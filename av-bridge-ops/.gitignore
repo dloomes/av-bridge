@@ -1,0 +1,14 @@
+# Ansible vault password file — never commit
+.vault_pass
+*.vault_pass
+
+# Compiled inventory cache
+.ansible/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

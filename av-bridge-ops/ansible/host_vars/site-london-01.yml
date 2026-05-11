@@ -1,0 +1,88 @@
+# ansible/host_vars/site-london-01.yml
+# Per-site device inventory and overrides for site-london-01
+# Encrypt sensitive values: ansible-vault encrypt_string 'secret' --name 'var_name'
+
+av_bridge_site_id: london-01
+av_bridge_location: "London, UK"
+
+# Secrets (use ansible-vault in production)
+av_bridge_cloud_api_key: !vault |
+  $ANSIBLE_VAULT;1.1;AES256
+  ...encrypted...
+av_bridge_local_api_key: !vault |
+  $ANSIBLE_VAULT;1.1;AES256
+  ...encrypted...
+av_bridge_hmac_secret: !vault |
+  $ANSIBLE_VAULT;1.1;AES256
+  ...encrypted...
+
+av_bridge_tailscale_enabled: true
+av_bridge_tailscale_authkey: !vault |
+  $ANSIBLE_VAULT;1.1;AES256
+  ...encrypted...
+
+av_bridge_devices:
+  - id: display-lobby-01
+    name: Lobby Main Display
+    location: Reception - Ground Floor
+    type: display
+    protocol: rest
+    address: "192.168.10.50"
+    username: admin
+    password: !vault |
+      $ANSIBLE_VAULT;1.1;AES256
+      ...encrypted...
+    poll_rate: 60s
+    commands:
+      poll: /api/v1/status
+      power_on: /api/v1/power/on
+      power_off: /api/v1/power/off
+    tags:
+      make: Samsung
+      model: QM65R
+
+  - id: vc-boardroom-01
+    name: Boardroom Video Bar
+    location: Boardroom - 2nd Floor
+    type: conferencing
+    protocol: websocket
+    address: "192.168.10.51:7788"
+    username: admin
+    password: !vault |
+      $ANSIBLE_VAULT;1.1;AES256
+      ...encrypted...
+    poll_rate: 30s
+    tags:
+      make: Cisco
+      model: Room Bar Pro
+
+  - id: dsp-auditorium-01
+    name: Auditorium DSP
+    location: Auditorium - Ground Floor
+    type: audio
+    protocol: telnet
+    address: "192.168.10.52:23"
+    username: admin
+    password: !vault |
+      $ANSIBLE_VAULT;1.1;AES256
+      ...encrypted...
+    poll_rate: 60s
+    commands:
+      poll: "STATUS GET"
+      volume_up: "DEVICE set gain +1"
+      mute: "DEVICE set mute true"
+    tags:
+      make: Biamp
+      model: Tesira FORTE
+
+  - id: camera-stage-01
+    name: Stage PTZ Camera
+    location: Stage - Auditorium
+    type: camera
+    protocol: serial
+    address: /dev/ttyUSB0
+    baud_rate: 9600
+    poll_rate: 120s
+    tags:
+      make: Sony
+      model: EVI-H100S

@@ -1,0 +1,12 @@
+---
+# roles/av-bridge/handlers/main.yml
+
+- name: Reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: Restart av-bridge
+  ansible.builtin.systemd:
+    name: av-bridge
+    state: restarted
+  listen: Restart av-bridge

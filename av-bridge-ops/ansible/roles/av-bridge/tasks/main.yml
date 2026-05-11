@@ -1,0 +1,254 @@
+---
+# roles/av-bridge/tasks/main.yml
+
+- name: Include OS-specific vars
+  ansible.builtin.include_vars: "{{ ansible_os_family | lower }}.yml"
+  failed_when: false
+
+# ── System user ────────────────────────────────────────────────────────────────
+
+- name: Create av-bridge group
+  ansible.builtin.group:
+    name: "{{ av_bridge_group }}"
+    system: true
+    state: present
+
+- name: Create av-bridge user
+  ansible.builtin.user:
+    name: "{{ av_bridge_user }}"
+    group: "{{ av_bridge_group }}"
+    system: true
+    shell: /usr/sbin/nologin
+    home: "{{ av_bridge_data_dir }}"
+    create_home: false
+    state: present
+
+# ── Directories ────────────────────────────────────────────────────────────────
+
+- name: Create required directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner | default(av_bridge_user) }}"
+    group: "{{ av_bridge_group }}"
+    mode: "{{ item.mode | default('0750') }}"
+  loop:
+    - { path: "{{ av_bridge_config_dir }}" }
+    - { path: "{{ av_bridge_data_dir }}" }
+    - { path: "{{ av_bridge_log_dir }}" }
+    - { path: "{{ av_bridge_config_dir }}/tls", mode: "0700" }
+
+# ── Binary ─────────────────────────────────────────────────────────────────────
+
+- name: Resolve latest release version
+  when: av_bridge_version == "latest"
+  block:
+    - name: Query GitHub releases API
+      ansible.builtin.uri:
+        url: "{{ av_bridge_release_url }}/latest"
+        method: GET
+        return_content: true
+        headers:
+          Accept: application/vnd.github.v3+json
+      register: _release_info
+      delegate_to: localhost
+      run_once: true
+
+    - name: Set resolved version
+      ansible.builtin.set_fact:
+        _av_bridge_resolved_version: "{{ _release_info.json.tag_name }}"
+
+- name: Use pinned version
+  when: av_bridge_version != "latest"
+  ansible.builtin.set_fact:
+    _av_bridge_resolved_version: "{{ av_bridge_version }}"
+
+- name: Check currently installed version
+  ansible.builtin.command: "{{ av_bridge_install_dir }}/av-bridge -version"
+  register: _installed_version
+  changed_when: false
+  failed_when: false
+
+- name: Download av-bridge binary
+  when: >
+    _installed_version.rc != 0 or
+    _av_bridge_resolved_version not in _installed_version.stdout
+  block:
+    - name: Download binary
+      ansible.builtin.get_url:
+        url: "{{ av_bridge_release_url }}/download/{{ _av_bridge_resolved_version }}/av-bridge-linux-{{ av_bridge_arch }}"
+        dest: "/tmp/av-bridge-{{ _av_bridge_resolved_version }}"
+        mode: "0755"
+        checksum: "sha256:{{ av_bridge_release_url }}/download/{{ _av_bridge_resolved_version }}/checksums.txt"
+
+    - name: Verify binary signature (if cosign available)
+      ansible.builtin.command: >
+        cosign verify-blob
+        --signature {{ av_bridge_release_url }}/download/{{ _av_bridge_resolved_version }}/av-bridge-linux-{{ av_bridge_arch }}.sig
+        --certificate {{ av_bridge_release_url }}/download/{{ _av_bridge_resolved_version }}/av-bridge-linux-{{ av_bridge_arch }}.pem
+        /tmp/av-bridge-{{ _av_bridge_resolved_version }}
+      changed_when: false
+      failed_when: false   # non-fatal if cosign not installed; checksum above is the hard gate
+
+    - name: Stop service before replacing binary
+      ansible.builtin.systemd:
+        name: av-bridge
+        state: stopped
+      failed_when: false
+
+    - name: Install binary
+      ansible.builtin.copy:
+        src: "/tmp/av-bridge-{{ _av_bridge_resolved_version }}"
+        dest: "{{ av_bridge_install_dir }}/av-bridge"
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0755"
+      notify: Restart av-bridge
+
+    - name: Clean up temp binary
+      ansible.builtin.file:
+        path: "/tmp/av-bridge-{{ _av_bridge_resolved_version }}"
+        state: absent
+
+# ── Config ─────────────────────────────────────────────────────────────────────
+
+- name: Deploy main config
+  ansible.builtin.template:
+    src: config.yaml.j2
+    dest: "{{ av_bridge_config_dir }}/config.yaml"
+    owner: root
+    group: "{{ av_bridge_group }}"
+    mode: "0640"
+    validate: "{{ av_bridge_install_dir }}/av-bridge -config %s -validate"
+  notify: Restart av-bridge
+  # Note: -validate flag needs adding to the Go binary (see note in README)
+
+- name: Deploy secrets env file
+  ansible.builtin.template:
+    src: env.j2
+    dest: "{{ av_bridge_config_dir }}/env"
+    owner: root
+    group: "{{ av_bridge_group }}"
+    mode: "0640"
+  no_log: true
+  notify: Restart av-bridge
+
+# ── TLS (optional) ─────────────────────────────────────────────────────────────
+
+- name: Deploy TLS certificate
+  when: av_bridge_tls_enabled
+  ansible.builtin.copy:
+    content: "{{ av_bridge_tls_cert }}"
+    dest: "{{ av_bridge_tls_cert_file }}"
+    owner: "{{ av_bridge_user }}"
+    group: "{{ av_bridge_group }}"
+    mode: "0640"
+  notify: Restart av-bridge
+
+- name: Deploy TLS private key
+  when: av_bridge_tls_enabled
+  ansible.builtin.copy:
+    content: "{{ av_bridge_tls_key }}"
+    dest: "{{ av_bridge_tls_key_file }}"
+    owner: "{{ av_bridge_user }}"
+    group: "{{ av_bridge_group }}"
+    mode: "0600"
+  no_log: true
+  notify: Restart av-bridge
+
+# ── Systemd ────────────────────────────────────────────────────────────────────
+
+- name: Deploy systemd unit
+  ansible.builtin.template:
+    src: av-bridge.service.j2
+    dest: /etc/systemd/system/av-bridge.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Reload systemd
+    - Restart av-bridge
+
+- name: Enable and start av-bridge
+  ansible.builtin.systemd:
+    name: av-bridge
+    enabled: true
+    state: started
+    daemon_reload: true
+
+# ── Auto-update timer ──────────────────────────────────────────────────────────
+
+- name: Deploy auto-update script
+  ansible.builtin.template:
+    src: av-bridge-update.sh.j2
+    dest: /usr/local/bin/av-bridge-update
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Deploy auto-update systemd service
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/av-bridge-update.service
+    content: |
+      [Unit]
+      Description=av-bridge auto-update
+      After=network-online.target
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/bin/av-bridge-update
+      StandardOutput=journal
+      StandardError=journal
+      SyslogIdentifier=av-bridge-update
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Deploy auto-update systemd timer
+  ansible.builtin.template:
+    src: av-bridge-update.timer.j2
+    dest: /etc/systemd/system/av-bridge-update.timer
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Enable auto-update timer
+  when: av_bridge_autoupdate_enabled
+  ansible.builtin.systemd:
+    name: av-bridge-update.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+
+# ── Tailscale (optional) ───────────────────────────────────────────────────────
+
+- name: Install and configure Tailscale
+  when: av_bridge_tailscale_enabled
+  block:
+    - name: Add Tailscale apt repo
+      ansible.builtin.shell: |
+        curl -fsSL https://tailscale.com/install.sh | sh
+      args:
+        creates: /usr/bin/tailscale
+
+    - name: Authenticate with Tailscale
+      ansible.builtin.command: >
+        tailscale up --authkey={{ av_bridge_tailscale_authkey }}
+        --hostname=av-bridge-{{ av_bridge_site_id }}
+        --ssh
+      changed_when: false
+      no_log: true
+
+# ── Smoke test ─────────────────────────────────────────────────────────────────
+
+- name: Wait for av-bridge to be healthy
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ av_bridge_listen_addr.split(':')[1] }}/healthz"
+    method: GET
+    status_code: 200
+  register: _health
+  retries: 12
+  delay: 5
+  until: _health.status == 200

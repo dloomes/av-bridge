@@ -1,0 +1,46 @@
+# prometheus/prometheus.yml
+# Scrape config for av-bridge fleet
+# Drop this into your existing prometheus.yml or use as a standalone config.
+
+global:
+  scrape_interval: 30s
+  evaluation_interval: 30s
+  external_labels:
+    monitor: av-bridge-fleet
+
+# Alerting rules file
+rule_files:
+  - "av-bridge-alerts.yml"
+
+scrape_configs:
+
+  # Option A: Static targets (simple, works for small fleets)
+  - job_name: av-bridge
+    metrics_path: /metrics
+    scheme: http
+    static_configs:
+      - targets:
+          - "10.10.1.50:8080"   # site-london-01
+          - "10.10.2.50:8080"   # site-manchester-01
+          - "10.20.1.50:8080"   # site-nyc-01
+          - "10.20.2.50:8080"   # site-la-01
+        labels:
+          job: av-bridge
+
+  # Option B: File-based service discovery (recommended for 10+ sites)
+  # Ansible writes /etc/prometheus/targets/av-bridge.json on each deploy.
+  # - job_name: av-bridge
+  #   metrics_path: /metrics
+  #   file_sd_configs:
+  #     - files:
+  #         - /etc/prometheus/targets/av-bridge.json
+  #       refresh_interval: 5m
+
+  # Option C: Grafana Alloy / remote_write (best for many sites, no inbound ports)
+  # Each site runs Alloy which remote_writes to your central Prometheus/Mimir.
+  # See: https://grafana.com/docs/alloy/latest/
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["localhost:9093"]

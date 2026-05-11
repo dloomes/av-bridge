@@ -1,0 +1,12 @@
+# Managed by Ansible — do not edit by hand
+[Unit]
+Description=av-bridge daily auto-update check
+Requires=network-online.target
+
+[Timer]
+OnCalendar=*-*-* {{ av_bridge_autoupdate_schedule }}:00
+RandomizedDelaySec=1800
+Persistent=true
+
+[Install]
+WantedBy=timers.target

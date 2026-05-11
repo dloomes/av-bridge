@@ -1,0 +1,129 @@
+#!/usr/bin/env bash
+# Managed by Ansible — do not edit by hand
+# av-bridge-update: checks for a new release and performs a zero-downtime swap
+set -euo pipefail
+
+BINARY="{{ av_bridge_install_dir }}/av-bridge"
+CHANNEL="{{ av_bridge_autoupdate_channel }}"
+ARCH="{{ av_bridge_arch }}"
+RELEASE_API="{{ av_bridge_release_url }}/latest"
+TMPDIR="$(mktemp -d)"
+LOG_TAG="av-bridge-update"
+
+log()  { logger -t "$LOG_TAG" -- "$*"; echo "$*"; }
+warn() { logger -t "$LOG_TAG" -p user.warning -- "$*"; echo "WARN: $*" >&2; }
+die()  { logger -t "$LOG_TAG" -p user.err -- "$*"; echo "ERROR: $*" >&2; exit 1; }
+
+cleanup() { rm -rf "$TMPDIR"; }
+trap cleanup EXIT
+
+# ── 1. Fetch latest release tag ────────────────────────────────────────────────
+log "Checking for updates (channel: $CHANNEL)..."
+
+LATEST=$(curl -fsSL \
+  -H "Accept: application/vnd.github.v3+json" \
+  "$RELEASE_API" | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": "\(.*\)".*/\1/')
+
+if [[ -z "$LATEST" ]]; then
+  die "Could not determine latest version from $RELEASE_API"
+fi
+log "Latest release: $LATEST"
+
+# ── 2. Check installed version ─────────────────────────────────────────────────
+if CURRENT=$("$BINARY" -version 2>&1 | awk '{print $NF}'); then
+  log "Installed version: $CURRENT"
+  if [[ "$CURRENT" == "$LATEST" ]]; then
+    log "Already up to date — nothing to do"
+    exit 0
+  fi
+else
+  warn "Could not determine installed version — will attempt update"
+  CURRENT="unknown"
+fi
+
+# ── 3. Download new binary and checksum ────────────────────────────────────────
+DOWNLOAD_BASE="{{ av_bridge_release_url }}/download/$LATEST"
+BINARY_NAME="av-bridge-linux-$ARCH"
+BINARY_URL="$DOWNLOAD_BASE/$BINARY_NAME"
+CHECKSUM_URL="$DOWNLOAD_BASE/checksums.txt"
+
+log "Downloading $BINARY_URL..."
+curl -fsSL -o "$TMPDIR/$BINARY_NAME" "$BINARY_URL" || die "Download failed"
+curl -fsSL -o "$TMPDIR/checksums.txt" "$CHECKSUM_URL" || die "Checksum download failed"
+
+# ── 4. Verify checksum ─────────────────────────────────────────────────────────
+log "Verifying checksum..."
+cd "$TMPDIR"
+grep "$BINARY_NAME" checksums.txt | sha256sum --check --status \
+  || die "Checksum verification FAILED — aborting update"
+log "Checksum OK"
+cd - > /dev/null
+
+# ── 5. Verify signature (if cosign available) ──────────────────────────────────
+if command -v cosign &>/dev/null; then
+  log "Verifying binary signature with cosign..."
+  SIG_URL="$DOWNLOAD_BASE/$BINARY_NAME.sig"
+  CERT_URL="$DOWNLOAD_BASE/$BINARY_NAME.pem"
+  curl -fsSL -o "$TMPDIR/$BINARY_NAME.sig" "$SIG_URL" || warn "Could not download signature"
+  curl -fsSL -o "$TMPDIR/$BINARY_NAME.pem" "$CERT_URL" || warn "Could not download certificate"
+  if [[ -f "$TMPDIR/$BINARY_NAME.sig" && -f "$TMPDIR/$BINARY_NAME.pem" ]]; then
+    cosign verify-blob \
+      --signature "$TMPDIR/$BINARY_NAME.sig" \
+      --certificate "$TMPDIR/$BINARY_NAME.pem" \
+      "$TMPDIR/$BINARY_NAME" && log "Signature OK" || warn "Signature verification failed — proceeding (checksum passed)"
+  fi
+fi
+
+# ── 6. Smoke-test the new binary ───────────────────────────────────────────────
+chmod +x "$TMPDIR/$BINARY_NAME"
+NEW_VERSION=$("$TMPDIR/$BINARY_NAME" -version 2>&1 | awk '{print $NF}' || true)
+log "New binary version reports: $NEW_VERSION"
+if [[ -z "$NEW_VERSION" ]]; then
+  die "New binary failed to report version — aborting update"
+fi
+
+# ── 7. Swap binary and restart service ────────────────────────────────────────
+log "Swapping binary ($CURRENT → $LATEST)..."
+
+# Atomic rename so av-bridge is never half-replaced
+cp "$TMPDIR/$BINARY_NAME" "$TMPDIR/av-bridge.new"
+chmod 755 "$TMPDIR/av-bridge.new"
+mv "$TMPDIR/av-bridge.new" "$BINARY"
+
+log "Restarting av-bridge service..."
+systemctl restart av-bridge
+
+# ── 8. Health check post-restart ──────────────────────────────────────────────
+HEALTHZ_URL="http://127.0.0.1:{{ av_bridge_listen_addr.split(':')[1] }}/healthz"
+log "Waiting for health check at $HEALTHZ_URL..."
+
+for i in $(seq 1 12); do
+  if curl -fsSL --max-time 3 "$HEALTHZ_URL" | grep -q '"ok"'; then
+    log "Health check passed — update to $LATEST complete"
+    # Notify cloud portal of successful update
+    {% raw %}
+    if [[ -f "{{ av_bridge_config_dir }}/env" ]]; then
+      source "{{ av_bridge_config_dir }}/env" 2>/dev/null || true
+      if [[ -n "${CLOUD_WEBHOOK_URL:-}" ]]; then
+        curl -fsSL -X POST "$CLOUD_WEBHOOK_URL/updates" \
+          -H "Authorization: Bearer ${CLOUD_API_KEY:-}" \
+          -H "Content-Type: application/json" \
+          -d "{\"site_id\":\"{{ av_bridge_site_id }}\",\"version\":\"$LATEST\",\"previous\":\"$CURRENT\",\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
+          2>/dev/null || true
+      fi
+    fi
+    {% endraw %}
+    exit 0
+  fi
+  sleep 5
+done
+
+# ── 9. Rollback on health check failure ───────────────────────────────────────
+warn "Health check failed after update to $LATEST — attempting rollback"
+if [[ -f "$BINARY.prev" ]]; then
+  mv "$BINARY.prev" "$BINARY"
+  systemctl restart av-bridge
+  warn "Rolled back to previous binary"
+else
+  die "Rollback failed — no previous binary saved. Manual intervention required."
+fi

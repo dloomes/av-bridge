@@ -1,0 +1,39 @@
+# ansible/group_vars/av_bridge_sites.yml
+# Shared defaults for all sites.
+# Override per-host in inventory/hosts.yml or host_vars/<hostname>.yml
+
+# --- Binary source ---
+av_bridge_version: "latest"          # or pin to "v1.2.3"
+av_bridge_release_url: "https://github.com/your-org/av-bridge/releases"
+av_bridge_install_dir: "/usr/local/bin"
+av_bridge_config_dir: "/etc/av-bridge"
+av_bridge_data_dir: "/var/lib/av-bridge"
+av_bridge_log_dir: "/var/log/av-bridge"
+
+# --- Service ---
+av_bridge_listen_addr: "127.0.0.1:8080"   # localhost only; Tailscale exposes externally
+av_bridge_heartbeat_period: "30s"
+av_bridge_log_level: "info"
+
+# --- Cloud portal ---
+# Store real values in ansible-vault or pull from environment
+av_bridge_cloud_webhook_url: "https://portal.your-org.com/api/v1/ingest"
+av_bridge_cloud_push_interval: "30s"
+av_bridge_cloud_retry_attempts: 3
+
+# --- API auth ---
+av_bridge_api_auth_enabled: true
+
+# --- Alerts ---
+av_bridge_alerts_offline_after: "5m"
+av_bridge_alerts_degraded_after: "2m"
+av_bridge_alerts_repeat_interval: "30m"
+
+# --- Auto-update ---
+av_bridge_autoupdate_enabled: true
+av_bridge_autoupdate_schedule: "02:30"    # local time on each host
+av_bridge_autoupdate_channel: "stable"    # stable | beta
+
+# --- Monitoring ---
+av_bridge_metrics_enabled: true
+av_bridge_prometheus_scrape_port: 9091    # node exporter side-car port

@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "golang-security": {
+      "source": "samber/cc-skills-golang",
+      "sourceType": "github",
+      "skillPath": "skills/golang-security/SKILL.md",
+      "computedHash": "6c80a68f6b936831c8805c645a71b642ee23876d0ea7d2bb64ee01fad1c0fa35"
+    }
+  }
+}

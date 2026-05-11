@@ -1,0 +1,71 @@
+# Managed by Ansible — do not edit by hand
+# Site: {{ av_bridge_site_id }} | {{ av_bridge_location }}
+# Deployed: {{ ansible_date_time.iso8601 }}
+
+hub:
+  listen_addr: "{{ av_bridge_listen_addr }}"
+  heartbeat_period: "{{ av_bridge_heartbeat_period }}"
+  log_level: "{{ av_bridge_log_level }}"
+  store_path: "{{ av_bridge_data_dir }}/state.json"
+
+cloud:
+  webhook_url: "${CLOUD_WEBHOOK_URL}"
+  api_key: "${CLOUD_API_KEY}"
+  push_interval: "{{ av_bridge_cloud_push_interval }}"
+  retry_attempts: {{ av_bridge_cloud_retry_attempts }}
+  retry_delay: "5s"
+  tls_skip_verify: false
+
+api:
+  auth:
+    enabled: {{ av_bridge_api_auth_enabled | lower }}
+    api_keys:
+      - "${LOCAL_API_KEY}"
+    hmac_secret: "${HMAC_SECRET}"
+  tls:
+    enabled: {{ av_bridge_tls_enabled | lower }}
+{% if av_bridge_tls_enabled %}
+    cert_file: "{{ av_bridge_tls_cert_file }}"
+    key_file: "{{ av_bridge_tls_key_file }}"
+{% endif %}
+
+alerts:
+  offline_after: "{{ av_bridge_alerts_offline_after }}"
+  degraded_after: "{{ av_bridge_alerts_degraded_after }}"
+  repeat_interval: "{{ av_bridge_alerts_repeat_interval }}"
+
+devices:
+{% if av_bridge_devices is defined %}
+{% for device in av_bridge_devices %}
+  - id: "{{ device.id }}"
+    name: "{{ device.name }}"
+    location: "{{ device.location | default(av_bridge_location) }}"
+    type: "{{ device.type }}"
+    protocol: "{{ device.protocol }}"
+    address: "{{ device.address }}"
+{% if device.baud_rate is defined %}
+    baud_rate: {{ device.baud_rate }}
+{% endif %}
+{% if device.username is defined %}
+    username: "{{ device.username }}"
+    password: "${DEVICE_{{ device.id | upper | replace('-', '_') }}_PASSWORD}"
+{% endif %}
+    poll_rate: "{{ device.poll_rate | default('60s') }}"
+{% if device.commands is defined %}
+    commands:
+{% for cmd_name, cmd_value in device.commands.items() %}
+      {{ cmd_name }}: "{{ cmd_value }}"
+{% endfor %}
+{% endif %}
+{% if device.tags is defined %}
+    tags:
+{% for tag_key, tag_value in device.tags.items() %}
+      {{ tag_key }}: "{{ tag_value }}"
+{% endfor %}
+{% endif %}
+{% endfor %}
+{% else %}
+  # No devices configured for this site yet.
+  # Add devices in host_vars/{{ inventory_hostname }}.yml
+  []
+{% endif %}

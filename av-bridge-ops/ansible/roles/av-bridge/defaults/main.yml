@@ -1,0 +1,14 @@
+# roles/av-bridge/defaults/main.yml
+# Lowest-priority defaults — all overridable from group_vars or host_vars
+
+av_bridge_user: av-bridge
+av_bridge_group: av-bridge
+av_bridge_version: latest
+av_bridge_arch: "amd64"   # amd64 | arm64
+
+av_bridge_tls_enabled: false
+av_bridge_tls_cert_file: "{{ av_bridge_config_dir }}/tls/server.crt"
+av_bridge_tls_key_file: "{{ av_bridge_config_dir }}/tls/server.key"
+
+av_bridge_tailscale_enabled: false
+av_bridge_tailscale_authkey: ""

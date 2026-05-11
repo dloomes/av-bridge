@@ -1,0 +1,34 @@
+# Managed by Ansible — do not edit by hand
+[Unit]
+Description=AV Bridge — on-premises AV device gateway
+Documentation=https://github.com/your-org/av-bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ av_bridge_user }}
+Group={{ av_bridge_group }}
+ExecStart={{ av_bridge_install_dir }}/av-bridge -config {{ av_bridge_config_dir }}/config.yaml
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=10s
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=av-bridge
+
+EnvironmentFile=-{{ av_bridge_config_dir }}/env
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths={{ av_bridge_data_dir }} {{ av_bridge_log_dir }}
+PrivateTmp=true
+CapabilityBoundingSet=
+LockPersonality=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

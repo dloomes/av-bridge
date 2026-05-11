@@ -1,0 +1,55 @@
+---
+# deploy.yml — Deploy or update av-bridge across all (or targeted) sites
+#
+# Usage:
+#   ansible-playbook deploy.yml                          # all sites
+#   ansible-playbook deploy.yml -l site-london-01        # single site
+#   ansible-playbook deploy.yml -l uk_sites              # region
+#   ansible-playbook deploy.yml -e av_bridge_version=v1.2.3  # pin version
+#   ansible-playbook deploy.yml --tags config            # config only, no binary update
+#   ansible-playbook deploy.yml --tags binary            # binary only
+#
+# Secrets: ansible-vault encrypt_string 'value' --name 'av_bridge_cloud_api_key'
+# Or use: ANSIBLE_VAULT_PASSWORD_FILE=~/.vault_pass
+
+- name: Deploy av-bridge to all sites
+  hosts: av_bridge_sites
+  become: true
+  gather_facts: true
+  serial: "{{ deploy_serial | default('25%') }}"   # rolling deploy — 25% of hosts at a time
+
+  pre_tasks:
+    - name: Check connectivity
+      ansible.builtin.ping:
+      tags: [always]
+
+    - name: Print deployment info
+      ansible.builtin.debug:
+        msg: >
+          Deploying av-bridge {{ av_bridge_version }}
+          to {{ inventory_hostname }} ({{ av_bridge_site_id }})
+          running {{ ansible_distribution }} {{ ansible_distribution_version }}
+      tags: [always]
+
+  roles:
+    - role: av-bridge
+      tags: [av-bridge]
+
+  post_tasks:
+    - name: Final status check
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ av_bridge_listen_addr.split(':')[1] }}/api/v1/status"
+        method: GET
+        status_code: 200
+        headers:
+          Authorization: "Bearer {{ av_bridge_local_api_key | default('') }}"
+      register: _status
+      tags: [always]
+
+    - name: Print device status
+      ansible.builtin.debug:
+        msg: >
+          {{ inventory_hostname }}: {{ _status.json.total }} devices,
+          {{ _status.json.online }} online,
+          {{ _status.json.offline }} offline
+      tags: [always]

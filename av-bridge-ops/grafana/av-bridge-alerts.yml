@@ -1,0 +1,67 @@
+# prometheus/av-bridge-alerts.yml
+# Alerting rules — fires to Alertmanager, which routes to PagerDuty/Slack/email
+
+groups:
+  - name: av-bridge-devices
+    interval: 60s
+    rules:
+
+      - alert: AVDeviceOffline
+        expr: av_bridge_device_status == 3
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "AV device offline: {{ $labels.name }}"
+          description: >
+            Device "{{ $labels.name }}" ({{ $labels.type }}) at {{ $labels.location }}
+            has been offline for more than 5 minutes.
+            Site: {{ $labels.instance }}
+
+      - alert: AVDeviceDegraded
+        expr: av_bridge_device_status == 2
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "AV device degraded: {{ $labels.name }}"
+          description: >
+            Device "{{ $labels.name }}" ({{ $labels.type }}) at {{ $labels.location }}
+            has been in a degraded state for more than 2 minutes.
+
+      - alert: AVBridgeFleetAvailabilityLow
+        expr: >
+          100 * sum(av_bridge_devices_online) / sum(av_bridge_devices_total) < 80
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Fleet availability below 80%"
+          description: >
+            Fleet-wide device availability has dropped below 80% for 10 minutes.
+            Online: {{ $value | printf "%.1f" }}%
+
+      - alert: AVBridgeInstanceDown
+        expr: up{job="av-bridge"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "av-bridge instance unreachable: {{ $labels.instance }}"
+          description: >
+            The av-bridge service at {{ $labels.instance }} has stopped responding
+            to Prometheus scrapes for 2 minutes. The service may have crashed.
+
+  - name: av-bridge-service
+    rules:
+
+      - alert: AVBridgeNoDevicesOnline
+        expr: av_bridge_devices_online == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "No AV devices online at {{ $labels.instance }}"
+          description: >
+            All devices at {{ $labels.instance }} are offline.
+            This may indicate a network-level issue at the site.
