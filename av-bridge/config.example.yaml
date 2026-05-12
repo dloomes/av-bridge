@@ -1,0 +1,98 @@
+hub:
+  listen_addr: "0.0.0.0:8080"
+  heartbeat_period: 30s
+  log_level: info
+
+cloud:
+  webhook_url: "${CLOUD_WEBHOOK_URL}"
+  api_key: "${CLOUD_API_KEY}"
+  push_interval: 30s
+  retry_attempts: 3
+  retry_delay: 5s
+  tls_skip_verify: false
+
+devices:
+  # -----------------------------------------------------------------
+  # Display / Screen — REST API (e.g. Samsung MDC, NEC, LG Signage)
+  # -----------------------------------------------------------------
+  - id: display-lobby-01
+    name: Lobby Main Display
+    location: Reception - Ground Floor
+    type: display
+    protocol: rest
+    address: "192.168.10.50"
+    poll_rate: 60s
+    username: admin
+    password: "${DISPLAY_PASSWORD}"
+    commands:
+      poll: /api/v1/status
+      power_on: /api/v1/power/on
+      power_off: /api/v1/power/off
+      set_input: /api/v1/input
+    tags:
+      make: Samsung
+      model: QM65R
+
+  # -----------------------------------------------------------------
+  # Video Conferencing — WebSocket (e.g. Cisco Room Bar, Poly Studio)
+  # -----------------------------------------------------------------
+  - id: vc-boardroom-01
+    name: Boardroom Video Bar
+    location: Boardroom - 2nd Floor
+    type: conferencing
+    protocol: websocket
+    address: "192.168.10.51:7788"
+    poll_rate: 30s
+    username: admin
+    password: "${VC_PASSWORD}"
+    commands:
+      dial: '{"command":"dial","number":"","protocol":"sip"}'
+      hangup: '{"command":"hangup"}'
+      mute: '{"command":"mute","value":true}'
+      unmute: '{"command":"mute","value":false}'
+    tags:
+      make: Cisco
+      model: Room Bar Pro
+
+  # -----------------------------------------------------------------
+  # Audio DSP — Telnet (e.g. Biamp Tesira, QSC Core)
+  # -----------------------------------------------------------------
+  - id: dsp-auditorium-01
+    name: Auditorium DSP
+    location: Auditorium - Ground Floor
+    type: audio
+    protocol: telnet
+    address: "192.168.10.52:23"
+    poll_rate: 60s
+    username: admin
+    password: "${DSP_PASSWORD}"
+    commands:
+      poll: "STATUS GET\r\n"
+      volume_up: "DEVICE set gain +1\r\n"
+      volume_down: "DEVICE set gain -1\r\n"
+      mute: "DEVICE set mute true\r\n"
+      unmute: "DEVICE set mute false\r\n"
+    tags:
+      make: Biamp
+      model: Tesira FORTE
+
+  # -----------------------------------------------------------------
+  # Camera / PTZ — Serial RS-232 (e.g. Sony EVI, Panasonic AW)
+  # -----------------------------------------------------------------
+  - id: camera-stage-01
+    name: Stage PTZ Camera
+    location: Stage - Auditorium
+    type: camera
+    protocol: serial
+    address: /dev/ttyUSB0
+    baud_rate: 9600
+    poll_rate: 120s
+    commands:
+      home: "\x8F\x01\x06\x04\xFF"
+      tilt_up: "\x81\x01\x06\x01\x09\x09\x03\x01\xFF"
+      tilt_down: "\x81\x01\x06\x01\x09\x09\x03\x02\xFF"
+      pan_left: "\x81\x01\x06\x01\x09\x09\x01\x03\xFF"
+      pan_right: "\x81\x01\x06\x01\x09\x09\x02\x03\xFF"
+    tags:
+      make: Sony
+      model: EVI-H100S

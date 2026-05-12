@@ -1,0 +1,37 @@
+version: "3.9"
+
+services:
+  av-bridge:
+    build: .
+    container_name: av-bridge
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./config.example.yaml:/etc/av-bridge/config.yaml:ro
+    environment:
+      - CLOUD_WEBHOOK_URL=${CLOUD_WEBHOOK_URL:-http://mock-cloud:9000/ingest}
+      - CLOUD_API_KEY=${CLOUD_API_KEY:-dev-key}
+      - DISPLAY_PASSWORD=${DISPLAY_PASSWORD:-admin}
+      - VC_PASSWORD=${VC_PASSWORD:-admin}
+      - DSP_PASSWORD=${DSP_PASSWORD:-admin}
+    # Serial devices: uncomment and adjust if running real hardware
+    # devices:
+    #   - /dev/ttyUSB0:/dev/ttyUSB0
+    depends_on:
+      - mock-cloud
+    networks:
+      - av-net
+
+  # Minimal webhook receiver for local dev — logs all incoming payloads
+  mock-cloud:
+    image: mendhak/http-https-echo:latest
+    container_name: mock-cloud
+    ports:
+      - "9000:8080"
+    networks:
+      - av-net
+
+networks:
+  av-net:
+    driver: bridge

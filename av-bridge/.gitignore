@@ -1,0 +1,27 @@
+﻿# Compiled binary
+av-bridge.exe
+av-bridge
+av-bridge-linux-amd64
+av-bridge-linux-arm64
+
+# Secrets - never commit these
+poc.env
+*.env
+/etc/av-bridge/
+
+# State store
+*.json
+!go.sum
+
+# Test coverage
+coverage.out
+coverage.html
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db

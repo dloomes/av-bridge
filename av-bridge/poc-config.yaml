@@ -1,0 +1,150 @@
+hub:
+  # Use 0.0.0.0:8080 to expose the API to other hosts on the LAN (e.g. when
+  # running av-bridge on a Raspberry Pi and the portal on a laptop). Use
+  # 127.0.0.1:8080 to keep the API local to this machine only.
+  listen_addr: "0.0.0.0:8080"
+  heartbeat_period: 30s
+  log_level: debug                      # verbose so you see everything during PoC
+  store_path: "/tmp/av-bridge-poc-state.json"
+  collector_id: "poc-collector-01"
+  site_id: "poc-site-01"
+
+cloud:
+  webhook_url: "http://localhost:9000/ingest"     # set to http://localhost:9000/ingest or webhook.site URL
+  api_key: "poc-key"
+  push_interval: 15s                    # faster than production so data arrives quickly
+  retry_attempts: 3
+  retry_delay: 5s
+
+lens:
+  # Poly Lens enrichment — fills in MAC, IP, last-detected and other inventory
+  # fields for any device tagged with lens_managed: "true". OAuth client
+  # credentials come from the Lens portal (Settings → API Keys).
+  enabled: true
+  client_id: "${LENS_CLIENT_ID}"
+  client_secret: "${LENS_CLIENT_SECRET}"
+  poll_interval: 5m
+
+api:
+  auth:
+    # Bearer-token auth for /api/v1/* and /ws/events. /healthz and /metrics
+    # remain unauthenticated so monitoring and the portal's connection
+    # indicator keep working without the key.
+    enabled: false
+    api_keys:
+      - "${AV_BRIDGE_API_KEY}"          # generate with: openssl rand -hex 32
+
+alerts:
+  offline_after: 2m                     # shorter thresholds to see alerts fire during demo
+  degraded_after: 1m
+  repeat_interval: 5m
+
+devices:
+  # ── Biamp Tesira FORTE ────────────────────────────────────────────────────
+  # Prerequisites:
+  #   1. Telnet must be enabled: Tesira software → Device Maintenance → Network → TTP → Telnet: On
+  #   2. Get instance tag names from whoever programmed the DSP (they are project-specific)
+  #   3. Replace mute_instance_tag and gain_instance_tag with the real names
+  - id: tesira-boardroom-01
+    name: Biamp Tesira
+    location: Court 3
+    type: audio
+    protocol: tesira
+    address: "${TESIRA_IP}:23"          # e.g. 192.168.10.52:23
+    username: "${TESIRA_USERNAME}"
+    password: "${TESIRA_PASSWORD}"
+    poll_rate: 30s
+    commands:
+      # Named commands — called via: POST /api/v1/devices/tesira-boardroom-01/command
+      # Body: {"name": "mute"}
+      mute:   "MicMuteLevel1 set mute true"    # replace MicMuteLevel1 with your instance tag
+      unmute: "MicMuteLevel1 set mute false"
+      vol_up: "ProgramLevel1 increment level 1 1"
+      vol_dn: "ProgramLevel1 increment level 1 -1"
+    tags:
+      make: Biamp
+      model: Tesira FORTE
+      building: Royal Courts of Justice
+      mute_instance_tag: "MicMuteLevel1"    # CHANGE to your actual instance tag name
+      gain_instance_tag: "ProgramLevel1"    # CHANGE to your actual instance tag name
+      # call_instance_tag: "VoIPDialer1"    # uncomment if you have a VoIP/POTS block
+
+  # ── Sony Bravia Professional Display ────────────────────────────────────
+  # Prerequisites:
+  #   1. Settings → Network → Home Network → IP Control → Simple IP Control: On
+  #   2. Settings → Network → Home Network → Pre-Shared Key → set a PSK string
+  #   3. REST API must be enabled (same menu area)
+  - id: display-sony-01
+    name: Judge's Screen
+    location: Court 1
+    type: display
+    protocol: sony_bravia
+    address: "${SONY_IP}"               # e.g. 192.168.10.60 (no http:// prefix needed)
+    poll_rate: 30s
+    tags:
+      make: Sony
+      psk: "${SONY_PSK}"               # the PSK you set on the display
+      building: Gloucester Crown Court
+
+  # ── Poly G7500 ────────────────────────────────────────────────────────────
+  # Prerequisites:
+  #   1. System → Security → Access → Remote Access: On
+  #   2. Default admin credentials: admin / [password set on first boot]
+  #   3. Self-signed cert is expected — tls_skip_verify handles this
+  #   4. Note: in Microsoft Teams Mode some endpoints behave differently
+  - id: vc-poly-01
+    name: Poly G7500
+    location: Court 1
+    type: conferencing
+    protocol: poly_videoos
+    address: "${POLY_IP}"              # e.g. 192.168.10.70 (no https:// prefix needed)
+    username: admin
+    password: "${POLY_PASSWORD}"
+    poll_rate: 30s
+    commands:
+      # Built-in command names handled by the poly_videoos adapter.
+      # The string values are descriptive only — the adapter knows what
+      # endpoint each name maps to (see internal/device/adapters/poly_videoos.go).
+      mute:   "POST /rest/audio/muted true"
+      unmute: "POST /rest/audio/muted false"
+      vol_up: "POST /rest/audio/volume +1"
+      vol_dn: "POST /rest/audio/volume -1"
+      hangup: "DELETE /rest/conferences/{id}"
+      reboot: "POST /rest/system/reboot"
+    tags:
+      make: Poly
+      model: G7500
+      tls_skip_verify: "true"          # accepts the G7500's self-signed certificate
+      building: Gloucester Crown Court
+      lens_managed: "true"             # also look this device up in Poly Lens
+  # ── Poly G7500 ────────────────────────────────────────────────────────────
+  # Prerequisites:
+  #   1. System → Security → Access → Remote Access: On
+  #   2. Default admin credentials: admin / [password set on first boot]
+  #   3. Self-signed cert is expected — tls_skip_verify handles this
+  #   4. Note: in Microsoft Teams Mode some endpoints behave differently
+  - id: vc-poly-02
+    name: Poly G7500
+    location: Court 2
+    type: conferencing
+    protocol: poly_videoos
+    address: "${POLY_IP2}"              # e.g. 192.168.10.70 (no https:// prefix needed)
+    username: admin
+    password: "${POLY_PASSWORD2}"
+    poll_rate: 30s
+    commands:
+      # Built-in command names handled by the poly_videoos adapter.
+      # The string values are descriptive only — the adapter knows what
+      # endpoint each name maps to (see internal/device/adapters/poly_videoos.go).
+      mute:   "POST /rest/audio/muted true"
+      unmute: "POST /rest/audio/muted false"
+      vol_up: "POST /rest/audio/volume +1"
+      vol_dn: "POST /rest/audio/volume -1"
+      hangup: "DELETE /rest/conferences/{id}"
+      reboot: "POST /rest/system/reboot"
+    tags:
+      make: Poly
+      model: G7500
+      tls_skip_verify: "true"          # accepts the G7500's self-signed certificate
+      building: Royal Courts of Justice
+      lens_managed: "true"             # also look this device up in Poly Lens

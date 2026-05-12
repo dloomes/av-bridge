@@ -1,0 +1,47 @@
+package adapters
+
+import (
+	"fmt"
+
+	"github.com/dloomes/av-bridge/internal/cloud/lens"
+	"github.com/dloomes/av-bridge/internal/config"
+	"github.com/dloomes/av-bridge/internal/device"
+)
+
+// Deps holds optional collaborators that some adapters use to enrich their
+// data. Pass nil values for any that aren't configured.
+type Deps struct {
+	Lens *lens.Client
+}
+
+// New creates the appropriate Device adapter for the given config.
+// Base transport adapters (rest, websocket, telnet, serial) handle generic
+// devices. Vendor-specific adapters extend these for devices with non-standard
+// authentication or control models.
+func New(cfg config.DeviceConfig, deps Deps) (device.Device, error) {
+	switch cfg.Protocol {
+	// ── Base transport adapters ──────────────────────────────────────────────
+	case "rest":
+		return NewRESTAdapter(cfg), nil
+	case "websocket":
+		return NewWebSocketAdapter(cfg), nil
+	case "telnet":
+		return NewTelnetAdapter(cfg), nil
+	case "serial":
+		return NewSerialAdapter(cfg), nil
+
+	// ── Vendor-specific adapters ─────────────────────────────────────────────
+	case "tesira":
+		// Biamp Tesira DSPs — TTP over Telnet with subscription support
+		return NewTesiraAdapter(cfg), nil
+	case "sony_bravia":
+		// Sony Bravia Professional Displays — JSON-RPC REST with PSK auth
+		return NewSonyBraviaAdapter(cfg), nil
+	case "poly_videoos":
+		// Poly VideoOS — G7500, Studio X70/X52/X50/X30; REST with session/XSRF lifecycle
+		return NewPolyVideoOSAdapter(cfg, deps.Lens), nil
+
+	default:
+		return nil, fmt.Errorf("unsupported protocol: %q (supported: rest, websocket, telnet, serial, tesira, sony_bravia, poly_videoos)", cfg.Protocol)
+	}
+}
