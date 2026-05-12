@@ -1,0 +1,30 @@
+[Unit]
+Description=AV Bridge - On-Premises AV Device Gateway
+Documentation=https://github.com/your-org/av-bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=av-bridge
+Group=av-bridge
+ExecStart=/usr/local/bin/av-bridge -config /etc/av-bridge/config.yaml
+Restart=on-failure
+RestartSec=10s
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=av-bridge
+
+# Environment variables (secrets loaded from here)
+EnvironmentFile=-/etc/av-bridge/env
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/av-bridge
+PrivateTmp=true
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target

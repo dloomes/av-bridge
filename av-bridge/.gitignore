@@ -1,8 +1,10 @@
-﻿# Compiled binary
-av-bridge.exe
-av-bridge
-av-bridge-linux-amd64
-av-bridge-linux-arm64
+﻿# Compiled binary — leading slash anchors to this file's directory so the
+# pattern only matches the binary, not the cmd/av-bridge package directory.
+/av-bridge.exe
+/av-bridge
+/av-bridge-linux-amd64
+/av-bridge-linux-arm64
+/av-bridge-linuxarm64
 
 # Secrets - never commit these
 poc.env
