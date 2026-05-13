@@ -1,9 +1,10 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import {
   AlertTriangle,
   Building2,
+  ChevronRight,
   CircleSlash,
   DoorOpen,
   RefreshCcw,
@@ -41,6 +42,15 @@ export default function DashboardPage() {
     () => (devices.data ? groupDevicesByLocation(devices.data) : []),
     [devices.data]
   );
+
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const toggle = (key: string) =>
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
 
   const isLoading = fleet.loading && !fleet.data;
   const hasError = !!(fleet.error || devices.error);
@@ -147,58 +157,93 @@ export default function DashboardPage() {
               </div>
 
               {devices.loading && !devices.data ? (
-                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                <div className="flex flex-col gap-2">
                   {[0, 1, 2].map((i) => (
-                    <Skeleton key={i} className="h-[210px]" />
+                    <Skeleton key={i} className="h-12 w-full" />
                   ))}
                 </div>
               ) : devices.data && devices.data.length > 0 ? (
-                <div className="space-y-8">
-                  {groups.map((g, gi) => (
-                    <div
-                      key={g.building ?? `__flat__${gi}`}
-                      className="space-y-4"
-                    >
-                      {g.building && (
-                        <div className="flex items-center gap-2">
-                          <Building2 className="h-4 w-4 text-muted-foreground" />
-                          <h3 className="text-sm font-semibold">
-                            {g.building}
-                          </h3>
-                          <div className="h-px flex-1 bg-border" />
-                        </div>
-                      )}
-                      <div
-                        className={
-                          g.building ? "space-y-6 pl-6" : "space-y-6"
-                        }
-                      >
-                        {g.rooms.map((r) => (
-                          <div key={r.room} className="space-y-3">
-                            <div className="flex items-center gap-2">
-                              <DoorOpen className="h-3.5 w-3.5 text-muted-foreground" />
-                              <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                                {r.room}
-                              </h4>
-                              <span className="text-[11px] text-muted-foreground/70">
-                                · {r.devices.length} device
-                                {r.devices.length === 1 ? "" : "s"}
-                              </span>
-                            </div>
-                            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                              {r.devices.map((d) => (
-                                <DeviceCard
-                                  key={d.id}
-                                  device={d}
-                                  refreshTick={refreshTick}
-                                />
-                              ))}
-                            </div>
+                <div className="space-y-6">
+                  {groups.map((g, gi) => {
+                    const buildingKey = g.building ?? `__flat__${gi}`;
+                    const buildingOpen = !collapsed.has(`b:${buildingKey}`);
+                    const buildingDevices = g.rooms.reduce(
+                      (n, r) => n + r.devices.length,
+                      0
+                    );
+                    return (
+                      <div key={buildingKey} className="space-y-3">
+                        {g.building && (
+                          <button
+                            type="button"
+                            onClick={() => toggle(`b:${buildingKey}`)}
+                            className="flex w-full items-center gap-2 text-left hover:opacity-80"
+                          >
+                            <ChevronRight
+                              className={`h-3.5 w-3.5 text-muted-foreground transition-transform ${
+                                buildingOpen ? "rotate-90" : ""
+                              }`}
+                            />
+                            <Building2 className="h-4 w-4 text-muted-foreground" />
+                            <h3 className="text-sm font-semibold">
+                              {g.building}
+                            </h3>
+                            <span className="text-[11px] text-muted-foreground/70">
+                              · {buildingDevices} device
+                              {buildingDevices === 1 ? "" : "s"}
+                            </span>
+                            <div className="h-px flex-1 bg-border" />
+                          </button>
+                        )}
+                        {buildingOpen && (
+                          <div
+                            className={
+                              g.building ? "space-y-4 pl-6" : "space-y-4"
+                            }
+                          >
+                            {g.rooms.map((r) => {
+                              const roomKey = `r:${buildingKey}::${r.room}`;
+                              const roomOpen = !collapsed.has(roomKey);
+                              return (
+                                <div key={r.room} className="space-y-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => toggle(roomKey)}
+                                    className="flex w-full items-center gap-2 text-left hover:opacity-80"
+                                  >
+                                    <ChevronRight
+                                      className={`h-3 w-3 text-muted-foreground transition-transform ${
+                                        roomOpen ? "rotate-90" : ""
+                                      }`}
+                                    />
+                                    <DoorOpen className="h-3.5 w-3.5 text-muted-foreground" />
+                                    <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                                      {r.room}
+                                    </h4>
+                                    <span className="text-[11px] text-muted-foreground/70">
+                                      · {r.devices.length} device
+                                      {r.devices.length === 1 ? "" : "s"}
+                                    </span>
+                                  </button>
+                                  {roomOpen && (
+                                    <div className="flex flex-col gap-2">
+                                      {r.devices.map((d) => (
+                                        <DeviceCard
+                                          key={d.id}
+                                          device={d}
+                                          refreshTick={refreshTick}
+                                        />
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
                           </div>
-                        ))}
+                        )}
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               ) : (
                 <Card>

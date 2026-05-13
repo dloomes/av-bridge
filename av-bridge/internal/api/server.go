@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/dloomes/av-bridge/internal/cloud"
@@ -28,19 +29,20 @@ var upgrader = websocket.Upgrader{
 //	GET  /api/v1/status                   - hub-wide summary
 //	GET  /ws/events                       - WebSocket stream of all device events
 type Server struct {
-	hub    *hub.Hub
-	cloud  *cloud.Client
-	auth   AuthConfig
-	srv    *http.Server
-	events chan *device.Event
+	hub         *hub.Hub
+	cloud       *cloud.Client
+	auth        AuthConfig
+	srv         *http.Server
+	subMu       sync.RWMutex
+	subscribers map[chan *device.Event]struct{}
 }
 
 func New(listenAddr string, h *hub.Hub, c *cloud.Client, auth AuthConfig) *Server {
 	s := &Server{
-		hub:    h,
-		cloud:  c,
-		auth:   auth,
-		events: make(chan *device.Event, 256),
+		hub:         h,
+		cloud:       c,
+		auth:        auth,
+		subscribers: make(map[chan *device.Event]struct{}),
 	}
 
 	r := mux.NewRouter()
@@ -80,11 +82,30 @@ func (s *Server) Shutdown(ctx context.Context) error {
 }
 
 // BroadcastEvent forwards a device event to all connected WebSocket clients.
+// Non-blocking: slow subscribers drop frames rather than backing up the hub.
 func (s *Server) BroadcastEvent(e *device.Event) {
-	select {
-	case s.events <- e:
-	default:
+	s.subMu.RLock()
+	defer s.subMu.RUnlock()
+	for ch := range s.subscribers {
+		select {
+		case ch <- e:
+		default:
+		}
 	}
+}
+
+func (s *Server) subscribe() chan *device.Event {
+	ch := make(chan *device.Event, 64)
+	s.subMu.Lock()
+	s.subscribers[ch] = struct{}{}
+	s.subMu.Unlock()
+	return ch
+}
+
+func (s *Server) unsubscribe(ch chan *device.Event) {
+	s.subMu.Lock()
+	delete(s.subscribers, ch)
+	s.subMu.Unlock()
 }
 
 // ---- Handlers ----
@@ -182,11 +203,14 @@ func (s *Server) wsEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
+	ch := s.subscribe()
+	defer s.unsubscribe(ch)
+
 	slog.Info("ws client connected", "remote", r.RemoteAddr)
 
 	for {
 		select {
-		case e := <-s.events:
+		case e := <-ch:
 			if err := conn.WriteJSON(e); err != nil {
 				slog.Info("ws client disconnected", "remote", r.RemoteAddr)
 				return

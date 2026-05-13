@@ -51,21 +51,30 @@ func NewClient(clientID, clientSecret string) *Client {
 // Device is a flat projection of the Lens Device GraphQL type, holding only
 // the fields av-bridge currently surfaces. Extend as needed; missing fields
 // stay zero-valued and are skipped by the adapter.
+//
+// Only scalar (String/Boolean/DateTime) Device fields are pulled here. Lens
+// also exposes `model: HardwareModel` and `product: HardwareProduct` as
+// custom types — these would need their own sub-selections. The string-typed
+// `hardwareModel` / `hardwareProduct` / `hardwareFamily` fields cover the
+// same information without the extra query complexity.
 type Device struct {
-	ID              string     `json:"id"`
-	Name            string     `json:"name"`
-	DisplayName     string     `json:"displayName"`
-	SerialNumber    string     `json:"serialNumber"`
-	MacAddress      string     `json:"macAddress"`
-	InternalIP      string     `json:"internalIp"`
-	ExternalIP      string     `json:"externalIp"`
-	Model           string     `json:"model"`
-	Manufacturer    string     `json:"manufacturer"`
-	SoftwareVersion string     `json:"softwareVersion"`
-	Connected       bool       `json:"connected"`
-	LastDetected    time.Time  `json:"lastDetected"`
-	Room            *NameRef   `json:"room"`
-	Site            *NameRef   `json:"site"`
+	ID              string    `json:"id"`
+	Name            string    `json:"name"`
+	DisplayName     string    `json:"displayName"`
+	SerialNumber    string    `json:"serialNumber"`
+	MacAddress      string    `json:"macAddress"`
+	InternalIP      string    `json:"internalIp"`
+	ExternalIP      string    `json:"externalIp"`
+	HardwareModel   string    `json:"hardwareModel"`
+	HardwareProduct string    `json:"hardwareProduct"`
+	HardwareFamily  string    `json:"hardwareFamily"`
+	Manufacturer    string    `json:"manufacturer"`
+	SoftwareVersion string    `json:"softwareVersion"`
+	SoftwareBuild   string    `json:"softwareBuild"`
+	Connected       bool      `json:"connected"`
+	LastDetected    time.Time `json:"lastDetected"`
+	Room            *NameRef  `json:"room"`
+	Site            *NameRef  `json:"site"`
 }
 
 // NameRef is the shape we project for any Lens nested type that has a name —
@@ -78,12 +87,15 @@ type NameRef struct {
 // Returns nil, nil when the device isn't found (so callers can distinguish
 // "not in Lens" from "lookup failed").
 //
-// The Lens DeviceFindArgs schema accepts a nested `filter` object; field set
-// here is the subset confirmed valid via Introspect.
+// The Lens DeviceFindArgs `filter` arg is an operator-style Filter type:
+// {field: "<fieldName>", eq: "<value>"} (also supports beginsWith / contains /
+// AND / OR / NOT / etc.). Field set on the node is the subset confirmed valid
+// via Introspect, restricted to scalar types so no sub-selection is needed
+// beyond room/site.
 func (c *Client) LookupBySerial(ctx context.Context, serial string) (*Device, error) {
 	query := `
 query DeviceBySerial($serial: String!) {
-  deviceSearch(params: { filter: { serialNumber: $serial } }) {
+  deviceSearch(params: { filter: { field: "serialNumber", eq: $serial } }) {
     edges {
       node {
         id
@@ -93,9 +105,12 @@ query DeviceBySerial($serial: String!) {
         macAddress
         internalIp
         externalIp
-        model
+        hardwareModel
+        hardwareProduct
+        hardwareFamily
         manufacturer
         softwareVersion
+        softwareBuild
         connected
         lastDetected
         room { name }
@@ -121,6 +136,44 @@ query DeviceBySerial($serial: String!) {
 		}
 	}
 	return nil, nil
+}
+
+// SampleDevices fetches a small page of devices visible to the API key,
+// returning their serial numbers and names. Used as a startup diagnostic to
+// distinguish "wrong tenant / no access" (count = 0) from "serial format
+// mismatch" (count > 0 but our specific serial isn't in the list).
+func (c *Client) SampleDevices(ctx context.Context, limit int) (total int, sample []string, err error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	query := `query Sample($n: Int!) {
+  deviceSearch(params: { pageSize: $n, filter: { field: "id", exists: true } }) {
+    pageInfo { totalCount }
+    edges { node { serialNumber name hardwareProduct } }
+  }
+}`
+	var out struct {
+		DeviceSearch struct {
+			PageInfo struct {
+				TotalCount int `json:"totalCount"`
+			} `json:"pageInfo"`
+			Edges []struct {
+				Node struct {
+					SerialNumber    string `json:"serialNumber"`
+					Name            string `json:"name"`
+					HardwareProduct string `json:"hardwareProduct"`
+				} `json:"node"`
+			} `json:"edges"`
+		} `json:"deviceSearch"`
+	}
+	if err := c.graphql(ctx, query, map[string]any{"n": limit}, &out); err != nil {
+		return 0, nil, err
+	}
+	sample = make([]string, 0, len(out.DeviceSearch.Edges))
+	for _, e := range out.DeviceSearch.Edges {
+		sample = append(sample, fmt.Sprintf("%q (%s, %s)", e.Node.SerialNumber, e.Node.Name, e.Node.HardwareProduct))
+	}
+	return out.DeviceSearch.PageInfo.TotalCount, sample, nil
 }
 
 // Introspect dumps the schema for DeviceFindArgs, the type referenced by its

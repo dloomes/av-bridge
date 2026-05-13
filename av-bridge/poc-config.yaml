@@ -5,7 +5,7 @@ hub:
   listen_addr: "0.0.0.0:8080"
   heartbeat_period: 30s
   log_level: debug                      # verbose so you see everything during PoC
-  store_path: "/tmp/av-bridge-poc-state.json"
+  store_path: "/var/lib/av-bridge/state.json"
   collector_id: "poc-collector-01"
   site_id: "poc-site-01"
 

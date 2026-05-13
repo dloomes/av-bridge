@@ -136,9 +136,16 @@ func main() {
 			schema, err := lensClient.Introspect(schemaCtx)
 			if err != nil {
 				slog.Warn("lens introspection failed — schema discovery skipped", "error", err)
+			} else {
+				slog.Info("lens schema discovered", "schema", schema)
+			}
+
+			total, sample, sErr := lensClient.SampleDevices(schemaCtx, 10)
+			if sErr != nil {
+				slog.Warn("lens sample query failed", "error", sErr)
 				return
 			}
-			slog.Info("lens schema discovered", "schema", schema)
+			slog.Info("lens visible devices", "total", total, "first_n", sample)
 		}()
 	}
 
@@ -150,6 +157,7 @@ func main() {
 		HMACSecret: cfg.API.Auth.HMACSecret,
 	}
 	apiServer := api.New(cfg.Hub.ListenAddr, h, cloudClient, authCfg)
+	h.SetEventBroadcaster(apiServer)
 
 	if err := h.Start(ctx); err != nil {
 		slog.Error("hub start failed", "error", err)

@@ -47,11 +47,12 @@ type RuleConfig struct {
 
 // Engine evaluates alert rules on a ticker and fires alerts via the cloud client.
 type Engine struct {
-	rules  RuleConfig
-	store  *store.Store
-	cloud  *cloud.Client
-	hub    DeviceSource
-	ticker *time.Ticker
+	rules       RuleConfig
+	store       *store.Store
+	cloud       *cloud.Client
+	hub         DeviceSource
+	broadcaster EventBroadcaster
+	ticker      *time.Ticker
 }
 
 // DeviceSource is satisfied by *hub.Hub — avoids an import cycle.
@@ -59,7 +60,13 @@ type DeviceSource interface {
 	Devices() []device.Device
 }
 
-func New(rules RuleConfig, st *store.Store, cloudClient *cloud.Client, hub DeviceSource) *Engine {
+// EventBroadcaster pushes alert events to live WebSocket subscribers. nil-safe:
+// pass nil in tests or when no WS fan-out is wired.
+type EventBroadcaster interface {
+	BroadcastEvent(e *device.Event)
+}
+
+func New(rules RuleConfig, st *store.Store, cloudClient *cloud.Client, hub DeviceSource, broadcaster EventBroadcaster) *Engine {
 	if rules.OfflineAfter == 0 {
 		rules.OfflineAfter = 5 * time.Minute
 	}
@@ -70,10 +77,11 @@ func New(rules RuleConfig, st *store.Store, cloudClient *cloud.Client, hub Devic
 		rules.RepeatInterval = 30 * time.Minute
 	}
 	return &Engine{
-		rules: rules,
-		store: st,
-		cloud: cloudClient,
-		hub:   hub,
+		rules:       rules,
+		store:       st,
+		cloud:       cloudClient,
+		hub:         hub,
+		broadcaster: broadcaster,
 	}
 }
 
@@ -200,6 +208,9 @@ func (e *Engine) maybeFireAlert(ctx context.Context, alert Alert) {
 	}
 
 	e.cloud.EnqueueEvent(event)
+	if e.broadcaster != nil {
+		e.broadcaster.BroadcastEvent(event)
+	}
 	_ = e.store.MarkAlertSent(alert.DeviceID, alert.AlertKey)
 
 	slog.Warn("alert fired",

@@ -48,8 +48,6 @@ export function DeviceCard({ device, refreshTick }: Props) {
     return () => clearInterval(t);
   }, []);
 
-  const make = device.tags?.make;
-  const model = device.tags?.model;
   const wantedKeys = KEY_METRICS_BY_TYPE[device.type] ?? [];
   const shown = metrics
     ? wantedKeys
@@ -60,49 +58,30 @@ export function DeviceCard({ device, refreshTick }: Props) {
 
   return (
     <Card className="group transition hover:shadow-md hover:border-primary/30">
-      <CardContent className="p-5 space-y-4">
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex items-start gap-3 min-w-0">
-            <div className="mt-0.5 h-9 w-9 rounded-md bg-primary/10 flex items-center justify-center text-primary">
-              <DeviceIcon type={device.type} className="h-4 w-4" />
+      <CardContent className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-2.5">
+        <div className="flex items-center gap-2.5 min-w-0 flex-1">
+          <div className="h-7 w-7 shrink-0 rounded-md bg-primary/10 flex items-center justify-center text-primary">
+            <DeviceIcon type={device.type} className="h-3.5 w-3.5" />
+          </div>
+          <div className="min-w-0">
+            <div className="font-medium text-sm truncate leading-tight">
+              {device.name}
             </div>
-            <div className="min-w-0">
-              <div className="font-semibold truncate">{device.name}</div>
-              <div className="flex items-center gap-1 text-xs text-muted-foreground mt-0.5">
-                <MapPin className="h-3 w-3" />
-                <span className="truncate">{device.location || "—"}</span>
-              </div>
+            <div className="flex items-center gap-1 text-[11px] text-muted-foreground leading-tight">
+              <MapPin className="h-3 w-3 shrink-0" />
+              <span className="truncate">{device.location || "—"}</span>
             </div>
           </div>
-          <StatusBadge status={device.status} />
-        </div>
-
-        <div className="flex flex-wrap items-center gap-1.5 text-xs">
-          {make && (
-            <span className="rounded bg-muted px-2 py-0.5 text-muted-foreground">
-              {make}
-              {model ? ` ${model}` : ""}
-            </span>
-          )}
-          <span className="rounded bg-muted px-2 py-0.5 text-muted-foreground">
-            {device.protocol}
-          </span>
-          <span className="rounded bg-muted px-2 py-0.5 text-muted-foreground capitalize">
-            {device.type}
-          </span>
         </div>
 
         {shown.length > 0 && (
-          <div className="grid grid-cols-3 gap-2">
+          <div className="flex items-center gap-3">
             {shown.map((m) => (
-              <div
-                key={m.key}
-                className="rounded-md bg-muted/40 px-2.5 py-2 min-w-0"
-              >
-                <div className="text-[10px] uppercase tracking-wide text-muted-foreground truncate">
+              <div key={m.key} className="text-right leading-tight">
+                <div className="text-[9px] uppercase tracking-wide text-muted-foreground">
                   {m.key.replace(/_/g, " ")}
                 </div>
-                <div className="text-sm font-medium truncate">
+                <div className="text-xs font-medium">
                   {formatMetricValue(m.value)}
                 </div>
               </div>
@@ -110,13 +89,14 @@ export function DeviceCard({ device, refreshTick }: Props) {
           </div>
         )}
 
-        <div className="flex items-center justify-between pt-1">
-          <div className="text-xs text-muted-foreground">
-            Updated {formatRelative(updatedAt)}
+        <StatusBadge status={device.status} />
+
+        <div className="flex items-center gap-2 ml-auto">
+          <div className="text-[11px] text-muted-foreground hidden sm:block">
+            {formatRelative(updatedAt)}
           </div>
-          <Button asChild size="sm" variant="ghost" className="h-8">
+          <Button asChild size="sm" variant="ghost" className="h-7 px-2">
             <Link href={`/devices/${encodeURIComponent(device.id)}`}>
-              View details
               <ArrowRight className="h-3.5 w-3.5" />
             </Link>
           </Button>

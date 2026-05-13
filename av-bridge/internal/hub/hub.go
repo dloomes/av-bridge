@@ -21,16 +21,24 @@ type DeviceEntry struct {
 	Cancel context.CancelFunc
 }
 
+// EventBroadcaster is satisfied by *api.Server (and by the notify engine via
+// the hub) and lets us push device events out to WebSocket subscribers without
+// the hub importing the api package.
+type EventBroadcaster interface {
+	BroadcastEvent(e *device.Event)
+}
+
 // Hub is the central coordinator. It manages device lifecycles,
 // polls devices, drains async events, persists state, and fires alerts.
 type Hub struct {
-	cfg     *config.Config
-	cloud   *cloud.Client
-	lens    *lens.Client
-	store   *store.Store
-	alerts  *notify.Engine
-	devices map[string]*DeviceEntry
-	mu      sync.RWMutex
+	cfg         *config.Config
+	cloud       *cloud.Client
+	lens        *lens.Client
+	store       *store.Store
+	alerts      *notify.Engine
+	devices     map[string]*DeviceEntry
+	mu          sync.RWMutex
+	broadcaster EventBroadcaster
 }
 
 func New(cfg *config.Config, cloudClient *cloud.Client, lensClient *lens.Client, st *store.Store) *Hub {
@@ -46,8 +54,22 @@ func New(cfg *config.Config, cloudClient *cloud.Client, lensClient *lens.Client,
 		store:   st,
 		devices: map[string]*DeviceEntry{},
 	}
-	h.alerts = notify.New(alertRules, st, cloudClient, h)
+	h.alerts = notify.New(alertRules, st, cloudClient, h, h)
 	return h
+}
+
+// SetEventBroadcaster wires up the destination for live WebSocket fan-out.
+// Set this after the api server is constructed and before Start runs.
+func (h *Hub) SetEventBroadcaster(b EventBroadcaster) {
+	h.broadcaster = b
+}
+
+// BroadcastEvent forwards a device event to the registered broadcaster, if any.
+// Safe to call when no broadcaster is wired.
+func (h *Hub) BroadcastEvent(e *device.Event) {
+	if h.broadcaster != nil {
+		h.broadcaster.BroadcastEvent(e)
+	}
 }
 
 // Start initialises all devices and begins polling/event loops.
@@ -150,6 +172,7 @@ func (h *Hub) manageDevice(ctx context.Context, dev device.Device) {
 
 		case e := <-dev.Events():
 			h.cloud.EnqueueEvent(e)
+			h.BroadcastEvent(e)
 			log.Debug("event received", "type", e.EventType)
 
 		case <-pollTicker.C:

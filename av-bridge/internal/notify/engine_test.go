@@ -85,7 +85,7 @@ func TestAlertEngine_RuleDefaults(t *testing.T) {
 
 	// Can't call cloud.NewClient without real config, so we verify
 	// the engine construction itself is stable with zero rules
-	_ = notify.New(rules, st, nil, hub)
+	_ = notify.New(rules, st, nil, hub, nil)
 }
 
 func TestDeviceState_OfflineTracking(t *testing.T) {
