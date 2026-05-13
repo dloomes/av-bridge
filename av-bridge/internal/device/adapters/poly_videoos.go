@@ -65,18 +65,21 @@ type PolyVideoOSAdapter struct {
 	// Lens-sourced fields, kept separate so we can publish them under their
 	// own bucket on telemetry. Zero values when Lens is disabled or the
 	// device isn't in the Lens inventory.
-	lensMu           sync.RWMutex
-	lensMacAddress   string
-	lensInternalIP   string
-	lensExternalIP   string
-	lensModel        string
-	lensManufacturer string
-	lensSoftware     string
-	lensRoom         string
-	lensSite         string
-	lensConnected    bool
-	lensConnectedSet bool
-	lensLastDetected string
+	lensMu              sync.RWMutex
+	lensMacAddress      string
+	lensInternalIP      string
+	lensExternalIP      string
+	lensHardwareModel   string
+	lensHardwareProduct string
+	lensHardwareFamily  string
+	lensManufacturer    string
+	lensSoftware        string
+	lensSoftwareBuild   string
+	lensRoom            string
+	lensSite            string
+	lensConnected       bool
+	lensConnectedSet    bool
+	lensLastDetected    string
 }
 
 // errSessionExpired indicates the device returned 401 Unauthorized.
@@ -163,12 +166,28 @@ func (a *PolyVideoOSAdapter) login(ctx context.Context) error {
 		return fmt.Errorf("login returned HTTP %d", resp.StatusCode)
 	}
 
-	if token := resp.Header.Get("X-XSRF-Token"); token != "" {
+	// Older PolyOS firmware returns the XSRF token via the X-XSRF-Token response
+	// header. Newer firmware (Studio X with PolyOS 4.x+) sets it as an XSRF-TOKEN
+	// cookie instead, which we must echo back in the X-XSRF-Token request header
+	// on every subsequent call — otherwise the device responds with 403 to all
+	// /rest/* endpoints except /rest/session itself.
+	token := resp.Header.Get("X-XSRF-Token")
+	if token == "" {
+		for _, c := range resp.Cookies() {
+			if strings.EqualFold(c.Name, "XSRF-TOKEN") || strings.EqualFold(c.Name, "XSRF_TOKEN") {
+				token = c.Value
+				break
+			}
+		}
+	}
+	if token != "" {
 		a.xsrfToken = token
-		slog.Debug("poly g7500 xsrf token acquired", "device", a.Cfg.ID)
+		slog.Debug("poly xsrf token acquired", "device", a.Cfg.ID)
+	} else {
+		slog.Warn("poly login succeeded but no XSRF token found in response", "device", a.Cfg.ID)
 	}
 
-	slog.Debug("poly g7500 session established", "device", a.Cfg.ID)
+	slog.Debug("poly session established", "device", a.Cfg.ID)
 	return nil
 }
 
@@ -250,9 +269,12 @@ func (a *PolyVideoOSAdapter) fetchDeviceInfo(ctx context.Context) {
 				a.lensMacAddress = ldev.MacAddress
 				a.lensInternalIP = ldev.InternalIP
 				a.lensExternalIP = ldev.ExternalIP
-				a.lensModel = ldev.Model
+				a.lensHardwareModel = ldev.HardwareModel
+				a.lensHardwareProduct = ldev.HardwareProduct
+				a.lensHardwareFamily = ldev.HardwareFamily
 				a.lensManufacturer = ldev.Manufacturer
 				a.lensSoftware = ldev.SoftwareVersion
+				a.lensSoftwareBuild = ldev.SoftwareBuild
 				if ldev.Room != nil {
 					a.lensRoom = ldev.Room.Name
 				}
@@ -426,14 +448,23 @@ func (a *PolyVideoOSAdapter) Poll(ctx context.Context) (*device.Telemetry, error
 	if a.lensExternalIP != "" {
 		lensMetrics["external_ip"] = a.lensExternalIP
 	}
-	if a.lensModel != "" {
-		lensMetrics["model"] = a.lensModel
+	if a.lensHardwareModel != "" {
+		lensMetrics["hardware_model"] = a.lensHardwareModel
+	}
+	if a.lensHardwareProduct != "" {
+		lensMetrics["hardware_product"] = a.lensHardwareProduct
+	}
+	if a.lensHardwareFamily != "" {
+		lensMetrics["hardware_family"] = a.lensHardwareFamily
 	}
 	if a.lensManufacturer != "" {
 		lensMetrics["manufacturer"] = a.lensManufacturer
 	}
 	if a.lensSoftware != "" {
 		lensMetrics["software_version"] = a.lensSoftware
+	}
+	if a.lensSoftwareBuild != "" {
+		lensMetrics["software_build"] = a.lensSoftwareBuild
 	}
 	if a.lensRoom != "" {
 		lensMetrics["room"] = a.lensRoom
