@@ -2,6 +2,7 @@ package adapters
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"log/slog"
@@ -13,6 +14,98 @@ import (
 	"github.com/dloomes/av-bridge/internal/config"
 	"github.com/dloomes/av-bridge/internal/device"
 )
+
+// Telnet (RFC 854) byte values we handle. The Tesira's Telnet server sends
+// IAC sequences during the handshake to negotiate options like ECHO and
+// SUPPRESS-GO-AHEAD; without an answer some firmwares hold off sending any
+// application data, which is exactly what we were seeing.
+const (
+	telnetIAC  = 0xFF
+	telnetSE   = 0xF0
+	telnetSB   = 0xFA
+	telnetWILL = 0xFB
+	telnetWONT = 0xFC
+	telnetDO   = 0xFD
+	telnetDONT = 0xFE
+)
+
+// telnetFilter wraps a net.Conn and:
+//  1. Strips IAC sequences from the inbound byte stream so they don't pollute
+//     the TTP parser's view of "lines".
+//  2. Auto-replies to any WILL/DO with WONT/DONT, telling the server we
+//     refuse to negotiate any options. That satisfies servers that block on
+//     negotiation but keeps the connection in plain-text mode.
+//
+// It implements io.Reader so a bufio.Reader can sit on top of it transparently.
+type telnetFilter struct {
+	conn net.Conn
+	buf  []byte // bytes from conn awaiting IAC processing
+}
+
+func newTelnetFilter(conn net.Conn) *telnetFilter {
+	return &telnetFilter{conn: conn}
+}
+
+func (t *telnetFilter) Read(p []byte) (int, error) {
+	if len(t.buf) == 0 {
+		raw := make([]byte, len(p)+32)
+		n, err := t.conn.Read(raw)
+		if n == 0 {
+			return 0, err
+		}
+		t.buf = raw[:n]
+	}
+
+	out := 0
+	for out < len(p) && len(t.buf) > 0 {
+		b := t.buf[0]
+		if b != telnetIAC {
+			p[out] = b
+			out++
+			t.buf = t.buf[1:]
+			continue
+		}
+		// IAC sequence — need at least one more byte to decode
+		if len(t.buf) < 2 {
+			break
+		}
+		cmd := t.buf[1]
+		switch cmd {
+		case telnetIAC:
+			// Escaped 0xFF in data
+			p[out] = telnetIAC
+			out++
+			t.buf = t.buf[2:]
+		case telnetWILL, telnetWONT, telnetDO, telnetDONT:
+			if len(t.buf) < 3 {
+				return out, nil
+			}
+			opt := t.buf[2]
+			t.buf = t.buf[3:]
+			// Refuse all options: respond WONT to WILL/WONT, DONT to DO/DONT.
+			var reply [3]byte
+			reply[0] = telnetIAC
+			if cmd == telnetWILL || cmd == telnetWONT {
+				reply[1] = telnetDONT
+			} else {
+				reply[1] = telnetWONT
+			}
+			reply[2] = opt
+			_, _ = t.conn.Write(reply[:])
+		case telnetSB:
+			// Subnegotiation: skip until IAC SE
+			end := bytes.Index(t.buf[2:], []byte{telnetIAC, telnetSE})
+			if end < 0 {
+				return out, nil // wait for more bytes
+			}
+			t.buf = t.buf[2+end+2:]
+		default:
+			// 2-byte commands (NOP, GA, IP, etc.) — just drop
+			t.buf = t.buf[2:]
+		}
+	}
+	return out, nil
+}
 
 // TesiraAdapter communicates with Biamp Tesira DSPs using the Tesira Text
 // Protocol (TTP) over a persistent TCP/Telnet connection.
@@ -65,7 +158,9 @@ func (a *TesiraAdapter) Connect(ctx context.Context) error {
 		return fmt.Errorf("tesira connect %s (%s): %w", a.Cfg.ID, a.Cfg.Address, err)
 	}
 	log.Info("tesira tcp connected")
-	reader := bufio.NewReader(conn)
+	// Wrap the conn so Telnet IAC negotiation is handled transparently and
+	// stripped from the byte stream the TTP parser sees.
+	reader := bufio.NewReader(newTelnetFilter(conn))
 
 	// rawWrite operates on the local conn — the lock-managed a.conn isn't
 	// published yet, so we avoid the writeLine() path (and its lock) here.
