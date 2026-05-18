@@ -106,8 +106,8 @@ func (a *TesiraAdapter) Connect(ctx context.Context) error {
 		time.Sleep(300 * time.Millisecond)
 	}
 
-	log.Info("tesira sending probe", "cmd", "DEVICE get networkInfo")
-	if err := rawWrite("DEVICE get networkInfo"); err != nil {
+	log.Info("tesira sending probe", "cmd", "DEVICE get serialNumber")
+	if err := rawWrite("DEVICE get serialNumber"); err != nil {
 		conn.Close()
 		a.SetStatus(device.StatusOffline)
 		return fmt.Errorf("tesira probe: %w", err)
@@ -287,11 +287,12 @@ func (a *TesiraAdapter) HandleSubscriptionNotification(line string) {
 
 // ── Poll ──────────────────────────────────────────────────────────────────────
 
-// Poll sends DEVICE get networkInfo to get current device status.
-// Subscription-based attributes (mute, gain, call state) are served from
-// the cached state updated by the read loop — no extra polling needed.
+// Poll sends a TTP probe command and merges the response with any cached
+// subscription state. Subscription-based attributes (mute, gain, call state)
+// are served from the cached state updated by the read loop, so the probe
+// only needs to confirm the session is still alive.
 func (a *TesiraAdapter) Poll(ctx context.Context) (*device.Telemetry, error) {
-	resp, err := a.sendAndReceive(ctx, "DEVICE get networkInfo", 3*time.Second)
+	resp, err := a.sendAndReceive(ctx, "DEVICE get serialNumber", 3*time.Second)
 
 	t := a.BaseTelemetry()
 
@@ -303,21 +304,20 @@ func (a *TesiraAdapter) Poll(ctx context.Context) (*device.Telemetry, error) {
 	a.stateMu.RUnlock()
 
 	if err != nil {
-		t.Status = device.StatusDegraded
+		a.SetStatus(device.StatusDegraded)
 		t.Error = err.Error()
 		metrics["poll_error"] = err.Error()
 	} else {
-		// Parse the networkInfo response
-		// Typical: +OK {"hostname":"tesira-1","ipAddress":"192.168.1.50",...}
-		if strings.HasPrefix(resp, "+OK") {
-			jsonPart := strings.TrimPrefix(resp, "+OK ")
-			jsonPart = strings.TrimSpace(jsonPart)
-			if jsonPart != "" {
-				// Store the raw networkInfo alongside subscription state
-				metrics["network_info"] = jsonPart
+		switch {
+		case strings.HasPrefix(resp, "+OK"):
+			// "+OK \"H123456\"" — strip the prefix and surrounding quotes.
+			val := strings.TrimSpace(strings.TrimPrefix(resp, "+OK"))
+			val = strings.Trim(val, "\"")
+			if val != "" {
+				metrics["serial_number"] = val
 			}
 			a.SetStatus(device.StatusOnline)
-		} else if strings.HasPrefix(resp, "-ERR") {
+		case strings.HasPrefix(resp, "-ERR"):
 			a.SetStatus(device.StatusDegraded)
 			metrics["ttp_error"] = resp
 		}
