@@ -26,9 +26,9 @@ export function Sidebar() {
           <Radio className="h-4 w-4 text-primary" />
         </div>
         <div>
-          <div className="font-semibold text-sm leading-tight">AV Bridge</div>
+          <div className="font-semibold text-sm leading-tight">Medio Assist</div>
           <div className="text-xs text-sidebar-foreground/50 leading-tight">
-            On-prem gateway
+            AV Monitoring
           </div>
         </div>
       </div>

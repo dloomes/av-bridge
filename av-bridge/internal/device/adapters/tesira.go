@@ -56,10 +56,7 @@ func NewTesiraAdapter(cfg config.DeviceConfig) *TesiraAdapter {
 // ── Connection ────────────────────────────────────────────────────────────────
 
 func (a *TesiraAdapter) Connect(ctx context.Context) error {
-	a.connMu.Lock()
-	defer a.connMu.Unlock()
-
-	log := slog.With("device", a.Cfg.ID)
+	log := slog.With("device", a.Cfg.ID, "address", a.Cfg.Address)
 
 	d := net.Dialer{Timeout: 10 * time.Second}
 	conn, err := d.DialContext(ctx, "tcp", a.Cfg.Address)
@@ -67,51 +64,67 @@ func (a *TesiraAdapter) Connect(ctx context.Context) error {
 		a.SetStatus(device.StatusOffline)
 		return fmt.Errorf("tesira connect %s (%s): %w", a.Cfg.ID, a.Cfg.Address, err)
 	}
+	log.Info("tesira tcp connected")
+	reader := bufio.NewReader(conn)
 
-	a.conn = conn
-	a.reader = bufio.NewReader(conn)
+	// rawWrite operates on the local conn — the lock-managed a.conn isn't
+	// published yet, so we avoid the writeLine() path (and its lock) here.
+	rawWrite := func(s string) error {
+		if !strings.HasSuffix(s, "\r\n") {
+			s += "\r\n"
+		}
+		_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+		_, err := fmt.Fprint(conn, s)
+		return err
+	}
 
-	// Tesira may send a welcome banner — drain it before sending commands
+	// Drain the welcome banner (Telnet negotiation + "Welcome to TTP server")
+	// so it doesn't get mixed into the first command response.
 	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
 	for {
-		line, err := a.reader.ReadString('\n')
+		line, err := reader.ReadString('\n')
 		if err != nil {
 			break // timeout — banner fully consumed
 		}
 		log.Debug("tesira banner", "line", strings.TrimSpace(line))
 	}
-	_ = conn.SetReadDeadline(time.Time{}) // clear deadline
+	_ = conn.SetReadDeadline(time.Time{})
 
-	// Authenticate if credentials provided
 	if a.Cfg.Username != "" {
-		if err := a.writeLine(a.Cfg.Username); err != nil {
-			a.conn.Close()
+		log.Info("tesira sending credentials", "user", a.Cfg.Username)
+		if err := rawWrite(a.Cfg.Username); err != nil {
+			conn.Close()
 			a.SetStatus(device.StatusOffline)
 			return fmt.Errorf("tesira auth username: %w", err)
 		}
 		time.Sleep(300 * time.Millisecond)
-		if err := a.writeLine(a.Cfg.Password); err != nil {
-			a.conn.Close()
+		if err := rawWrite(a.Cfg.Password); err != nil {
+			conn.Close()
 			a.SetStatus(device.StatusOffline)
 			return fmt.Errorf("tesira auth password: %w", err)
 		}
 		time.Sleep(300 * time.Millisecond)
 	}
 
-	// Verify connectivity with a simple device query
-	if err := a.writeLine("DEVICE get networkInfo"); err != nil {
-		a.conn.Close()
+	log.Info("tesira sending probe", "cmd", "DEVICE get networkInfo")
+	if err := rawWrite("DEVICE get networkInfo"); err != nil {
+		conn.Close()
 		a.SetStatus(device.StatusOffline)
 		return fmt.Errorf("tesira probe: %w", err)
 	}
 
-	a.SetStatus(device.StatusOnline)
-	log.Info("tesira connected", "address", a.Cfg.Address)
+	// Publish the connection so reader/writer paths can use it.
+	a.connMu.Lock()
+	a.conn = conn
+	a.reader = reader
+	a.connMu.Unlock()
 
-	// Start the read loop before sending subscriptions so responses are handled
+	a.SetStatus(device.StatusOnline)
+	log.Info("tesira connected")
+
+	// Read loop must start before subscriptions so their +OK acks are drained.
 	go a.readLoop(ctx)
 
-	// Subscribe to configured DSP block attributes
 	a.sendSubscriptions()
 
 	return nil

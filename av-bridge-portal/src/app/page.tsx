@@ -61,7 +61,7 @@ export default function DashboardPage() {
         <div>
           <h1 className="text-xl font-semibold">AV Bridge</h1>
           <p className="text-sm text-muted-foreground">
-            Fleet overview · auto-refreshing every 15s
+            Room overview · auto-refreshing every 15s
           </p>
         </div>
         <div className="flex items-center gap-3">
