@@ -405,10 +405,7 @@ func (a *TesiraAdapter) Poll(ctx context.Context) (*device.Telemetry, error) {
 	} else {
 		switch {
 		case strings.HasPrefix(resp, "+OK"):
-			// "+OK \"H123456\"" — strip the prefix and surrounding quotes.
-			val := strings.TrimSpace(strings.TrimPrefix(resp, "+OK"))
-			val = strings.Trim(val, "\"")
-			if val != "" {
+			if val := parseTTPValue(resp); val != "" {
 				metrics["serial_number"] = val
 			}
 			a.SetStatus(device.StatusOnline)
@@ -455,9 +452,8 @@ func (a *TesiraAdapter) SendCommand(ctx context.Context, req device.CommandReque
 	parsed := map[string]any{"ttp_response": resp}
 	if strings.HasPrefix(resp, "+OK") {
 		parsed["success"] = true
-		val := strings.TrimPrefix(resp, "+OK ")
-		if val != "" {
-			parsed["value"] = strings.Trim(val, "\"")
+		if val := parseTTPValue(resp); val != "" {
+			parsed["value"] = val
 		}
 	} else if strings.HasPrefix(resp, "-ERR") {
 		parsed["success"] = false
@@ -503,6 +499,26 @@ func (a *TesiraAdapter) sendAndReceive(ctx context.Context, cmd string, timeout 
 	case <-ctx.Done():
 		return "", ctx.Err()
 	}
+}
+
+// parseTTPValue extracts the value from a TTP +OK response. Tesira firmware
+// versions return values in three different shapes:
+//
+//	+OK "05008305"               (older firmware — bare quoted value)
+//	+OK "value":"05008305"       (newer firmware — single-attribute key/value)
+//	+OK {"hostname":"foo",...}   (JSON object — multi-attribute results)
+//
+// JSON objects are returned intact for the caller to unmarshal. Bare and
+// key/value forms collapse to just the value string.
+func parseTTPValue(resp string) string {
+	val := strings.TrimSpace(strings.TrimPrefix(resp, "+OK"))
+	if strings.HasPrefix(val, "{") {
+		return val
+	}
+	if idx := strings.Index(val, ":"); idx > 0 && strings.HasSuffix(val[:idx], "\"") {
+		val = strings.TrimSpace(val[idx+1:])
+	}
+	return strings.Trim(val, "\"")
 }
 
 func (a *TesiraAdapter) writeLine(s string) error {
