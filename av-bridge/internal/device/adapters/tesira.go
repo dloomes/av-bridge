@@ -201,13 +201,6 @@ func (a *TesiraAdapter) Connect(ctx context.Context) error {
 		time.Sleep(300 * time.Millisecond)
 	}
 
-	log.Info("tesira sending probe", "cmd", "DEVICE get serialNumber")
-	if err := rawWrite("DEVICE get serialNumber"); err != nil {
-		conn.Close()
-		a.SetStatus(device.StatusOffline)
-		return fmt.Errorf("tesira probe: %w", err)
-	}
-
 	// Publish the connection so reader/writer paths can use it.
 	a.connMu.Lock()
 	a.conn = conn
@@ -215,13 +208,23 @@ func (a *TesiraAdapter) Connect(ctx context.Context) error {
 	a.connMu.Unlock()
 
 	a.SetStatus(device.StatusOnline)
-	log.Info("tesira connected")
 
-	// Read loop must start before subscriptions so their +OK acks are drained.
+	// Start the read loop now so sendAndReceive below works.
 	go a.readLoop(ctx)
 
-	a.sendSubscriptions()
+	// Serialise the handshake. Sending probe + subscriptions back-to-back
+	// causes Telnet echo and responses to interleave on the byte stream;
+	// waiting for each response keeps the streams cleanly separated.
+	log.Info("tesira sending probe", "cmd", "DEVICE get serialNumber")
+	if resp, err := a.sendAndReceive(ctx, "DEVICE get serialNumber", 3*time.Second); err != nil {
+		log.Warn("tesira probe response timeout", "error", err)
+	} else {
+		log.Info("tesira probe response", "resp", resp)
+	}
 
+	a.sendSubscriptions(ctx)
+
+	log.Info("tesira connected")
 	return nil
 }
 
@@ -243,34 +246,32 @@ func (a *TesiraAdapter) Disconnect() error {
 //
 // TTP subscription syntax:
 //   <InstanceTag> subscribe <Attribute> <Index> <CustomLabel> [<MinRate>]
-func (a *TesiraAdapter) sendSubscriptions() {
+//
+// Each subscribe is issued synchronously (wait for ack) so its echo doesn't
+// interleave with the next subscribe's response on the byte stream.
+func (a *TesiraAdapter) sendSubscriptions(ctx context.Context) {
 	log := slog.With("device", a.Cfg.ID)
 
+	subscribe := func(label, tag, cmd string) {
+		resp, err := a.sendAndReceive(ctx, cmd, 3*time.Second)
+		switch {
+		case err != nil:
+			log.Warn("tesira subscribe failed", "label", label, "tag", tag, "error", err)
+		case strings.HasPrefix(resp, "-ERR"):
+			log.Warn("tesira subscribe rejected", "label", label, "tag", tag, "resp", resp)
+		default:
+			log.Info("subscribed", "label", label, "tag", tag)
+		}
+	}
+
 	if tag := a.Cfg.Tags["mute_instance_tag"]; tag != "" {
-		cmd := fmt.Sprintf("%s subscribe mute 1 mute_state 500", tag)
-		if err := a.writeLine(cmd); err != nil {
-			log.Warn("tesira subscribe mute failed", "error", err)
-		} else {
-			log.Debug("subscribed to mute", "tag", tag)
-		}
+		subscribe("mute_state", tag, fmt.Sprintf("%s subscribe mute 1 mute_state 500", tag))
 	}
-
 	if tag := a.Cfg.Tags["gain_instance_tag"]; tag != "" {
-		cmd := fmt.Sprintf("%s subscribe level 1 gain_level 500", tag)
-		if err := a.writeLine(cmd); err != nil {
-			log.Warn("tesira subscribe gain failed", "error", err)
-		} else {
-			log.Debug("subscribed to gain", "tag", tag)
-		}
+		subscribe("gain_level", tag, fmt.Sprintf("%s subscribe level 1 gain_level 500", tag))
 	}
-
 	if tag := a.Cfg.Tags["call_instance_tag"]; tag != "" {
-		cmd := fmt.Sprintf("%s subscribe callState 1 call_state 500", tag)
-		if err := a.writeLine(cmd); err != nil {
-			log.Warn("tesira subscribe call failed", "error", err)
-		} else {
-			log.Debug("subscribed to call state", "tag", tag)
-		}
+		subscribe("call_state", tag, fmt.Sprintf("%s subscribe callState 1 call_state 500", tag))
 	}
 }
 
@@ -341,19 +342,19 @@ func (a *TesiraAdapter) readLoop(ctx context.Context) {
 }
 
 // handleSubscriptionNotification parses lines like:
-//   ! mute_state true
-//   ! gain_level -10.0
-//   ! call_state "Init"
+//
+//	Old firmware:  ! mute_state true
+//	               ! gain_level -10.0
+//	New firmware:  ! "publishToken":"mute_state" "value":false
+//	               ! "publishToken":"gain_level" "value":-30.000000
+//
+// Both forms collapse to a label (the publishToken / custom label) and a
+// stringified value. Notifications that don't match either form are dropped.
 func (a *TesiraAdapter) HandleSubscriptionNotification(line string) {
-	// Strip leading "! "
-	content := strings.TrimPrefix(line, "! ")
-	parts := strings.SplitN(content, " ", 2)
-	if len(parts) != 2 {
+	label, value := parseSubscriptionNotification(line)
+	if label == "" {
 		return
 	}
-
-	label := parts[0]
-	value := strings.Trim(parts[1], "\"")
 
 	// Update cached metrics
 	a.stateMu.Lock()
@@ -499,6 +500,76 @@ func (a *TesiraAdapter) sendAndReceive(ctx context.Context, cmd string, timeout 
 	case <-ctx.Done():
 		return "", ctx.Err()
 	}
+}
+
+// parseSubscriptionNotification extracts the (label, value) pair from a TTP
+// "! ..." subscription notification, supporting both the legacy positional
+// form and the newer key/value form emitted by current Tesira firmware.
+func parseSubscriptionNotification(line string) (label, value string) {
+	content := strings.TrimSpace(strings.TrimPrefix(line, "!"))
+	if content == "" {
+		return "", ""
+	}
+
+	// Newer firmware: ! "publishToken":"<label>" "value":<value>
+	if strings.Contains(content, "\"publishToken\":") {
+		label = extractQuotedField(content, "publishToken")
+		value = extractValueField(content)
+		return label, value
+	}
+
+	// Legacy firmware: ! <label> <value>
+	parts := strings.SplitN(content, " ", 2)
+	if len(parts) != 2 {
+		return "", ""
+	}
+	return parts[0], strings.Trim(parts[1], "\"")
+}
+
+// extractQuotedField returns the string contents of `"key":"<contents>"` from
+// content. Returns "" if the key isn't present or the value isn't quoted.
+func extractQuotedField(content, key string) string {
+	needle := "\"" + key + "\":"
+	i := strings.Index(content, needle)
+	if i < 0 {
+		return ""
+	}
+	rest := strings.TrimSpace(content[i+len(needle):])
+	if !strings.HasPrefix(rest, "\"") {
+		return ""
+	}
+	end := strings.Index(rest[1:], "\"")
+	if end < 0 {
+		return ""
+	}
+	return rest[1 : 1+end]
+}
+
+// extractValueField returns the "value" field from a subscription notification,
+// stringified. Handles quoted strings, bare numbers, and bare booleans.
+func extractValueField(content string) string {
+	needle := "\"value\":"
+	i := strings.Index(content, needle)
+	if i < 0 {
+		return ""
+	}
+	rest := strings.TrimSpace(content[i+len(needle):])
+	if rest == "" {
+		return ""
+	}
+	if strings.HasPrefix(rest, "\"") {
+		end := strings.Index(rest[1:], "\"")
+		if end < 0 {
+			return ""
+		}
+		return rest[1 : 1+end]
+	}
+	// Bare token — take up to the next whitespace.
+	end := strings.IndexAny(rest, " \t\r\n")
+	if end < 0 {
+		return rest
+	}
+	return rest[:end]
 }
 
 // parseTTPValue extracts the value from a TTP +OK response. Tesira firmware
