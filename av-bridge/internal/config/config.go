@@ -74,18 +74,34 @@ type AlertsConfig struct {
 }
 
 type DeviceConfig struct {
-	ID       string            `yaml:"id"`
-	Name     string            `yaml:"name"`
-	Location string            `yaml:"location"`
-	Type     string            `yaml:"type"`
-	Protocol string            `yaml:"protocol"`
-	Address  string            `yaml:"address"`
-	BaudRate int               `yaml:"baud_rate"`
-	Username string            `yaml:"username"`
-	Password string            `yaml:"password"`
-	PollRate time.Duration     `yaml:"poll_rate"`
-	Commands map[string]string `yaml:"commands"`
-	Tags     map[string]string `yaml:"tags"`
+	ID            string             `yaml:"id"`
+	Name          string             `yaml:"name"`
+	Location      string             `yaml:"location"`
+	Type          string             `yaml:"type"`
+	Protocol      string             `yaml:"protocol"`
+	Address       string             `yaml:"address"`
+	BaudRate      int                `yaml:"baud_rate"`
+	Username      string             `yaml:"username"`
+	Password      string             `yaml:"password"`
+	PollRate      time.Duration      `yaml:"poll_rate"`
+	Commands      map[string]string  `yaml:"commands"`
+	Tags          map[string]string  `yaml:"tags"`
+	Subscriptions []SubscriptionSpec `yaml:"subscriptions"`
+}
+
+// SubscriptionSpec describes a single push-notification subscription that an
+// adapter should register on connect. Currently consumed by the Tesira
+// adapter; other subscription-capable adapters can adopt the same shape.
+//
+// For Tesira TTP this maps directly to:
+//
+//	<tag> subscribe <attribute> <channel> <label> <rate>
+type SubscriptionSpec struct {
+	Tag       string `yaml:"tag"`             // Instance Tag in the device (e.g. master_level)
+	Attribute string `yaml:"attribute"`       // attribute to watch (mute, level, callState, …)
+	Channel   int    `yaml:"channel"`         // 1-based channel index
+	Label     string `yaml:"label"`           // metric name surfaced in telemetry/events
+	Rate      int    `yaml:"rate,omitempty"`  // optional min update rate in ms (defaults to 500)
 }
 
 func Load(path string) (*Config, error) {

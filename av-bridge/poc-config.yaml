@@ -63,15 +63,33 @@ devices:
       unmute: "master_level set mute 1 false"
       vol_up: "master_level increment level 1 1"
       vol_dn: "master_level increment level 1 -1"
+      mute_judge:   "level_judge set mute 1 true"
+      unmute_judge: "level_judge set mute 1 false"
+      mute_witness:   "level_witness set mute 1 true"
+      unmute_witness: "level_witness set mute 1 false"
+    subscriptions:
+      # Each entry triggers `<tag> subscribe <attribute> <channel> <label> <rate>`
+      # on connect; the Tesira then pushes a notification whenever the value
+      # changes. `label` is what appears in telemetry/events.
+      - { tag: master_level,      attribute: level, channel: 1, label: master_level }
+      - { tag: master_level,      attribute: mute,  channel: 1, label: master_mute  }
+      - { tag: level_judge,       attribute: level, channel: 1, label: judge_level  }
+      - { tag: level_judge,       attribute: mute,  channel: 1, label: judge_mute   }
+      - { tag: level_witness,     attribute: level, channel: 1, label: witness_level }
+      - { tag: level_witness,     attribute: mute,  channel: 1, label: witness_mute  }
+      - { tag: level_advocate,    attribute: level, channel: 1, label: advocate_level }
+      - { tag: level_advocate,    attribute: mute,  channel: 1, label: advocate_mute  }
+      - { tag: level_clerk,       attribute: level, channel: 1, label: clerk_level }
+      - { tag: level_clerk,       attribute: mute,  channel: 1, label: clerk_mute  }
+      - { tag: level_z1_spk,      attribute: level, channel: 1, label: zone1_level }
+      - { tag: level_z2_spk,      attribute: level, channel: 1, label: zone2_level }
+      - { tag: level_z3_spk,      attribute: level, channel: 1, label: zone3_level }
+      - { tag: level_z4_spk,      attribute: level, channel: 1, label: zone4_level }
+      - { tag: Zone1Mte,          attribute: mute,  channel: 1, label: zone1_mute  }
     tags:
       make: Biamp
       model: Tesira FORTE
       building: Royal Courts of Justice
-      # master_level is a Level Control block — exposes both level and mute
-      # attributes, so one tag drives both subscriptions.
-      mute_instance_tag: "master_level"
-      gain_instance_tag: "master_level"
-      # call_instance_tag: "VoIPDialer1"    # uncomment if you have a VoIP/POTS block
 
   # ── Sony Bravia Professional Display ────────────────────────────────────
   # Prerequisites:

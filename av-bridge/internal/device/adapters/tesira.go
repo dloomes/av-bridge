@@ -249,10 +249,25 @@ func (a *TesiraAdapter) Disconnect() error {
 //
 // Each subscribe is issued synchronously (wait for ack) so its echo doesn't
 // interleave with the next subscribe's response on the byte stream.
+//
+// Sources of subscription specs, in order:
+//  1. cfg.Subscriptions list — preferred, supports arbitrary number of blocks.
+//  2. cfg.Tags{mute,gain,call}_instance_tag — legacy single-tag form, retained
+//     for backward compatibility with the original PoC config.
 func (a *TesiraAdapter) sendSubscriptions(ctx context.Context) {
 	log := slog.With("device", a.Cfg.ID)
 
-	subscribe := func(label, tag, cmd string) {
+	subscribe := func(label, tag, attribute string, channel, rate int) {
+		if channel <= 0 {
+			channel = 1
+		}
+		if rate <= 0 {
+			rate = 500
+		}
+		if label == "" {
+			label = fmt.Sprintf("%s_%s", tag, attribute)
+		}
+		cmd := fmt.Sprintf("%s subscribe %s %d %s %d", tag, attribute, channel, label, rate)
 		resp, err := a.sendAndReceive(ctx, cmd, 3*time.Second)
 		switch {
 		case err != nil:
@@ -260,18 +275,30 @@ func (a *TesiraAdapter) sendSubscriptions(ctx context.Context) {
 		case strings.HasPrefix(resp, "-ERR"):
 			log.Warn("tesira subscribe rejected", "label", label, "tag", tag, "resp", resp)
 		default:
-			log.Info("subscribed", "label", label, "tag", tag)
+			log.Info("subscribed", "label", label, "tag", tag, "attribute", attribute, "channel", channel)
 		}
 	}
 
+	if len(a.Cfg.Subscriptions) > 0 {
+		for _, s := range a.Cfg.Subscriptions {
+			if s.Tag == "" || s.Attribute == "" {
+				log.Warn("tesira subscription spec missing tag or attribute", "spec", s)
+				continue
+			}
+			subscribe(s.Label, s.Tag, s.Attribute, s.Channel, s.Rate)
+		}
+		return
+	}
+
+	// Legacy fallback — single tag per attribute via tags map.
 	if tag := a.Cfg.Tags["mute_instance_tag"]; tag != "" {
-		subscribe("mute_state", tag, fmt.Sprintf("%s subscribe mute 1 mute_state 500", tag))
+		subscribe("mute_state", tag, "mute", 1, 500)
 	}
 	if tag := a.Cfg.Tags["gain_instance_tag"]; tag != "" {
-		subscribe("gain_level", tag, fmt.Sprintf("%s subscribe level 1 gain_level 500", tag))
+		subscribe("gain_level", tag, "level", 1, 500)
 	}
 	if tag := a.Cfg.Tags["call_instance_tag"]; tag != "" {
-		subscribe("call_state", tag, fmt.Sprintf("%s subscribe callState 1 call_state 500", tag))
+		subscribe("call_state", tag, "callState", 1, 500)
 	}
 }
 
