@@ -57,16 +57,20 @@ devices:
     commands:
       # Named commands — called via: POST /api/v1/devices/tesira-boardroom-01/command
       # Body: {"name": "mute"}
-      mute:   "MicMuteLevel1 set mute true"    # replace MicMuteLevel1 with your instance tag
-      unmute: "MicMuteLevel1 set mute false"
-      vol_up: "ProgramLevel1 increment level 1 1"
-      vol_dn: "ProgramLevel1 increment level 1 -1"
+      # Tesira Level Control blocks require a channel index (1-based) on
+      # both `set mute` and `set/increment level`.
+      mute:   "master_level set mute 1 true"
+      unmute: "master_level set mute 1 false"
+      vol_up: "master_level increment level 1 1"
+      vol_dn: "master_level increment level 1 -1"
     tags:
       make: Biamp
       model: Tesira FORTE
       building: Royal Courts of Justice
-      mute_instance_tag: "MicMuteLevel1"    # CHANGE to your actual instance tag name
-      gain_instance_tag: "ProgramLevel1"    # CHANGE to your actual instance tag name
+      # master_level is a Level Control block — exposes both level and mute
+      # attributes, so one tag drives both subscriptions.
+      mute_instance_tag: "master_level"
+      gain_instance_tag: "master_level"
       # call_instance_tag: "VoIPDialer1"    # uncomment if you have a VoIP/POTS block
 
   # ── Sony Bravia Professional Display ────────────────────────────────────
