@@ -40,8 +40,11 @@ func New(cfg config.DeviceConfig, deps Deps) (device.Device, error) {
 	case "poly_videoos":
 		// Poly VideoOS — G7500, Studio X70/X52/X50/X30; REST with session/XSRF lifecycle
 		return NewPolyVideoOSAdapter(cfg, deps.Lens), nil
+	case "aurora_rxt":
+		// Aurora Multimedia RXT-x WM touch panels — JSON-RPC over Telnet (port 6975)
+		return NewAuroraAdapter(cfg), nil
 
 	default:
-		return nil, fmt.Errorf("unsupported protocol: %q (supported: rest, websocket, telnet, serial, tesira, sony_bravia, poly_videoos)", cfg.Protocol)
+		return nil, fmt.Errorf("unsupported protocol: %q (supported: rest, websocket, telnet, serial, tesira, sony_bravia, poly_videoos, aurora_rxt)", cfg.Protocol)
 	}
 }

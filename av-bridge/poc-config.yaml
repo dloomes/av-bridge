@@ -170,3 +170,19 @@ devices:
       tls_skip_verify: "true"          # accepts the G7500's self-signed certificate
       building: Royal Courts of Justice
       lens_managed: "true"             # also look this device up in Poly Lens
+
+  - id: aurora-court3-01
+    name: Aurora RXT-8 (Bench)
+    location: Court 3 Bench
+    type: control
+    protocol: aurora_rxt
+    address: "${AURORA_IP}"          # IP or IP:6975 (port defaults to 6975)
+    poll_rate: 60s
+    commands:
+      lcd_dim:   "set_lcd brightness 1"
+      lcd_full:  "set_lcd brightness 7"
+      kiosk_set: "kiosk seturl {url}"   # call with {"name":"kiosk_set","args":{"url":"http://..."}}
+    tags:
+      make: Aurora
+      model: RXT-8
+      building: Royal Courts of Justice

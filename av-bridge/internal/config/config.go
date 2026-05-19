@@ -183,10 +183,10 @@ func validate(cfg *Config) error {
 			return fmt.Errorf("duplicate device id %q", d.ID)
 		}
 		seen[d.ID] = true
-		if !map[string]bool{"rest": true, "websocket": true, "telnet": true, "serial": true, "tesira": true, "sony_bravia": true, "poly_videoos": true}[d.Protocol] {
+		if !map[string]bool{"rest": true, "websocket": true, "telnet": true, "serial": true, "tesira": true, "sony_bravia": true, "poly_videoos": true, "aurora_rxt": true}[d.Protocol] {
 			return fmt.Errorf("device %q: unsupported protocol %q", d.ID, d.Protocol)
 		}
-		if !map[string]bool{"display": true, "conferencing": true, "audio": true, "camera": true}[d.Type] {
+		if !map[string]bool{"display": true, "conferencing": true, "audio": true, "camera": true, "control": true}[d.Type] {
 			return fmt.Errorf("device %q: unsupported type %q", d.ID, d.Type)
 		}
 	}
