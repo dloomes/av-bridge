@@ -61,6 +61,19 @@ func (s *Server) touchPanelProxy(w http.ResponseWriter, r *http.Request) {
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 		},
+		ModifyResponse: func(resp *http.Response) error {
+			// Rewrite absolute-path redirects so the browser stays inside the
+			// proxy mount instead of resolving against the portal's origin.
+			// e.g. panel returns "Location: /user/" → we send "Location:
+			// /api/v1/devices/{id}/touch-panel/user/".
+			if loc := resp.Header.Get("Location"); loc != "" {
+				if u, err := url.Parse(loc); err == nil && u.Scheme == "" && u.Host == "" && strings.HasPrefix(u.Path, "/") {
+					u.Path = prefix + u.Path
+					resp.Header.Set("Location", u.String())
+				}
+			}
+			return nil
+		},
 		ErrorHandler: func(rw http.ResponseWriter, _ *http.Request, err error) {
 			slog.Warn("touch-panel proxy error", "device", id, "target", target.String(), "error", err)
 			writeJSONError(rw, http.StatusBadGateway, "touch panel unreachable: "+err.Error())
