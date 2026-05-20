@@ -20,7 +20,7 @@ import { CommandPanel } from "@/components/command-panel";
 import { TelemetryGrid } from "@/components/telemetry-grid";
 import { EventFeed } from "@/components/event-feed";
 import { usePolling } from "@/hooks/usePolling";
-import { api } from "@/lib/api";
+import { api, API_BASE, API_KEY } from "@/lib/api";
 import type { DeviceDetail, Telemetry } from "@/lib/types";
 import { formatRelative } from "@/lib/utils";
 
@@ -144,24 +144,18 @@ export default function DeviceDetailPage() {
                 : null
             )}
           </span>
-          {device.protocol === "aurora_rxt" &&
-            (() => {
-              const host =
-                device.tags?.ip_address ?? device.address?.split(":")[0];
-              if (!host) return null;
-              return (
-                <Button asChild variant="outline" size="sm">
-                  <a
-                    href={`https://${host}/user`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    Touch Panel
-                    <ExternalLink className="h-3.5 w-3.5" />
-                  </a>
-                </Button>
-              );
-            })()}
+          {device.protocol === "aurora_rxt" && (
+            <Button asChild variant="outline" size="sm">
+              <a
+                href={`${API_BASE}/api/v1/devices/${encodeURIComponent(device.id)}/touch-panel/user${API_KEY ? `?token=${encodeURIComponent(API_KEY)}` : ""}`}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Touch Panel
+                <ExternalLink className="h-3.5 w-3.5" />
+              </a>
+            </Button>
+          )}
           <Button
             variant="outline"
             size="sm"
