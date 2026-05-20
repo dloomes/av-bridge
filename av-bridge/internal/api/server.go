@@ -60,6 +60,7 @@ func New(listenAddr string, h *hub.Hub, c *cloud.Client, auth AuthConfig) *Serve
 	r.HandleFunc("/api/v1/devices/{id}/command", s.sendCommand).Methods(http.MethodPost)
 	r.HandleFunc("/api/v1/devices/{id}/telemetry", s.getTelemetry).Methods(http.MethodGet)
 	r.HandleFunc("/api/v1/devices/{id}/reconnect", s.reconnectDevice).Methods(http.MethodPost)
+	r.PathPrefix("/api/v1/devices/{id}/touch-panel").HandlerFunc(s.touchPanelProxy)
 	r.HandleFunc("/ws/events", s.wsEvents)
 
 	s.srv = &http.Server{
@@ -113,12 +114,13 @@ func (s *Server) unsubscribe(ch chan *device.Event) {
 func (s *Server) listDevices(w http.ResponseWriter, r *http.Request) {
 	devs := s.hub.Devices()
 	type item struct {
-		ID       string        `json:"id"`
-		Name     string        `json:"name"`
-		Type     string        `json:"type"`
-		Protocol string        `json:"protocol"`
-		Location string        `json:"location"`
-		Status   device.Status `json:"status"`
+		ID       string            `json:"id"`
+		Name     string            `json:"name"`
+		Type     string            `json:"type"`
+		Protocol string            `json:"protocol"`
+		Location string            `json:"location"`
+		Address  string            `json:"address,omitempty"`
+		Status   device.Status     `json:"status"`
 		Tags     map[string]string `json:"tags,omitempty"`
 	}
 	out := make([]item, 0, len(devs))
@@ -130,6 +132,7 @@ func (s *Server) listDevices(w http.ResponseWriter, r *http.Request) {
 			Type:     info.Type,
 			Protocol: info.Protocol,
 			Location: info.Location,
+			Address:  info.Address,
 			Status:   d.Status(),
 			Tags:     info.Tags,
 		})
@@ -150,6 +153,7 @@ func (s *Server) getDevice(w http.ResponseWriter, r *http.Request) {
 		"type":     info.Type,
 		"protocol": info.Protocol,
 		"location": info.Location,
+		"address":  info.Address,
 		"status":   dev.Status(),
 		"tags":     info.Tags,
 		"commands": info.Commands,

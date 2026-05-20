@@ -1,4 +1,4 @@
-import { Camera, Mic, Monitor, Video } from "lucide-react";
+import { Camera, Mic, Monitor, SlidersHorizontal, Video } from "lucide-react";
 import type { DeviceType } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -7,6 +7,7 @@ const map = {
   conferencing: Video,
   audio: Mic,
   camera: Camera,
+  control: SlidersHorizontal,
 } as const;
 
 interface Props {

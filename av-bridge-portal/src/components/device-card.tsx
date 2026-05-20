@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { ArrowRight, MapPin } from "lucide-react";
+import { ArrowRight, ExternalLink, MapPin } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/status-badge";
@@ -47,6 +47,15 @@ export function DeviceCard({ device, refreshTick }: Props) {
     const t = setInterval(() => setNow((n) => n + 1), 1000);
     return () => clearInterval(t);
   }, []);
+
+  // Aurora RXT touch panels expose a built-in web UI at https://<ip>/user.
+  // Prefer the runtime-captured ip_address tag (set by captureStaticInfo on
+  // connect), fall back to the configured address with any control-API port
+  // stripped (e.g. ":6975").
+  const touchPanelHost =
+    device.protocol === "aurora_rxt"
+      ? device.tags?.ip_address ?? device.address?.split(":")[0]
+      : undefined;
 
   const wantedKeys = KEY_METRICS_BY_TYPE[device.type] ?? [];
   const shown = metrics
@@ -95,6 +104,18 @@ export function DeviceCard({ device, refreshTick }: Props) {
           <div className="text-[11px] text-muted-foreground hidden sm:block">
             {formatRelative(updatedAt)}
           </div>
+          {touchPanelHost && (
+            <Button asChild size="sm" variant="outline" className="h-7 px-2 gap-1 text-xs">
+              <a
+                href={`https://${touchPanelHost}/user`}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Touch Panel
+                <ExternalLink className="h-3 w-3" />
+              </a>
+            </Button>
+          )}
           <Button asChild size="sm" variant="ghost" className="h-7 px-2">
             <Link href={`/devices/${encodeURIComponent(device.id)}`}>
               <ArrowRight className="h-3.5 w-3.5" />

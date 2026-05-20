@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import {
   ArrowLeft,
+  ExternalLink,
   MapPin,
   RefreshCcw,
   RotateCcw,
@@ -143,6 +144,24 @@ export default function DeviceDetailPage() {
                 : null
             )}
           </span>
+          {device.protocol === "aurora_rxt" &&
+            (() => {
+              const host =
+                device.tags?.ip_address ?? device.address?.split(":")[0];
+              if (!host) return null;
+              return (
+                <Button asChild variant="outline" size="sm">
+                  <a
+                    href={`https://${host}/user`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Touch Panel
+                    <ExternalLink className="h-3.5 w-3.5" />
+                  </a>
+                </Button>
+              );
+            })()}
           <Button
             variant="outline"
             size="sm"

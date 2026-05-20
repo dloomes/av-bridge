@@ -1,6 +1,6 @@
 export type DeviceStatus = "online" | "offline" | "degraded" | "unknown";
 
-export type DeviceType = "display" | "conferencing" | "audio" | "camera";
+export type DeviceType = "display" | "conferencing" | "audio" | "camera" | "control";
 
 export interface DeviceSummary {
   id: string;
@@ -8,6 +8,7 @@ export interface DeviceSummary {
   type: DeviceType;
   protocol: string;
   location: string;
+  address?: string;
   status: DeviceStatus;
   tags?: Record<string, string>;
 }
