@@ -1,0 +1,53 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: avbridge
+    ports:
+      - "5432:5432"
+    volumes:
+      # Schema migrations are now applied by the cloud binary on startup
+      # via internal/db/migrate.go (embedded). `down -v` is no longer required
+      # to pick up a new migration.
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d avbridge"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  cloud:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      CLOUD_LISTEN_ADDR: ":8090"
+      # Migration role: needs CREATE TABLE/ROLE, ALTER TABLE ENABLE RLS, CREATE
+      # POLICY. In dev that's the bootstrap postgres superuser; in production
+      # use a scoped-down one-shot migration role per environment.
+      DATABASE_MIGRATION_URL: "postgres://postgres:postgres@postgres:5432/avbridge?sslmode=disable"
+      DATABASE_ADMIN_URL: "postgres://app_admin:app_admin_dev@postgres:5432/avbridge?sslmode=disable"
+      DATABASE_TENANT_URL: "postgres://app_tenant:app_tenant_dev@postgres:5432/avbridge?sslmode=disable"
+      # Dev key only — 64 hex chars (32 bytes). Replace per deployment / use KMS.
+      CLOUD_SECRET_KEY: "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
+      # Bearer token gating /admin/* endpoints (collector registration etc.).
+      # Empty → endpoints disabled. Real auth comes with the portal.
+      ADMIN_API_TOKEN: "dev-admin-token-change-me"
+      # Slice 2 portal-read auth: one env-held token maps to the PoC customer.
+      # The portal sends Authorization: Bearer <POC_PORTAL_TOKEN>. Replaced by
+      # DB-backed tokens / Entra ID JWTs as the auth slices land. The dev token
+      # is given "admin" role for convenience so placement + hierarchy CRUD work.
+      POC_PORTAL_TOKEN: "dev-portal-token-change-me"
+      POC_PORTAL_ROLE: "admin"
+      # Seed one tenant + collector so the existing bridge can push immediately.
+      BOOTSTRAP_POC: "true"
+      POC_BRIDGE_COLLECTOR_ID: "poc-collector-01"
+      POC_HMAC_SECRET: "poc-shared-secret"
+    ports:
+      - "8090:8090"
+
+volumes:
+  pgdata:

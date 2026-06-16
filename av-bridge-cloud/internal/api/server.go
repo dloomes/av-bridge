@@ -1,0 +1,145 @@
+package api
+
+import (
+	"log/slog"
+	"net/http"
+	"time"
+
+	"github.com/dloomes/av-bridge-cloud/internal/portalapi"
+	"github.com/dloomes/av-bridge-cloud/internal/portalauth"
+)
+
+// PortalRoutes bundles the dependencies needed to mount the portal-facing read
+// API. portal must be non-nil; resolver gates every /api/v1 route.
+type PortalRoutes struct {
+	Resolver portalauth.Resolver
+	Portal   *portalapi.Handler
+}
+
+// BridgeCommandRoutes are the cloud-side endpoints the bridge polls for
+// pending commands and posts results to. Both auth via HMAC over the body
+// (same scheme as /ingest) — no portal token required.
+type BridgeCommandRoutes struct {
+	Poll   http.HandlerFunc
+	Result http.HandlerFunc
+}
+
+// BridgeConfigRoutes wires the config-pull endpoints. GetConfig returns the
+// device set for the requesting collector; PutConfig seeds it from the
+// bridge's YAML on first run (refused once the collector already has devices,
+// so portal edits aren't overwritten). HMAC-authenticated.
+type BridgeConfigRoutes struct {
+	GetConfig http.HandlerFunc
+	PutConfig http.HandlerFunc
+}
+
+// NewServer wires the routes. Go 1.22 method-aware patterns keep us dependency-free.
+// adminCollectors may be nil — registration endpoints are off when no ADMIN_API_TOKEN
+// is configured. portal may be nil — read API is off when no POC_PORTAL_TOKEN is set.
+// bridgeCommands wires POST /bridge/poll and POST /bridge/commands/{id}/result.
+func NewServer(addr string, ingest, adminCollectors http.Handler, portal *PortalRoutes, bridgeCommands BridgeCommandRoutes, bridgeConfig BridgeConfigRoutes, log *slog.Logger) *http.Server {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	})
+	mux.Handle("POST /ingest", ingest)
+	if adminCollectors != nil {
+		mux.Handle("POST /admin/collectors", adminCollectors)
+	}
+
+	if portal != nil {
+		// wrap: any authenticated portal user (read endpoints + listings).
+		// wrapAdmin: principal must hold the "admin" role (writes + placement).
+		wrap := func(h http.HandlerFunc) http.Handler {
+			return portalauth.Middleware(portal.Resolver, h)
+		}
+		adminOnly := portalauth.RequireRole("admin")
+		wrapAdmin := func(h http.HandlerFunc) http.Handler {
+			return portalauth.Middleware(portal.Resolver, adminOnly(h))
+		}
+
+		// Read — any authenticated user.
+		mux.Handle("GET /api/v1/status", wrap(portal.Portal.Status))
+		mux.Handle("GET /api/v1/collectors", wrap(portal.Portal.ListCollectors))
+		mux.Handle("GET /api/v1/devices", wrap(portal.Portal.ListDevices))
+		mux.Handle("GET /api/v1/devices/{id}", wrap(portal.Portal.GetDevice))
+		mux.Handle("GET /api/v1/devices/{id}/telemetry", wrap(portal.Portal.GetTelemetry))
+		mux.Handle("GET /api/v1/devices/{id}/telemetry/history", wrap(portal.Portal.TelemetryHistory))
+		mux.Handle("GET /api/v1/events", wrap(portal.Portal.ListEvents))
+		mux.Handle("GET /api/v1/regions", wrap(portal.Portal.ListRegions))
+		mux.Handle("GET /api/v1/locations", wrap(portal.Portal.ListLocations))
+		mux.Handle("GET /api/v1/buildings", wrap(portal.Portal.ListBuildings))
+		mux.Handle("GET /api/v1/rooms", wrap(portal.Portal.ListRooms))
+
+		// Customer Admin writes — device CRUD, placement (folded into PATCH),
+		// and hierarchy CRUD.
+		mux.Handle("POST /api/v1/devices", wrapAdmin(portal.Portal.CreateDevice))
+		mux.Handle("PATCH /api/v1/devices/{id}", wrapAdmin(portal.Portal.UpdateDevice))
+		mux.Handle("DELETE /api/v1/devices/{id}", wrapAdmin(portal.Portal.DeleteDevice))
+		mux.Handle("POST /api/v1/regions", wrapAdmin(portal.Portal.CreateRegion))
+		mux.Handle("POST /api/v1/locations", wrapAdmin(portal.Portal.CreateLocation))
+		mux.Handle("POST /api/v1/buildings", wrapAdmin(portal.Portal.CreateBuilding))
+		mux.Handle("POST /api/v1/rooms", wrapAdmin(portal.Portal.CreateRoom))
+
+		// Command submission + status (Slice 3). Submit is operator-and-above;
+		// reconnect is a special-cased command name handled by the bridge.
+		operatorOrAbove := portalauth.RequireRole("operator", "admin")
+		wrapOperator := func(h http.HandlerFunc) http.Handler {
+			return portalauth.Middleware(portal.Resolver, operatorOrAbove(h))
+		}
+		mux.Handle("POST /api/v1/devices/{id}/command", wrapOperator(portal.Portal.SubmitCommand))
+		mux.Handle("POST /api/v1/devices/{id}/reconnect", wrapOperator(portal.Portal.SubmitReconnect))
+		mux.Handle("GET /api/v1/commands/{id}", wrap(portal.Portal.GetCommand))
+	}
+
+	// Bridge-side command channel — HMAC-authenticated, same scheme as /ingest.
+	if bridgeCommands.Poll != nil {
+		mux.Handle("POST /bridge/poll", bridgeCommands.Poll)
+	}
+	if bridgeCommands.Result != nil {
+		mux.Handle("POST /bridge/commands/{id}/result", bridgeCommands.Result)
+	}
+
+	// Bridge-side config channel — same HMAC scheme. POST not GET because every
+	// bridge call signs the request body, and a GET with no body can't.
+	if bridgeConfig.GetConfig != nil {
+		mux.Handle("POST /bridge/config", bridgeConfig.GetConfig)
+	}
+	if bridgeConfig.PutConfig != nil {
+		mux.Handle("PUT /bridge/config", bridgeConfig.PutConfig)
+	}
+
+	return &http.Server{
+		Addr:         addr,
+		Handler:      logging(log, mux),
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 15 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
+}
+
+func logging(log *slog.Logger, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		rw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(rw, r)
+		log.Info("request",
+			"method", r.Method,
+			"path", r.URL.Path,
+			"status", rw.status,
+			"latency_ms", time.Since(start).Milliseconds(),
+			"remote", r.RemoteAddr,
+		)
+	})
+}
+
+type statusWriter struct {
+	http.ResponseWriter
+	status int
+}
+
+func (w *statusWriter) WriteHeader(code int) {
+	w.status = code
+	w.ResponseWriter.WriteHeader(code)
+}
