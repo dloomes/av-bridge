@@ -3,7 +3,10 @@ package cloud
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
 	"crypto/tls"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -146,6 +149,13 @@ func (c *Client) send(ctx context.Context, payload Payload) error {
 	req.Header.Set("Content-Type", "application/json")
 	if c.cfg.APIKey != "" {
 		req.Header.Set("Authorization", "Bearer "+c.cfg.APIKey)
+	}
+	// Sign the body so the cloud can verify which collector sent it. Matches the
+	// "sha256=<hex>" scheme the cloud and the bridge's own webhook verifier use.
+	if c.cfg.HMACSecret != "" {
+		mac := hmac.New(sha256.New, []byte(c.cfg.HMACSecret))
+		mac.Write(b)
+		req.Header.Set("X-Signature", "sha256="+hex.EncodeToString(mac.Sum(nil)))
 	}
 
 	resp, err := c.http.Do(req)

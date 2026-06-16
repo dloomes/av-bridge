@@ -2,3 +2,12 @@
 /CLAUDE_CODE_PROMPT.md
 /SPEC.md
 /TASKS.md
+
+# Local bridge config — contains real HMAC secret for this deployment.
+/av-bridge/local-config.yaml
+
+# Build artefacts and IDE leftovers.
+/av-bridge/test-av-bridge.exe~
+/av-bridge/test-av-bridge.exe
+/av-bridge/av-bridge
+/av-bridge/av-bridge.exe

@@ -10,11 +10,13 @@ hub:
   site_id: "poc-site-01"
 
 cloud:
-  webhook_url: "http://localhost:9000/ingest"     # set to http://localhost:9000/ingest or webhook.site URL
+  webhook_url: "http://localhost:8090/ingest"     # set to http://localhost:9000/ingest or webhook.site URL
   api_key: "poc-key"
   push_interval: 15s                    # faster than production so data arrives quickly
   retry_attempts: 3
   retry_delay: 5s
+  hmac_secret: "poc-shared-secret"
+  collector_id: "poc-collector-01"
 
 lens:
   # Poly Lens enrichment — fills in MAC, IP, last-detected and other inventory

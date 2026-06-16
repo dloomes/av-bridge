@@ -3,6 +3,7 @@ package hub
 import (
 	"context"
 	"log/slog"
+	"reflect"
 	"sync"
 	"time"
 
@@ -15,9 +16,12 @@ import (
 	"github.com/dloomes/av-bridge/internal/store"
 )
 
-// DeviceEntry holds a device and its managed goroutine cancel
+// DeviceEntry holds a device, the config that produced it, and the cancel
+// for its manage-goroutine. Cfg is kept so Reconcile can diff incoming
+// configs against what's running.
 type DeviceEntry struct {
 	Dev    device.Device
+	Cfg    config.DeviceConfig
 	Cancel context.CancelFunc
 }
 
@@ -39,6 +43,10 @@ type Hub struct {
 	devices     map[string]*DeviceEntry
 	mu          sync.RWMutex
 	broadcaster EventBroadcaster
+	// runCtx is the lifetime context captured in Start. New device goroutines
+	// spawned by Reconcile derive from this, not from any tick-scoped context,
+	// so they outlive the puller's call.
+	runCtx context.Context
 }
 
 func New(cfg *config.Config, cloudClient *cloud.Client, lensClient *lens.Client, st *store.Store) *Hub {
@@ -74,24 +82,13 @@ func (h *Hub) BroadcastEvent(e *device.Event) {
 
 // Start initialises all devices and begins polling/event loops.
 func (h *Hub) Start(ctx context.Context) error {
+	h.runCtx = ctx
 	go h.cloud.Run(ctx)
 	go h.alerts.Run(ctx, 60*time.Second)
 
 	for _, dcfg := range h.cfg.Devices {
-		dev, err := adapters.New(dcfg, adapters.Deps{Lens: h.lens})
-		if err != nil {
-			slog.Error("failed to create adapter", "device", dcfg.ID, "error", err)
-			continue
-		}
-
-		devCtx, cancel := context.WithCancel(ctx)
-		h.mu.Lock()
-		h.devices[dcfg.ID] = &DeviceEntry{Dev: dev, Cancel: cancel}
-		h.mu.Unlock()
-
-		go h.manageDevice(devCtx, dev)
+		h.spawnDevice(dcfg)
 	}
-
 	return nil
 }
 
@@ -124,6 +121,90 @@ func (h *Hub) Devices() []device.Device {
 		out = append(out, e.Dev)
 	}
 	return out
+}
+
+// LocalDeviceConfigs returns the configs of every device currently running.
+// Used by the config puller to seed the cloud on first run.
+func (h *Hub) LocalDeviceConfigs() []config.DeviceConfig {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	out := make([]config.DeviceConfig, 0, len(h.devices))
+	for _, e := range h.devices {
+		out = append(out, e.Cfg)
+	}
+	return out
+}
+
+// Reconcile drives the running device set toward the desired list. Devices
+// missing from want are stopped; devices present in both with the same config
+// are left alone; devices whose config differs are torn down and respawned;
+// new devices are spawned. Idempotent — calling with the current set is a
+// no-op.
+func (h *Hub) Reconcile(want []config.DeviceConfig) {
+	wantByID := make(map[string]config.DeviceConfig, len(want))
+	for _, d := range want {
+		wantByID[d.ID] = d
+	}
+
+	h.mu.Lock()
+	for id, entry := range h.devices {
+		wanted, kept := wantByID[id]
+		if !kept {
+			slog.Info("reconcile: removing device", "device", id)
+			entry.Cancel()
+			_ = entry.Dev.Disconnect()
+			delete(h.devices, id)
+			continue
+		}
+		if !configEqual(entry.Cfg, wanted) {
+			slog.Info("reconcile: restarting device with updated config", "device", id)
+			entry.Cancel()
+			_ = entry.Dev.Disconnect()
+			delete(h.devices, id)
+			// Fall through to the add-loop below — same id is no longer in
+			// h.devices, so it gets spawned with the updated config.
+		}
+	}
+	var toSpawn []config.DeviceConfig
+	for id, dcfg := range wantByID {
+		if _, exists := h.devices[id]; exists {
+			continue
+		}
+		toSpawn = append(toSpawn, dcfg)
+	}
+	h.mu.Unlock()
+
+	for _, dcfg := range toSpawn {
+		h.spawnDevice(dcfg)
+	}
+}
+
+// spawnDevice creates an adapter, registers it, and starts its manage
+// goroutine. Caller must NOT hold h.mu.
+func (h *Hub) spawnDevice(dcfg config.DeviceConfig) {
+	dev, err := adapters.New(dcfg, adapters.Deps{Lens: h.lens})
+	if err != nil {
+		slog.Error("failed to create adapter", "device", dcfg.ID, "error", err)
+		return
+	}
+	ctx := h.runCtx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	devCtx, cancel := context.WithCancel(ctx)
+	h.mu.Lock()
+	h.devices[dcfg.ID] = &DeviceEntry{Dev: dev, Cfg: dcfg, Cancel: cancel}
+	h.mu.Unlock()
+	slog.Info("reconcile: starting device", "device", dcfg.ID, "protocol", dcfg.Protocol)
+	go h.manageDevice(devCtx, dev)
+}
+
+// configEqual is a value-equality test on DeviceConfig. reflect.DeepEqual
+// handles the nested maps/slices correctly; we don't normalise PollRate or
+// other zero-defaults because Reconcile sees configs as they came from the
+// cloud — defaults are applied at YAML-load time only.
+func configEqual(a, b config.DeviceConfig) bool {
+	return reflect.DeepEqual(a, b)
 }
 
 // manageDevice handles connect-with-retry, polling, event draining, and state persistence.

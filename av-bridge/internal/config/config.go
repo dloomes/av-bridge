@@ -45,8 +45,21 @@ type CloudConfig struct {
 	RetryAttempts int           `yaml:"retry_attempts"`
 	RetryDelay    time.Duration `yaml:"retry_delay"`
 	TLSSkipVerify bool          `yaml:"tls_skip_verify"`
-	PortalAPI     string        `yaml:"portal_api"`
-	HMACSecret    string        `yaml:"hmac_secret"`
+	// PortalAPI is the cloud service's base URL (e.g. http://cloud-host:8090).
+	// Used by the command poller for /bridge/poll and /bridge/commands/{id}/result.
+	// When empty, the command poller is disabled.
+	PortalAPI string `yaml:"portal_api"`
+	// HMACSecret signs outbound calls to the cloud (ingest push, command poll,
+	// command result). Must match the secret stored for this collector in the
+	// cloud DB. When empty, outbound HMAC signing is skipped and the command
+	// poller is disabled.
+	HMACSecret string `yaml:"hmac_secret"`
+	// CommandPollInterval is how often the bridge polls the cloud for pending
+	// commands. Defaults to 5s.
+	CommandPollInterval time.Duration `yaml:"command_poll_interval"`
+	// CommandMaxBatch caps how many commands the bridge claims per poll.
+	// Defaults to 10.
+	CommandMaxBatch int `yaml:"command_max_batch"`
 }
 
 type APIConfig struct {
@@ -142,6 +155,12 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Cloud.RetryDelay == 0 {
 		cfg.Cloud.RetryDelay = 5 * time.Second
+	}
+	if cfg.Cloud.CommandPollInterval == 0 {
+		cfg.Cloud.CommandPollInterval = 5 * time.Second
+	}
+	if cfg.Cloud.CommandMaxBatch == 0 {
+		cfg.Cloud.CommandMaxBatch = 10
 	}
 	if cfg.Lens.PollInterval == 0 {
 		cfg.Lens.PollInterval = 5 * time.Minute

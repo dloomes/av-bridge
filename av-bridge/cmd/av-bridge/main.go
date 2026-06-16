@@ -17,6 +17,8 @@ import (
 	"github.com/dloomes/av-bridge/internal/api"
 	"github.com/dloomes/av-bridge/internal/cloud"
 	"github.com/dloomes/av-bridge/internal/cloud/lens"
+	"github.com/dloomes/av-bridge/internal/cloudpoll"
+	"github.com/dloomes/av-bridge/internal/cloudpull"
 	"github.com/dloomes/av-bridge/internal/config"
 	"github.com/dloomes/av-bridge/internal/hub"
 	"github.com/dloomes/av-bridge/internal/store"
@@ -163,6 +165,18 @@ func main() {
 		slog.Error("hub start failed", "error", err)
 		os.Exit(1)
 	}
+
+	// Slice 3: command poller. Pulls portal-issued commands from the cloud and
+	// dispatches them via the hub. No-ops if cloud.portal_api or hmac_secret
+	// aren't set.
+	cmdPoller := cloudpoll.NewPoller(cfg.Cloud, cfg.Hub.CollectorID, h)
+	go cmdPoller.Run(ctx)
+
+	// Slice 4: config puller. Fetches the cloud's device set on device_sync_interval
+	// and reconciles the hub. On first run with an empty cloud, seeds the local
+	// YAML up so the cloud has a starting point. Subsequent edits flow cloud → bridge.
+	cfgPuller := cloudpull.NewPoller(cfg.Cloud, cfg.Hub.DeviceSyncInterval, cfg.Hub.CollectorID, h)
+	go cfgPuller.Run(ctx)
 
 	go func() {
 		var serverErr error
