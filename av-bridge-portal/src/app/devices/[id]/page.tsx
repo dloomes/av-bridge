@@ -1,14 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { useParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useParams, useRouter } from "next/navigation";
+import { useCallback, useEffect, useState } from "react";
 import {
   ArrowLeft,
   ExternalLink,
   MapPin,
+  Pencil,
   RefreshCcw,
   RotateCcw,
+  Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -19,6 +21,8 @@ import { DeviceIcon } from "@/components/device-icon";
 import { CommandPanel } from "@/components/command-panel";
 import { TelemetryGrid } from "@/components/telemetry-grid";
 import { EventFeed } from "@/components/event-feed";
+import { Modal } from "@/components/modal";
+import { DeviceForm } from "@/components/device-form";
 import { usePolling } from "@/hooks/usePolling";
 import { api, API_BASE, API_KEY } from "@/lib/api";
 import type { DeviceDetail, Telemetry } from "@/lib/types";
@@ -27,25 +31,52 @@ import { formatRelative } from "@/lib/utils";
 export default function DeviceDetailPage() {
   const params = useParams<{ id: string }>();
   const id = decodeURIComponent(params.id);
+  const router = useRouter();
 
   const [device, setDevice] = useState<DeviceDetail | null>(null);
   const [deviceError, setDeviceError] = useState<Error | null>(null);
   const [reconnecting, setReconnecting] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
-  // Static-ish device meta — refresh once on load
+  // Loader extracted so the Edit save handler can also refresh the device meta
+  // after a successful PATCH without an artificial full page reload.
+  const loadDevice = useCallback(
+    (signal?: AbortSignal) =>
+      api
+        .getDevice(id, signal)
+        .then((d) => {
+          if (!signal?.aborted) {
+            setDevice(d);
+            setDeviceError(null);
+          }
+        })
+        .catch((e) => {
+          if (signal?.aborted) return;
+          setDeviceError(e instanceof Error ? e : new Error(String(e)));
+        }),
+    [id]
+  );
+
   useEffect(() => {
     const ctrl = new AbortController();
-    api
-      .getDevice(id, ctrl.signal)
-      .then((d) => {
-        if (!ctrl.signal.aborted) setDevice(d);
-      })
-      .catch((e) => {
-        if (ctrl.signal.aborted) return;
-        setDeviceError(e instanceof Error ? e : new Error(String(e)));
-      });
+    void loadDevice(ctrl.signal);
     return () => ctrl.abort();
-  }, [id]);
+  }, [loadDevice]);
+
+  const handleDelete = async () => {
+    setDeleting(true);
+    try {
+      await api.deleteDevice(id);
+      router.push("/");
+    } catch (e) {
+      setDeleteConfirmOpen(false);
+      setDeviceError(e instanceof Error ? e : new Error(String(e)));
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   const telemetry = usePolling<Telemetry>(
     (signal) => api.getTelemetry(id, signal),
@@ -173,9 +204,67 @@ export default function DeviceDetailPage() {
             <RotateCcw className="h-3.5 w-3.5" />
             {reconnecting ? "Reconnecting…" : "Reconnect"}
           </Button>
+          <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}>
+            <Pencil className="h-3.5 w-3.5" />
+            Edit
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setDeleteConfirmOpen(true)}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            Delete
+          </Button>
           <ConnectionIndicator />
         </div>
       </header>
+
+      <Modal
+        open={editOpen}
+        onClose={() => setEditOpen(false)}
+        title={`Edit ${device.name}`}
+      >
+        <DeviceForm
+          mode="edit"
+          initial={device}
+          onCancel={() => setEditOpen(false)}
+          onSuccess={() => {
+            setEditOpen(false);
+            void loadDevice();
+            telemetry.refresh();
+          }}
+        />
+      </Modal>
+
+      <Modal
+        open={deleteConfirmOpen}
+        onClose={() => setDeleteConfirmOpen(false)}
+        title="Delete device?"
+        wide={false}
+      >
+        <p className="text-sm">
+          Permanently delete <strong>{device.name}</strong>? Its telemetry,
+          events and pending commands will also be removed. The bridge will stop
+          managing it on its next config-pull tick.
+        </p>
+        <div className="mt-4 flex items-center justify-end gap-2">
+          <Button
+            variant="ghost"
+            onClick={() => setDeleteConfirmOpen(false)}
+            disabled={deleting}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="destructive"
+            onClick={handleDelete}
+            disabled={deleting}
+          >
+            {deleting ? "Deleting…" : "Delete"}
+          </Button>
+        </div>
+      </Modal>
 
       <div className="flex-1 min-h-0 overflow-y-auto">
         <div className="grid gap-6 p-6 lg:grid-cols-[minmax(0,1fr)_360px]">

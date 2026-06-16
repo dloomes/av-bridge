@@ -1,11 +1,15 @@
 import type {
+  CollectorSummary,
   CommandRequest,
   CommandResponse,
+  CreateDeviceBody,
   DeviceDetail,
   DeviceSummary,
   FleetStatus,
   HealthResponse,
+  NamedRow,
   Telemetry,
+  UpdateDeviceBody,
 } from "./types";
 
 // HTTP requests go to the Next.js dev server, which proxies to av-bridge via
@@ -108,6 +112,47 @@ export const api = {
       `/api/v1/devices/${encodeURIComponent(id)}/reconnect`,
       { method: "POST", signal }
     ),
+
+  // -- device CRUD (admin-only on the cloud side; the dev portal token is
+  // -- admin-roled by default, so all three work locally) -----------------------
+
+  listCollectors: (signal?: AbortSignal) =>
+    request<CollectorSummary[]>("/api/v1/collectors", { signal }),
+
+  listRooms: (signal?: AbortSignal) =>
+    request<NamedRow[]>("/api/v1/rooms", { signal }),
+
+  createDevice: (body: CreateDeviceBody, signal?: AbortSignal) =>
+    request<{ id: string }>("/api/v1/devices", {
+      method: "POST",
+      body: JSON.stringify(body),
+      signal,
+    }),
+
+  updateDevice: (id: string, body: UpdateDeviceBody, signal?: AbortSignal) =>
+    request<{ id: string; updated: string }>(
+      `/api/v1/devices/${encodeURIComponent(id)}`,
+      { method: "PATCH", body: JSON.stringify(body), signal }
+    ),
+
+  deleteDevice: async (id: string, signal?: AbortSignal): Promise<void> => {
+    const res = await fetch(
+      `${API_BASE}/api/v1/devices/${encodeURIComponent(id)}`,
+      {
+        method: "DELETE",
+        headers: authHeaders(),
+        signal,
+        cache: "no-store",
+      }
+    );
+    if (!res.ok) {
+      let body = "";
+      try {
+        body = await res.text();
+      } catch {}
+      throw new ApiError(`${res.status} ${res.statusText}${body ? `: ${body}` : ""}`, res.status);
+    }
+  },
 
   metrics: (signal?: AbortSignal) => requestText("/metrics", { signal }),
 };

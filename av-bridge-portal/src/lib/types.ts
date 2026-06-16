@@ -13,8 +13,61 @@ export interface DeviceSummary {
   tags?: Record<string, string>;
 }
 
+export interface Subscription {
+  tag: string;
+  attribute: string;
+  channel: number;
+  label: string;
+  rate?: number;
+}
+
+// DeviceDetail returns the full editable config (creds excluded — write-only).
+// The fields beyond DeviceSummary are what the edit form needs to pre-fill.
 export interface DeviceDetail extends DeviceSummary {
+  collector_id: string;
+  room_id?: string | null;
+  reported_id: string;
+  ip_address?: string;
+  baud_rate?: number;
+  poll_rate_seconds?: number;
   commands?: Record<string, string>;
+  subscriptions?: Subscription[];
+}
+
+// Wire shape for POST /api/v1/devices — collector_id + reported_id required.
+export interface CreateDeviceBody {
+  collector_id: string;
+  reported_id: string;
+  name?: string;
+  type?: string;
+  protocol?: string;
+  address?: string;
+  baud_rate?: number;
+  username?: string;
+  password?: string;
+  poll_rate_seconds?: number;
+  commands?: Record<string, string>;
+  tags?: Record<string, string>;
+  subscriptions?: Subscription[];
+  room_id?: string;
+}
+
+// PATCH body. Every field optional — only the ones present are written.
+// password: blank string clears, omit-field leaves alone.
+export type UpdateDeviceBody = Partial<Omit<CreateDeviceBody, "collector_id" | "reported_id">>;
+
+export interface CollectorSummary {
+  id: string;
+  bridge_collector_id: string;
+  name: string;
+  status: string;
+  last_seen_at?: string;
+}
+
+export interface NamedRow {
+  id: string;
+  name: string;
+  parent_id?: string;
 }
 
 export interface Telemetry {

@@ -7,6 +7,7 @@ import {
   ChevronRight,
   CircleSlash,
   DoorOpen,
+  Plus,
   RefreshCcw,
   Server,
   Wifi,
@@ -15,6 +16,8 @@ import { ConnectionIndicator } from "@/components/connection-indicator";
 import { StatCard } from "@/components/stat-card";
 import { DeviceCard } from "@/components/device-card";
 import { EventFeed } from "@/components/event-feed";
+import { Modal } from "@/components/modal";
+import { DeviceForm } from "@/components/device-form";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -52,6 +55,8 @@ export default function DashboardPage() {
       return next;
     });
 
+  const [createOpen, setCreateOpen] = useState(false);
+
   const isLoading = fleet.loading && !fleet.data;
   const hasError = !!(fleet.error || devices.error);
 
@@ -81,9 +86,29 @@ export default function DashboardPage() {
             <RefreshCcw className="h-3.5 w-3.5" />
             Refresh
           </Button>
+          <Button size="sm" onClick={() => setCreateOpen(true)}>
+            <Plus className="h-3.5 w-3.5" />
+            New device
+          </Button>
           <ConnectionIndicator />
         </div>
       </header>
+
+      <Modal
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        title="New device"
+      >
+        <DeviceForm
+          mode="create"
+          onCancel={() => setCreateOpen(false)}
+          onSuccess={() => {
+            setCreateOpen(false);
+            devices.refresh();
+            fleet.refresh();
+          }}
+        />
+      </Modal>
 
       <div className="flex-1 min-h-0 overflow-y-auto">
         <div className="grid gap-6 p-6 lg:grid-cols-[minmax(0,1fr)_360px]">
