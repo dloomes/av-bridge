@@ -9,6 +9,7 @@ import {
   CircleSlash,
   DoorOpen,
   History,
+  MapPin,
   Plus,
   RefreshCcw,
   Server,
@@ -97,6 +98,12 @@ export default function DashboardPage() {
           >
             <RefreshCcw className="h-3.5 w-3.5" />
             Refresh
+          </Button>
+          <Button asChild variant="outline" size="sm">
+            <Link href="/locations">
+              <MapPin className="h-3.5 w-3.5" />
+              Locations
+            </Link>
           </Button>
           <Button asChild variant="outline" size="sm">
             <Link href="/audit">

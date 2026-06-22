@@ -1,5 +1,6 @@
 import type {
   AuditEntry,
+  BuildingRow,
   CollectorSummary,
   CommandRequest,
   CommandResponse,
@@ -120,8 +121,77 @@ export const api = {
   listCollectors: (signal?: AbortSignal) =>
     request<CollectorSummary[]>("/api/v1/collectors", { signal }),
 
+  listRegions: (signal?: AbortSignal) =>
+    request<NamedRow[]>("/api/v1/regions", { signal }),
+
+  listLocations: (signal?: AbortSignal) =>
+    request<NamedRow[]>("/api/v1/locations", { signal }),
+
+  listBuildings: (signal?: AbortSignal) =>
+    request<BuildingRow[]>("/api/v1/buildings", { signal }),
+
   listRooms: (signal?: AbortSignal) =>
     request<NamedRow[]>("/api/v1/rooms", { signal }),
+
+  createRegion: (name: string, signal?: AbortSignal) =>
+    request<{ id: string; name: string }>("/api/v1/regions", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+      signal,
+    }),
+
+  createLocation: (region_id: string, name: string, signal?: AbortSignal) =>
+    request<{ id: string; name: string }>("/api/v1/locations", {
+      method: "POST",
+      body: JSON.stringify({ region_id, name }),
+      signal,
+    }),
+
+  createBuilding: (
+    body: { location_id: string; name: string; address?: string; timezone?: string },
+    signal?: AbortSignal
+  ) =>
+    request<{ id: string; name: string }>("/api/v1/buildings", {
+      method: "POST",
+      body: JSON.stringify(body),
+      signal,
+    }),
+
+  createRoom: (building_id: string, name: string, signal?: AbortSignal) =>
+    request<{ id: string; name: string }>("/api/v1/rooms", {
+      method: "POST",
+      body: JSON.stringify({ building_id, name }),
+      signal,
+    }),
+
+  updateRegion: (id: string, name: string, signal?: AbortSignal) =>
+    request<{ id: string; name: string }>(
+      `/api/v1/regions/${encodeURIComponent(id)}`,
+      { method: "PATCH", body: JSON.stringify({ name }), signal }
+    ),
+
+  updateLocation: (id: string, name: string, signal?: AbortSignal) =>
+    request<{ id: string; name: string }>(
+      `/api/v1/locations/${encodeURIComponent(id)}`,
+      { method: "PATCH", body: JSON.stringify({ name }), signal }
+    ),
+
+  updateBuilding: (
+    id: string,
+    body: { name?: string; address?: string; timezone?: string },
+    signal?: AbortSignal
+  ) =>
+    request<{ id: string }>(`/api/v1/buildings/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+      signal,
+    }),
+
+  updateRoom: (id: string, name: string, signal?: AbortSignal) =>
+    request<{ id: string; name: string }>(
+      `/api/v1/rooms/${encodeURIComponent(id)}`,
+      { method: "PATCH", body: JSON.stringify({ name }), signal }
+    ),
 
   createDevice: (body: CreateDeviceBody, signal?: AbortSignal) =>
     request<{ id: string }>("/api/v1/devices", {

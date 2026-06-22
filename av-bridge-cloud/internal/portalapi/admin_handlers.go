@@ -232,10 +232,187 @@ func (h *Handler) ListLocations(w http.ResponseWriter, r *http.Request) {
 	h.listSimple(w, r, `SELECT id::text, name, region_id::text FROM locations ORDER BY name`)
 }
 func (h *Handler) ListBuildings(w http.ResponseWriter, r *http.Request) {
-	h.listSimple(w, r, `SELECT id::text, name, location_id::text FROM buildings ORDER BY name`)
+	// Buildings carry address + timezone in addition to the shared fields, so
+	// they need their own row shape rather than the generic listSimple path.
+	type buildingRow struct {
+		ID       string `json:"id"`
+		Name     string `json:"name"`
+		ParentID string `json:"parent_id"`
+		Address  string `json:"address,omitempty"`
+		Timezone string `json:"timezone,omitempty"`
+	}
+	out := []buildingRow{}
+	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `
+			SELECT id::text, name, location_id::text,
+			       COALESCE(address,'') AS address,
+			       COALESCE(timezone,'') AS timezone
+			FROM buildings ORDER BY name`)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var rr buildingRow
+			if err := rows.Scan(&rr.ID, &rr.Name, &rr.ParentID, &rr.Address, &rr.Timezone); err != nil {
+				return err
+			}
+			out = append(out, rr)
+		}
+		return rows.Err()
+	})
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 func (h *Handler) ListRooms(w http.ResponseWriter, r *http.Request) {
 	h.listSimple(w, r, `SELECT id::text, name, building_id::text FROM rooms ORDER BY name`)
+}
+
+// ----- hierarchy updates -----------------------------------------------------
+//
+// Region/location/room are simple-rename PATCHes. Building also takes optional
+// address + timezone. All gated to admin role at the route layer.
+
+type updateNamedReq struct {
+	Name *string `json:"name,omitempty"`
+}
+
+type updateBuildingReq struct {
+	Name     *string `json:"name,omitempty"`
+	Address  *string `json:"address,omitempty"`
+	Timezone *string `json:"timezone,omitempty"`
+}
+
+// updateSimpleNamed is the shared workhorse for the three name-only tables.
+// The table + action names are the only things that change between them, so
+// we parameterise rather than copy three near-identical handlers.
+func (h *Handler) updateSimpleNamed(w http.ResponseWriter, r *http.Request, table, kind string) {
+	id := r.PathValue("id")
+	var req updateNamedReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == nil || *req.Name == "" {
+		writeErr(w, http.StatusBadRequest, "name is required")
+		return
+	}
+	p, _ := portalauth.From(r.Context())
+
+	var rowsAffected int64
+	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
+		before, err := audit.SnapshotByTable(ctx, tx, table, id)
+		if err != nil {
+			return err
+		}
+		tag, err := tx.Exec(ctx,
+			"UPDATE "+table+" SET name = $1 WHERE id = $2", *req.Name, id)
+		if err != nil {
+			return err
+		}
+		rowsAffected = tag.RowsAffected()
+		if rowsAffected == 0 {
+			return nil
+		}
+		after, err := audit.SnapshotByTable(ctx, tx, table, id)
+		if err != nil {
+			return err
+		}
+		return audit.Record(ctx, tx, p.CustomerID, audit.Entry{
+			Actor: p.Role, Action: kind + ".update", TargetKind: kind, TargetID: id,
+			Before: before, After: after,
+		})
+	})
+	if !ok {
+		return
+	}
+	if rowsAffected == 0 {
+		writeErr(w, http.StatusNotFound, kind+" not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"id": id, "name": *req.Name})
+}
+
+func (h *Handler) UpdateRegion(w http.ResponseWriter, r *http.Request) {
+	h.updateSimpleNamed(w, r, "regions", "region")
+}
+func (h *Handler) UpdateLocation(w http.ResponseWriter, r *http.Request) {
+	h.updateSimpleNamed(w, r, "locations", "location")
+}
+func (h *Handler) UpdateRoom(w http.ResponseWriter, r *http.Request) {
+	h.updateSimpleNamed(w, r, "rooms", "room")
+}
+
+// UpdateBuilding — PATCH /api/v1/buildings/{id}
+//
+// Pointer-per-field PATCH so callers can rename without touching address, or
+// clear a field by sending it as an empty string.
+func (h *Handler) UpdateBuilding(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var req updateBuildingReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if req.Name != nil && *req.Name == "" {
+		writeErr(w, http.StatusBadRequest, "name cannot be empty")
+		return
+	}
+
+	set := []string{}
+	args := []any{}
+	add := func(col string, val any) {
+		args = append(args, val)
+		set = append(set, col+" = $"+strconv.Itoa(len(args)))
+	}
+	if req.Name != nil {
+		add("name", *req.Name)
+	}
+	if req.Address != nil {
+		add("address", nullIfEmpty(*req.Address))
+	}
+	if req.Timezone != nil {
+		add("timezone", nullIfEmpty(*req.Timezone))
+	}
+	if len(set) == 0 {
+		writeErr(w, http.StatusBadRequest, "no fields to update")
+		return
+	}
+
+	args = append(args, id)
+	sql := "UPDATE buildings SET " + strings.Join(set, ", ") + " WHERE id = $" + strconv.Itoa(len(args))
+
+	p, _ := portalauth.From(r.Context())
+
+	var rowsAffected int64
+	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
+		before, err := audit.SnapshotByTable(ctx, tx, "buildings", id)
+		if err != nil {
+			return err
+		}
+		tag, err := tx.Exec(ctx, sql, args...)
+		if err != nil {
+			return err
+		}
+		rowsAffected = tag.RowsAffected()
+		if rowsAffected == 0 {
+			return nil
+		}
+		after, err := audit.SnapshotByTable(ctx, tx, "buildings", id)
+		if err != nil {
+			return err
+		}
+		return audit.Record(ctx, tx, p.CustomerID, audit.Entry{
+			Actor: p.Role, Action: "building.update", TargetKind: "building", TargetID: id,
+			Before: before, After: after,
+		})
+	})
+	if !ok {
+		return
+	}
+	if rowsAffected == 0 {
+		writeErr(w, http.StatusNotFound, "building not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"id": id})
 }
 
 // ----- device CRUD -----------------------------------------------------------

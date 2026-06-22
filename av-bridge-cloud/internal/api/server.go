@@ -92,6 +92,10 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 		mux.Handle("POST /api/v1/locations", wrapAdmin(portal.Portal.CreateLocation))
 		mux.Handle("POST /api/v1/buildings", wrapAdmin(portal.Portal.CreateBuilding))
 		mux.Handle("POST /api/v1/rooms", wrapAdmin(portal.Portal.CreateRoom))
+		mux.Handle("PATCH /api/v1/regions/{id}", wrapAdmin(portal.Portal.UpdateRegion))
+		mux.Handle("PATCH /api/v1/locations/{id}", wrapAdmin(portal.Portal.UpdateLocation))
+		mux.Handle("PATCH /api/v1/buildings/{id}", wrapAdmin(portal.Portal.UpdateBuilding))
+		mux.Handle("PATCH /api/v1/rooms/{id}", wrapAdmin(portal.Portal.UpdateRoom))
 
 		// Command submission + status (Slice 3). Submit is operator-and-above;
 		// reconnect is a special-cased command name handled by the bridge.

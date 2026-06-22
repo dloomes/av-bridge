@@ -119,6 +119,7 @@ export function DeviceForm({ mode, initial, onCancel, onSuccess }: DeviceFormPro
   );
   const [collectors, setCollectors] = useState<CollectorSummary[]>([]);
   const [rooms, setRooms] = useState<NamedRow[]>([]);
+  const [buildings, setBuildings] = useState<NamedRow[]>([]);
   const [loadingLookups, setLoadingLookups] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -128,11 +129,13 @@ export function DeviceForm({ mode, initial, onCancel, onSuccess }: DeviceFormPro
     Promise.all([
       api.listCollectors(ctrl.signal),
       api.listRooms(ctrl.signal),
+      api.listBuildings(ctrl.signal),
     ])
-      .then(([cs, rs]) => {
+      .then(([cs, rs, bs]) => {
         if (ctrl.signal.aborted) return;
         setCollectors(cs);
         setRooms(rs);
+        setBuildings(bs);
         // Auto-select the only collector when creating, so the operator
         // doesn't have to pick from a list of one.
         if (mode === "create" && cs.length === 1 && !form.collector_id) {
@@ -287,11 +290,15 @@ export function DeviceForm({ mode, initial, onCancel, onSuccess }: DeviceFormPro
             disabled={loadingLookups}
           >
             <option value="">— Unassigned —</option>
-            {rooms.map((r) => (
-              <option key={r.id} value={r.id}>
-                {r.name}
-              </option>
-            ))}
+            {rooms.map((r) => {
+              const building = buildings.find((b) => b.id === r.parent_id);
+              const label = building ? `${building.name} / ${r.name}` : r.name;
+              return (
+                <option key={r.id} value={r.id}>
+                  {label}
+                </option>
+              );
+            })}
           </select>
         </div>
         <div>
