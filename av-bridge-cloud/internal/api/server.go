@@ -1,19 +1,26 @@
 package api
 
 import (
+	"bufio"
+	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"time"
 
 	"github.com/dloomes/av-bridge-cloud/internal/portalapi"
 	"github.com/dloomes/av-bridge-cloud/internal/portalauth"
+	"github.com/dloomes/av-bridge-cloud/internal/wsfanout"
 )
 
 // PortalRoutes bundles the dependencies needed to mount the portal-facing read
-// API. portal must be non-nil; resolver gates every /api/v1 route.
+// API. portal must be non-nil; resolver gates every /api/v1 route. WSHub is
+// optional — when set, GET /ws/events is exposed for live device-event
+// fan-out, gated by the same Resolver as the rest of /api/v1.
 type PortalRoutes struct {
 	Resolver portalauth.Resolver
 	Portal   *portalapi.Handler
+	WSHub    *wsfanout.Hub
 }
 
 // BridgeCommandRoutes are the cloud-side endpoints the bridge polls for
@@ -67,6 +74,10 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 		mux.Handle("GET /api/v1/devices/{id}/telemetry", wrap(portal.Portal.GetTelemetry))
 		mux.Handle("GET /api/v1/devices/{id}/telemetry/history", wrap(portal.Portal.TelemetryHistory))
 		mux.Handle("GET /api/v1/events", wrap(portal.Portal.ListEvents))
+		mux.Handle("GET /api/v1/audit", wrap(portal.Portal.ListAudit))
+		if portal.WSHub != nil {
+			mux.Handle("GET /ws/events", portalauth.Middleware(portal.Resolver, http.HandlerFunc(portal.WSHub.ServeHTTP)))
+		}
 		mux.Handle("GET /api/v1/regions", wrap(portal.Portal.ListRegions))
 		mux.Handle("GET /api/v1/locations", wrap(portal.Portal.ListLocations))
 		mux.Handle("GET /api/v1/buildings", wrap(portal.Portal.ListBuildings))
@@ -142,4 +153,15 @@ type statusWriter struct {
 func (w *statusWriter) WriteHeader(code int) {
 	w.status = code
 	w.ResponseWriter.WriteHeader(code)
+}
+
+// Hijack passes through to the wrapped ResponseWriter so gorilla/websocket can
+// upgrade /ws/events. Without this, Upgrade fails with "response does not
+// implement http.Hijacker" and the route returns 500.
+func (w *statusWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hj, ok := w.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, fmt.Errorf("statusWriter: underlying ResponseWriter does not implement http.Hijacker")
+	}
+	return hj.Hijack()
 }

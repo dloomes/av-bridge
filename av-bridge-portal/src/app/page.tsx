@@ -1,12 +1,14 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import {
   AlertTriangle,
   Building2,
   ChevronRight,
   CircleSlash,
   DoorOpen,
+  History,
   Plus,
   RefreshCcw,
   Server,
@@ -14,6 +16,7 @@ import {
 } from "lucide-react";
 import { ConnectionIndicator } from "@/components/connection-indicator";
 import { StatCard } from "@/components/stat-card";
+import { StatusBadge } from "@/components/status-badge";
 import { DeviceCard } from "@/components/device-card";
 import { EventFeed } from "@/components/event-feed";
 import { Modal } from "@/components/modal";
@@ -24,7 +27,12 @@ import { Card, CardContent } from "@/components/ui/card";
 import { usePolling } from "@/hooks/usePolling";
 import { api } from "@/lib/api";
 import { formatRelative, groupDevicesByLocation } from "@/lib/utils";
-import type { DeviceSummary, FleetStatus } from "@/lib/types";
+import type {
+  CollectorSummary,
+  DeviceStatus,
+  DeviceSummary,
+  FleetStatus,
+} from "@/lib/types";
 
 export default function DashboardPage() {
   const fleet = usePolling<FleetStatus>(
@@ -33,6 +41,10 @@ export default function DashboardPage() {
   );
   const devices = usePolling<DeviceSummary[]>(
     (signal) => api.listDevices(signal),
+    15_000
+  );
+  const collectors = usePolling<CollectorSummary[]>(
+    (signal) => api.listCollectors(signal),
     15_000
   );
 
@@ -85,6 +97,12 @@ export default function DashboardPage() {
           >
             <RefreshCcw className="h-3.5 w-3.5" />
             Refresh
+          </Button>
+          <Button asChild variant="outline" size="sm">
+            <Link href="/audit">
+              <History className="h-3.5 w-3.5" />
+              Activity
+            </Link>
           </Button>
           <Button size="sm" onClick={() => setCreateOpen(true)}>
             <Plus className="h-3.5 w-3.5" />
@@ -168,6 +186,42 @@ export default function DashboardPage() {
                   </>
                 )}
               </div>
+            </section>
+
+            <section className="space-y-3">
+              <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
+                Collectors
+              </h2>
+              {collectors.loading && !collectors.data ? (
+                <Skeleton className="h-14 w-full" />
+              ) : collectors.data && collectors.data.length > 0 ? (
+                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                  {collectors.data.map((c) => (
+                    <Card key={c.id} className="border">
+                      <CardContent className="flex items-center justify-between gap-3 p-3">
+                        <div className="min-w-0">
+                          <div className="truncate text-sm font-medium">{c.name}</div>
+                          <div className="truncate text-xs text-muted-foreground">
+                            {c.bridge_collector_id}
+                          </div>
+                          <div className="mt-1 text-[11px] text-muted-foreground">
+                            {c.last_seen_at
+                              ? `Last seen ${formatRelative(c.last_seen_at)}`
+                              : "Never seen"}
+                          </div>
+                        </div>
+                        <StatusBadge status={c.status as DeviceStatus} />
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              ) : (
+                <Card>
+                  <CardContent className="p-4 text-xs text-muted-foreground">
+                    No collectors registered yet.
+                  </CardContent>
+                </Card>
+              )}
             </section>
 
             <section className="space-y-3">

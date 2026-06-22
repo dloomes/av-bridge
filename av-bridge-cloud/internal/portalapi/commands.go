@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/dloomes/av-bridge-cloud/internal/audit"
 	"github.com/dloomes/av-bridge-cloud/internal/commands"
 	"github.com/dloomes/av-bridge-cloud/internal/portalauth"
 	"github.com/jackc/pgx/v5"
@@ -92,7 +93,20 @@ func (h *Handler) submitAndWait(w http.ResponseWriter, r *http.Request, deviceID
 			return err
 		}
 		cmdID = id
-		return nil
+		// Audit captures the submission only — the eventual result is added to
+		// the command row itself, retrievable via GET /api/v1/commands/{id}.
+		// related_target=device so this entry surfaces on the device's
+		// activity feed as well as the command-id feed.
+		argsMeta := map[string]any{"name": name}
+		if len(args) > 0 {
+			argsMeta["args"] = json.RawMessage(args)
+		}
+		return audit.Record(ctx, tx, p.CustomerID, audit.Entry{
+			Actor: p.Role, Action: "command.submit",
+			TargetKind: "command", TargetID: id,
+			RelatedTargetKind: "device", RelatedTargetID: deviceID,
+			Metadata: argsMeta,
+		})
 	})
 	if !ok {
 		return

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dloomes/av-bridge-cloud/internal/audit"
 	"github.com/dloomes/av-bridge-cloud/internal/portalauth"
 	"github.com/jackc/pgx/v5"
 )
@@ -48,9 +49,18 @@ func (h *Handler) CreateRegion(w http.ResponseWriter, r *http.Request) {
 
 	var id string
 	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
-		return tx.QueryRow(ctx,
+		if err := tx.QueryRow(ctx,
 			`INSERT INTO regions (customer_id, name) VALUES ($1, $2) RETURNING id::text`,
-			p.CustomerID, req.Name).Scan(&id)
+			p.CustomerID, req.Name).Scan(&id); err != nil {
+			return err
+		}
+		after, err := audit.SnapshotByTable(ctx, tx, "regions", id)
+		if err != nil {
+			return err
+		}
+		return audit.Record(ctx, tx, p.CustomerID, audit.Entry{
+			Actor: p.Role, Action: "region.create", TargetKind: "region", TargetID: id, After: after,
+		})
 	})
 	if !ok {
 		return
@@ -79,7 +89,16 @@ func (h *Handler) CreateLocation(w http.ResponseWriter, r *http.Request) {
 			notFound = true
 			return nil
 		}
-		return err
+		if err != nil {
+			return err
+		}
+		after, err := audit.SnapshotByTable(ctx, tx, "locations", id)
+		if err != nil {
+			return err
+		}
+		return audit.Record(ctx, tx, p.CustomerID, audit.Entry{
+			Actor: p.Role, Action: "location.create", TargetKind: "location", TargetID: id, After: after,
+		})
 	})
 	if !ok {
 		return
@@ -112,7 +131,16 @@ func (h *Handler) CreateBuilding(w http.ResponseWriter, r *http.Request) {
 			notFound = true
 			return nil
 		}
-		return err
+		if err != nil {
+			return err
+		}
+		after, err := audit.SnapshotByTable(ctx, tx, "buildings", id)
+		if err != nil {
+			return err
+		}
+		return audit.Record(ctx, tx, p.CustomerID, audit.Entry{
+			Actor: p.Role, Action: "building.create", TargetKind: "building", TargetID: id, After: after,
+		})
 	})
 	if !ok {
 		return
@@ -145,7 +173,16 @@ func (h *Handler) CreateRoom(w http.ResponseWriter, r *http.Request) {
 			notFound = true
 			return nil
 		}
-		return err
+		if err != nil {
+			return err
+		}
+		after, err := audit.SnapshotByTable(ctx, tx, "rooms", id)
+		if err != nil {
+			return err
+		}
+		return audit.Record(ctx, tx, p.CustomerID, audit.Entry{
+			Actor: p.Role, Action: "room.create", TargetKind: "room", TargetID: id, After: after,
+		})
 	})
 	if !ok {
 		return
@@ -351,7 +388,16 @@ func (h *Handler) CreateDevice(w http.ResponseWriter, r *http.Request) {
 			duplicate = true
 			return nil
 		}
-		return err
+		if err != nil {
+			return err
+		}
+		after, err := audit.SnapshotDevice(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		return audit.Record(ctx, tx, p.CustomerID, audit.Entry{
+			Actor: p.Role, Action: "device.create", TargetKind: "device", TargetID: id, After: after,
+		})
 	})
 	if !ok {
 		return
@@ -498,14 +544,30 @@ func (h *Handler) UpdateDevice(w http.ResponseWriter, r *http.Request) {
 
 	sql := "UPDATE devices SET " + strings.Join(set, ", ") + " WHERE " + where
 
+	p, _ := portalauth.From(r.Context())
+
 	var rowsAffected int64
 	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
+		before, err := audit.SnapshotDevice(ctx, tx, id)
+		if err != nil {
+			return err
+		}
 		tag, err := tx.Exec(ctx, sql, args...)
 		if err != nil {
 			return err
 		}
 		rowsAffected = tag.RowsAffected()
-		return nil
+		if rowsAffected == 0 {
+			return nil
+		}
+		after, err := audit.SnapshotDevice(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		return audit.Record(ctx, tx, p.CustomerID, audit.Entry{
+			Actor: p.Role, Action: "device.update", TargetKind: "device", TargetID: id,
+			Before: before, After: after,
+		})
 	})
 	if !ok {
 		return
@@ -522,18 +584,31 @@ func (h *Handler) UpdateDevice(w http.ResponseWriter, r *http.Request) {
 
 // DeleteDevice — DELETE /api/v1/devices/{id}
 //
-// FK cascades drop the device's telemetry, events, and commands. Audit logging
-// (when it lands) will capture the delete itself; the row itself is gone.
+// FK cascades drop the device's telemetry, events, and commands. The audit
+// row captures the device's full pre-delete state so it can be reconstructed
+// for forensic purposes even after the cascade has run.
 func (h *Handler) DeleteDevice(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	p, _ := portalauth.From(r.Context())
+
 	var rowsAffected int64
 	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
+		before, err := audit.SnapshotDevice(ctx, tx, id)
+		if err != nil {
+			return err
+		}
 		tag, err := tx.Exec(ctx, `DELETE FROM devices WHERE id = $1`, id)
 		if err != nil {
 			return err
 		}
 		rowsAffected = tag.RowsAffected()
-		return nil
+		if rowsAffected == 0 {
+			return nil
+		}
+		return audit.Record(ctx, tx, p.CustomerID, audit.Entry{
+			Actor: p.Role, Action: "device.delete", TargetKind: "device", TargetID: id,
+			Before: before,
+		})
 	})
 	if !ok {
 		return

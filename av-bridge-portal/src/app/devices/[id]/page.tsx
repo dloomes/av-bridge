@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 import {
   ArrowLeft,
   ExternalLink,
+  History,
   MapPin,
   Pencil,
   RefreshCcw,
@@ -23,6 +24,7 @@ import { TelemetryGrid } from "@/components/telemetry-grid";
 import { EventFeed } from "@/components/event-feed";
 import { Modal } from "@/components/modal";
 import { DeviceForm } from "@/components/device-form";
+import { AuditFeed } from "@/components/audit-feed";
 import { usePolling } from "@/hooks/usePolling";
 import { api, API_BASE, API_KEY } from "@/lib/api";
 import type { DeviceDetail, Telemetry } from "@/lib/types";
@@ -37,6 +39,7 @@ export default function DeviceDetailPage() {
   const [deviceError, setDeviceError] = useState<Error | null>(null);
   const [reconnecting, setReconnecting] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
+  const [activityOpen, setActivityOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -208,6 +211,10 @@ export default function DeviceDetailPage() {
             <Pencil className="h-3.5 w-3.5" />
             Edit
           </Button>
+          <Button variant="outline" size="sm" onClick={() => setActivityOpen(true)}>
+            <History className="h-3.5 w-3.5" />
+            Activity
+          </Button>
           <Button
             variant="outline"
             size="sm"
@@ -235,6 +242,20 @@ export default function DeviceDetailPage() {
             telemetry.refresh();
           }}
         />
+      </Modal>
+
+      <Modal
+        open={activityOpen}
+        onClose={() => setActivityOpen(false)}
+        title={`Activity — ${device.name}`}
+      >
+        <div className="max-h-[70vh] overflow-y-auto">
+          <AuditFeed
+            targetKind="device"
+            targetId={device.id}
+            emptyHint="Nothing has happened to this device yet."
+          />
+        </div>
       </Modal>
 
       <Modal

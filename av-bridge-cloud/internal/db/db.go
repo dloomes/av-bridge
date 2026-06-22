@@ -86,6 +86,16 @@ type Collector struct {
 	SecretEnc  []byte
 }
 
+// TouchCollector stamps last_seen_at = now() for the given collector. Called
+// after every successful bridge auth so portal-side health checks can render
+// real online/offline state instead of "unknown". Uses the admin pool because
+// we want this write regardless of which (or whether any) tenant variable is
+// set in the current connection.
+func (s *Store) TouchCollector(ctx context.Context, id string) error {
+	_, err := s.admin.Exec(ctx, `UPDATE collectors SET last_seen_at = now() WHERE id = $1`, id)
+	return err
+}
+
 // LookupCollectorByBridgeID resolves the id the bridge reports to a collector
 // row. Runs as app_admin (cross-tenant) — we don't know the customer yet.
 func (s *Store) LookupCollectorByBridgeID(ctx context.Context, bridgeID string) (Collector, error) {

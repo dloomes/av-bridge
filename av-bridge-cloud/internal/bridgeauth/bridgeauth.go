@@ -75,6 +75,11 @@ func (a *Authenticator) Authenticate(w http.ResponseWriter, r *http.Request) ([]
 		WriteErr(w, http.StatusUnauthorized, "authentication failed")
 		return nil, nil, false
 	}
+	// Stamp last-seen so portal can render real connection health. Failure
+	// here is non-fatal — log and continue; the bridge call itself succeeded.
+	if err := a.store.TouchCollector(r.Context(), col.ID); err != nil {
+		a.log.Warn("touch collector failed", "collector", col.ID, "error", err)
+	}
 	return body, &col, true
 }
 

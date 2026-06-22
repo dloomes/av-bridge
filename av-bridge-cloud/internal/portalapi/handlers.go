@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/dloomes/av-bridge-cloud/internal/db"
@@ -94,6 +95,14 @@ func (h *Handler) Status(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, o)
 }
 
+// Collector health thresholds. Bridges poll every ~30s by default, so a
+// 2-minute gap is the first signal something's off, and 5 minutes is enough
+// for a power blip or restart to recover from.
+const (
+	collectorDegradedAfter = 2 * time.Minute
+	collectorOfflineAfter  = 5 * time.Minute
+)
+
 // ListCollectors — GET /api/v1/collectors
 func (h *Handler) ListCollectors(w http.ResponseWriter, r *http.Request) {
 	type item struct {
@@ -104,9 +113,10 @@ func (h *Handler) ListCollectors(w http.ResponseWriter, r *http.Request) {
 		LastSeenAt        *time.Time `json:"last_seen_at,omitempty"`
 	}
 	out := []item{}
+	now := time.Now()
 	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
 		rows, err := tx.Query(ctx,
-			`SELECT id::text, COALESCE(bridge_collector_id,''), name, status, last_seen_at
+			`SELECT id::text, COALESCE(bridge_collector_id,''), name, last_seen_at
 			   FROM collectors ORDER BY name`)
 		if err != nil {
 			return err
@@ -114,9 +124,10 @@ func (h *Handler) ListCollectors(w http.ResponseWriter, r *http.Request) {
 		defer rows.Close()
 		for rows.Next() {
 			var c item
-			if err := rows.Scan(&c.ID, &c.BridgeCollectorID, &c.Name, &c.Status, &c.LastSeenAt); err != nil {
+			if err := rows.Scan(&c.ID, &c.BridgeCollectorID, &c.Name, &c.LastSeenAt); err != nil {
 				return err
 			}
+			c.Status = computeCollectorStatus(c.LastSeenAt, now)
 			out = append(out, c)
 		}
 		return rows.Err()
@@ -125,6 +136,21 @@ func (h *Handler) ListCollectors(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+func computeCollectorStatus(lastSeen *time.Time, now time.Time) string {
+	if lastSeen == nil {
+		return "unknown"
+	}
+	age := now.Sub(*lastSeen)
+	switch {
+	case age >= collectorOfflineAfter:
+		return "offline"
+	case age >= collectorDegradedAfter:
+		return "degraded"
+	default:
+		return "online"
+	}
 }
 
 // ListDevices — GET /api/v1/devices. Shape matches the bridge's DeviceSummary.
@@ -409,6 +435,92 @@ func (h *Handler) ListEvents(w http.ResponseWriter, r *http.Request) {
 				return err
 			}
 			out = append(out, it)
+		}
+		return rows.Err()
+	})
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// ListAudit — GET /api/v1/audit?limit=N&target_kind=device&target_id=<uuid>
+//
+// Returns recent audit entries for the caller's tenant, most recent first.
+// Filtering: target_kind + target_id let the portal show a per-target
+// history pane (e.g. "every change to this device"). All filters are
+// optional; without them you get the customer-wide feed.
+//
+// Any authenticated portal user can read their own tenant's audit — this is
+// transparency, not privilege escalation. Sensitive columns
+// (username_enc / password_enc) are never in the snapshots in the first
+// place (excluded at write time, see audit.SnapshotDevice).
+func (h *Handler) ListAudit(w http.ResponseWriter, r *http.Request) {
+	limit := queryInt(r, "limit", 100, 500)
+	targetKind := r.URL.Query().Get("target_kind")
+	targetID := r.URL.Query().Get("target_id")
+
+	type entry struct {
+		ID         int64           `json:"id"`
+		Actor      string          `json:"actor"`
+		Action     string          `json:"action"`
+		TargetKind string          `json:"target_kind"`
+		TargetID   string          `json:"target_id,omitempty"`
+		Before     json.RawMessage `json:"before,omitempty"`
+		After      json.RawMessage `json:"after,omitempty"`
+		Metadata   json.RawMessage `json:"metadata,omitempty"`
+		Ts         time.Time       `json:"ts"`
+	}
+	out := []entry{}
+
+	// Build the query with optional filters. Always tenant-scoped via RLS;
+	// no need to repeat customer_id in the WHERE.
+	//
+	// target_id filter matches either target_id OR related_target_id so a
+	// per-device feed picks up entries where the device is the secondary
+	// subject (today: command.submit). target_kind, when supplied, applies
+	// to whichever side the id matched on.
+	sql := `SELECT id, actor, action, target_kind, COALESCE(target_id,''),
+	               before, "after", metadata, ts
+	          FROM audit_log`
+	conds := []string{}
+	args := []any{}
+	if targetID != "" {
+		args = append(args, targetID)
+		idIdx := strconv.Itoa(len(args))
+		if targetKind != "" {
+			args = append(args, targetKind)
+			kindIdx := strconv.Itoa(len(args))
+			conds = append(conds,
+				"((target_id = $"+idIdx+" AND target_kind = $"+kindIdx+")"+
+					" OR (related_target_id = $"+idIdx+" AND related_target_kind = $"+kindIdx+"))")
+		} else {
+			conds = append(conds,
+				"(target_id = $"+idIdx+" OR related_target_id = $"+idIdx+")")
+		}
+	} else if targetKind != "" {
+		args = append(args, targetKind)
+		conds = append(conds, "target_kind = $"+strconv.Itoa(len(args)))
+	}
+	if len(conds) > 0 {
+		sql += " WHERE " + strings.Join(conds, " AND ")
+	}
+	args = append(args, limit)
+	sql += " ORDER BY ts DESC LIMIT $" + strconv.Itoa(len(args))
+
+	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, sql, args...)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var e entry
+			if err := rows.Scan(&e.ID, &e.Actor, &e.Action, &e.TargetKind, &e.TargetID,
+				&e.Before, &e.After, &e.Metadata, &e.Ts); err != nil {
+				return err
+			}
+			out = append(out, e)
 		}
 		return rows.Err()
 	})

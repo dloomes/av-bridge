@@ -20,6 +20,7 @@ import (
 	"github.com/dloomes/av-bridge-cloud/internal/portalapi"
 	"github.com/dloomes/av-bridge-cloud/internal/portalauth"
 	"github.com/dloomes/av-bridge-cloud/internal/secrets"
+	"github.com/dloomes/av-bridge-cloud/internal/wsfanout"
 )
 
 func main() {
@@ -72,7 +73,11 @@ func main() {
 		log.Info("poc tenant bootstrapped", "bridge_collector_id", cfg.PoCBridgeID)
 	}
 
-	h := ingest.NewHandler(store, cipher, log)
+	// Live-event fan-out: ingest publishes, portal /ws/events subscribes.
+	// Single hub is shared so events from ingest reach subscribed portals.
+	hub := wsfanout.NewHub(log)
+
+	h := ingest.NewHandler(store, cipher, hub, log)
 
 	var adminH http.Handler
 	if cfg.AdminAPIToken != "" {
@@ -88,6 +93,7 @@ func main() {
 		portalRoutes = &api.PortalRoutes{
 			Resolver: resolver,
 			Portal:   portalapi.New(store, cipher, log),
+			WSHub:    hub,
 		}
 		log.Info("portal read API enabled",
 			"customer_id", cfg.PoCPortalCustomerID, "role", cfg.PoCPortalRole)

@@ -12,6 +12,7 @@ import (
 	"github.com/dloomes/av-bridge-cloud/internal/auth"
 	"github.com/dloomes/av-bridge-cloud/internal/db"
 	"github.com/dloomes/av-bridge-cloud/internal/secrets"
+	"github.com/dloomes/av-bridge-cloud/internal/wsfanout"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -56,11 +57,14 @@ type payloadDTO struct {
 type Handler struct {
 	store  *db.Store
 	cipher secrets.Cipher
+	hub    *wsfanout.Hub
 	log    *slog.Logger
 }
 
-func NewHandler(store *db.Store, cipher secrets.Cipher, log *slog.Logger) *Handler {
-	return &Handler{store: store, cipher: cipher, log: log}
+// NewHandler. hub may be nil — if so, events still persist but no live
+// fan-out happens (handler degrades gracefully so the WS layer is optional).
+func NewHandler(store *db.Store, cipher secrets.Cipher, hub *wsfanout.Hub, log *slog.Logger) *Handler {
+	return &Handler{store: store, cipher: cipher, hub: hub, log: log}
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -104,6 +108,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnauthorized, "authentication failed")
 		return
 	}
+	if err := h.store.TouchCollector(ctx, col.ID); err != nil {
+		h.log.Warn("touch collector failed", "collector", col.ID, "error", err)
+	}
 
 	// 2. Tenant-scoped writes (RLS-enforced as app_tenant).
 	err = h.store.WithTenant(ctx, col.CustomerID, func(tx pgx.Tx) error {
@@ -143,6 +150,22 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.log.Error("ingest write failed", "collector", col.ID, "error", err)
 		writeErr(w, http.StatusInternalServerError, "internal error")
 		return
+	}
+
+	// Live fan-out happens after persist so a rolled-back tx never produces
+	// phantom WS frames. Loop is cheap when no subscribers — Publish is a
+	// read-locked map lookup with an empty result.
+	if h.hub != nil {
+		for _, e := range p.Events {
+			h.hub.Publish(col.CustomerID, wsfanout.Event{
+				DeviceID:   e.DeviceID,
+				DeviceName: e.DeviceName,
+				DeviceType: e.DeviceType,
+				EventType:  e.EventType,
+				Payload:    e.Payload,
+				Timestamp:  e.Timestamp,
+			})
+		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{

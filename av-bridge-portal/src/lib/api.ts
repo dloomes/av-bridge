@@ -1,4 +1,5 @@
 import type {
+  AuditEntry,
   CollectorSummary,
   CommandRequest,
   CommandResponse,
@@ -152,6 +153,20 @@ export const api = {
       } catch {}
       throw new ApiError(`${res.status} ${res.statusText}${body ? `: ${body}` : ""}`, res.status);
     }
+  },
+
+  // -- audit -------------------------------------------------------------------
+
+  listAudit: (
+    params: { targetKind?: string; targetId?: string; limit?: number } = {},
+    signal?: AbortSignal
+  ) => {
+    const qs = new URLSearchParams();
+    if (params.targetKind) qs.set("target_kind", params.targetKind);
+    if (params.targetId) qs.set("target_id", params.targetId);
+    if (params.limit) qs.set("limit", String(params.limit));
+    const q = qs.toString();
+    return request<AuditEntry[]>(`/api/v1/audit${q ? `?${q}` : ""}`, { signal });
   },
 
   metrics: (signal?: AbortSignal) => requestText("/metrics", { signal }),

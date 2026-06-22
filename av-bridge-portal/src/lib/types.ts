@@ -70,6 +70,22 @@ export interface NamedRow {
   parent_id?: string;
 }
 
+// AuditEntry mirrors the JSON shape returned by GET /api/v1/audit.
+// before/after are intentionally `unknown` — the cloud returns whatever
+// row_to_json produced for the target table, and the shape varies by
+// target_kind. The UI renders these as JSON, not typed objects.
+export interface AuditEntry {
+  id: number;
+  actor: string;
+  action: string;
+  target_kind: string;
+  target_id?: string;
+  before?: unknown;
+  after?: unknown;
+  metadata?: Record<string, unknown>;
+  ts: string;
+}
+
 export interface Telemetry {
   device_id: string;
   device_name: string;
