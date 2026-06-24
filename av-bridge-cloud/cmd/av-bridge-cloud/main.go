@@ -89,14 +89,22 @@ func main() {
 
 	var portalRoutes *api.PortalRoutes
 	if cfg.PoCPortalToken != "" {
-		resolver := portalauth.NewStaticResolver(cfg.PoCPortalToken, cfg.PoCPortalCustomerID, cfg.PoCPortalRole)
+		// Two-tier auth: mock-JWT for real per-user identity (dev-friendly),
+		// static token as a fallback for ops/smoke scripts that don't want to
+		// mint a token. ChainResolver tries mock first; static catches the
+		// long-form Bearer that's been in the config since slice 2.
+		lookup := portalauth.NewDBTenantLookup(store.AdminPool())
+		mock := portalauth.NewMockJWTResolver(lookup, true)
+		static := portalauth.NewStaticResolver(cfg.PoCPortalToken, cfg.PoCPortalCustomerID, cfg.PoCPortalRole)
+		resolver := portalauth.NewChainResolver(mock, static)
 		portalRoutes = &api.PortalRoutes{
 			Resolver: resolver,
 			Portal:   portalapi.New(store, cipher, log),
 			WSHub:    hub,
 		}
-		log.Info("portal read API enabled",
-			"customer_id", cfg.PoCPortalCustomerID, "role", cfg.PoCPortalRole)
+		log.Info("portal API enabled",
+			"customer_id", cfg.PoCPortalCustomerID, "role", cfg.PoCPortalRole,
+			"mock_jwt", "enabled")
 	} else {
 		log.Warn("POC_PORTAL_TOKEN not set — portal read API disabled")
 	}

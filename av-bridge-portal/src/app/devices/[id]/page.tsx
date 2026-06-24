@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ConnectionIndicator } from "@/components/connection-indicator";
+import { UserMenu } from "@/components/user-menu";
 import { StatusBadge } from "@/components/status-badge";
 import { DeviceIcon } from "@/components/device-icon";
 import { CommandPanel } from "@/components/command-panel";
@@ -26,7 +27,7 @@ import { Modal } from "@/components/modal";
 import { DeviceForm } from "@/components/device-form";
 import { AuditFeed } from "@/components/audit-feed";
 import { usePolling } from "@/hooks/usePolling";
-import { api, API_BASE, API_KEY } from "@/lib/api";
+import { api, API_BASE, currentToken } from "@/lib/api";
 import type { DeviceDetail, Telemetry } from "@/lib/types";
 import { formatRelative } from "@/lib/utils";
 
@@ -181,7 +182,7 @@ export default function DeviceDetailPage() {
           {device.protocol === "aurora_rxt" && (
             <Button asChild variant="outline" size="sm">
               <a
-                href={`${API_BASE}/api/v1/devices/${encodeURIComponent(device.id)}/touch-panel/user${API_KEY ? `?token=${encodeURIComponent(API_KEY)}` : ""}`}
+                href={`${API_BASE}/api/v1/devices/${encodeURIComponent(device.id)}/touch-panel/user${currentToken() ? `?token=${encodeURIComponent(currentToken())}` : ""}`}
                 target="_blank"
                 rel="noopener noreferrer"
               >
@@ -224,6 +225,7 @@ export default function DeviceDetailPage() {
             Delete
           </Button>
           <ConnectionIndicator />
+          <UserMenu />
         </div>
       </header>
 

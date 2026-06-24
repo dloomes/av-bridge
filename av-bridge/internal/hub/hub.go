@@ -16,6 +16,32 @@ import (
 	"github.com/dloomes/av-bridge/internal/store"
 )
 
+// adapterRelevantChange reports whether the difference between a and b would
+// require a restart of the running adapter. Returns false when the configs
+// differ only in cosmetic fields (Name, Location, Type, Tags) — those don't
+// affect the connection, polling cadence, or pre-registered subscriptions.
+//
+// Limitation: cosmetic field updates don't propagate to telemetry until the
+// next real restart, since the adapter caches Cfg by value. A separate live-
+// update path on device.Base would be needed if/when that matters.
+func adapterRelevantChange(a, b config.DeviceConfig) bool {
+	if a.Protocol != b.Protocol ||
+		a.Address != b.Address ||
+		a.BaudRate != b.BaudRate ||
+		a.Username != b.Username ||
+		a.Password != b.Password ||
+		a.PollRate != b.PollRate {
+		return true
+	}
+	if !reflect.DeepEqual(a.Commands, b.Commands) {
+		return true
+	}
+	if !reflect.DeepEqual(a.Subscriptions, b.Subscriptions) {
+		return true
+	}
+	return false
+}
+
 // DeviceEntry holds a device, the config that produced it, and the cancel
 // for its manage-goroutine. Cfg is kept so Reconcile can diff incoming
 // configs against what's running.
@@ -156,14 +182,25 @@ func (h *Hub) Reconcile(want []config.DeviceConfig) {
 			delete(h.devices, id)
 			continue
 		}
-		if !configEqual(entry.Cfg, wanted) {
-			slog.Info("reconcile: restarting device with updated config", "device", id)
-			entry.Cancel()
-			_ = entry.Dev.Disconnect()
-			delete(h.devices, id)
-			// Fall through to the add-loop below — same id is no longer in
-			// h.devices, so it gets spawned with the updated config.
+		if configEqual(entry.Cfg, wanted) {
+			continue
 		}
+		if !adapterRelevantChange(entry.Cfg, wanted) {
+			// Cosmetic-only edit (Name / Location / Type / Tags). Keep the
+			// running adapter — don't drop a live session for a label change.
+			// We still refresh entry.Cfg so the next reconcile compares
+			// against the desired state, not against a fossilised earlier
+			// snapshot.
+			slog.Info("reconcile: cosmetic-only change, keeping device running", "device", id)
+			entry.Cfg = wanted
+			continue
+		}
+		slog.Info("reconcile: restarting device with updated config", "device", id)
+		entry.Cancel()
+		_ = entry.Dev.Disconnect()
+		delete(h.devices, id)
+		// Fall through to the add-loop below — same id is no longer in
+		// h.devices, so it gets spawned with the updated config.
 	}
 	var toSpawn []config.DeviceConfig
 	for id, dcfg := range wantByID {

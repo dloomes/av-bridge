@@ -11,18 +11,21 @@ import {
   MapPin,
   Pencil,
   Plus,
+  Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Modal } from "@/components/modal";
+import { UserMenu } from "@/components/user-menu";
 import {
   HierarchyForm,
   type HierarchyEditInitial,
   type HierarchyKind,
 } from "@/components/hierarchy-form";
+import { ConfirmDelete, type ImpactCounts } from "@/components/confirm-delete";
 import { api } from "@/lib/api";
-import type { BuildingRow, NamedRow } from "@/lib/types";
+import type { BuildingRow, DeviceSummary, NamedRow } from "@/lib/types";
 
 interface ModalState {
   kind: HierarchyKind;
@@ -32,28 +35,39 @@ interface ModalState {
   initial?: HierarchyEditInitial;
 }
 
+interface DeleteState {
+  kind: HierarchyKind;
+  id: string;
+  name: string;
+  impact: ImpactCounts;
+}
+
 export default function LocationsPage() {
   const [regions, setRegions] = useState<NamedRow[] | null>(null);
   const [locations, setLocations] = useState<NamedRow[] | null>(null);
   const [buildings, setBuildings] = useState<BuildingRow[] | null>(null);
   const [rooms, setRooms] = useState<NamedRow[] | null>(null);
+  const [devices, setDevices] = useState<DeviceSummary[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [modal, setModal] = useState<ModalState | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<DeleteState | null>(null);
 
   const load = useCallback(async (signal?: AbortSignal) => {
     try {
-      const [rg, lc, bd, rm] = await Promise.all([
+      const [rg, lc, bd, rm, dv] = await Promise.all([
         api.listRegions(signal),
         api.listLocations(signal),
         api.listBuildings(signal),
         api.listRooms(signal),
+        api.listDevices(signal),
       ]);
       if (signal?.aborted) return;
       setRegions(rg);
       setLocations(lc);
       setBuildings(bd);
       setRooms(rm);
+      setDevices(dv);
       setLoadError(null);
     } catch (e) {
       if (!signal?.aborted) setLoadError((e as Error).message);
@@ -107,10 +121,72 @@ export default function LocationsPage() {
     return m;
   }, [rooms]);
 
+  const devicesByRoom = useMemo(() => {
+    const m = new Map<string, number>();
+    (devices ?? []).forEach((d) => {
+      if (!d.room_id) return;
+      m.set(d.room_id, (m.get(d.room_id) ?? 0) + 1);
+    });
+    return m;
+  }, [devices]);
+
   const isLoading = regions === null;
 
   const handleSuccess = () => {
     setModal(null);
+    void load();
+  };
+
+  // Cascade impact, computed from already-fetched lists. The cloud recounts
+  // server-side for the audit metadata, so the UI being a few seconds stale
+  // is harmless — worst case the count shown is off by one.
+  const buildImpact = useCallback(
+    (kind: HierarchyKind, id: string): ImpactCounts => {
+      switch (kind) {
+        case "region": {
+          const locs = locationsByRegion.get(id) ?? [];
+          const blds = locs.flatMap((l) => buildingsByLocation.get(l.id) ?? []);
+          const rms = blds.flatMap((b) => roomsByBuilding.get(b.id) ?? []);
+          const dev = rms.reduce((n, r) => n + (devicesByRoom.get(r.id) ?? 0), 0);
+          return {
+            locations: locs.length,
+            buildings: blds.length,
+            rooms: rms.length,
+            devicesOrphaned: dev,
+          };
+        }
+        case "location": {
+          const blds = buildingsByLocation.get(id) ?? [];
+          const rms = blds.flatMap((b) => roomsByBuilding.get(b.id) ?? []);
+          const dev = rms.reduce((n, r) => n + (devicesByRoom.get(r.id) ?? 0), 0);
+          return {
+            buildings: blds.length,
+            rooms: rms.length,
+            devicesOrphaned: dev,
+          };
+        }
+        case "building": {
+          const rms = roomsByBuilding.get(id) ?? [];
+          const dev = rms.reduce((n, r) => n + (devicesByRoom.get(r.id) ?? 0), 0);
+          return { rooms: rms.length, devicesOrphaned: dev };
+        }
+        case "room":
+          return { devicesOrphaned: devicesByRoom.get(id) ?? 0 };
+      }
+    },
+    [locationsByRegion, buildingsByLocation, roomsByBuilding, devicesByRoom]
+  );
+
+  const handleDelete = async () => {
+    if (!deleteTarget) return;
+    const table = ({
+      region: "regions",
+      location: "locations",
+      building: "buildings",
+      room: "rooms",
+    } as const)[deleteTarget.kind];
+    await api.deleteHierarchy(table, deleteTarget.id);
+    setDeleteTarget(null);
     void load();
   };
 
@@ -131,13 +207,16 @@ export default function LocationsPage() {
             </p>
           </div>
         </div>
-        <Button
-          size="sm"
-          onClick={() => setModal({ kind: "region", mode: "create" })}
-        >
-          <Plus className="h-3.5 w-3.5" />
-          New region
-        </Button>
+        <div className="flex items-center gap-3">
+          <Button
+            size="sm"
+            onClick={() => setModal({ kind: "region", mode: "create" })}
+          >
+            <Plus className="h-3.5 w-3.5" />
+            New region
+          </Button>
+          <UserMenu />
+        </div>
       </header>
 
       {modal && (
@@ -155,6 +234,23 @@ export default function LocationsPage() {
             parentLabel={modal.parentLabel}
             onCancel={() => setModal(null)}
             onSuccess={handleSuccess}
+          />
+        </Modal>
+      )}
+
+      {deleteTarget && (
+        <Modal
+          open
+          onClose={() => setDeleteTarget(null)}
+          title={`Delete ${deleteTarget.kind}`}
+          wide={false}
+        >
+          <ConfirmDelete
+            kind={deleteTarget.kind}
+            name={deleteTarget.name}
+            impact={deleteTarget.impact}
+            onCancel={() => setDeleteTarget(null)}
+            onConfirm={handleDelete}
           />
         </Modal>
       )}
@@ -214,6 +310,21 @@ export default function LocationsPage() {
                         }
                       >
                         <Pencil className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        aria-label="Delete region"
+                        onClick={() =>
+                          setDeleteTarget({
+                            kind: "region",
+                            id: region.id,
+                            name: region.name,
+                            impact: buildImpact("region", region.id),
+                          })
+                        }
+                      >
+                        <Trash2 className="h-3.5 w-3.5 text-destructive" />
                       </Button>
                       <Button
                         size="sm"
@@ -279,6 +390,21 @@ export default function LocationsPage() {
                                   }
                                 >
                                   <Pencil className="h-3.5 w-3.5" />
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  aria-label="Delete location"
+                                  onClick={() =>
+                                    setDeleteTarget({
+                                      kind: "location",
+                                      id: loc.id,
+                                      name: loc.name,
+                                      impact: buildImpact("location", loc.id),
+                                    })
+                                  }
+                                >
+                                  <Trash2 className="h-3.5 w-3.5 text-destructive" />
                                 </Button>
                                 <Button
                                   size="sm"
@@ -353,6 +479,21 @@ export default function LocationsPage() {
                                           <Button
                                             size="sm"
                                             variant="ghost"
+                                            aria-label="Delete building"
+                                            onClick={() =>
+                                              setDeleteTarget({
+                                                kind: "building",
+                                                id: bld.id,
+                                                name: bld.name,
+                                                impact: buildImpact("building", bld.id),
+                                              })
+                                            }
+                                          >
+                                            <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                                          </Button>
+                                          <Button
+                                            size="sm"
+                                            variant="ghost"
                                             onClick={() =>
                                               setModal({
                                                 kind: "room",
@@ -374,35 +515,61 @@ export default function LocationsPage() {
                                                 No rooms yet.
                                               </li>
                                             ) : (
-                                              bRooms.map((room) => (
-                                                <li
-                                                  key={room.id}
-                                                  className="group flex items-center gap-2 text-sm text-muted-foreground"
-                                                >
-                                                  <DoorOpen className="h-3 w-3" />
-                                                  <span className="flex-1">
-                                                    {room.name}
-                                                  </span>
-                                                  <Button
-                                                    size="sm"
-                                                    variant="ghost"
-                                                    aria-label="Edit room"
-                                                    className="opacity-0 group-hover:opacity-100 transition-opacity"
-                                                    onClick={() =>
-                                                      setModal({
-                                                        kind: "room",
-                                                        mode: "edit",
-                                                        initial: {
+                                              bRooms.map((room) => {
+                                                const deviceCount =
+                                                  devicesByRoom.get(room.id) ?? 0;
+                                                return (
+                                                  <li
+                                                    key={room.id}
+                                                    className="group flex items-center gap-2 text-sm text-muted-foreground"
+                                                  >
+                                                    <DoorOpen className="h-3 w-3" />
+                                                    <span className="flex-1">
+                                                      {room.name}
+                                                      {deviceCount > 0 && (
+                                                        <span className="ml-2 text-[11px] text-muted-foreground/70">
+                                                          · {deviceCount} device
+                                                          {deviceCount === 1 ? "" : "s"}
+                                                        </span>
+                                                      )}
+                                                    </span>
+                                                    <Button
+                                                      size="sm"
+                                                      variant="ghost"
+                                                      aria-label="Edit room"
+                                                      className="opacity-0 group-hover:opacity-100 transition-opacity"
+                                                      onClick={() =>
+                                                        setModal({
+                                                          kind: "room",
+                                                          mode: "edit",
+                                                          initial: {
+                                                            id: room.id,
+                                                            name: room.name,
+                                                          },
+                                                        })
+                                                      }
+                                                    >
+                                                      <Pencil className="h-3 w-3" />
+                                                    </Button>
+                                                    <Button
+                                                      size="sm"
+                                                      variant="ghost"
+                                                      aria-label="Delete room"
+                                                      className="opacity-0 group-hover:opacity-100 transition-opacity"
+                                                      onClick={() =>
+                                                        setDeleteTarget({
+                                                          kind: "room",
                                                           id: room.id,
                                                           name: room.name,
-                                                        },
-                                                      })
-                                                    }
-                                                  >
-                                                    <Pencil className="h-3 w-3" />
-                                                  </Button>
-                                                </li>
-                                              ))
+                                                          impact: buildImpact("room", room.id),
+                                                        })
+                                                      }
+                                                    >
+                                                      <Trash2 className="h-3 w-3 text-destructive" />
+                                                    </Button>
+                                                  </li>
+                                                );
+                                              })
                                             )}
                                           </ul>
                                         )}

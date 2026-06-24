@@ -115,6 +115,13 @@ const (
 	pocBuildingID = "44444444-4444-4444-4444-444444444444"
 	pocRoomID     = "55555555-5555-5555-5555-555555555555"
 	pocCollectorID = "66666666-6666-6666-6666-666666666666"
+
+	// PocEntraTenantID is the Entra tenant the POC customer's users live in
+	// for the mock-JWT dev flow. Real deployments set this per-customer via
+	// admin tooling; for POC we hardcode + seed.
+	PocEntraTenantID    = "tenant-acme-poc"
+	PocVendorTenantID   = "tenant-involve-vendor"
+	pocVendorTenantUUID = "77777777-7777-7777-7777-777777777777"
 )
 
 // BootstrapPoC idempotently seeds one tenant's full hierarchy plus a collector
@@ -136,8 +143,9 @@ func (s *Store) BootstrapPoC(ctx context.Context, cipher secrets.Cipher, bridgeI
 		sql  string
 		args []any
 	}{
-		{`INSERT INTO customers (id, name) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING`,
-			[]any{pocCustomerID, customerName}},
+		{`INSERT INTO customers (id, name, entra_tenant_id) VALUES ($1, $2, $3)
+		  ON CONFLICT (id) DO UPDATE SET entra_tenant_id = EXCLUDED.entra_tenant_id`,
+			[]any{pocCustomerID, customerName, PocEntraTenantID}},
 		{`INSERT INTO regions (id, customer_id, name) VALUES ($1, $2, 'Default Region') ON CONFLICT (id) DO NOTHING`,
 			[]any{pocRegionID, pocCustomerID}},
 		{`INSERT INTO locations (id, customer_id, region_id, name) VALUES ($1, $2, $3, 'Default Location') ON CONFLICT (id) DO NOTHING`,
@@ -151,6 +159,26 @@ func (s *Store) BootstrapPoC(ctx context.Context, cipher secrets.Cipher, bridgeI
 		  ON CONFLICT (id) DO UPDATE SET bridge_collector_id = EXCLUDED.bridge_collector_id,
 		                                 hmac_secret_enc = EXCLUDED.hmac_secret_enc`,
 			[]any{pocCollectorID, pocCustomerID, pocBuildingID, bridgeID, enc}},
+
+		// Customer-side role mappings — group names match the mock-JWT
+		// presets used by the dev portal sign-in screen.
+		{`INSERT INTO role_mappings (customer_id, group_id, role) VALUES ($1, 'poc-admins', 'admin')
+		  ON CONFLICT (customer_id, group_id) WHERE customer_id IS NOT NULL DO NOTHING`,
+			[]any{pocCustomerID}},
+		{`INSERT INTO role_mappings (customer_id, group_id, role) VALUES ($1, 'poc-operators', 'operator')
+		  ON CONFLICT (customer_id, group_id) WHERE customer_id IS NOT NULL DO NOTHING`,
+			[]any{pocCustomerID}},
+		{`INSERT INTO role_mappings (customer_id, group_id, role) VALUES ($1, 'poc-viewers', 'viewer')
+		  ON CONFLICT (customer_id, group_id) WHERE customer_id IS NOT NULL DO NOTHING`,
+			[]any{pocCustomerID}},
+
+		// Vendor (Involve / helpdesk) tenant + admin group mapping.
+		{`INSERT INTO vendor_tenants (id, name, entra_tenant_id)
+		  VALUES ($1, 'Involve (Vendor)', $2) ON CONFLICT (entra_tenant_id) DO NOTHING`,
+			[]any{pocVendorTenantUUID, PocVendorTenantID}},
+		{`INSERT INTO role_mappings (vendor_tenant_id, group_id, role) VALUES ($1, 'helpdesk-admins', 'admin')
+		  ON CONFLICT (vendor_tenant_id, group_id) WHERE vendor_tenant_id IS NOT NULL DO NOTHING`,
+			[]any{pocVendorTenantUUID}},
 	}
 	for _, st := range stmts {
 		if _, err := tx.Exec(ctx, st.sql, st.args...); err != nil {

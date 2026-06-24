@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import { Sidebar } from "@/components/sidebar";
+import { AppShell } from "@/components/app-shell";
 
 export const metadata: Metadata = {
   title: "AV Bridge",
@@ -16,8 +16,7 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <body className="antialiased">
         <div className="flex min-h-screen">
-          <Sidebar />
-          <main className="flex-1 min-w-0">{children}</main>
+          <AppShell>{children}</AppShell>
         </div>
       </body>
     </html>

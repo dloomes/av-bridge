@@ -154,6 +154,9 @@ func computeCollectorStatus(lastSeen *time.Time, now time.Time) string {
 }
 
 // ListDevices — GET /api/v1/devices. Shape matches the bridge's DeviceSummary.
+//
+// room_id is included so callers (e.g. the locations page's delete-impact
+// preview) can group devices by their placement without an extra fetch.
 func (h *Handler) ListDevices(w http.ResponseWriter, r *http.Request) {
 	type item struct {
 		ID       string            `json:"id"`
@@ -161,6 +164,7 @@ func (h *Handler) ListDevices(w http.ResponseWriter, r *http.Request) {
 		Type     string            `json:"type"`
 		Protocol string            `json:"protocol"`
 		Location string            `json:"location"`
+		RoomID   *string           `json:"room_id,omitempty"`
 		Address  string            `json:"address,omitempty"`
 		Status   string            `json:"status"`
 		Tags     map[string]string `json:"tags,omitempty"`
@@ -176,6 +180,7 @@ func (h *Handler) ListDevices(w http.ResponseWriter, r *http.Request) {
 			         WHEN r.name IS NOT NULL THEN r.name
 			         ELSE ''
 			       END,
+			       d.room_id::text,
 			       COALESCE(d.ip_address, ''),
 			       COALESCE(d.latest_status, 'unknown'),
 			       d.tags
@@ -190,7 +195,7 @@ func (h *Handler) ListDevices(w http.ResponseWriter, r *http.Request) {
 		for rows.Next() {
 			var it item
 			var tags []byte
-			if err := rows.Scan(&it.ID, &it.Name, &it.Type, &it.Protocol, &it.Location, &it.Address, &it.Status, &tags); err != nil {
+			if err := rows.Scan(&it.ID, &it.Name, &it.Type, &it.Protocol, &it.Location, &it.RoomID, &it.Address, &it.Status, &tags); err != nil {
 				return err
 			}
 			if len(tags) > 0 {
@@ -526,6 +531,316 @@ func (h *Handler) ListAudit(w http.ResponseWriter, r *http.Request) {
 	})
 	if !ok {
 		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// ListAlerts — GET /api/v1/alerts?status=open&limit=N
+//
+// Returns alerts for the caller's tenant, most recently opened first.
+// `status` filters to open / acknowledged / resolved; omit for all states.
+// Acknowledged + resolved share a recency bias too — useful for a "what
+// happened recently" view alongside the live open list.
+func (h *Handler) ListAlerts(w http.ResponseWriter, r *http.Request) {
+	limit := queryInt(r, "limit", 100, 500)
+	status := r.URL.Query().Get("status")
+
+	type item struct {
+		ID              string          `json:"id"`
+		DeviceID        string          `json:"device_id"`
+		DeviceName      string          `json:"device_name"`
+		AlertKey        string          `json:"alert_key"`
+		Severity        string          `json:"severity"`
+		Message         string          `json:"message"`
+		Payload         json.RawMessage `json:"payload,omitempty"`
+		Status          string          `json:"status"`
+		OpenedAt        time.Time       `json:"opened_at"`
+		AcknowledgedAt  *time.Time      `json:"acknowledged_at,omitempty"`
+		AcknowledgedBy  string          `json:"acknowledged_by,omitempty"`
+		ResolvedAt      *time.Time      `json:"resolved_at,omitempty"`
+		ResolvedBy      string          `json:"resolved_by,omitempty"`
+	}
+	out := []item{}
+
+	sql := `SELECT a.id::text, a.device_id::text,
+	               COALESCE(d.name, d.reported_id, ''),
+	               a.alert_key, a.severity, a.message, a.payload, a.status,
+	               a.opened_at, a.acknowledged_at, COALESCE(a.acknowledged_by,''),
+	               a.resolved_at, COALESCE(a.resolved_by,'')
+	          FROM alerts a
+	          JOIN devices d ON d.id = a.device_id`
+	args := []any{}
+	if status != "" {
+		args = append(args, status)
+		sql += " WHERE a.status = $1"
+	}
+	args = append(args, limit)
+	sql += " ORDER BY a.opened_at DESC LIMIT $" + strconv.Itoa(len(args))
+
+	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, sql, args...)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var it item
+			if err := rows.Scan(&it.ID, &it.DeviceID, &it.DeviceName,
+				&it.AlertKey, &it.Severity, &it.Message, &it.Payload, &it.Status,
+				&it.OpenedAt, &it.AcknowledgedAt, &it.AcknowledgedBy,
+				&it.ResolvedAt, &it.ResolvedBy); err != nil {
+				return err
+			}
+			out = append(out, it)
+		}
+		return rows.Err()
+	})
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// AlertsSummary — GET /api/v1/alerts/summary
+//
+// Cheap counts for header badges. Returns open / acknowledged totals so the
+// dashboard can show an at-a-glance indicator without paging through the
+// full list. Resolved is omitted — it grows without bound and isn't useful
+// as a count.
+func (h *Handler) AlertsSummary(w http.ResponseWriter, r *http.Request) {
+	type out struct {
+		Open         int `json:"open"`
+		Acknowledged int `json:"acknowledged"`
+		Critical     int `json:"critical_open"`
+	}
+	var o out
+	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			SELECT
+			  COUNT(*) FILTER (WHERE status = 'open'),
+			  COUNT(*) FILTER (WHERE status = 'acknowledged'),
+			  COUNT(*) FILTER (WHERE status = 'open' AND severity = 'critical')
+			FROM alerts`).Scan(&o.Open, &o.Acknowledged, &o.Critical)
+	})
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, o)
+}
+
+// AcknowledgeAlert — POST /api/v1/alerts/{id}/acknowledge
+// Marks an open alert as acknowledged by the caller. Idempotent — a 200 is
+// returned even if the alert was already acknowledged (the row's actor +
+// timestamp stay on the first ack).
+func (h *Handler) AcknowledgeAlert(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	p, _ := portalauth.From(r.Context())
+
+	var rowsAffected int64
+	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, `
+			UPDATE alerts
+			   SET status          = 'acknowledged',
+			       acknowledged_at = now(),
+			       acknowledged_by = $2
+			 WHERE id = $1
+			   AND status = 'open'`,
+			id, p.Role)
+		if err != nil {
+			return err
+		}
+		rowsAffected = tag.RowsAffected()
+		return nil
+	})
+	if !ok {
+		return
+	}
+	if rowsAffected == 0 {
+		// Either not found, not visible to this tenant, or already past "open".
+		writeErr(w, http.StatusNotFound, "alert not found or not open")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"id": id, "status": "acknowledged"})
+}
+
+// ResolveAlert — POST /api/v1/alerts/{id}/resolve
+// Manually closes an alert. Use for cases where the bridge can't auto-resolve
+// (e.g. a "transient_glitch" event that doesn't have a matching recovery).
+func (h *Handler) ResolveAlert(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	p, _ := portalauth.From(r.Context())
+
+	var rowsAffected int64
+	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, `
+			UPDATE alerts
+			   SET status      = 'resolved',
+			       resolved_at = now(),
+			       resolved_by = $2
+			 WHERE id = $1
+			   AND status IN ('open','acknowledged')`,
+			id, p.Role)
+		if err != nil {
+			return err
+		}
+		rowsAffected = tag.RowsAffected()
+		return nil
+	})
+	if !ok {
+		return
+	}
+	if rowsAffected == 0 {
+		writeErr(w, http.StatusNotFound, "alert not found or already resolved")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"id": id, "status": "resolved"})
+}
+
+// Whoami — GET /api/v1/whoami
+//
+// Returns the resolved Principal so the portal can show the signed-in user
+// and gate UI to their role. Empty fields are omitted from the JSON to keep
+// the response readable for the legacy static-token path (which has no
+// email/name).
+func (h *Handler) Whoami(w http.ResponseWriter, r *http.Request) {
+	p, ok := portalauth.From(r.Context())
+	if !ok {
+		writeErr(w, http.StatusUnauthorized, "no principal")
+		return
+	}
+	type out struct {
+		UserID     string `json:"user_id,omitempty"`
+		Email      string `json:"email,omitempty"`
+		Name       string `json:"name,omitempty"`
+		CustomerID string `json:"customer_id,omitempty"`
+		Role       string `json:"role"`
+		IsVendor   bool   `json:"is_vendor,omitempty"`
+	}
+	writeJSON(w, http.StatusOK, out{
+		UserID:     p.UserID,
+		Email:      p.Email,
+		Name:       p.Name,
+		CustomerID: p.CustomerID,
+		Role:       p.Role,
+		IsVendor:   p.IsVendor,
+	})
+}
+
+// HelpdeskOverview — GET /api/v1/helpdesk/overview
+//
+// Per-customer rollups for the helpdesk landing page. Single query with
+// LEFT JOIN aggregates so an empty customer (no devices / no alerts /
+// no collectors) still shows up with zeros, not omitted.
+//
+// Vendor-only — handlers.go wires it behind RequireVendor at route mount
+// time. Bypasses RLS (admin pool) because by definition this is a cross-
+// tenant view.
+func (h *Handler) HelpdeskOverview(w http.ResponseWriter, r *http.Request) {
+	type item struct {
+		ID               string     `json:"id"`
+		Name             string     `json:"name"`
+		EntraTenantID    string     `json:"entra_tenant_id,omitempty"`
+		DevicesTotal     int        `json:"devices_total"`
+		DevicesOnline    int        `json:"devices_online"`
+		DevicesOffline   int        `json:"devices_offline"`
+		DevicesDegraded  int        `json:"devices_degraded"`
+		AlertsOpen       int        `json:"alerts_open"`
+		AlertsCritical   int        `json:"alerts_critical"`
+		CollectorsTotal  int        `json:"collectors_total"`
+		LastBridgeSeen   *time.Time `json:"last_bridge_seen,omitempty"`
+	}
+	out := []item{}
+
+	rows, err := h.store.AdminPool().Query(r.Context(), `
+		SELECT
+		  c.id::text,
+		  c.name,
+		  COALESCE(c.entra_tenant_id,''),
+		  COALESCE(d.total, 0),
+		  COALESCE(d.online, 0),
+		  COALESCE(d.offline, 0),
+		  COALESCE(d.degraded, 0),
+		  COALESCE(a.open, 0),
+		  COALESCE(a.critical, 0),
+		  COALESCE(col.total, 0),
+		  col.last_seen
+		FROM customers c
+		LEFT JOIN (
+		  SELECT customer_id,
+		    COUNT(*)::int AS total,
+		    COUNT(*) FILTER (WHERE latest_status = 'online')::int AS online,
+		    COUNT(*) FILTER (WHERE latest_status = 'offline')::int AS offline,
+		    COUNT(*) FILTER (WHERE latest_status = 'degraded')::int AS degraded
+		  FROM devices GROUP BY customer_id
+		) d ON d.customer_id = c.id
+		LEFT JOIN (
+		  SELECT customer_id,
+		    COUNT(*) FILTER (WHERE status = 'open')::int AS open,
+		    COUNT(*) FILTER (WHERE status = 'open' AND severity = 'critical')::int AS critical
+		  FROM alerts GROUP BY customer_id
+		) a ON a.customer_id = c.id
+		LEFT JOIN (
+		  SELECT customer_id,
+		    COUNT(*)::int AS total,
+		    MAX(last_seen_at) AS last_seen
+		  FROM collectors GROUP BY customer_id
+		) col ON col.customer_id = c.id
+		ORDER BY c.name`)
+	if err != nil {
+		h.log.Error("helpdesk overview query", "error", err)
+		writeErr(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var it item
+		if err := rows.Scan(&it.ID, &it.Name, &it.EntraTenantID,
+			&it.DevicesTotal, &it.DevicesOnline, &it.DevicesOffline, &it.DevicesDegraded,
+			&it.AlertsOpen, &it.AlertsCritical,
+			&it.CollectorsTotal, &it.LastBridgeSeen); err != nil {
+			h.log.Error("helpdesk overview scan", "error", err)
+			writeErr(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		out = append(out, it)
+	}
+	if err := rows.Err(); err != nil {
+		h.log.Error("helpdesk overview rows", "error", err)
+		writeErr(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// HelpdeskListCustomers — GET /api/v1/helpdesk/customers
+//
+// Vendor-only cross-tenant list of every customer. Used by the helpdesk UI
+// so support staff can pick which customer to act as via the X-Customer-Scope
+// header. Reads via the admin pool because by definition this call is
+// unscoped (the principal is a vendor without a CustomerID).
+func (h *Handler) HelpdeskListCustomers(w http.ResponseWriter, r *http.Request) {
+	type item struct {
+		ID            string `json:"id"`
+		Name          string `json:"name"`
+		EntraTenantID string `json:"entra_tenant_id,omitempty"`
+	}
+	out := []item{}
+	rows, err := h.store.AdminPool().Query(r.Context(),
+		`SELECT id::text, name, COALESCE(entra_tenant_id,'') FROM customers ORDER BY name`)
+	if err != nil {
+		h.log.Error("helpdesk customers list", "error", err)
+		writeErr(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var it item
+		if err := rows.Scan(&it.ID, &it.Name, &it.EntraTenantID); err != nil {
+			h.log.Error("helpdesk customers scan", "error", err)
+			writeErr(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		out = append(out, it)
 	}
 	writeJSON(w, http.StatusOK, out)
 }

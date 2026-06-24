@@ -8,6 +8,7 @@ export interface DeviceSummary {
   type: DeviceType;
   protocol: string;
   location: string;
+  room_id?: string | null;
   address?: string;
   status: DeviceStatus;
   tags?: Record<string, string>;
@@ -134,6 +135,31 @@ export interface FleetStatus {
   offline: number;
   degraded: number;
   time: string;
+}
+
+export type AlertSeverity = "info" | "warning" | "critical";
+export type AlertStatus = "open" | "acknowledged" | "resolved";
+
+export interface AlertItem {
+  id: string;
+  device_id: string;
+  device_name: string;
+  alert_key: string;
+  severity: AlertSeverity;
+  message: string;
+  payload?: unknown;
+  status: AlertStatus;
+  opened_at: string;
+  acknowledged_at?: string;
+  acknowledged_by?: string;
+  resolved_at?: string;
+  resolved_by?: string;
+}
+
+export interface AlertsSummary {
+  open: number;
+  acknowledged: number;
+  critical_open: number;
 }
 
 export interface HealthResponse {

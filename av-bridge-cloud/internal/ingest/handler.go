@@ -140,6 +140,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if err := insertEvent(ctx, tx, col.CustomerID, devID, e); err != nil {
 				return err
 			}
+			// Side-effect of an alert event: persist (or update) the alert row
+			// in the dedicated alerts table so the portal can show actionable
+			// state. Recovery events auto-resolve still-open alerts for the
+			// same device. Non-alert events are ignored here.
+			if err := handleAlertEvent(ctx, tx, col.CustomerID, devID, e); err != nil {
+				return err
+			}
 		}
 
 		_, err := tx.Exec(ctx,

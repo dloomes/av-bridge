@@ -67,6 +67,13 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 		}
 
 		// Read — any authenticated user.
+		mux.Handle("GET /api/v1/whoami", wrap(portal.Portal.Whoami))
+		mux.Handle("GET /api/v1/helpdesk/customers",
+			portalauth.Middleware(portal.Resolver,
+				portalauth.RequireVendor(http.HandlerFunc(portal.Portal.HelpdeskListCustomers))))
+		mux.Handle("GET /api/v1/helpdesk/overview",
+			portalauth.Middleware(portal.Resolver,
+				portalauth.RequireVendor(http.HandlerFunc(portal.Portal.HelpdeskOverview))))
 		mux.Handle("GET /api/v1/status", wrap(portal.Portal.Status))
 		mux.Handle("GET /api/v1/collectors", wrap(portal.Portal.ListCollectors))
 		mux.Handle("GET /api/v1/devices", wrap(portal.Portal.ListDevices))
@@ -75,6 +82,8 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 		mux.Handle("GET /api/v1/devices/{id}/telemetry/history", wrap(portal.Portal.TelemetryHistory))
 		mux.Handle("GET /api/v1/events", wrap(portal.Portal.ListEvents))
 		mux.Handle("GET /api/v1/audit", wrap(portal.Portal.ListAudit))
+		mux.Handle("GET /api/v1/alerts", wrap(portal.Portal.ListAlerts))
+		mux.Handle("GET /api/v1/alerts/summary", wrap(portal.Portal.AlertsSummary))
 		if portal.WSHub != nil {
 			mux.Handle("GET /ws/events", portalauth.Middleware(portal.Resolver, http.HandlerFunc(portal.WSHub.ServeHTTP)))
 		}
@@ -96,6 +105,10 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 		mux.Handle("PATCH /api/v1/locations/{id}", wrapAdmin(portal.Portal.UpdateLocation))
 		mux.Handle("PATCH /api/v1/buildings/{id}", wrapAdmin(portal.Portal.UpdateBuilding))
 		mux.Handle("PATCH /api/v1/rooms/{id}", wrapAdmin(portal.Portal.UpdateRoom))
+		mux.Handle("DELETE /api/v1/regions/{id}", wrapAdmin(portal.Portal.DeleteRegion))
+		mux.Handle("DELETE /api/v1/locations/{id}", wrapAdmin(portal.Portal.DeleteLocation))
+		mux.Handle("DELETE /api/v1/buildings/{id}", wrapAdmin(portal.Portal.DeleteBuilding))
+		mux.Handle("DELETE /api/v1/rooms/{id}", wrapAdmin(portal.Portal.DeleteRoom))
 
 		// Command submission + status (Slice 3). Submit is operator-and-above;
 		// reconnect is a special-cased command name handled by the bridge.
@@ -106,6 +119,8 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 		mux.Handle("POST /api/v1/devices/{id}/command", wrapOperator(portal.Portal.SubmitCommand))
 		mux.Handle("POST /api/v1/devices/{id}/reconnect", wrapOperator(portal.Portal.SubmitReconnect))
 		mux.Handle("GET /api/v1/commands/{id}", wrap(portal.Portal.GetCommand))
+		mux.Handle("POST /api/v1/alerts/{id}/acknowledge", wrapOperator(portal.Portal.AcknowledgeAlert))
+		mux.Handle("POST /api/v1/alerts/{id}/resolve", wrapOperator(portal.Portal.ResolveAlert))
 	}
 
 	// Bridge-side command channel — HMAC-authenticated, same scheme as /ingest.

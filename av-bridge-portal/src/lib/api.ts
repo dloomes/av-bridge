@@ -1,4 +1,6 @@
 import type {
+  AlertItem,
+  AlertsSummary,
   AuditEntry,
   BuildingRow,
   CollectorSummary,
@@ -24,10 +26,15 @@ export const API_BASE = process.env.NEXT_PUBLIC_AV_BRIDGE_HTTP ?? "";
 export const WS_BASE =
   process.env.NEXT_PUBLIC_AV_BRIDGE_WS ?? "ws://localhost:8080";
 
-// Optional bearer token for av-bridge's auth middleware. When set, every HTTP
-// request carries `Authorization: Bearer <key>` and the WebSocket URL appends
-// `?token=<key>` (browsers can't send custom headers on the WS handshake).
-export const API_KEY = process.env.NEXT_PUBLIC_AV_BRIDGE_API_KEY ?? "";
+// Bearer token comes from the active session set on sign-in. Falls back to
+// the env-supplied key so smoke scripts and CI keep working when no browser
+// session exists.
+import { getScope, getToken } from "./session";
+const FALLBACK_KEY = process.env.NEXT_PUBLIC_AV_BRIDGE_API_KEY ?? "";
+
+export function currentToken(): string {
+  return getToken() ?? FALLBACK_KEY;
+}
 
 class ApiError extends Error {
   status: number;
@@ -38,7 +45,14 @@ class ApiError extends Error {
 }
 
 function authHeaders(): Record<string, string> {
-  return API_KEY ? { Authorization: `Bearer ${API_KEY}` } : {};
+  const headers: Record<string, string> = {};
+  const tok = currentToken();
+  if (tok) headers["Authorization"] = `Bearer ${tok}`;
+  // Vendor-acting-as-customer: only sent if a scope is set in session. The
+  // cloud middleware rejects this from non-vendor users with 403.
+  const scope = getScope();
+  if (scope) headers["X-Customer-Scope"] = scope;
+  return headers;
 }
 
 async function request<T>(
@@ -82,7 +96,45 @@ async function requestText(
   return res.text();
 }
 
+export interface WhoamiResponse {
+  user_id?: string;
+  email?: string;
+  name?: string;
+  customer_id?: string;
+  role: string;
+  is_vendor?: boolean;
+}
+
+export interface HelpdeskCustomer {
+  id: string;
+  name: string;
+  entra_tenant_id?: string;
+}
+
+export interface HelpdeskOverviewItem {
+  id: string;
+  name: string;
+  entra_tenant_id?: string;
+  devices_total: number;
+  devices_online: number;
+  devices_offline: number;
+  devices_degraded: number;
+  alerts_open: number;
+  alerts_critical: number;
+  collectors_total: number;
+  last_bridge_seen?: string;
+}
+
 export const api = {
+  whoami: (signal?: AbortSignal) =>
+    request<WhoamiResponse>("/api/v1/whoami", { signal }),
+
+  helpdeskCustomers: (signal?: AbortSignal) =>
+    request<HelpdeskCustomer[]>("/api/v1/helpdesk/customers", { signal }),
+
+  helpdeskOverview: (signal?: AbortSignal) =>
+    request<HelpdeskOverviewItem[]>("/api/v1/helpdesk/overview", { signal }),
+
   health: (signal?: AbortSignal) =>
     request<HealthResponse>("/healthz", { signal }),
 
@@ -193,6 +245,29 @@ export const api = {
       { method: "PATCH", body: JSON.stringify({ name }), signal }
     ),
 
+  // Hierarchy deletes — cascade down (region → location → building → room),
+  // devices in affected rooms are orphaned (room_id set to NULL, device row
+  // preserved). The cloud's audit metadata captures the cascade counts.
+  deleteHierarchy: async (
+    kind: "regions" | "locations" | "buildings" | "rooms",
+    id: string,
+    signal?: AbortSignal
+  ): Promise<void> => {
+    const res = await fetch(`${API_BASE}/api/v1/${kind}/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      headers: authHeaders(),
+      signal,
+      cache: "no-store",
+    });
+    if (!res.ok) {
+      let body = "";
+      try {
+        body = await res.text();
+      } catch {}
+      throw new ApiError(`${res.status} ${res.statusText}${body ? `: ${body}` : ""}`, res.status);
+    }
+  },
+
   createDevice: (body: CreateDeviceBody, signal?: AbortSignal) =>
     request<{ id: string }>("/api/v1/devices", {
       method: "POST",
@@ -224,6 +299,34 @@ export const api = {
       throw new ApiError(`${res.status} ${res.statusText}${body ? `: ${body}` : ""}`, res.status);
     }
   },
+
+  // -- alerts ------------------------------------------------------------------
+
+  listAlerts: (
+    params: { status?: string; limit?: number } = {},
+    signal?: AbortSignal
+  ) => {
+    const qs = new URLSearchParams();
+    if (params.status) qs.set("status", params.status);
+    if (params.limit) qs.set("limit", String(params.limit));
+    const q = qs.toString();
+    return request<AlertItem[]>(`/api/v1/alerts${q ? `?${q}` : ""}`, { signal });
+  },
+
+  alertsSummary: (signal?: AbortSignal) =>
+    request<AlertsSummary>("/api/v1/alerts/summary", { signal }),
+
+  acknowledgeAlert: (id: string, signal?: AbortSignal) =>
+    request<{ id: string; status: string }>(
+      `/api/v1/alerts/${encodeURIComponent(id)}/acknowledge`,
+      { method: "POST", signal }
+    ),
+
+  resolveAlert: (id: string, signal?: AbortSignal) =>
+    request<{ id: string; status: string }>(
+      `/api/v1/alerts/${encodeURIComponent(id)}/resolve`,
+      { method: "POST", signal }
+    ),
 
   // -- audit -------------------------------------------------------------------
 

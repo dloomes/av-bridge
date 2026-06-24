@@ -19,9 +19,32 @@ import (
 	"strings"
 )
 
+// Principal carries the identity established by a Resolver. CustomerID is the
+// scope every tenant-bound query runs under; for vendor users it may be set
+// by the X-Customer-Scope header on each request (the resolver hands back a
+// vendor-flagged Principal with an empty CustomerID and the middleware fills
+// it in if a valid scope header is present).
+//
+// Audit consumers should prefer Email (real identity) over Role (just the
+// authorisation level) when stamping actor — Role is a fallback for the
+// legacy StaticResolver path where no user identity exists.
 type Principal struct {
+	UserID     string
+	Email      string
+	Name       string
 	CustomerID string
 	Role       string
+	IsVendor   bool
+}
+
+// ActorLabel returns the best available identifier for audit/log purposes.
+// Real users surface their email; the legacy static-token path falls back to
+// the role string so existing audit rows remain interpretable.
+func (p Principal) ActorLabel() string {
+	if p.Email != "" {
+		return p.Email
+	}
+	return p.Role
 }
 
 type principalKey struct{}
@@ -69,6 +92,12 @@ func (s *StaticResolver) Resolve(token string) (Principal, bool) {
 // 401 otherwise. Header `Authorization: Bearer <token>` is canonical; a
 // `?token=` query param is also accepted so the future WebSocket route can use
 // it (browsers can't set custom headers on the WS handshake).
+//
+// Vendor users (IsVendor=true) may pass `X-Customer-Scope: <customer-id>` to
+// act as that customer for tenant-scoped endpoints. Non-vendor users supplying
+// the header get a 403 — only vendor support staff can cross-tenant. A vendor
+// with no scope header keeps an empty CustomerID; handlers that require a
+// tenant scope must reject that explicitly.
 func Middleware(r Resolver, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		token := extractBearer(req)
@@ -80,6 +109,13 @@ func Middleware(r Resolver, next http.Handler) http.Handler {
 		if !ok {
 			writeErr(w, http.StatusUnauthorized, "invalid token")
 			return
+		}
+		if scope := req.Header.Get("X-Customer-Scope"); scope != "" {
+			if !p.IsVendor {
+				writeErr(w, http.StatusForbidden, "X-Customer-Scope is vendor-only")
+				return
+			}
+			p.CustomerID = scope
 		}
 		next.ServeHTTP(w, req.WithContext(withPrincipal(req.Context(), p)))
 	})
@@ -107,6 +143,23 @@ func RequireRole(allowed ...string) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// RequireVendor rejects non-vendor callers. For helpdesk-only endpoints
+// (e.g. cross-customer list views). Compose inside Middleware.
+func RequireVendor(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p, ok := From(r.Context())
+		if !ok {
+			writeErr(w, http.StatusUnauthorized, "no principal in context")
+			return
+		}
+		if !p.IsVendor {
+			writeErr(w, http.StatusForbidden, "vendor access required")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func extractBearer(r *http.Request) string {

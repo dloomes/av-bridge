@@ -1,9 +1,11 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
+  Bell,
   Building2,
   ChevronRight,
   CircleSlash,
@@ -17,6 +19,7 @@ import {
 } from "lucide-react";
 import { ConnectionIndicator } from "@/components/connection-indicator";
 import { StatCard } from "@/components/stat-card";
+import { UserMenu } from "@/components/user-menu";
 import { StatusBadge } from "@/components/status-badge";
 import { DeviceCard } from "@/components/device-card";
 import { EventFeed } from "@/components/event-feed";
@@ -26,9 +29,11 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { usePolling } from "@/hooks/usePolling";
+import { useSession } from "@/hooks/useSession";
 import { api } from "@/lib/api";
 import { formatRelative, groupDevicesByLocation } from "@/lib/utils";
 import type {
+  AlertsSummary,
   CollectorSummary,
   DeviceStatus,
   DeviceSummary,
@@ -36,6 +41,19 @@ import type {
 } from "@/lib/types";
 
 export default function DashboardPage() {
+  const session = useSession();
+  const router = useRouter();
+
+  // Vendor users without a customer scope have nothing to show here — every
+  // tenant query would 500 with an empty UUID. Push them to the helpdesk
+  // overview, which is the right landing page for unscoped support staff.
+  useEffect(() => {
+    if (!session.hydrated) return;
+    if (session.user?.is_vendor && !session.scope) {
+      router.replace("/helpdesk");
+    }
+  }, [session.hydrated, session.user, session.scope, router]);
+
   const fleet = usePolling<FleetStatus>(
     (signal) => api.fleetStatus(signal),
     15_000
@@ -48,6 +66,12 @@ export default function DashboardPage() {
     (signal) => api.listCollectors(signal),
     15_000
   );
+  const alerts = usePolling<AlertsSummary>(
+    (signal) => api.alertsSummary(signal),
+    15_000
+  );
+  const openAlerts = alerts.data?.open ?? 0;
+  const criticalAlerts = alerts.data?.critical_open ?? 0;
 
   const refreshTick = useMemo(
     () => devices.lastUpdated ?? 0,
@@ -99,6 +123,26 @@ export default function DashboardPage() {
             <RefreshCcw className="h-3.5 w-3.5" />
             Refresh
           </Button>
+          <Button
+            asChild
+            variant={openAlerts > 0 ? "default" : "outline"}
+            size="sm"
+            className={
+              criticalAlerts > 0
+                ? "bg-red-600 hover:bg-red-700 text-white"
+                : undefined
+            }
+          >
+            <Link href="/alerts">
+              <Bell className="h-3.5 w-3.5" />
+              Alerts
+              {openAlerts > 0 && (
+                <span className="ml-1.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-white/20 px-1 text-[10px] font-semibold">
+                  {openAlerts}
+                </span>
+              )}
+            </Link>
+          </Button>
           <Button asChild variant="outline" size="sm">
             <Link href="/locations">
               <MapPin className="h-3.5 w-3.5" />
@@ -116,6 +160,7 @@ export default function DashboardPage() {
             New device
           </Button>
           <ConnectionIndicator />
+          <UserMenu />
         </div>
       </header>
 

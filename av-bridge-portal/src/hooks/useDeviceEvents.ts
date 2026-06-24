@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import { API_KEY, WS_BASE } from "@/lib/api";
+import { currentToken, WS_BASE } from "@/lib/api";
 import type { DeviceEvent } from "@/lib/types";
 
 export type WsStatus = "connecting" | "open" | "closed";
@@ -23,8 +23,9 @@ export function useDeviceEvents(opts: Options = {}) {
     if (cancelled.current) return;
     setStatus("connecting");
     try {
-      const url = API_KEY
-        ? `${WS_BASE}/ws/events?token=${encodeURIComponent(API_KEY)}`
+      const tok = currentToken();
+      const url = tok
+        ? `${WS_BASE}/ws/events?token=${encodeURIComponent(tok)}`
         : `${WS_BASE}/ws/events`;
       const ws = new WebSocket(url);
       wsRef.current = ws;

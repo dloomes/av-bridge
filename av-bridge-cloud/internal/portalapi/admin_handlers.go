@@ -59,7 +59,7 @@ func (h *Handler) CreateRegion(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 		return audit.Record(ctx, tx, p.CustomerID, audit.Entry{
-			Actor: p.Role, Action: "region.create", TargetKind: "region", TargetID: id, After: after,
+			Actor: p.ActorLabel(), Action: "region.create", TargetKind: "region", TargetID: id, After: after,
 		})
 	})
 	if !ok {
@@ -97,7 +97,7 @@ func (h *Handler) CreateLocation(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 		return audit.Record(ctx, tx, p.CustomerID, audit.Entry{
-			Actor: p.Role, Action: "location.create", TargetKind: "location", TargetID: id, After: after,
+			Actor: p.ActorLabel(), Action: "location.create", TargetKind: "location", TargetID: id, After: after,
 		})
 	})
 	if !ok {
@@ -139,7 +139,7 @@ func (h *Handler) CreateBuilding(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 		return audit.Record(ctx, tx, p.CustomerID, audit.Entry{
-			Actor: p.Role, Action: "building.create", TargetKind: "building", TargetID: id, After: after,
+			Actor: p.ActorLabel(), Action: "building.create", TargetKind: "building", TargetID: id, After: after,
 		})
 	})
 	if !ok {
@@ -181,7 +181,7 @@ func (h *Handler) CreateRoom(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 		return audit.Record(ctx, tx, p.CustomerID, audit.Entry{
-			Actor: p.Role, Action: "room.create", TargetKind: "room", TargetID: id, After: after,
+			Actor: p.ActorLabel(), Action: "room.create", TargetKind: "room", TargetID: id, After: after,
 		})
 	})
 	if !ok {
@@ -317,7 +317,7 @@ func (h *Handler) updateSimpleNamed(w http.ResponseWriter, r *http.Request, tabl
 			return err
 		}
 		return audit.Record(ctx, tx, p.CustomerID, audit.Entry{
-			Actor: p.Role, Action: kind + ".update", TargetKind: kind, TargetID: id,
+			Actor: p.ActorLabel(), Action: kind + ".update", TargetKind: kind, TargetID: id,
 			Before: before, After: after,
 		})
 	})
@@ -401,7 +401,7 @@ func (h *Handler) UpdateBuilding(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 		return audit.Record(ctx, tx, p.CustomerID, audit.Entry{
-			Actor: p.Role, Action: "building.update", TargetKind: "building", TargetID: id,
+			Actor: p.ActorLabel(), Action: "building.update", TargetKind: "building", TargetID: id,
 			Before: before, After: after,
 		})
 	})
@@ -413,6 +413,152 @@ func (h *Handler) UpdateBuilding(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"id": id})
+}
+
+// ----- hierarchy deletes -----------------------------------------------------
+//
+// Each delete cascades down (region → location → building → room) and orphans
+// affected devices (devices.room_id FK is ON DELETE SET NULL — see migration
+// 0001). The before-snapshot + audit metadata together capture the row that
+// was removed and how many descendants the cascade swept up, so the audit
+// trail is enough to reconstruct intent later.
+
+type hierarchyImpact struct {
+	Locations       int `json:"locations,omitempty"`
+	Buildings       int `json:"buildings,omitempty"`
+	Rooms           int `json:"rooms,omitempty"`
+	DevicesOrphaned int `json:"devices_orphaned"`
+}
+
+// impactToMap converts the typed counts into the map[string]any shape the
+// audit layer expects for the metadata column. Zero-value counts are dropped
+// so the JSON stays compact and the read-side diff doesn't show noise.
+func impactToMap(imp hierarchyImpact) map[string]any {
+	m := map[string]any{"devices_orphaned": imp.DevicesOrphaned}
+	if imp.Locations > 0 {
+		m["locations"] = imp.Locations
+	}
+	if imp.Buildings > 0 {
+		m["buildings"] = imp.Buildings
+	}
+	if imp.Rooms > 0 {
+		m["rooms"] = imp.Rooms
+	}
+	return m
+}
+
+// countRegionImpact / countLocationImpact / countBuildingImpact / countRoomImpact
+// must run inside the same tx as the DELETE so RLS keeps the counts tenant-
+// scoped (no cross-tenant info leak via counts).
+func countRegionImpact(ctx context.Context, tx pgx.Tx, id string) (hierarchyImpact, error) {
+	var imp hierarchyImpact
+	err := tx.QueryRow(ctx, `
+		WITH loc AS (SELECT id FROM locations WHERE region_id = $1),
+		     bld AS (SELECT id FROM buildings WHERE location_id IN (SELECT id FROM loc)),
+		     rms AS (SELECT id FROM rooms WHERE building_id IN (SELECT id FROM bld))
+		SELECT
+		  (SELECT COUNT(*) FROM loc)::int,
+		  (SELECT COUNT(*) FROM bld)::int,
+		  (SELECT COUNT(*) FROM rms)::int,
+		  (SELECT COUNT(*) FROM devices WHERE room_id IN (SELECT id FROM rms))::int`,
+		id).Scan(&imp.Locations, &imp.Buildings, &imp.Rooms, &imp.DevicesOrphaned)
+	return imp, err
+}
+
+func countLocationImpact(ctx context.Context, tx pgx.Tx, id string) (hierarchyImpact, error) {
+	var imp hierarchyImpact
+	err := tx.QueryRow(ctx, `
+		WITH bld AS (SELECT id FROM buildings WHERE location_id = $1),
+		     rms AS (SELECT id FROM rooms WHERE building_id IN (SELECT id FROM bld))
+		SELECT
+		  (SELECT COUNT(*) FROM bld)::int,
+		  (SELECT COUNT(*) FROM rms)::int,
+		  (SELECT COUNT(*) FROM devices WHERE room_id IN (SELECT id FROM rms))::int`,
+		id).Scan(&imp.Buildings, &imp.Rooms, &imp.DevicesOrphaned)
+	return imp, err
+}
+
+func countBuildingImpact(ctx context.Context, tx pgx.Tx, id string) (hierarchyImpact, error) {
+	var imp hierarchyImpact
+	err := tx.QueryRow(ctx, `
+		WITH rms AS (SELECT id FROM rooms WHERE building_id = $1)
+		SELECT
+		  (SELECT COUNT(*) FROM rms)::int,
+		  (SELECT COUNT(*) FROM devices WHERE room_id IN (SELECT id FROM rms))::int`,
+		id).Scan(&imp.Rooms, &imp.DevicesOrphaned)
+	return imp, err
+}
+
+func countRoomImpact(ctx context.Context, tx pgx.Tx, id string) (hierarchyImpact, error) {
+	var imp hierarchyImpact
+	err := tx.QueryRow(ctx, `
+		SELECT COUNT(*)::int FROM devices WHERE room_id = $1`,
+		id).Scan(&imp.DevicesOrphaned)
+	return imp, err
+}
+
+// deleteHierarchyNode is the shared workhorse. counter computes the cascade
+// impact for audit metadata; table is the row to delete; kind names the audit
+// action.
+func (h *Handler) deleteHierarchyNode(
+	w http.ResponseWriter, r *http.Request,
+	table, kind string,
+	counter func(context.Context, pgx.Tx, string) (hierarchyImpact, error),
+) {
+	id := r.PathValue("id")
+	p, _ := portalauth.From(r.Context())
+
+	var rowsAffected int64
+	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
+		before, err := audit.SnapshotByTable(ctx, tx, table, id)
+		if err != nil {
+			return err
+		}
+		if before == nil {
+			// Row didn't exist or wasn't visible to this tenant; either way,
+			// nothing to delete. Leave rowsAffected at 0 so the handler 404s.
+			return nil
+		}
+		imp, err := counter(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		tag, err := tx.Exec(ctx,
+			"DELETE FROM "+table+" WHERE id = $1", id)
+		if err != nil {
+			return err
+		}
+		rowsAffected = tag.RowsAffected()
+		if rowsAffected == 0 {
+			return nil
+		}
+		return audit.Record(ctx, tx, p.CustomerID, audit.Entry{
+			Actor: p.ActorLabel(), Action: kind + ".delete", TargetKind: kind, TargetID: id,
+			Before:   before,
+			Metadata: impactToMap(imp),
+		})
+	})
+	if !ok {
+		return
+	}
+	if rowsAffected == 0 {
+		writeErr(w, http.StatusNotFound, kind+" not found")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) DeleteRegion(w http.ResponseWriter, r *http.Request) {
+	h.deleteHierarchyNode(w, r, "regions", "region", countRegionImpact)
+}
+func (h *Handler) DeleteLocation(w http.ResponseWriter, r *http.Request) {
+	h.deleteHierarchyNode(w, r, "locations", "location", countLocationImpact)
+}
+func (h *Handler) DeleteBuilding(w http.ResponseWriter, r *http.Request) {
+	h.deleteHierarchyNode(w, r, "buildings", "building", countBuildingImpact)
+}
+func (h *Handler) DeleteRoom(w http.ResponseWriter, r *http.Request) {
+	h.deleteHierarchyNode(w, r, "rooms", "room", countRoomImpact)
 }
 
 // ----- device CRUD -----------------------------------------------------------
@@ -573,7 +719,7 @@ func (h *Handler) CreateDevice(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 		return audit.Record(ctx, tx, p.CustomerID, audit.Entry{
-			Actor: p.Role, Action: "device.create", TargetKind: "device", TargetID: id, After: after,
+			Actor: p.ActorLabel(), Action: "device.create", TargetKind: "device", TargetID: id, After: after,
 		})
 	})
 	if !ok {
@@ -742,7 +888,7 @@ func (h *Handler) UpdateDevice(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 		return audit.Record(ctx, tx, p.CustomerID, audit.Entry{
-			Actor: p.Role, Action: "device.update", TargetKind: "device", TargetID: id,
+			Actor: p.ActorLabel(), Action: "device.update", TargetKind: "device", TargetID: id,
 			Before: before, After: after,
 		})
 	})
@@ -783,7 +929,7 @@ func (h *Handler) DeleteDevice(w http.ResponseWriter, r *http.Request) {
 			return nil
 		}
 		return audit.Record(ctx, tx, p.CustomerID, audit.Entry{
-			Actor: p.Role, Action: "device.delete", TargetKind: "device", TargetID: id,
+			Actor: p.ActorLabel(), Action: "device.delete", TargetKind: "device", TargetID: id,
 			Before: before,
 		})
 	})

@@ -102,7 +102,7 @@ func (h *Handler) submitAndWait(w http.ResponseWriter, r *http.Request, deviceID
 			argsMeta["args"] = json.RawMessage(args)
 		}
 		return audit.Record(ctx, tx, p.CustomerID, audit.Entry{
-			Actor: p.Role, Action: "command.submit",
+			Actor: p.ActorLabel(), Action: "command.submit",
 			TargetKind: "command", TargetID: id,
 			RelatedTargetKind: "device", RelatedTargetID: deviceID,
 			Metadata: argsMeta,
