@@ -32,6 +32,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { usePolling } from "@/hooks/usePolling";
 import { useSession } from "@/hooks/useSession";
 import { api } from "@/lib/api";
+import { isAdmin } from "@/lib/session";
 import { formatRelative, groupDevicesByLocation } from "@/lib/utils";
 import type {
   AlertsSummary,
@@ -162,10 +163,12 @@ export default function DashboardPage() {
               Activity
             </Link>
           </Button>
-          <Button size="sm" onClick={() => setCreateOpen(true)}>
-            <Plus className="h-3.5 w-3.5" />
-            New device
-          </Button>
+          {isAdmin(session.user?.role) && (
+            <Button size="sm" onClick={() => setCreateOpen(true)}>
+              <Plus className="h-3.5 w-3.5" />
+              New device
+            </Button>
+          )}
           <ConnectionIndicator />
           <UserMenu />
         </div>

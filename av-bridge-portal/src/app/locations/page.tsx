@@ -24,7 +24,9 @@ import {
   type HierarchyKind,
 } from "@/components/hierarchy-form";
 import { ConfirmDelete, type ImpactCounts } from "@/components/confirm-delete";
+import { useSession } from "@/hooks/useSession";
 import { api } from "@/lib/api";
+import { isAdmin } from "@/lib/session";
 import type { BuildingRow, DeviceSummary, NamedRow } from "@/lib/types";
 
 interface ModalState {
@@ -43,6 +45,8 @@ interface DeleteState {
 }
 
 export default function LocationsPage() {
+  const session = useSession();
+  const admin = isAdmin(session.user?.role);
   const [regions, setRegions] = useState<NamedRow[] | null>(null);
   const [locations, setLocations] = useState<NamedRow[] | null>(null);
   const [buildings, setBuildings] = useState<BuildingRow[] | null>(null);
@@ -208,13 +212,15 @@ export default function LocationsPage() {
           </div>
         </div>
         <div className="flex items-center gap-3">
-          <Button
-            size="sm"
-            onClick={() => setModal({ kind: "region", mode: "create" })}
-          >
-            <Plus className="h-3.5 w-3.5" />
-            New region
-          </Button>
+          {admin && (
+            <Button
+              size="sm"
+              onClick={() => setModal({ kind: "region", mode: "create" })}
+            >
+              <Plus className="h-3.5 w-3.5" />
+              New region
+            </Button>
+          )}
           <UserMenu />
         </div>
       </header>
@@ -297,50 +303,54 @@ export default function LocationsPage() {
                           {regionLocations.length === 1 ? "" : "s"}
                         </span>
                       </button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        aria-label="Edit region"
-                        onClick={() =>
-                          setModal({
-                            kind: "region",
-                            mode: "edit",
-                            initial: { id: region.id, name: region.name },
-                          })
-                        }
-                      >
-                        <Pencil className="h-3.5 w-3.5" />
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        aria-label="Delete region"
-                        onClick={() =>
-                          setDeleteTarget({
-                            kind: "region",
-                            id: region.id,
-                            name: region.name,
-                            impact: buildImpact("region", region.id),
-                          })
-                        }
-                      >
-                        <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() =>
-                          setModal({
-                            kind: "location",
-                            mode: "create",
-                            parentId: region.id,
-                            parentLabel: region.name,
-                          })
-                        }
-                      >
-                        <Plus className="h-3.5 w-3.5" />
-                        Location
-                      </Button>
+                      {admin && (
+                        <>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            aria-label="Edit region"
+                            onClick={() =>
+                              setModal({
+                                kind: "region",
+                                mode: "edit",
+                                initial: { id: region.id, name: region.name },
+                              })
+                            }
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            aria-label="Delete region"
+                            onClick={() =>
+                              setDeleteTarget({
+                                kind: "region",
+                                id: region.id,
+                                name: region.name,
+                                impact: buildImpact("region", region.id),
+                              })
+                            }
+                          >
+                            <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() =>
+                              setModal({
+                                kind: "location",
+                                mode: "create",
+                                parentId: region.id,
+                                parentLabel: region.name,
+                              })
+                            }
+                          >
+                            <Plus className="h-3.5 w-3.5" />
+                            Location
+                          </Button>
+                        </>
+                      )}
                     </div>
 
                     {regionOpen && (
@@ -377,50 +387,54 @@ export default function LocationsPage() {
                                     {locBuildings.length === 1 ? "" : "s"}
                                   </span>
                                 </button>
-                                <Button
-                                  size="sm"
-                                  variant="ghost"
-                                  aria-label="Edit location"
-                                  onClick={() =>
-                                    setModal({
-                                      kind: "location",
-                                      mode: "edit",
-                                      initial: { id: loc.id, name: loc.name },
-                                    })
-                                  }
-                                >
-                                  <Pencil className="h-3.5 w-3.5" />
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="ghost"
-                                  aria-label="Delete location"
-                                  onClick={() =>
-                                    setDeleteTarget({
-                                      kind: "location",
-                                      id: loc.id,
-                                      name: loc.name,
-                                      impact: buildImpact("location", loc.id),
-                                    })
-                                  }
-                                >
-                                  <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="ghost"
-                                  onClick={() =>
-                                    setModal({
-                                      kind: "building",
-                                      mode: "create",
-                                      parentId: loc.id,
-                                      parentLabel: `${region.name} / ${loc.name}`,
-                                    })
-                                  }
-                                >
-                                  <Plus className="h-3.5 w-3.5" />
-                                  Building
-                                </Button>
+                                {admin && (
+                                  <>
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      aria-label="Edit location"
+                                      onClick={() =>
+                                        setModal({
+                                          kind: "location",
+                                          mode: "edit",
+                                          initial: { id: loc.id, name: loc.name },
+                                        })
+                                      }
+                                    >
+                                      <Pencil className="h-3.5 w-3.5" />
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      aria-label="Delete location"
+                                      onClick={() =>
+                                        setDeleteTarget({
+                                          kind: "location",
+                                          id: loc.id,
+                                          name: loc.name,
+                                          impact: buildImpact("location", loc.id),
+                                        })
+                                      }
+                                    >
+                                      <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      onClick={() =>
+                                        setModal({
+                                          kind: "building",
+                                          mode: "create",
+                                          parentId: loc.id,
+                                          parentLabel: `${region.name} / ${loc.name}`,
+                                        })
+                                      }
+                                    >
+                                      <Plus className="h-3.5 w-3.5" />
+                                      Building
+                                    </Button>
+                                  </>
+                                )}
                               </div>
 
                               {locOpen && (
@@ -457,55 +471,59 @@ export default function LocationsPage() {
                                               {bRooms.length === 1 ? "" : "s"}
                                             </span>
                                           </button>
-                                          <Button
-                                            size="sm"
-                                            variant="ghost"
-                                            aria-label="Edit building"
-                                            onClick={() =>
-                                              setModal({
-                                                kind: "building",
-                                                mode: "edit",
-                                                initial: {
-                                                  id: bld.id,
-                                                  name: bld.name,
-                                                  address: bld.address,
-                                                  timezone: bld.timezone,
-                                                },
-                                              })
-                                            }
-                                          >
-                                            <Pencil className="h-3.5 w-3.5" />
-                                          </Button>
-                                          <Button
-                                            size="sm"
-                                            variant="ghost"
-                                            aria-label="Delete building"
-                                            onClick={() =>
-                                              setDeleteTarget({
-                                                kind: "building",
-                                                id: bld.id,
-                                                name: bld.name,
-                                                impact: buildImpact("building", bld.id),
-                                              })
-                                            }
-                                          >
-                                            <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                                          </Button>
-                                          <Button
-                                            size="sm"
-                                            variant="ghost"
-                                            onClick={() =>
-                                              setModal({
-                                                kind: "room",
-                                                mode: "create",
-                                                parentId: bld.id,
-                                                parentLabel: `${region.name} / ${loc.name} / ${bld.name}`,
-                                              })
-                                            }
-                                          >
-                                            <Plus className="h-3.5 w-3.5" />
-                                            Room
-                                          </Button>
+                                          {admin && (
+                                            <>
+                                              <Button
+                                                size="sm"
+                                                variant="ghost"
+                                                aria-label="Edit building"
+                                                onClick={() =>
+                                                  setModal({
+                                                    kind: "building",
+                                                    mode: "edit",
+                                                    initial: {
+                                                      id: bld.id,
+                                                      name: bld.name,
+                                                      address: bld.address,
+                                                      timezone: bld.timezone,
+                                                    },
+                                                  })
+                                                }
+                                              >
+                                                <Pencil className="h-3.5 w-3.5" />
+                                              </Button>
+                                              <Button
+                                                size="sm"
+                                                variant="ghost"
+                                                aria-label="Delete building"
+                                                onClick={() =>
+                                                  setDeleteTarget({
+                                                    kind: "building",
+                                                    id: bld.id,
+                                                    name: bld.name,
+                                                    impact: buildImpact("building", bld.id),
+                                                  })
+                                                }
+                                              >
+                                                <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                                              </Button>
+                                              <Button
+                                                size="sm"
+                                                variant="ghost"
+                                                onClick={() =>
+                                                  setModal({
+                                                    kind: "room",
+                                                    mode: "create",
+                                                    parentId: bld.id,
+                                                    parentLabel: `${region.name} / ${loc.name} / ${bld.name}`,
+                                                  })
+                                                }
+                                              >
+                                                <Plus className="h-3.5 w-3.5" />
+                                                Room
+                                              </Button>
+                                            </>
+                                          )}
                                         </div>
 
                                         {bOpen && (
@@ -533,6 +551,8 @@ export default function LocationsPage() {
                                                         </span>
                                                       )}
                                                     </span>
+                                                    {admin && (
+                                                      <>
                                                     <Button
                                                       size="sm"
                                                       variant="ghost"
@@ -567,6 +587,8 @@ export default function LocationsPage() {
                                                     >
                                                       <Trash2 className="h-3 w-3 text-destructive" />
                                                     </Button>
+                                                      </>
+                                                    )}
                                                   </li>
                                                 );
                                               })
@@ -592,12 +614,16 @@ export default function LocationsPage() {
           <Card>
             <CardContent className="p-10 text-center space-y-3">
               <div className="text-sm text-muted-foreground">
-                No regions yet. Create one to start organising your devices.
+                {admin
+                  ? "No regions yet. Create one to start organising your devices."
+                  : "No regions yet — ask an admin to create one."}
               </div>
-              <Button onClick={() => setModal({ kind: "region", mode: "create" })}>
-                <Plus className="h-3.5 w-3.5" />
-                Create your first region
-              </Button>
+              {admin && (
+                <Button onClick={() => setModal({ kind: "region", mode: "create" })}>
+                  <Plus className="h-3.5 w-3.5" />
+                  Create your first region
+                </Button>
+              )}
             </CardContent>
           </Card>
         )}

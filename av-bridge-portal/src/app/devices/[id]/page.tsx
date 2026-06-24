@@ -27,7 +27,9 @@ import { Modal } from "@/components/modal";
 import { DeviceForm } from "@/components/device-form";
 import { AuditFeed } from "@/components/audit-feed";
 import { usePolling } from "@/hooks/usePolling";
+import { useSession } from "@/hooks/useSession";
 import { api, API_BASE, currentToken } from "@/lib/api";
+import { canOperate, isAdmin } from "@/lib/session";
 import type { DeviceDetail, Telemetry } from "@/lib/types";
 import { formatRelative } from "@/lib/utils";
 
@@ -35,6 +37,9 @@ export default function DeviceDetailPage() {
   const params = useParams<{ id: string }>();
   const id = decodeURIComponent(params.id);
   const router = useRouter();
+  const session = useSession();
+  const admin = isAdmin(session.user?.role);
+  const operator = canOperate(session.user?.role);
 
   const [device, setDevice] = useState<DeviceDetail | null>(null);
   const [deviceError, setDeviceError] = useState<Error | null>(null);
@@ -199,31 +204,37 @@ export default function DeviceDetailPage() {
             <RefreshCcw className="h-3.5 w-3.5" />
             Refresh
           </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleReconnect}
-            disabled={reconnecting}
-          >
-            <RotateCcw className="h-3.5 w-3.5" />
-            {reconnecting ? "Reconnecting…" : "Reconnect"}
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}>
-            <Pencil className="h-3.5 w-3.5" />
-            Edit
-          </Button>
+          {operator && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleReconnect}
+              disabled={reconnecting}
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+              {reconnecting ? "Reconnecting…" : "Reconnect"}
+            </Button>
+          )}
+          {admin && (
+            <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}>
+              <Pencil className="h-3.5 w-3.5" />
+              Edit
+            </Button>
+          )}
           <Button variant="outline" size="sm" onClick={() => setActivityOpen(true)}>
             <History className="h-3.5 w-3.5" />
             Activity
           </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setDeleteConfirmOpen(true)}
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-            Delete
-          </Button>
+          {admin && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setDeleteConfirmOpen(true)}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              Delete
+            </Button>
+          )}
           <ConnectionIndicator />
           <UserMenu />
         </div>
@@ -299,7 +310,7 @@ export default function DeviceDetailPage() {
                 telemetry.error?.message ?? telemetry.data?.error ?? undefined
               }
             />
-            <CommandPanel device={device} telemetry={telemetry.data} />
+            {operator && <CommandPanel device={device} telemetry={telemetry.data} />}
           </div>
           <aside className="lg:sticky lg:top-6 lg:h-[calc(100vh-7rem)]">
             <EventFeed

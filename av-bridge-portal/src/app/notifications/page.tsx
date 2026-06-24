@@ -20,7 +20,9 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Modal } from "@/components/modal";
 import { UserMenu } from "@/components/user-menu";
+import { useSession } from "@/hooks/useSession";
 import { api } from "@/lib/api";
+import { canOperate, isAdmin } from "@/lib/session";
 import { formatRelative } from "@/lib/utils";
 import type {
   AlertSeverity,
@@ -48,6 +50,9 @@ const TARGET_PLACEHOLDER: Record<NotificationChannelType, string> = {
 };
 
 export default function NotificationsPage() {
+  const session = useSession();
+  const admin = isAdmin(session.user?.role);
+  const operator = canOperate(session.user?.role);
   const [channels, setChannels] = useState<NotificationChannel[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [editing, setEditing] = useState<{ mode: "create" | "edit"; existing?: NotificationChannel } | null>(null);
@@ -112,10 +117,12 @@ export default function NotificationsPage() {
           </div>
         </div>
         <div className="flex items-center gap-3">
-          <Button size="sm" onClick={() => setEditing({ mode: "create" })}>
-            <Plus className="h-3.5 w-3.5" />
-            New channel
-          </Button>
+          {admin && (
+            <Button size="sm" onClick={() => setEditing({ mode: "create" })}>
+              <Plus className="h-3.5 w-3.5" />
+              New channel
+            </Button>
+          )}
           <UserMenu />
         </div>
       </header>
@@ -238,19 +245,23 @@ export default function NotificationsPage() {
                           )}
                         </div>
                         <div className="flex gap-1 shrink-0">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => handleTest(ch)}
-                            disabled={testBusy === ch.id}
-                          >
-                            {testBusy === ch.id ? (
-                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                            ) : (
-                              <Send className="h-3.5 w-3.5" />
-                            )}
-                            Test
-                          </Button>
+                          {operator && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleTest(ch)}
+                              disabled={testBusy === ch.id}
+                            >
+                              {testBusy === ch.id ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <Send className="h-3.5 w-3.5" />
+                              )}
+                              Test
+                            </Button>
+                          )}
+                          {admin && (
+                            <>
                           <Button
                             size="sm"
                             variant="ghost"
@@ -266,6 +277,8 @@ export default function NotificationsPage() {
                           >
                             <Trash2 className="h-3.5 w-3.5 text-destructive" />
                           </Button>
+                            </>
+                          )}
                         </div>
                       </div>
                     </CardContent>
@@ -279,13 +292,16 @@ export default function NotificationsPage() {
             <CardContent className="p-10 text-center space-y-3">
               <Bell className="h-8 w-8 text-muted-foreground mx-auto" />
               <div className="text-sm text-muted-foreground">
-                No notification channels yet. Add one to start receiving alerts
-                outside the portal.
+                {admin
+                  ? "No notification channels yet. Add one to start receiving alerts outside the portal."
+                  : "No notification channels yet — ask an admin to add one."}
               </div>
-              <Button onClick={() => setEditing({ mode: "create" })}>
-                <Plus className="h-3.5 w-3.5" />
-                Add first channel
-              </Button>
+              {admin && (
+                <Button onClick={() => setEditing({ mode: "create" })}>
+                  <Plus className="h-3.5 w-3.5" />
+                  Add first channel
+                </Button>
+              )}
             </CardContent>
           </Card>
         )}

@@ -17,7 +17,9 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { UserMenu } from "@/components/user-menu";
 import { usePolling } from "@/hooks/usePolling";
+import { useSession } from "@/hooks/useSession";
 import { api } from "@/lib/api";
+import { canOperate } from "@/lib/session";
 import { formatRelative } from "@/lib/utils";
 import type { AlertItem, AlertSeverity, AlertStatus } from "@/lib/types";
 
@@ -49,6 +51,8 @@ const STATUS_LABEL: Record<AlertStatus, string> = {
 };
 
 export default function AlertsPage() {
+  const session = useSession();
+  const operator = canOperate(session.user?.role);
   const [tab, setTab] = useState<Tab>("open");
   const [busy, setBusy] = useState<Record<string, "ack" | "resolve" | undefined>>({});
   const [error, setError] = useState<string | null>(null);
@@ -217,38 +221,40 @@ export default function AlertsPage() {
                           </div>
                         )}
                       </div>
-                      <div className="flex gap-1 shrink-0">
-                        {a.status === "open" && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => handleAck(a.id)}
-                            disabled={busy[a.id] !== undefined}
-                          >
-                            {busy[a.id] === "ack" ? (
-                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                            ) : (
-                              <Check className="h-3.5 w-3.5" />
-                            )}
-                            Ack
-                          </Button>
-                        )}
-                        {(a.status === "open" || a.status === "acknowledged") && (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => handleResolve(a.id)}
-                            disabled={busy[a.id] !== undefined}
-                          >
-                            {busy[a.id] === "resolve" ? (
-                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                            ) : (
-                              <X className="h-3.5 w-3.5" />
-                            )}
-                            Resolve
-                          </Button>
-                        )}
-                      </div>
+                      {operator && (
+                        <div className="flex gap-1 shrink-0">
+                          {a.status === "open" && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleAck(a.id)}
+                              disabled={busy[a.id] !== undefined}
+                            >
+                              {busy[a.id] === "ack" ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <Check className="h-3.5 w-3.5" />
+                              )}
+                              Ack
+                            </Button>
+                          )}
+                          {(a.status === "open" || a.status === "acknowledged") && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => handleResolve(a.id)}
+                              disabled={busy[a.id] !== undefined}
+                            >
+                              {busy[a.id] === "resolve" ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <X className="h-3.5 w-3.5" />
+                              )}
+                              Resolve
+                            </Button>
+                          )}
+                        </div>
+                      )}
                     </CardContent>
                   </Card>
                 </li>

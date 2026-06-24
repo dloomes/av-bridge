@@ -82,6 +82,17 @@ export function setScope(customerID: string | null): void {
   notify();
 }
 
+// Role capability helpers. Mirror the wrapAdmin / wrapOperator gates the
+// cloud applies at the route layer — UI uses these to hide buttons the
+// backend would 403 anyway. Don't rely on these for security; they're for
+// not-showing-broken-UI, not for keeping anyone out.
+export function isAdmin(role?: string | null): boolean {
+  return role === "admin";
+}
+export function canOperate(role?: string | null): boolean {
+  return role === "admin" || role === "operator";
+}
+
 // buildMockToken assembles a `mock.<base64-json>` token from claims. Used by
 // the sign-in page's preset buttons. Exposed so a custom-paste UI can also
 // validate that what the user pasted is a recognisable shape.
