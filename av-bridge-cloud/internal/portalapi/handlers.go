@@ -15,19 +15,23 @@ import (
 	"time"
 
 	"github.com/dloomes/av-bridge-cloud/internal/db"
+	"github.com/dloomes/av-bridge-cloud/internal/notify"
 	"github.com/dloomes/av-bridge-cloud/internal/portalauth"
 	"github.com/dloomes/av-bridge-cloud/internal/secrets"
 	"github.com/jackc/pgx/v5"
 )
 
 type Handler struct {
-	store  *db.Store
-	cipher secrets.Cipher
-	log    *slog.Logger
+	store      *db.Store
+	cipher     secrets.Cipher
+	dispatcher *notify.Dispatcher
+	log        *slog.Logger
 }
 
-func New(store *db.Store, cipher secrets.Cipher, log *slog.Logger) *Handler {
-	return &Handler{store: store, cipher: cipher, log: log}
+// New. dispatcher may be nil — the notification channel endpoints still
+// serve reads and CRUD but the test-send endpoint returns 503.
+func New(store *db.Store, cipher secrets.Cipher, dispatcher *notify.Dispatcher, log *slog.Logger) *Handler {
+	return &Handler{store: store, cipher: cipher, dispatcher: dispatcher, log: log}
 }
 
 // withTenant runs fn under the caller's customer scope. On error it writes a

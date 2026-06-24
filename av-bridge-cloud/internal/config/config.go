@@ -52,6 +52,16 @@ type Config struct {
 	CommandStaleAfter    time.Duration
 	CommandMaxClaims     int
 	CommandSweepInterval time.Duration
+
+	// SMTP relay for outbound alert notifications. SMTPHost empty = dry-run
+	// (sends log instead of actually emailing) so dev can exercise the
+	// channel-config UI without standing up a mail server. SMTPFrom defaults
+	// to alerts@av-bridge.local when unset.
+	SMTPHost     string
+	SMTPPort     string
+	SMTPUsername string
+	SMTPPassword string
+	SMTPFrom     string
 }
 
 func FromEnv() (Config, error) {
@@ -85,6 +95,11 @@ func FromEnv() (Config, error) {
 		CommandStaleAfter:    staleAfter,
 		CommandMaxClaims:     maxClaims,
 		CommandSweepInterval: sweepInterval,
+		SMTPHost:             os.Getenv("POC_SMTP_HOST"),
+		SMTPPort:             getenv("POC_SMTP_PORT", "587"),
+		SMTPUsername:         os.Getenv("POC_SMTP_USERNAME"),
+		SMTPPassword:         os.Getenv("POC_SMTP_PASSWORD"),
+		SMTPFrom:             getenv("POC_SMTP_FROM", "alerts@av-bridge.local"),
 	}
 	if c.MigrationDSN == "" {
 		return c, fmt.Errorf("DATABASE_MIGRATION_URL is required")

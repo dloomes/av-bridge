@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/dloomes/av-bridge-cloud/internal/audit"
+	"github.com/dloomes/av-bridge-cloud/internal/notify"
 	"github.com/dloomes/av-bridge-cloud/internal/portalauth"
 	"github.com/jackc/pgx/v5"
 )
@@ -413,6 +414,256 @@ func (h *Handler) UpdateBuilding(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"id": id})
+}
+
+// ----- notification channels ------------------------------------------------
+//
+// Per-customer outbound channels (email / Teams webhook / generic webhook)
+// that alerts get dispatched to when first opened. Reads and lists are open
+// to any authenticated user in the customer; create/update/delete are gated
+// to admin at the route layer.
+
+type notificationChannelReq struct {
+	Name        string         `json:"name"`
+	Type        string         `json:"type"`
+	Target      string         `json:"target"`
+	Config      map[string]any `json:"config,omitempty"`
+	MinSeverity string         `json:"min_severity"`
+	Enabled     *bool          `json:"enabled,omitempty"`
+}
+
+var allowedChannelTypes = map[string]bool{
+	"email": true, "teams": true, "webhook": true,
+}
+
+var allowedSeverities = map[string]bool{
+	"info": true, "warning": true, "critical": true,
+}
+
+func (h *Handler) ListNotificationChannels(w http.ResponseWriter, r *http.Request) {
+	type item struct {
+		ID          string     `json:"id"`
+		Name        string     `json:"name"`
+		Type        string     `json:"type"`
+		Target      string     `json:"target"`
+		MinSeverity string     `json:"min_severity"`
+		Enabled     bool       `json:"enabled"`
+		LastSentAt  *time.Time `json:"last_sent_at,omitempty"`
+		LastError   string     `json:"last_error,omitempty"`
+	}
+	out := []item{}
+	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `
+			SELECT id::text, name, type, target, min_severity, enabled,
+			       last_sent_at, COALESCE(last_error,'')
+			  FROM notification_channels ORDER BY created_at DESC`)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var it item
+			if err := rows.Scan(&it.ID, &it.Name, &it.Type, &it.Target,
+				&it.MinSeverity, &it.Enabled, &it.LastSentAt, &it.LastError); err != nil {
+				return err
+			}
+			out = append(out, it)
+		}
+		return rows.Err()
+	})
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (h *Handler) CreateNotificationChannel(w http.ResponseWriter, r *http.Request) {
+	var req notificationChannelReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if req.Name == "" || req.Target == "" {
+		writeErr(w, http.StatusBadRequest, "name and target are required")
+		return
+	}
+	if !allowedChannelTypes[req.Type] {
+		writeErr(w, http.StatusBadRequest, "type must be one of email/teams/webhook")
+		return
+	}
+	if req.MinSeverity == "" {
+		req.MinSeverity = "warning"
+	}
+	if !allowedSeverities[req.MinSeverity] {
+		writeErr(w, http.StatusBadRequest, "min_severity must be info/warning/critical")
+		return
+	}
+	enabled := true
+	if req.Enabled != nil {
+		enabled = *req.Enabled
+	}
+	p, _ := portalauth.From(r.Context())
+
+	var id string
+	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
+		if err := tx.QueryRow(ctx, `
+			INSERT INTO notification_channels
+			    (customer_id, name, type, target, config, min_severity, enabled)
+			VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7)
+			RETURNING id::text`,
+			p.CustomerID, req.Name, req.Type, req.Target,
+			jsonOrNil(req.Config), req.MinSeverity, enabled).Scan(&id); err != nil {
+			return err
+		}
+		return audit.Record(ctx, tx, p.CustomerID, audit.Entry{
+			Actor: p.ActorLabel(), Action: "notification_channel.create",
+			TargetKind: "notification_channel", TargetID: id,
+			After: mustJSON(map[string]any{
+				"name": req.Name, "type": req.Type, "target": req.Target,
+				"min_severity": req.MinSeverity, "enabled": enabled,
+			}),
+		})
+	})
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]string{"id": id})
+}
+
+func (h *Handler) UpdateNotificationChannel(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var req notificationChannelReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	// Validation mirrors create — but type can't change on update because
+	// channels are typed at creation (a different type means a different
+	// target shape entirely).
+	if req.Name == "" || req.Target == "" {
+		writeErr(w, http.StatusBadRequest, "name and target are required")
+		return
+	}
+	if req.MinSeverity == "" {
+		req.MinSeverity = "warning"
+	}
+	if !allowedSeverities[req.MinSeverity] {
+		writeErr(w, http.StatusBadRequest, "min_severity must be info/warning/critical")
+		return
+	}
+	enabled := true
+	if req.Enabled != nil {
+		enabled = *req.Enabled
+	}
+	p, _ := portalauth.From(r.Context())
+
+	var rowsAffected int64
+	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, `
+			UPDATE notification_channels
+			   SET name = $2, target = $3, config = $4::jsonb,
+			       min_severity = $5, enabled = $6
+			 WHERE id = $1`,
+			id, req.Name, req.Target, jsonOrNil(req.Config),
+			req.MinSeverity, enabled)
+		if err != nil {
+			return err
+		}
+		rowsAffected = tag.RowsAffected()
+		if rowsAffected == 0 {
+			return nil
+		}
+		return audit.Record(ctx, tx, p.CustomerID, audit.Entry{
+			Actor: p.ActorLabel(), Action: "notification_channel.update",
+			TargetKind: "notification_channel", TargetID: id,
+			After: mustJSON(map[string]any{
+				"name": req.Name, "target": req.Target,
+				"min_severity": req.MinSeverity, "enabled": enabled,
+			}),
+		})
+	})
+	if !ok {
+		return
+	}
+	if rowsAffected == 0 {
+		writeErr(w, http.StatusNotFound, "channel not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"id": id})
+}
+
+func (h *Handler) DeleteNotificationChannel(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	p, _ := portalauth.From(r.Context())
+
+	var rowsAffected int64
+	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, `DELETE FROM notification_channels WHERE id = $1`, id)
+		if err != nil {
+			return err
+		}
+		rowsAffected = tag.RowsAffected()
+		if rowsAffected == 0 {
+			return nil
+		}
+		return audit.Record(ctx, tx, p.CustomerID, audit.Entry{
+			Actor: p.ActorLabel(), Action: "notification_channel.delete",
+			TargetKind: "notification_channel", TargetID: id,
+		})
+	})
+	if !ok {
+		return
+	}
+	if rowsAffected == 0 {
+		writeErr(w, http.StatusNotFound, "channel not found")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// TestNotificationChannel — POST /api/v1/notifications/channels/{id}/test
+//
+// Sends a synthetic alert through a single channel so an operator can verify
+// the target works before relying on it. Returns 200 if the send succeeded,
+// 502 with the underlying error message otherwise. The channel's
+// last_sent_at + last_error are updated by the dispatcher regardless.
+func (h *Handler) TestNotificationChannel(w http.ResponseWriter, r *http.Request) {
+	if h.dispatcher == nil {
+		writeErr(w, http.StatusServiceUnavailable, "notification dispatcher not configured")
+		return
+	}
+	id := r.PathValue("id")
+	p, _ := portalauth.From(r.Context())
+
+	evt := notify.AlertEvent{
+		CustomerID: p.CustomerID,
+		DeviceID:   "00000000-0000-0000-0000-000000000000",
+		DeviceName: "Test device",
+		AlertKey:   "test_notification",
+		Severity:   "info",
+		Message:    "This is a test notification triggered from the portal by " + p.ActorLabel() + ".",
+		OpenedAt:   time.Now().UTC(),
+	}
+	if err := h.dispatcher.SendToChannel(r.Context(), p.CustomerID, id, evt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeErr(w, http.StatusNotFound, "channel not found")
+			return
+		}
+		writeErr(w, http.StatusBadGateway, "send failed: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "sent"})
+}
+
+// mustJSON returns a marshalled json.RawMessage for an audit before/after
+// snapshot. Falls back to nil if marshalling fails — the audit row is
+// best-effort and shouldn't fail the actual operation.
+func mustJSON(v any) json.RawMessage {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return nil
+	}
+	return b
 }
 
 // ----- hierarchy deletes -----------------------------------------------------

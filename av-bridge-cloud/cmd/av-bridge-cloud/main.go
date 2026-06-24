@@ -17,6 +17,7 @@ import (
 	"github.com/dloomes/av-bridge-cloud/internal/config"
 	"github.com/dloomes/av-bridge-cloud/internal/db"
 	"github.com/dloomes/av-bridge-cloud/internal/ingest"
+	"github.com/dloomes/av-bridge-cloud/internal/notify"
 	"github.com/dloomes/av-bridge-cloud/internal/portalapi"
 	"github.com/dloomes/av-bridge-cloud/internal/portalauth"
 	"github.com/dloomes/av-bridge-cloud/internal/secrets"
@@ -77,7 +78,24 @@ func main() {
 	// Single hub is shared so events from ingest reach subscribed portals.
 	hub := wsfanout.NewHub(log)
 
-	h := ingest.NewHandler(store, cipher, hub, log)
+	// Outbound notification dispatcher. SMTPHost empty → email sends log
+	// instead of fail (dev convenience). Real deployments configure SMTP
+	// via POC_SMTP_* env vars; Teams/webhook channels work either way.
+	senders := notify.NewSenders(notify.SMTPConfig{
+		Host:     cfg.SMTPHost,
+		Port:     cfg.SMTPPort,
+		Username: cfg.SMTPUsername,
+		Password: cfg.SMTPPassword,
+		From:     cfg.SMTPFrom,
+	}, log)
+	dispatcher := notify.NewDispatcher(store.AdminPool(), senders, log)
+	if cfg.SMTPHost == "" {
+		log.Info("notify: SMTP not configured — email channels run in dry-run mode (logs only)")
+	} else {
+		log.Info("notify: SMTP configured", "host", cfg.SMTPHost, "from", cfg.SMTPFrom)
+	}
+
+	h := ingest.NewHandler(store, cipher, hub, dispatcher, log)
 
 	var adminH http.Handler
 	if cfg.AdminAPIToken != "" {
@@ -99,7 +117,7 @@ func main() {
 		resolver := portalauth.NewChainResolver(mock, static)
 		portalRoutes = &api.PortalRoutes{
 			Resolver: resolver,
-			Portal:   portalapi.New(store, cipher, log),
+			Portal:   portalapi.New(store, cipher, dispatcher, log),
 			WSHub:    hub,
 		}
 		log.Info("portal API enabled",

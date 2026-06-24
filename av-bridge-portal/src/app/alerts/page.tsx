@@ -132,6 +132,12 @@ export default function AlertsPage() {
             <span className="font-semibold">{counts.acknowledged}</span>{" "}
             <span className="text-muted-foreground">acknowledged</span>
           </span>
+          <Button asChild variant="outline" size="sm">
+            <Link href="/notifications">
+              <Bell className="h-3.5 w-3.5" />
+              Channels
+            </Link>
+          </Button>
           <UserMenu />
         </div>
       </header>

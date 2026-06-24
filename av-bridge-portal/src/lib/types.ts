@@ -162,6 +162,47 @@ export interface AlertsSummary {
   critical_open: number;
 }
 
+export type NotificationChannelType = "email" | "teams" | "webhook";
+
+export interface NotificationChannel {
+  id: string;
+  name: string;
+  type: NotificationChannelType;
+  target: string;
+  min_severity: AlertSeverity;
+  enabled: boolean;
+  last_sent_at?: string;
+  last_error?: string;
+}
+
+export interface NotificationChannelBody {
+  name: string;
+  type?: NotificationChannelType; // omit on PATCH (type is immutable)
+  target: string;
+  min_severity: AlertSeverity;
+  enabled?: boolean;
+}
+
+export interface DeviceUptimeRow {
+  device_id: string;
+  name: string;
+  location: string;
+  samples: number;
+  online_samples: number;
+  uptime_pct?: number;
+  current_status: DeviceStatus;
+  last_seen_at?: string;
+}
+
+export interface RoomActivityRow {
+  room_id: string;
+  room_name: string;
+  building_name: string;
+  device_count: number;
+  event_count: number;
+  last_event_at?: string;
+}
+
 export interface HealthResponse {
   status: string;
   time: string;

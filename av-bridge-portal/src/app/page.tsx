@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
   Bell,
+  BarChart3,
   Building2,
   ChevronRight,
   CircleSlash,
@@ -147,6 +148,12 @@ export default function DashboardPage() {
             <Link href="/locations">
               <MapPin className="h-3.5 w-3.5" />
               Locations
+            </Link>
+          </Button>
+          <Button asChild variant="outline" size="sm">
+            <Link href="/reports">
+              <BarChart3 className="h-3.5 w-3.5" />
+              Reports
             </Link>
           </Button>
           <Button asChild variant="outline" size="sm">

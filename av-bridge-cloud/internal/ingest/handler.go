@@ -11,6 +11,7 @@ import (
 
 	"github.com/dloomes/av-bridge-cloud/internal/auth"
 	"github.com/dloomes/av-bridge-cloud/internal/db"
+	"github.com/dloomes/av-bridge-cloud/internal/notify"
 	"github.com/dloomes/av-bridge-cloud/internal/secrets"
 	"github.com/dloomes/av-bridge-cloud/internal/wsfanout"
 	"github.com/jackc/pgx/v5"
@@ -55,16 +56,18 @@ type payloadDTO struct {
 }
 
 type Handler struct {
-	store  *db.Store
-	cipher secrets.Cipher
-	hub    *wsfanout.Hub
-	log    *slog.Logger
+	store      *db.Store
+	cipher     secrets.Cipher
+	hub        *wsfanout.Hub
+	dispatcher *notify.Dispatcher
+	log        *slog.Logger
 }
 
-// NewHandler. hub may be nil — if so, events still persist but no live
-// fan-out happens (handler degrades gracefully so the WS layer is optional).
-func NewHandler(store *db.Store, cipher secrets.Cipher, hub *wsfanout.Hub, log *slog.Logger) *Handler {
-	return &Handler{store: store, cipher: cipher, hub: hub, log: log}
+// NewHandler. hub and dispatcher may be nil — if so, events still persist
+// but no live fan-out and no outbound notifications happen. Handler
+// degrades gracefully so both side-effects are optional.
+func NewHandler(store *db.Store, cipher secrets.Cipher, hub *wsfanout.Hub, dispatcher *notify.Dispatcher, log *slog.Logger) *Handler {
+	return &Handler{store: store, cipher: cipher, hub: hub, dispatcher: dispatcher, log: log}
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -113,7 +116,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 2. Tenant-scoped writes (RLS-enforced as app_tenant).
+	// Collect newly-opened alerts so the dispatcher can fan them out to
+	// configured channels after the tx commits (don't dispatch on rollback).
+	var newAlerts []notify.AlertEvent
 	err = h.store.WithTenant(ctx, col.CustomerID, func(tx pgx.Tx) error {
+		newAlerts = newAlerts[:0]
 		deviceIDs := make(map[string]string, len(p.Telemetry))
 
 		for _, t := range p.Telemetry {
@@ -144,8 +151,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			// in the dedicated alerts table so the portal can show actionable
 			// state. Recovery events auto-resolve still-open alerts for the
 			// same device. Non-alert events are ignored here.
-			if err := handleAlertEvent(ctx, tx, col.CustomerID, devID, e); err != nil {
+			outcome, err := handleAlertEvent(ctx, tx, col.CustomerID, devID, e)
+			if err != nil {
 				return err
+			}
+			if outcome.notifyEvent != nil {
+				newAlerts = append(newAlerts, *outcome.notifyEvent)
 			}
 		}
 
@@ -172,6 +183,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				Payload:    e.Payload,
 				Timestamp:  e.Timestamp,
 			})
+		}
+	}
+
+	// Outbound notifications — only for alerts that just opened (re-fires of
+	// an already-open alert don't notify, per the alertOutcome logic). Each
+	// Dispatch call is non-blocking; the dispatcher manages its own
+	// goroutines + per-channel timeouts.
+	if h.dispatcher != nil {
+		for i := range newAlerts {
+			h.dispatcher.Dispatch(newAlerts[i])
 		}
 	}
 

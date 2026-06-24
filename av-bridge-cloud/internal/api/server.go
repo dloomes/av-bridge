@@ -82,6 +82,8 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 		mux.Handle("GET /api/v1/devices/{id}/telemetry/history", wrap(portal.Portal.TelemetryHistory))
 		mux.Handle("GET /api/v1/events", wrap(portal.Portal.ListEvents))
 		mux.Handle("GET /api/v1/audit", wrap(portal.Portal.ListAudit))
+		mux.Handle("GET /api/v1/reports/device-uptime", wrap(portal.Portal.DeviceUptimeReport))
+		mux.Handle("GET /api/v1/reports/room-activity", wrap(portal.Portal.RoomActivityReport))
 		mux.Handle("GET /api/v1/alerts", wrap(portal.Portal.ListAlerts))
 		mux.Handle("GET /api/v1/alerts/summary", wrap(portal.Portal.AlertsSummary))
 		if portal.WSHub != nil {
@@ -121,6 +123,15 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 		mux.Handle("GET /api/v1/commands/{id}", wrap(portal.Portal.GetCommand))
 		mux.Handle("POST /api/v1/alerts/{id}/acknowledge", wrapOperator(portal.Portal.AcknowledgeAlert))
 		mux.Handle("POST /api/v1/alerts/{id}/resolve", wrapOperator(portal.Portal.ResolveAlert))
+
+		// Notification channels — list/read open to any authed user, writes
+		// admin-only, test-send operator-or-above (operators verify their own
+		// on-call channels without needing admin).
+		mux.Handle("GET /api/v1/notifications/channels", wrap(portal.Portal.ListNotificationChannels))
+		mux.Handle("POST /api/v1/notifications/channels", wrapAdmin(portal.Portal.CreateNotificationChannel))
+		mux.Handle("PATCH /api/v1/notifications/channels/{id}", wrapAdmin(portal.Portal.UpdateNotificationChannel))
+		mux.Handle("DELETE /api/v1/notifications/channels/{id}", wrapAdmin(portal.Portal.DeleteNotificationChannel))
+		mux.Handle("POST /api/v1/notifications/channels/{id}/test", wrapOperator(portal.Portal.TestNotificationChannel))
 	}
 
 	// Bridge-side command channel — HMAC-authenticated, same scheme as /ingest.
