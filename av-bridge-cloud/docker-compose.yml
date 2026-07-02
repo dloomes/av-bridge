@@ -46,6 +46,13 @@ services:
       BOOTSTRAP_POC: "true"
       POC_BRIDGE_COLLECTOR_ID: "poc-collector-01"
       POC_HMAC_SECRET: "poc-shared-secret"
+      # Seed a vendor (helpdesk) admin for local username+password auth on
+      # first boot. Only creates a row if none exists — rotating the password
+      # here after the first boot has no effect (use POST /api/v1/auth/change-
+      # password). Delete these two lines to disable the seed entirely.
+      VENDOR_ADMIN_EMAIL: "dloomes@involve.vc"
+      VENDOR_ADMIN_PASSWORD: "ChangeMeOnFirstRun!"
+      VENDOR_ADMIN_NAME: "Daniel Loomes"
     ports:
       - "8090:8090"
 

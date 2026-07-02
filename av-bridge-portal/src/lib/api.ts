@@ -37,11 +37,21 @@ export const WS_BASE =
 // Bearer token comes from the active session set on sign-in. Falls back to
 // the env-supplied key so smoke scripts and CI keep working when no browser
 // session exists.
-import { getScope, getToken } from "./session";
+import { getScope, getToken, signOut } from "./session";
 const FALLBACK_KEY = process.env.NEXT_PUBLIC_AV_BRIDGE_API_KEY ?? "";
 
 export function currentToken(): string {
   return getToken() ?? FALLBACK_KEY;
+}
+
+// 401 on any authenticated call means the session is dead — expired,
+// revoked, or the server was restarted. Clear the local session so AuthGuard
+// bounces the user to /sign-in. Login itself is exempt because 401 there is
+// a bad-password signal, not a session-death signal.
+function handle401IfSessionDeath(path: string) {
+  if (path.startsWith("/api/v1/auth/login")) return;
+  if (typeof window === "undefined") return;
+  signOut();
 }
 
 class ApiError extends Error {
@@ -77,6 +87,7 @@ async function request<T>(
     cache: "no-store",
   });
   if (!res.ok) {
+    if (res.status === 401) handle401IfSessionDeath(path);
     let body = "";
     try {
       body = await res.text();
@@ -133,7 +144,60 @@ export interface HelpdeskOverviewItem {
   last_bridge_seen?: string;
 }
 
+export interface LoginResponse {
+  token: string;
+  expires_at: string;
+  role: string;
+}
+
 export const api = {
+  // -- auth --------------------------------------------------------------------
+  //
+  // Login is intentionally NOT guarded by AuthGuard — the caller has no token
+  // yet. The returned token goes into localStorage via signIn() before the
+  // portal reads /whoami to hydrate the rest of the session.
+  login: (email: string, password: string, signal?: AbortSignal) =>
+    request<LoginResponse>("/api/v1/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ email, password }),
+      signal,
+    }),
+
+  logout: async (signal?: AbortSignal): Promise<void> => {
+    // Best-effort — tell the server to revoke the session so a leaked token
+    // can't outlive the sign-out click. A network failure here still clears
+    // local session state; the caller does that after this resolves.
+    try {
+      await fetch(`${API_BASE}/api/v1/auth/logout`, {
+        method: "POST",
+        headers: authHeaders(),
+        signal,
+        cache: "no-store",
+      });
+    } catch {
+      // ignore — we still want to clear the local token
+    }
+  },
+
+  changePassword: (
+    current_password: string,
+    new_password: string,
+    signal?: AbortSignal
+  ): Promise<void> =>
+    fetch(`${API_BASE}/api/v1/auth/change-password`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ current_password, new_password }),
+      signal,
+      cache: "no-store",
+    }).then(async (res) => {
+      if (!res.ok) {
+        let body = "";
+        try { body = await res.text(); } catch {}
+        throw new ApiError(`${res.status} ${res.statusText}${body ? `: ${body}` : ""}`, res.status);
+      }
+    }),
+
   whoami: (signal?: AbortSignal) =>
     request<WhoamiResponse>("/api/v1/whoami", { signal }),
 

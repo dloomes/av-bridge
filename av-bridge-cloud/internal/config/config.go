@@ -62,6 +62,15 @@ type Config struct {
 	SMTPUsername string
 	SMTPPassword string
 	SMTPFrom     string
+
+	// Local auth seed — creates a vendor admin on first startup if all three
+	// are set and no user with that email already exists. Existing rows are
+	// never overwritten, so rotating VENDOR_ADMIN_PASSWORD after first boot
+	// has no effect (use the change-password endpoint or an admin CLI). All
+	// three empty ⇒ no seed runs.
+	VendorAdminEmail    string
+	VendorAdminPassword string
+	VendorAdminName     string
 }
 
 func FromEnv() (Config, error) {
@@ -100,6 +109,9 @@ func FromEnv() (Config, error) {
 		SMTPUsername:         os.Getenv("POC_SMTP_USERNAME"),
 		SMTPPassword:         os.Getenv("POC_SMTP_PASSWORD"),
 		SMTPFrom:             getenv("POC_SMTP_FROM", "alerts@av-bridge.local"),
+		VendorAdminEmail:     os.Getenv("VENDOR_ADMIN_EMAIL"),
+		VendorAdminPassword:  os.Getenv("VENDOR_ADMIN_PASSWORD"),
+		VendorAdminName:      getenv("VENDOR_ADMIN_NAME", "Vendor Administrator"),
 	}
 	if c.MigrationDSN == "" {
 		return c, fmt.Errorf("DATABASE_MIGRATION_URL is required")

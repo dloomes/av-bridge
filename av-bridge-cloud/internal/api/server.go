@@ -66,6 +66,14 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 			return portalauth.Middleware(portal.Resolver, adminOnly(h))
 		}
 
+		// Login is intentionally OUTSIDE the auth middleware — a fresh user
+		// has no token yet. Logout accepts a token but tolerates an
+		// unauthenticated caller (idempotent 204) so it can be a "clear my
+		// session server-side" call even after the token expired.
+		mux.Handle("POST /api/v1/auth/login", http.HandlerFunc(portal.Portal.Login))
+		mux.Handle("POST /api/v1/auth/logout", http.HandlerFunc(portal.Portal.Logout))
+		mux.Handle("POST /api/v1/auth/change-password", wrap(portal.Portal.ChangePassword))
+
 		// Read — any authenticated user.
 		mux.Handle("GET /api/v1/whoami", wrap(portal.Portal.Whoami))
 		mux.Handle("GET /api/v1/helpdesk/customers",

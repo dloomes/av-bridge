@@ -44,7 +44,12 @@ export function UserMenu() {
 
   if (!session.user) return null;
 
-  const handleSignOut = () => {
+  const handleSignOut = async () => {
+    // Revoke the session server-side before clearing local state. Awaited so
+    // a slow network doesn't leave a live token on the server after the
+    // client thinks it signed out; api.logout swallows its own errors so
+    // this never blocks the redirect.
+    await api.logout();
     signOut();
     router.replace("/sign-in");
   };

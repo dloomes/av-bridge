@@ -124,6 +124,11 @@ const (
 	pocVendorTenantUUID = "77777777-7777-7777-7777-777777777777"
 )
 
+// PocVendorTenantUUID exposes the fixed vendor tenant UUID so callers outside
+// the db package (e.g. main.go's vendor-admin seed) can reference the same
+// row BootstrapPoC creates.
+func PocVendorTenantUUID() string { return pocVendorTenantUUID }
+
 // BootstrapPoC idempotently seeds one tenant's full hierarchy plus a collector
 // whose HMAC secret matches the on-prem bridge. Runs as app_admin (BYPASSRLS).
 // Re-running updates the collector secret (rotation) but leaves the rest.

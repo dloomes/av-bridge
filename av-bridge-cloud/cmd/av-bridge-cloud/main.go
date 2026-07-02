@@ -74,6 +74,28 @@ func main() {
 		log.Info("poc tenant bootstrapped", "bridge_collector_id", cfg.PoCBridgeID)
 	}
 
+	// Vendor admin seed — create a helpdesk login on first boot so an
+	// operator can sign in via local auth without needing a portal user CRUD
+	// UI. Idempotent: never overwrites an existing row.
+	if cfg.VendorAdminEmail != "" && cfg.VendorAdminPassword != "" {
+		created, err := store.SeedLocalUser(ctx, db.SeedLocalUserOptions{
+			Email:          cfg.VendorAdminEmail,
+			Password:       cfg.VendorAdminPassword,
+			FullName:       cfg.VendorAdminName,
+			Role:           "admin",
+			VendorTenantID: db.PocVendorTenantUUID(),
+		})
+		if err != nil {
+			log.Error("seed vendor admin", "error", err)
+			os.Exit(1)
+		}
+		if created {
+			log.Info("seeded vendor admin", "email", cfg.VendorAdminEmail)
+		} else {
+			log.Info("vendor admin already exists — password not touched", "email", cfg.VendorAdminEmail)
+		}
+	}
+
 	// Live-event fan-out: ingest publishes, portal /ws/events subscribes.
 	// Single hub is shared so events from ingest reach subscribed portals.
 	hub := wsfanout.NewHub(log)
@@ -107,14 +129,16 @@ func main() {
 
 	var portalRoutes *api.PortalRoutes
 	if cfg.PoCPortalToken != "" {
-		// Two-tier auth: mock-JWT for real per-user identity (dev-friendly),
-		// static token as a fallback for ops/smoke scripts that don't want to
-		// mint a token. ChainResolver tries mock first; static catches the
-		// long-form Bearer that's been in the config since slice 2.
+		// Three-tier auth. Local is checked first: session tokens have a
+		// distinctive `av_` prefix so mismatches short-circuit without a DB
+		// query. Mock-JWT is next for the dev sign-in presets. Static token
+		// catches the long-form Bearer used by smoke scripts. All three
+		// hand back the same Principal shape.
 		lookup := portalauth.NewDBTenantLookup(store.AdminPool())
+		local := portalauth.NewLocalResolver(store.AdminPool())
 		mock := portalauth.NewMockJWTResolver(lookup, true)
 		static := portalauth.NewStaticResolver(cfg.PoCPortalToken, cfg.PoCPortalCustomerID, cfg.PoCPortalRole)
-		resolver := portalauth.NewChainResolver(mock, static)
+		resolver := portalauth.NewChainResolver(local, mock, static)
 		portalRoutes = &api.PortalRoutes{
 			Resolver: resolver,
 			Portal:   portalapi.New(store, cipher, dispatcher, log),
@@ -122,7 +146,7 @@ func main() {
 		}
 		log.Info("portal API enabled",
 			"customer_id", cfg.PoCPortalCustomerID, "role", cfg.PoCPortalRole,
-			"mock_jwt", "enabled")
+			"local_auth", "enabled", "mock_jwt", "enabled")
 	} else {
 		log.Warn("POC_PORTAL_TOKEN not set — portal read API disabled")
 	}
