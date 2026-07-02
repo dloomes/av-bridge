@@ -1,20 +1,16 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
-  Bell,
-  BarChart3,
   Building2,
   ChevronRight,
   CircleSlash,
   DoorOpen,
-  History,
-  MapPin,
   Plus,
   RefreshCcw,
+  Send,
   Server,
   Wifi,
 } from "lucide-react";
@@ -26,16 +22,16 @@ import { DeviceCard } from "@/components/device-card";
 import { EventFeed } from "@/components/event-feed";
 import { Modal } from "@/components/modal";
 import { DeviceForm } from "@/components/device-form";
+import { BulkCommandForm } from "@/components/bulk-command";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { usePolling } from "@/hooks/usePolling";
 import { useSession } from "@/hooks/useSession";
 import { api } from "@/lib/api";
-import { isAdmin } from "@/lib/session";
+import { canOperate, isAdmin } from "@/lib/session";
 import { formatRelative, groupDevicesByLocation } from "@/lib/utils";
 import type {
-  AlertsSummary,
   CollectorSummary,
   DeviceStatus,
   DeviceSummary,
@@ -68,13 +64,6 @@ export default function DashboardPage() {
     (signal) => api.listCollectors(signal),
     15_000
   );
-  const alerts = usePolling<AlertsSummary>(
-    (signal) => api.alertsSummary(signal),
-    15_000
-  );
-  const openAlerts = alerts.data?.open ?? 0;
-  const criticalAlerts = alerts.data?.critical_open ?? 0;
-
   const refreshTick = useMemo(
     () => devices.lastUpdated ?? 0,
     [devices.lastUpdated]
@@ -95,6 +84,8 @@ export default function DashboardPage() {
     });
 
   const [createOpen, setCreateOpen] = useState(false);
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const operator = canOperate(session.user?.role);
 
   const isLoading = fleet.loading && !fleet.data;
   const hasError = !!(fleet.error || devices.error);
@@ -125,44 +116,12 @@ export default function DashboardPage() {
             <RefreshCcw className="h-3.5 w-3.5" />
             Refresh
           </Button>
-          <Button
-            asChild
-            variant={openAlerts > 0 ? "default" : "outline"}
-            size="sm"
-            className={
-              criticalAlerts > 0
-                ? "bg-red-600 hover:bg-red-700 text-white"
-                : undefined
-            }
-          >
-            <Link href="/alerts">
-              <Bell className="h-3.5 w-3.5" />
-              Alerts
-              {openAlerts > 0 && (
-                <span className="ml-1.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-white/20 px-1 text-[10px] font-semibold">
-                  {openAlerts}
-                </span>
-              )}
-            </Link>
-          </Button>
-          <Button asChild variant="outline" size="sm">
-            <Link href="/locations">
-              <MapPin className="h-3.5 w-3.5" />
-              Locations
-            </Link>
-          </Button>
-          <Button asChild variant="outline" size="sm">
-            <Link href="/reports">
-              <BarChart3 className="h-3.5 w-3.5" />
-              Reports
-            </Link>
-          </Button>
-          <Button asChild variant="outline" size="sm">
-            <Link href="/audit">
-              <History className="h-3.5 w-3.5" />
-              Activity
-            </Link>
-          </Button>
+          {operator && (
+            <Button variant="outline" size="sm" onClick={() => setBulkOpen(true)}>
+              <Send className="h-3.5 w-3.5" />
+              Send to group
+            </Button>
+          )}
           {isAdmin(session.user?.role) && (
             <Button size="sm" onClick={() => setCreateOpen(true)}>
               <Plus className="h-3.5 w-3.5" />
@@ -187,6 +146,17 @@ export default function DashboardPage() {
             devices.refresh();
             fleet.refresh();
           }}
+        />
+      </Modal>
+
+      <Modal
+        open={bulkOpen}
+        onClose={() => setBulkOpen(false)}
+        title="Send command to devices"
+      >
+        <BulkCommandForm
+          devices={devices.data ?? []}
+          onClose={() => setBulkOpen(false)}
         />
       </Modal>
 

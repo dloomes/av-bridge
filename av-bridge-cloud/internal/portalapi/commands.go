@@ -49,6 +49,95 @@ func (h *Handler) SubmitReconnect(w http.ResponseWriter, r *http.Request) {
 	h.submitAndWait(w, r, r.PathValue("id"), CommandReconnectName, nil)
 }
 
+// SubmitBulkCommand — POST /api/v1/commands/bulk
+// body: { device_ids: [...], name: "...", args: {...} }
+//
+// Fires the same command to N devices in a single request. Doesn't wait for
+// results — with 20 devices in a room, aggregate wait time would blow the
+// portal's HTTP timeout even for fast commands. Instead every device gets
+// its own row enqueued and the response returns one entry per device with
+// either a command_id (portal can poll) or an error (device unknown, not
+// visible to this tenant, etc). Whole-request 4xx only fires on shape
+// problems — a mixed batch (some ids valid, some not) still returns 200
+// with per-device status.
+//
+// Audit gets one row per submitted command, same shape as single-submit,
+// so a bulk fire looks like N submits in the activity feed — expected.
+func (h *Handler) SubmitBulkCommand(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		DeviceIDs []string       `json:"device_ids"`
+		Name      string         `json:"name"`
+		Args      map[string]any `json:"args,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if req.Name == "" {
+		writeErr(w, http.StatusBadRequest, "name is required")
+		return
+	}
+	if len(req.DeviceIDs) == 0 {
+		writeErr(w, http.StatusBadRequest, "device_ids must be non-empty")
+		return
+	}
+	// Sanity cap so a runaway UI can't drop 10k rows in one call. Real bulk
+	// jobs (nightly power-off etc.) would use a proper scheduling flow, not
+	// a synchronous fan-out.
+	if len(req.DeviceIDs) > 200 {
+		writeErr(w, http.StatusBadRequest, "at most 200 devices per bulk request")
+		return
+	}
+
+	var argsJSON []byte
+	if len(req.Args) > 0 {
+		argsJSON, _ = json.Marshal(req.Args)
+	}
+	argsMeta := map[string]any{"name": req.Name}
+	if len(argsJSON) > 0 {
+		argsMeta["args"] = json.RawMessage(argsJSON)
+	}
+
+	p, _ := portalauth.From(r.Context())
+
+	type result struct {
+		DeviceID  string `json:"device_id"`
+		CommandID string `json:"command_id,omitempty"`
+		Error     string `json:"error,omitempty"`
+	}
+	results := make([]result, 0, len(req.DeviceIDs))
+
+	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
+		for _, devID := range req.DeviceIDs {
+			cmdID, err := commands.Submit(ctx, tx, p.CustomerID, devID, req.Name, argsJSON, p.Role)
+			if errors.Is(err, pgx.ErrNoRows) {
+				results = append(results, result{DeviceID: devID, Error: "device not found"})
+				continue
+			}
+			if err != nil {
+				// A real DB error (constraint, connection, etc.) is not per-device —
+				// abort the whole batch so the tx rolls back cleanly and the caller
+				// sees a 500. Partial writes here would poison the tx anyway.
+				return err
+			}
+			if err := audit.Record(ctx, tx, p.CustomerID, audit.Entry{
+				Actor: p.ActorLabel(), Action: "command.submit",
+				TargetKind: "command", TargetID: cmdID,
+				RelatedTargetKind: "device", RelatedTargetID: devID,
+				Metadata: argsMeta,
+			}); err != nil {
+				return err
+			}
+			results = append(results, result{DeviceID: devID, CommandID: cmdID})
+		}
+		return nil
+	})
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"results": results})
+}
+
 // GetCommand — GET /api/v1/commands/{id}
 func (h *Handler) GetCommand(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")

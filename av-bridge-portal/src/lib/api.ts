@@ -3,6 +3,7 @@ import type {
   AlertsSummary,
   AuditEntry,
   BuildingRow,
+  BulkCommandResponse,
   CollectorSummary,
   CommandRequest,
   CommandResponse,
@@ -10,6 +11,9 @@ import type {
   DeviceDetail,
   DeviceSummary,
   DeviceUptimeRow,
+  FirmwareRow,
+  FirmwareTarget,
+  FirmwareTargetBody,
   FleetStatus,
   HealthResponse,
   NamedRow,
@@ -164,6 +168,41 @@ export const api = {
       `/api/v1/devices/${encodeURIComponent(id)}/command`,
       { method: "POST", body: JSON.stringify(body), signal }
     ),
+
+  sendBulkCommand: (
+    body: { device_ids: string[]; name: string; args?: Record<string, unknown> },
+    signal?: AbortSignal
+  ) =>
+    request<BulkCommandResponse>("/api/v1/commands/bulk", {
+      method: "POST",
+      body: JSON.stringify(body),
+      signal,
+    }),
+
+  firmware: (signal?: AbortSignal) =>
+    request<FirmwareRow[]>("/api/v1/firmware", { signal }),
+
+  listFirmwareTargets: (signal?: AbortSignal) =>
+    request<FirmwareTarget[]>("/api/v1/firmware/targets", { signal }),
+
+  upsertFirmwareTarget: (body: FirmwareTargetBody, signal?: AbortSignal) =>
+    request<{ id: string }>("/api/v1/firmware/targets", {
+      method: "POST",
+      body: JSON.stringify(body),
+      signal,
+    }),
+
+  deleteFirmwareTarget: async (id: string, signal?: AbortSignal): Promise<void> => {
+    const res = await fetch(
+      `${API_BASE}/api/v1/firmware/targets/${encodeURIComponent(id)}`,
+      { method: "DELETE", headers: authHeaders(), signal, cache: "no-store" }
+    );
+    if (!res.ok) {
+      let body = "";
+      try { body = await res.text(); } catch {}
+      throw new ApiError(`${res.status} ${res.statusText}${body ? `: ${body}` : ""}`, res.status);
+    }
+  },
 
   reconnectDevice: (id: string, signal?: AbortSignal) =>
     request<{ status: string; device_id: string }>(

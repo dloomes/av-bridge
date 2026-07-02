@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
-  ArrowLeft,
   Download,
   LineChart,
   RefreshCcw,
@@ -33,19 +32,11 @@ export default function ReportsPage() {
   return (
     <div className="flex h-screen flex-col">
       <header className="flex flex-wrap items-center justify-between gap-3 border-b bg-card/50 px-6 py-4">
-        <div className="flex items-center gap-3">
-          <Button asChild variant="ghost" size="sm">
-            <Link href="/">
-              <ArrowLeft className="h-3.5 w-3.5" />
-              Dashboard
-            </Link>
-          </Button>
-          <div>
-            <h1 className="text-xl font-semibold">Reports</h1>
-            <p className="text-sm text-muted-foreground">
-              Device uptime and room activity over the selected window
-            </p>
-          </div>
+        <div>
+          <h1 className="text-xl font-semibold">Reports</h1>
+          <p className="text-sm text-muted-foreground">
+            Device uptime and room activity over the selected window
+          </p>
         </div>
         <UserMenu />
       </header>

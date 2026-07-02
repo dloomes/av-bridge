@@ -203,6 +203,49 @@ export interface RoomActivityRow {
   last_event_at?: string;
 }
 
+export interface FirmwareRow {
+  device_id: string;
+  name: string;
+  location: string;
+  make?: string;
+  model?: string;
+  firmware_version?: string;
+  // Per-(make, model) reference data — populated from firmware_targets when
+  // an admin has curated one. Empty when no target is set; the UI falls back
+  // to a neutral fleet breakdown per model group.
+  target_version?: string;
+  docs_url?: string;
+}
+
+export interface FirmwareTarget {
+  id: string;
+  make: string;
+  model: string;
+  target_version?: string;
+  docs_url?: string;
+  notes?: string;
+  updated_at?: string;
+  updated_by?: string;
+}
+
+export interface FirmwareTargetBody {
+  make: string;
+  model: string;
+  target_version?: string;
+  docs_url?: string;
+  notes?: string;
+}
+
+export interface BulkCommandResult {
+  device_id: string;
+  command_id?: string;
+  error?: string;
+}
+
+export interface BulkCommandResponse {
+  results: BulkCommandResult[];
+}
+
 export interface HealthResponse {
   status: string;
   time: string;

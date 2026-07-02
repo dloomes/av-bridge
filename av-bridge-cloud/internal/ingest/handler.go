@@ -233,10 +233,17 @@ func upsertDeviceFromTelemetry(ctx context.Context, tx pgx.Tx, customerID, colle
 		nilIfEmpty(t.DeviceName),
 		nilIfEmpty(t.DeviceType),
 		nilIfEmpty(t.Protocol),
-		nilIfEmpty(t.Tags["make"]),
-		nilIfEmpty(t.Tags["model"]),
+		// Tag-supplied make/model take priority (customer can override via YAML/portal),
+		// then fall back to what the adapter emits via metrics/lens_metrics. Poly, for
+		// example, gets its make/model from Lens (manufacturer + hardware_model) rather
+		// than being set as tags on the device row.
+		nilIfEmpty(firstNonEmpty(t.Tags["make"], pick(t.LensMetrics, t.Metrics, "manufacturer", "make"))),
+		nilIfEmpty(firstNonEmpty(t.Tags["model"], pick(t.LensMetrics, t.Metrics, "hardware_model", "model", "product_model"))),
 		nilIfEmpty(pick(t.LensMetrics, t.Metrics, "serial_number", "serial")),
-		nilIfEmpty(pick(t.Metrics, t.LensMetrics, "firmware_version", "firmware", "sw_version")),
+		// software_version covers Poly / Cisco / other vendors that report firmware
+		// under a "software" naming; firmware_version and sw_version stay for the
+		// tesira / display drivers that use those keys.
+		nilIfEmpty(pick(t.Metrics, t.LensMetrics, "firmware_version", "firmware", "sw_version", "software_version", "software_build")),
 		nilIfEmpty(pick(t.LensMetrics, t.Metrics, "mac_address", "mac")),
 		nilIfEmpty(firstNonEmpty(t.Tags["ip_address"], pick(t.Metrics, t.LensMetrics, "ip_address", "ip"))),
 		jsonbStringMap(t.Tags),

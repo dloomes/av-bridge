@@ -4,7 +4,6 @@ import { useCallback, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   AlertTriangle,
-  ArrowLeft,
   Bell,
   Check,
   CheckCircle2,
@@ -109,19 +108,11 @@ export default function AlertsPage() {
   return (
     <div className="flex h-screen flex-col">
       <header className="flex flex-wrap items-center justify-between gap-3 border-b bg-card/50 px-6 py-4">
-        <div className="flex items-center gap-3">
-          <Button asChild variant="ghost" size="sm">
-            <Link href="/">
-              <ArrowLeft className="h-3.5 w-3.5" />
-              Dashboard
-            </Link>
-          </Button>
-          <div>
-            <h1 className="text-xl font-semibold">Alerts</h1>
-            <p className="text-sm text-muted-foreground">
-              Issues raised by the bridge that need attention
-            </p>
-          </div>
+        <div>
+          <h1 className="text-xl font-semibold">Alerts</h1>
+          <p className="text-sm text-muted-foreground">
+            Issues raised by the bridge that need attention
+          </p>
         </div>
         <div className="flex items-center gap-4 text-sm">
           <span>
@@ -136,12 +127,6 @@ export default function AlertsPage() {
             <span className="font-semibold">{counts.acknowledged}</span>{" "}
             <span className="text-muted-foreground">acknowledged</span>
           </span>
-          <Button asChild variant="outline" size="sm">
-            <Link href="/notifications">
-              <Bell className="h-3.5 w-3.5" />
-              Channels
-            </Link>
-          </Button>
           <UserMenu />
         </div>
       </header>

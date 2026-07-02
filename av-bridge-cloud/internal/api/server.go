@@ -82,6 +82,10 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 		mux.Handle("GET /api/v1/devices/{id}/telemetry/history", wrap(portal.Portal.TelemetryHistory))
 		mux.Handle("GET /api/v1/events", wrap(portal.Portal.ListEvents))
 		mux.Handle("GET /api/v1/audit", wrap(portal.Portal.ListAudit))
+		mux.Handle("GET /api/v1/firmware", wrap(portal.Portal.FirmwareSummary))
+		mux.Handle("GET /api/v1/firmware/targets", wrap(portal.Portal.ListFirmwareTargets))
+		mux.Handle("POST /api/v1/firmware/targets", wrapAdmin(portal.Portal.UpsertFirmwareTarget))
+		mux.Handle("DELETE /api/v1/firmware/targets/{id}", wrapAdmin(portal.Portal.DeleteFirmwareTarget))
 		mux.Handle("GET /api/v1/reports/device-uptime", wrap(portal.Portal.DeviceUptimeReport))
 		mux.Handle("GET /api/v1/reports/room-activity", wrap(portal.Portal.RoomActivityReport))
 		mux.Handle("GET /api/v1/alerts", wrap(portal.Portal.ListAlerts))
@@ -120,6 +124,7 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 		}
 		mux.Handle("POST /api/v1/devices/{id}/command", wrapOperator(portal.Portal.SubmitCommand))
 		mux.Handle("POST /api/v1/devices/{id}/reconnect", wrapOperator(portal.Portal.SubmitReconnect))
+		mux.Handle("POST /api/v1/commands/bulk", wrapOperator(portal.Portal.SubmitBulkCommand))
 		mux.Handle("GET /api/v1/commands/{id}", wrap(portal.Portal.GetCommand))
 		mux.Handle("POST /api/v1/alerts/{id}/acknowledge", wrapOperator(portal.Portal.AcknowledgeAlert))
 		mux.Handle("POST /api/v1/alerts/{id}/resolve", wrapOperator(portal.Portal.ResolveAlert))

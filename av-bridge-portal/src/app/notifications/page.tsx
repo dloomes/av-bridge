@@ -1,9 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import Link from "next/link";
 import {
-  ArrowLeft,
   Bell,
   CheckCircle2,
   Loader2,
@@ -102,19 +100,11 @@ export default function NotificationsPage() {
   return (
     <div className="flex h-screen flex-col">
       <header className="flex flex-wrap items-center justify-between gap-3 border-b bg-card/50 px-6 py-4">
-        <div className="flex items-center gap-3">
-          <Button asChild variant="ghost" size="sm">
-            <Link href="/alerts">
-              <ArrowLeft className="h-3.5 w-3.5" />
-              Alerts
-            </Link>
-          </Button>
-          <div>
-            <h1 className="text-xl font-semibold">Notification channels</h1>
-            <p className="text-sm text-muted-foreground">
-              Where alerts get dispatched when they first open
-            </p>
-          </div>
+        <div>
+          <h1 className="text-xl font-semibold">Notification channels</h1>
+          <p className="text-sm text-muted-foreground">
+            Where alerts get dispatched when they first open
+          </p>
         </div>
         <div className="flex items-center gap-3">
           {admin && (
