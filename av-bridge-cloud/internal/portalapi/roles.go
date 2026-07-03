@@ -180,14 +180,14 @@ func (h *Handler) CreateRole(w http.ResponseWriter, r *http.Request) {
 	}
 
 	_ = h.store.WithTenantScoped(r.Context(), p.CustomerID, principalScope(p), func(tx pgx.Tx) error {
-		return audit.Record(r.Context(), tx, p.CustomerID, audit.Entry{
-			Actor: p.ActorLabel(), Action: "role.create",
+		return audit.Record(r.Context(), tx, p.CustomerID, stampActor(p, audit.Entry{
+			Action: "role.create",
 			TargetKind: "role", TargetID: id,
 			After: mustJSON(map[string]any{
 				"name":        req.Name,
 				"permissions": req.Permissions,
 			}),
-		})
+		}))
 	})
 	writeJSON(w, http.StatusOK, map[string]string{"id": id})
 }
@@ -310,12 +310,12 @@ func (h *Handler) UpdateRole(w http.ResponseWriter, r *http.Request) {
 		auditPayload["permissions"] = *req.Permissions
 	}
 	_ = h.store.WithTenantScoped(r.Context(), p.CustomerID, principalScope(p), func(tx pgx.Tx) error {
-		return audit.Record(r.Context(), tx, p.CustomerID, audit.Entry{
-			Actor: p.ActorLabel(), Action: "role.update",
+		return audit.Record(r.Context(), tx, p.CustomerID, stampActor(p, audit.Entry{
+			Action: "role.update",
 			TargetKind: "role", TargetID: id,
 			Before: mustJSON(existing),
 			After:  mustJSON(auditPayload),
-		})
+		}))
 	})
 	writeJSON(w, http.StatusOK, map[string]string{"id": id})
 }
@@ -376,11 +376,11 @@ func (h *Handler) DeleteRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = h.store.WithTenantScoped(r.Context(), p.CustomerID, principalScope(p), func(tx pgx.Tx) error {
-		return audit.Record(r.Context(), tx, p.CustomerID, audit.Entry{
-			Actor: p.ActorLabel(), Action: "role.delete",
+		return audit.Record(r.Context(), tx, p.CustomerID, stampActor(p, audit.Entry{
+			Action: "role.delete",
 			TargetKind: "role", TargetID: id,
 			Before: mustJSON(map[string]any{"name": name}),
-		})
+		}))
 	})
 	w.WriteHeader(http.StatusNoContent)
 }

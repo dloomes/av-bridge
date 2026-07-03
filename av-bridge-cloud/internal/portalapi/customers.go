@@ -77,26 +77,26 @@ func (h *Handler) HelpdeskCreateCustomer(w http.ResponseWriter, r *http.Request)
 	// store, so this is a separate small tx that just records the trail.
 	// The new customer id becomes the tenant scope.
 	_ = h.store.WithTenant(r.Context(), res.CustomerID, func(tx pgx.Tx) error {
-		if err := audit.Record(r.Context(), tx, res.CustomerID, audit.Entry{
-			Actor: p.ActorLabel(), Action: "customer.create",
+		if err := audit.Record(r.Context(), tx, res.CustomerID, stampActor(p, audit.Entry{
+			Action: "customer.create",
 			TargetKind: "customer", TargetID: res.CustomerID,
 			After: mustJSON(map[string]any{
 				"name":            req.Name,
 				"entra_tenant_id": req.EntraTenantID,
 			}),
-		}); err != nil {
+		})); err != nil {
 			return err
 		}
 		if res.AdminUserID != "" {
-			return audit.Record(r.Context(), tx, res.CustomerID, audit.Entry{
-				Actor: p.ActorLabel(), Action: "user.create",
+			return audit.Record(r.Context(), tx, res.CustomerID, stampActor(p, audit.Entry{
+				Action: "user.create",
 				TargetKind: "user", TargetID: res.AdminUserID,
 				After: mustJSON(map[string]any{
 					"email": strings.ToLower(strings.TrimSpace(req.InitialAdmin.Email)),
 					"role":  "admin",
 					"note":  "initial admin — seeded during customer creation",
 				}),
-			})
+			}))
 		}
 		return nil
 	})

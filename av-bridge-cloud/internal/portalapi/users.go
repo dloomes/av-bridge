@@ -185,8 +185,8 @@ func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	_ = h.store.WithTenantScoped(r.Context(), p.CustomerID, principalScope(p), func(tx pgx.Tx) error {
-		return audit.Record(r.Context(), tx, p.CustomerID, audit.Entry{
-			Actor: p.ActorLabel(), Action: "user.create",
+		return audit.Record(r.Context(), tx, p.CustomerID, stampActor(p, audit.Entry{
+			Action: "user.create",
 			TargetKind: "user", TargetID: id,
 			After: mustJSON(map[string]any{
 				"email":              req.Email,
@@ -194,7 +194,7 @@ func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
 				"building_scope_ids": req.BuildingScopeIDs,
 				"full_name":          req.FullName,
 			}),
-		})
+		}))
 	})
 	writeJSON(w, http.StatusOK, map[string]string{"id": id})
 }
@@ -340,11 +340,11 @@ func (h *Handler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		auditPayload["role_ids"] = *req.RoleIDs
 	}
 	_ = h.store.WithTenantScoped(r.Context(), p.CustomerID, principalScope(p), func(tx pgx.Tx) error {
-		return audit.Record(r.Context(), tx, p.CustomerID, audit.Entry{
-			Actor: p.ActorLabel(), Action: "user.update",
+		return audit.Record(r.Context(), tx, p.CustomerID, stampActor(p, audit.Entry{
+			Action: "user.update",
 			TargetKind: "user", TargetID: id,
 			Before: mustJSON(before), After: mustJSON(auditPayload),
-		})
+		}))
 	})
 	writeJSON(w, http.StatusOK, map[string]string{"id": id})
 }
@@ -398,11 +398,11 @@ func (h *Handler) ResetUserPassword(w http.ResponseWriter, r *http.Request) {
 		  WHERE user_id = $1 AND revoked_at IS NULL`, id)
 
 	_ = h.store.WithTenantScoped(r.Context(), p.CustomerID, principalScope(p), func(tx pgx.Tx) error {
-		return audit.Record(r.Context(), tx, p.CustomerID, audit.Entry{
-			Actor: p.ActorLabel(), Action: "user.reset_password",
+		return audit.Record(r.Context(), tx, p.CustomerID, stampActor(p, audit.Entry{
+			Action: "user.reset_password",
 			TargetKind: "user", TargetID: id,
 			After: mustJSON(map[string]any{"note": "password reset by admin; sessions revoked"}),
-		})
+		}))
 	})
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -440,11 +440,11 @@ func (h *Handler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = h.store.WithTenantScoped(r.Context(), p.CustomerID, principalScope(p), func(tx pgx.Tx) error {
-		return audit.Record(r.Context(), tx, p.CustomerID, audit.Entry{
-			Actor: p.ActorLabel(), Action: "user.delete",
+		return audit.Record(r.Context(), tx, p.CustomerID, stampActor(p, audit.Entry{
+			Action: "user.delete",
 			TargetKind: "user", TargetID: id,
 			Before: mustJSON(map[string]any{"email": email, "role": role}),
-		})
+		}))
 	})
 	w.WriteHeader(http.StatusNoContent)
 }

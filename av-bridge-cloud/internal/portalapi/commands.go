@@ -120,12 +120,12 @@ func (h *Handler) SubmitBulkCommand(w http.ResponseWriter, r *http.Request) {
 				// sees a 500. Partial writes here would poison the tx anyway.
 				return err
 			}
-			if err := audit.Record(ctx, tx, p.CustomerID, audit.Entry{
-				Actor: p.ActorLabel(), Action: "command.submit",
+			if err := audit.Record(ctx, tx, p.CustomerID, stampActor(p, audit.Entry{
+				Action: "command.submit",
 				TargetKind: "command", TargetID: cmdID,
 				RelatedTargetKind: "device", RelatedTargetID: devID,
 				Metadata: argsMeta,
-			}); err != nil {
+			})); err != nil {
 				return err
 			}
 			results = append(results, result{DeviceID: devID, CommandID: cmdID})
@@ -190,12 +190,12 @@ func (h *Handler) submitAndWait(w http.ResponseWriter, r *http.Request, deviceID
 		if len(args) > 0 {
 			argsMeta["args"] = json.RawMessage(args)
 		}
-		return audit.Record(ctx, tx, p.CustomerID, audit.Entry{
-			Actor: p.ActorLabel(), Action: "command.submit",
+		return audit.Record(ctx, tx, p.CustomerID, stampActor(p, audit.Entry{
+			Action: "command.submit",
 			TargetKind: "command", TargetID: id,
 			RelatedTargetKind: "device", RelatedTargetID: deviceID,
 			Metadata: argsMeta,
-		})
+		}))
 	})
 	if !ok {
 		return

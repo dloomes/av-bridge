@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dloomes/av-bridge-cloud/internal/audit"
 	"github.com/dloomes/av-bridge-cloud/internal/db"
 	"github.com/dloomes/av-bridge-cloud/internal/notify"
 	"github.com/dloomes/av-bridge-cloud/internal/portalauth"
@@ -77,6 +78,30 @@ func principalScope(p portalauth.Principal) []string {
 		return nil
 	}
 	return p.BuildingScopeIDs
+}
+
+// stampActor fills the actor-context fields on an audit.Entry from the
+// caller's Principal so every audit row carries a snapshot of the
+// authorization state at write time (role, physical scope, vendor flag).
+// Roles and scope drift; the row is frozen. Handlers should compose their
+// entry then pass it through this before audit.Record.
+//
+// A nil BuildingScopeIDs is normalized to an empty slice: it distinguishes
+// "explicitly unscoped / full-tenant" (stored as {}) from the pre-slice-7
+// legacy where the column is NULL because the row was written before this
+// field existed.
+func stampActor(p portalauth.Principal, e audit.Entry) audit.Entry {
+	if e.Actor == "" {
+		e.Actor = p.ActorLabel()
+	}
+	e.ActorRole = p.Role
+	if p.BuildingScopeIDs == nil {
+		e.ActorScope = []string{}
+	} else {
+		e.ActorScope = p.BuildingScopeIDs
+	}
+	e.ActorIsVendor = p.IsVendor
+	return e
 }
 
 func queryInt(r *http.Request, key string, def, max int) int {
@@ -736,13 +761,14 @@ func (h *Handler) Whoami(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	type out struct {
-		UserID      string   `json:"user_id,omitempty"`
-		Email       string   `json:"email,omitempty"`
-		Name        string   `json:"name,omitempty"`
-		CustomerID  string   `json:"customer_id,omitempty"`
-		Role        string   `json:"role"`
-		IsVendor    bool     `json:"is_vendor,omitempty"`
-		Permissions []string `json:"permissions"`
+		UserID           string   `json:"user_id,omitempty"`
+		Email            string   `json:"email,omitempty"`
+		Name             string   `json:"name,omitempty"`
+		CustomerID       string   `json:"customer_id,omitempty"`
+		Role             string   `json:"role"`
+		IsVendor         bool     `json:"is_vendor,omitempty"`
+		Permissions      []string `json:"permissions"`
+		BuildingScopeIDs []string `json:"building_scope_ids"`
 	}
 	// Portal uses this list to gate UI (show/hide buttons) — vendor bypass
 	// still applies server-side, but for the UI we surface the effective
@@ -758,14 +784,22 @@ func (h *Handler) Whoami(w http.ResponseWriter, r *http.Request) {
 			perms = append(perms, k)
 		}
 	}
+	// Callers key off length: [] means unscoped (full tenant), non-empty means
+	// restricted to those buildings. json marshalling of a nil slice would
+	// emit null, breaking JS `scope.length`.
+	scope := p.BuildingScopeIDs
+	if scope == nil {
+		scope = []string{}
+	}
 	writeJSON(w, http.StatusOK, out{
-		UserID:      p.UserID,
-		Email:       p.Email,
-		Name:        p.Name,
-		CustomerID:  p.CustomerID,
-		Role:        p.Role,
-		IsVendor:    p.IsVendor,
-		Permissions: perms,
+		UserID:           p.UserID,
+		Email:            p.Email,
+		Name:             p.Name,
+		CustomerID:       p.CustomerID,
+		Role:             p.Role,
+		IsVendor:         p.IsVendor,
+		Permissions:      perms,
+		BuildingScopeIDs: scope,
 	})
 }
 

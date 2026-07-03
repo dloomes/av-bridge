@@ -26,6 +26,12 @@ import (
 // secondary entity — e.g. command.submit has target=command, related=device,
 // so the device's activity feed surfaces the command without needing
 // metadata-JSON lookups.
+//
+// ActorRole / ActorScope / ActorIsVendor snapshot the caller's authorization
+// state at the moment of the action. Roles and scope can drift after the fact
+// (a helpdesk promotion, a widened scope) — freezing them here keeps the
+// trail forensics-ready. Leave zero for legacy paths with no principal
+// context; the columns are nullable.
 type Entry struct {
 	Actor             string
 	Action            string
@@ -36,6 +42,9 @@ type Entry struct {
 	Before            any
 	After             any
 	Metadata          map[string]any
+	ActorRole         string
+	ActorScope        []string
+	ActorIsVendor     bool
 }
 
 // Record inserts the audit row inside the caller's tx. The session variable
@@ -57,19 +66,30 @@ func Record(ctx context.Context, tx pgx.Tx, customerID string, e Entry) error {
 	targetIDParam := nullIfEmpty(e.TargetID)
 	relKindParam := nullIfEmpty(e.RelatedTargetKind)
 	relIDParam := nullIfEmpty(e.RelatedTargetID)
+	actorRoleParam := nullIfEmpty(e.ActorRole)
+	// nil scope reads as "unknown / not stamped" (pre-slice-7 rows); an empty
+	// slice reads as "explicitly unscoped, full-tenant access". Preserve the
+	// distinction rather than coalescing both to NULL.
+	var actorScopeParam any
+	if e.ActorScope != nil {
+		actorScopeParam = e.ActorScope
+	}
 	_, err = tx.Exec(ctx, `
 		INSERT INTO audit_log (
 			customer_id, actor, action, target_kind, target_id,
 			related_target_kind, related_target_id,
-			before, "after", metadata
+			before, "after", metadata,
+			actor_role, actor_scope, actor_is_vendor
 		) VALUES (
 			$1, $2, $3, $4, $5,
 			$6, $7,
-			$8::jsonb, $9::jsonb, $10::jsonb
+			$8::jsonb, $9::jsonb, $10::jsonb,
+			$11, $12, $13
 		)`,
 		customerID, e.Actor, e.Action, e.TargetKind, targetIDParam,
 		relKindParam, relIDParam,
-		beforeParam, afterParam, metaParam)
+		beforeParam, afterParam, metaParam,
+		actorRoleParam, actorScopeParam, e.ActorIsVendor)
 	return err
 }
 

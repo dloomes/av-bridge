@@ -59,9 +59,9 @@ func (h *Handler) CreateRegion(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
-		return audit.Record(ctx, tx, p.CustomerID, audit.Entry{
-			Actor: p.ActorLabel(), Action: "region.create", TargetKind: "region", TargetID: id, After: after,
-		})
+		return audit.Record(ctx, tx, p.CustomerID, stampActor(p, audit.Entry{
+			Action: "region.create", TargetKind: "region", TargetID: id, After: after,
+		}))
 	})
 	if !ok {
 		return
@@ -97,9 +97,9 @@ func (h *Handler) CreateLocation(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
-		return audit.Record(ctx, tx, p.CustomerID, audit.Entry{
-			Actor: p.ActorLabel(), Action: "location.create", TargetKind: "location", TargetID: id, After: after,
-		})
+		return audit.Record(ctx, tx, p.CustomerID, stampActor(p, audit.Entry{
+			Action: "location.create", TargetKind: "location", TargetID: id, After: after,
+		}))
 	})
 	if !ok {
 		return
@@ -139,9 +139,9 @@ func (h *Handler) CreateBuilding(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
-		return audit.Record(ctx, tx, p.CustomerID, audit.Entry{
-			Actor: p.ActorLabel(), Action: "building.create", TargetKind: "building", TargetID: id, After: after,
-		})
+		return audit.Record(ctx, tx, p.CustomerID, stampActor(p, audit.Entry{
+			Action: "building.create", TargetKind: "building", TargetID: id, After: after,
+		}))
 	})
 	if !ok {
 		return
@@ -181,9 +181,9 @@ func (h *Handler) CreateRoom(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
-		return audit.Record(ctx, tx, p.CustomerID, audit.Entry{
-			Actor: p.ActorLabel(), Action: "room.create", TargetKind: "room", TargetID: id, After: after,
-		})
+		return audit.Record(ctx, tx, p.CustomerID, stampActor(p, audit.Entry{
+			Action: "room.create", TargetKind: "room", TargetID: id, After: after,
+		}))
 	})
 	if !ok {
 		return
@@ -317,10 +317,10 @@ func (h *Handler) updateSimpleNamed(w http.ResponseWriter, r *http.Request, tabl
 		if err != nil {
 			return err
 		}
-		return audit.Record(ctx, tx, p.CustomerID, audit.Entry{
-			Actor: p.ActorLabel(), Action: kind + ".update", TargetKind: kind, TargetID: id,
+		return audit.Record(ctx, tx, p.CustomerID, stampActor(p, audit.Entry{
+			Action: kind + ".update", TargetKind: kind, TargetID: id,
 			Before: before, After: after,
-		})
+		}))
 	})
 	if !ok {
 		return
@@ -401,10 +401,10 @@ func (h *Handler) UpdateBuilding(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
-		return audit.Record(ctx, tx, p.CustomerID, audit.Entry{
-			Actor: p.ActorLabel(), Action: "building.update", TargetKind: "building", TargetID: id,
+		return audit.Record(ctx, tx, p.CustomerID, stampActor(p, audit.Entry{
+			Action: "building.update", TargetKind: "building", TargetID: id,
 			Before: before, After: after,
-		})
+		}))
 	})
 	if !ok {
 		return
@@ -515,14 +515,14 @@ func (h *Handler) CreateNotificationChannel(w http.ResponseWriter, r *http.Reque
 			jsonOrNil(req.Config), req.MinSeverity, enabled).Scan(&id); err != nil {
 			return err
 		}
-		return audit.Record(ctx, tx, p.CustomerID, audit.Entry{
-			Actor: p.ActorLabel(), Action: "notification_channel.create",
+		return audit.Record(ctx, tx, p.CustomerID, stampActor(p, audit.Entry{
+			Action: "notification_channel.create",
 			TargetKind: "notification_channel", TargetID: id,
 			After: mustJSON(map[string]any{
 				"name": req.Name, "type": req.Type, "target": req.Target,
 				"min_severity": req.MinSeverity, "enabled": enabled,
 			}),
-		})
+		}))
 	})
 	if !ok {
 		return
@@ -573,14 +573,14 @@ func (h *Handler) UpdateNotificationChannel(w http.ResponseWriter, r *http.Reque
 		if rowsAffected == 0 {
 			return nil
 		}
-		return audit.Record(ctx, tx, p.CustomerID, audit.Entry{
-			Actor: p.ActorLabel(), Action: "notification_channel.update",
+		return audit.Record(ctx, tx, p.CustomerID, stampActor(p, audit.Entry{
+			Action: "notification_channel.update",
 			TargetKind: "notification_channel", TargetID: id,
 			After: mustJSON(map[string]any{
 				"name": req.Name, "target": req.Target,
 				"min_severity": req.MinSeverity, "enabled": enabled,
 			}),
-		})
+		}))
 	})
 	if !ok {
 		return
@@ -606,10 +606,10 @@ func (h *Handler) DeleteNotificationChannel(w http.ResponseWriter, r *http.Reque
 		if rowsAffected == 0 {
 			return nil
 		}
-		return audit.Record(ctx, tx, p.CustomerID, audit.Entry{
-			Actor: p.ActorLabel(), Action: "notification_channel.delete",
+		return audit.Record(ctx, tx, p.CustomerID, stampActor(p, audit.Entry{
+			Action: "notification_channel.delete",
 			TargetKind: "notification_channel", TargetID: id,
-		})
+		}))
 	})
 	if !ok {
 		return
@@ -783,11 +783,11 @@ func (h *Handler) deleteHierarchyNode(
 		if rowsAffected == 0 {
 			return nil
 		}
-		return audit.Record(ctx, tx, p.CustomerID, audit.Entry{
-			Actor: p.ActorLabel(), Action: kind + ".delete", TargetKind: kind, TargetID: id,
+		return audit.Record(ctx, tx, p.CustomerID, stampActor(p, audit.Entry{
+			Action: kind + ".delete", TargetKind: kind, TargetID: id,
 			Before:   before,
 			Metadata: impactToMap(imp),
-		})
+		}))
 	})
 	if !ok {
 		return
@@ -969,9 +969,9 @@ func (h *Handler) CreateDevice(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
-		return audit.Record(ctx, tx, p.CustomerID, audit.Entry{
-			Actor: p.ActorLabel(), Action: "device.create", TargetKind: "device", TargetID: id, After: after,
-		})
+		return audit.Record(ctx, tx, p.CustomerID, stampActor(p, audit.Entry{
+			Action: "device.create", TargetKind: "device", TargetID: id, After: after,
+		}))
 	})
 	if !ok {
 		return
@@ -1138,10 +1138,10 @@ func (h *Handler) UpdateDevice(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
-		return audit.Record(ctx, tx, p.CustomerID, audit.Entry{
-			Actor: p.ActorLabel(), Action: "device.update", TargetKind: "device", TargetID: id,
+		return audit.Record(ctx, tx, p.CustomerID, stampActor(p, audit.Entry{
+			Action: "device.update", TargetKind: "device", TargetID: id,
 			Before: before, After: after,
-		})
+		}))
 	})
 	if !ok {
 		return
@@ -1179,10 +1179,10 @@ func (h *Handler) DeleteDevice(w http.ResponseWriter, r *http.Request) {
 		if rowsAffected == 0 {
 			return nil
 		}
-		return audit.Record(ctx, tx, p.CustomerID, audit.Entry{
-			Actor: p.ActorLabel(), Action: "device.delete", TargetKind: "device", TargetID: id,
+		return audit.Record(ctx, tx, p.CustomerID, stampActor(p, audit.Entry{
+			Action: "device.delete", TargetKind: "device", TargetID: id,
 			Before: before,
-		})
+		}))
 	})
 	if !ok {
 		return

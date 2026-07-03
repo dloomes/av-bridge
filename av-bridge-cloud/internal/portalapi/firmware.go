@@ -177,14 +177,14 @@ func (h *Handler) UpsertFirmwareTarget(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
-		return audit.Record(ctx, tx, p.CustomerID, audit.Entry{
-			Actor: p.ActorLabel(), Action: "firmware_target.upsert",
+		return audit.Record(ctx, tx, p.CustomerID, stampActor(p, audit.Entry{
+			Action: "firmware_target.upsert",
 			TargetKind: "firmware_target", TargetID: id,
 			After: mustJSON(map[string]any{
 				"make": req.Make, "model": req.Model,
 				"target_version": req.TargetVersion, "docs_url": req.DocsURL,
 			}),
-		})
+		}))
 	})
 	if !ok {
 		return
@@ -209,10 +209,10 @@ func (h *Handler) DeleteFirmwareTarget(w http.ResponseWriter, r *http.Request) {
 		if rowsAffected == 0 {
 			return nil
 		}
-		return audit.Record(ctx, tx, p.CustomerID, audit.Entry{
-			Actor: p.ActorLabel(), Action: "firmware_target.delete",
+		return audit.Record(ctx, tx, p.CustomerID, stampActor(p, audit.Entry{
+			Action: "firmware_target.delete",
 			TargetKind: "firmware_target", TargetID: id,
-		})
+		}))
 	})
 	if !ok {
 		return
