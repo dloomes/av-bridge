@@ -111,8 +111,11 @@ const PRESETS: Array<{
   },
 ];
 
+// Opt-in — hidden by default so demos and screen-shares never see the mock
+// personas. Set NEXT_PUBLIC_AV_BRIDGE_ENABLE_DEV_SIGNINS=true in .env.local
+// during development to restore the "Alice/Bob/Casey/Sam" preset chooser.
 const DEV_SHORTCUTS_ENABLED =
-  process.env.NEXT_PUBLIC_AV_BRIDGE_ENABLE_DEV_SIGNINS !== "false";
+  process.env.NEXT_PUBLIC_AV_BRIDGE_ENABLE_DEV_SIGNINS === "true";
 
 export default function SignInPage() {
   const router = useRouter();

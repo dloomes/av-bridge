@@ -13,6 +13,8 @@ import {
   MapPin,
   Radio,
   ShieldCheck,
+  Users,
+  KeyRound,
 } from "lucide-react";
 import { LocationNav } from "@/components/location-nav";
 import { usePolling } from "@/hooks/usePolling";
@@ -55,6 +57,8 @@ const SECTIONS: NavSection[] = [
     title: "Manage",
     items: [
       { href: "/locations", label: "Locations", icon: MapPin },
+      { href: "/users", label: "Users", icon: Users },
+      { href: "/roles", label: "Roles", icon: KeyRound },
       { href: "/notifications", label: "Notifications", icon: Bell },
     ],
   },

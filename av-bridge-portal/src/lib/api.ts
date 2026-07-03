@@ -7,7 +7,11 @@ import type {
   CollectorSummary,
   CommandRequest,
   CommandResponse,
+  CreateCustomerBody,
+  CreateCustomerResponse,
   CreateDeviceBody,
+  CreateRoleBody,
+  CreateUserBody,
   DeviceDetail,
   DeviceSummary,
   DeviceUptimeRow,
@@ -19,9 +23,13 @@ import type {
   NamedRow,
   NotificationChannel,
   NotificationChannelBody,
+  RoleRow,
   RoomActivityRow,
   Telemetry,
   UpdateDeviceBody,
+  UpdateRoleBody,
+  UpdateUserBody,
+  UserRow,
 } from "./types";
 
 // HTTP requests go to the Next.js dev server, which proxies to av-bridge via
@@ -511,6 +519,106 @@ export const api = {
   },
 
   metrics: (signal?: AbortSignal) => requestText("/metrics", { signal }),
+
+  // -- users (customer tenant, admin-scoped) -----------------------------------
+  //
+  // Vendor callers can act on any customer by setting the scope in the user-
+  // menu picker — the api client sends X-Customer-Scope automatically. Non-
+  // vendor callers can only see their own tenant's users.
+
+  listUsers: (signal?: AbortSignal) =>
+    request<UserRow[]>("/api/v1/users", { signal }),
+
+  createUser: (body: CreateUserBody, signal?: AbortSignal) =>
+    request<{ id: string }>("/api/v1/users", {
+      method: "POST",
+      body: JSON.stringify(body),
+      signal,
+    }),
+
+  updateUser: (id: string, body: UpdateUserBody, signal?: AbortSignal) =>
+    request<{ id: string }>(`/api/v1/users/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+      signal,
+    }),
+
+  resetUserPassword: async (
+    id: string,
+    new_password: string,
+    signal?: AbortSignal
+  ): Promise<void> => {
+    const res = await fetch(
+      `${API_BASE}/api/v1/users/${encodeURIComponent(id)}/reset-password`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ new_password }),
+        signal,
+        cache: "no-store",
+      }
+    );
+    if (!res.ok) {
+      let body = "";
+      try { body = await res.text(); } catch {}
+      throw new ApiError(`${res.status} ${res.statusText}${body ? `: ${body}` : ""}`, res.status);
+    }
+  },
+
+  deleteUser: async (id: string, signal?: AbortSignal): Promise<void> => {
+    const res = await fetch(
+      `${API_BASE}/api/v1/users/${encodeURIComponent(id)}`,
+      { method: "DELETE", headers: authHeaders(), signal, cache: "no-store" }
+    );
+    if (!res.ok) {
+      let body = "";
+      try { body = await res.text(); } catch {}
+      throw new ApiError(`${res.status} ${res.statusText}${body ? `: ${body}` : ""}`, res.status);
+    }
+  },
+
+  // -- helpdesk customer create (vendor-only) ----------------------------------
+
+  createCustomer: (body: CreateCustomerBody, signal?: AbortSignal) =>
+    request<CreateCustomerResponse>("/api/v1/helpdesk/customers", {
+      method: "POST",
+      body: JSON.stringify(body),
+      signal,
+    }),
+
+  // -- roles (per-tenant catalogue) --------------------------------------------
+
+  listRoles: (signal?: AbortSignal) =>
+    request<RoleRow[]>("/api/v1/roles", { signal }),
+
+  getRole: (id: string, signal?: AbortSignal) =>
+    request<RoleRow>(`/api/v1/roles/${encodeURIComponent(id)}`, { signal }),
+
+  createRole: (body: CreateRoleBody, signal?: AbortSignal) =>
+    request<{ id: string }>("/api/v1/roles", {
+      method: "POST",
+      body: JSON.stringify(body),
+      signal,
+    }),
+
+  updateRole: (id: string, body: UpdateRoleBody, signal?: AbortSignal) =>
+    request<{ id: string }>(`/api/v1/roles/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+      signal,
+    }),
+
+  deleteRole: async (id: string, signal?: AbortSignal): Promise<void> => {
+    const res = await fetch(
+      `${API_BASE}/api/v1/roles/${encodeURIComponent(id)}`,
+      { method: "DELETE", headers: authHeaders(), signal, cache: "no-store" }
+    );
+    if (!res.ok) {
+      let body = "";
+      try { body = await res.text(); } catch {}
+      throw new ApiError(`${res.status} ${res.statusText}${body ? `: ${body}` : ""}`, res.status);
+    }
+  },
 };
 
 export { ApiError };

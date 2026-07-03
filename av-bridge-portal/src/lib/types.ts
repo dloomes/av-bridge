@@ -246,6 +246,85 @@ export interface BulkCommandResponse {
   results: BulkCommandResult[];
 }
 
+export interface UserRow {
+  id: string;
+  email: string;
+  full_name?: string;
+  role: "admin" | "operator" | "viewer";
+  disabled: boolean;
+  created_at?: string;
+  last_login_at?: string;
+}
+
+// CreateUserBody — password is required on create only; reset flow is
+// separate (/users/{id}/reset-password) so admins can rotate without
+// knowing the old value.
+export interface CreateUserBody {
+  email: string;
+  password: string;
+  full_name?: string;
+  role: "admin" | "operator" | "viewer";
+}
+
+// UpdateUserBody — every field optional; PATCH semantics on the cloud
+// touch only the columns whose value is provided.
+export interface UpdateUserBody {
+  full_name?: string;
+  role?: "admin" | "operator" | "viewer";
+  disabled?: boolean;
+}
+
+// CreateCustomerBody — vendor-only helpdesk call. initial_admin is
+// optional but strongly recommended; without it the new tenant has no
+// way for anyone to log in until a second call creates a user.
+export interface CreateCustomerBody {
+  name: string;
+  entra_tenant_id?: string;
+  initial_admin?: {
+    email: string;
+    password: string;
+    full_name?: string;
+  };
+}
+
+export interface CreateCustomerResponse {
+  customer_id: string;
+  region_id: string;
+  location_id: string;
+  building_id: string;
+  room_id: string;
+  admin_user_id: string;
+}
+
+// Role catalogue — per-tenant. System defaults have is_system_default=true
+// and reject writes at the backend. Permissions are strings drawn from the
+// catalogue in lib/permissions.ts; the backend validates against its Go
+// mirror and rejects unknown keys.
+export interface RoleRow {
+  id: string;
+  name: string;
+  description?: string;
+  is_system_default: boolean;
+  permissions: string[];
+  assigned_users: number;
+  created_at?: string;
+}
+
+export interface CreateRoleBody {
+  name: string;
+  description?: string;
+  permissions: string[];
+}
+
+// UpdateRoleBody — PATCH semantics. Passing `permissions` REPLACES the
+// role's full permission set (a set is a set — additive edits get confusing
+// when the client isn't sure of the current state).
+export interface UpdateRoleBody {
+  name?: string;
+  description?: string;
+  permissions?: string[];
+}
+
 export interface HealthResponse {
   status: string;
   time: string;
