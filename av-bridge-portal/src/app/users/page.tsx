@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import {
   KeyRound,
   Loader2,
+  MapPin,
   Pencil,
   Plus,
   Trash2,
@@ -19,19 +20,26 @@ import { useSession } from "@/hooks/useSession";
 import { api } from "@/lib/api";
 import { isAdmin } from "@/lib/session";
 import { formatRelative } from "@/lib/utils";
-import type { CreateUserBody, UpdateUserBody, UserRow } from "@/lib/types";
+import type {
+  BuildingRow,
+  CreateUserBody,
+  RoleRow,
+  UpdateUserBody,
+  UserRow,
+} from "@/lib/types";
 
-// UsersPage — tenant user roster.
-//
-// Read is any authed user in a tenant. Writes (create / edit / reset /
-// delete) are admin-only, gated both at the sidebar level (link hidden for
-// non-admins) and by the backend RequireRole middleware. The UI still hides
-// write affordances when the user isn't an admin — matches how the rest of
-// the portal treats role gating (UX polish; the backend is authoritative).
+// UsersPage — tenant user roster with multi-role assignment + optional
+// physical scope. Reads are any authed user with view.users; writes are
+// gated by user.create / user.update / user.reset_password / user.delete.
+// Physical scope UI writes users.building_scope_ids — enforcement (the
+// RLS scope engine) lands in a later slice, so scope is currently
+// advisory. Setting it does no harm — nothing enforces it yet.
 export default function UsersPage() {
   const session = useSession();
   const admin = isAdmin(session.user?.role);
   const [users, setUsers] = useState<UserRow[] | null>(null);
+  const [roles, setRoles] = useState<RoleRow[] | null>(null);
+  const [buildings, setBuildings] = useState<BuildingRow[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [editing, setEditing] = useState<{ mode: "create" | "edit"; existing?: UserRow } | null>(null);
   const [resetting, setResetting] = useState<UserRow | null>(null);
@@ -39,9 +47,17 @@ export default function UsersPage() {
 
   const load = useCallback(async (signal?: AbortSignal) => {
     try {
-      const list = await api.listUsers(signal);
+      // Fetch everything the page + form needs in parallel so the modal
+      // has its role + building lists ready as soon as it opens.
+      const [us, rs, bs] = await Promise.all([
+        api.listUsers(signal),
+        api.listRoles(signal),
+        api.listBuildings(signal),
+      ]);
       if (signal?.aborted) return;
-      setUsers(list);
+      setUsers(us);
+      setRoles(rs);
+      setBuildings(bs);
       setLoadError(null);
     } catch (e) {
       if (!signal?.aborted) setLoadError((e as Error).message);
@@ -129,12 +145,13 @@ export default function UsersPage() {
           open={editing !== null}
           onClose={() => setEditing(null)}
           title={editing?.mode === "edit" ? "Edit user" : "New user"}
-          wide={false}
         >
-          {editing && (
+          {editing && roles && buildings && (
             <UserForm
               mode={editing.mode}
               existing={editing.existing}
+              roles={roles}
+              buildings={buildings}
               onCancel={() => setEditing(null)}
               onSaved={async () => {
                 setEditing(null);
@@ -218,20 +235,38 @@ function UserRowView({
         </div>
         <div className="text-xs text-muted-foreground truncate">{user.email}</div>
       </div>
-      <div className="flex items-center gap-2 text-[11px]">
-        <span
-          className={`rounded px-1.5 py-0.5 font-medium ${
-            user.role === "admin"
-              ? "bg-amber-500/10 text-amber-700 dark:text-amber-300"
-              : user.role === "operator"
-              ? "bg-sky-500/10 text-sky-700 dark:text-sky-300"
-              : "bg-muted text-muted-foreground"
-          }`}
-        >
-          {user.role}
-        </span>
+      <div className="flex flex-wrap items-center gap-1 max-w-xs justify-end">
+        {user.role_names.length === 0 ? (
+          <span className="text-[11px] text-muted-foreground italic">no roles</span>
+        ) : (
+          user.role_names.map((name) => (
+            <span
+              key={name}
+              className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${
+                name === "admin"
+                  ? "bg-amber-500/10 text-amber-700 dark:text-amber-300"
+                  : name === "operator"
+                  ? "bg-sky-500/10 text-sky-700 dark:text-sky-300"
+                  : name === "viewer"
+                  ? "bg-muted text-muted-foreground"
+                  : "bg-primary/10 text-primary"
+              }`}
+            >
+              {name}
+            </span>
+          ))
+        )}
+        {user.building_scope_ids.length > 0 && (
+          <span
+            className="inline-flex items-center gap-1 rounded bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 px-1.5 py-0.5 text-[11px] font-medium"
+            title={`Restricted to ${user.building_scope_ids.length} building${user.building_scope_ids.length === 1 ? "" : "s"}`}
+          >
+            <MapPin className="h-3 w-3" />
+            {user.building_scope_ids.length}
+          </span>
+        )}
         {user.disabled && (
-          <span className="rounded bg-destructive/10 px-1.5 py-0.5 font-medium [color:hsl(var(--destructive))]">
+          <span className="rounded bg-destructive/10 px-1.5 py-0.5 text-[11px] font-medium [color:hsl(var(--destructive))]">
             disabled
           </span>
         )}
@@ -277,29 +312,61 @@ function UserRowView({
   );
 }
 
-// UserForm handles both create and edit. Create requires password; edit
-// keeps it optional (there's a separate reset flow).
+// UserForm handles both create and edit. Create requires password + at
+// least one role. Edit doesn't change email (email is the login identifier)
+// but everything else is mutable including full multi-role reassignment.
 function UserForm({
   mode,
   existing,
+  roles,
+  buildings,
   onCancel,
   onSaved,
 }: {
   mode: "create" | "edit";
   existing?: UserRow;
+  roles: RoleRow[];
+  buildings: BuildingRow[];
   onCancel: () => void;
   onSaved: () => Promise<void> | void;
 }) {
   const [email, setEmail] = useState(existing?.email ?? "");
   const [fullName, setFullName] = useState(existing?.full_name ?? "");
-  const [role, setRole] = useState<UserRow["role"]>(existing?.role ?? "viewer");
+  const [selectedRoles, setSelectedRoles] = useState<Set<string>>(
+    () => new Set(existing?.role_ids ?? [])
+  );
+  const [selectedBuildings, setSelectedBuildings] = useState<Set<string>>(
+    () => new Set(existing?.building_scope_ids ?? [])
+  );
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const toggleRole = (id: string) => {
+    setSelectedRoles((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleBuilding = (id: string) => {
+    setSelectedBuildings((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    if (selectedRoles.size === 0) {
+      setError("Pick at least one role.");
+      return;
+    }
     setBusy(true);
     try {
       if (mode === "create") {
@@ -307,13 +374,16 @@ function UserForm({
           email: email.trim(),
           password,
           full_name: fullName.trim() || undefined,
-          role,
+          role_ids: Array.from(selectedRoles),
+          building_scope_ids:
+            selectedBuildings.size > 0 ? Array.from(selectedBuildings) : undefined,
         };
         await api.createUser(body);
       } else if (existing) {
         const body: UpdateUserBody = {
           full_name: fullName.trim(),
-          role,
+          role_ids: Array.from(selectedRoles),
+          building_scope_ids: Array.from(selectedBuildings),
         };
         await api.updateUser(existing.id, body);
       }
@@ -325,6 +395,20 @@ function UserForm({
     }
   };
 
+  // Sort roles: system defaults first (admin > operator > viewer), then custom alphabetically.
+  const sortedRoles = [...roles].sort((a, b) => {
+    if (a.is_system_default !== b.is_system_default) {
+      return a.is_system_default ? -1 : 1;
+    }
+    if (a.is_system_default) {
+      const order = { admin: 0, operator: 1, viewer: 2 };
+      const ao = order[a.name as keyof typeof order] ?? 99;
+      const bo = order[b.name as keyof typeof order] ?? 99;
+      return ao - bo;
+    }
+    return a.name.localeCompare(b.name);
+  });
+
   return (
     <form onSubmit={submit} className="space-y-3">
       {error && (
@@ -333,55 +417,147 @@ function UserForm({
         </div>
       )}
 
-      <div className="space-y-1">
-        <label htmlFor="uf-email" className="text-xs font-medium text-muted-foreground">
-          Email
-        </label>
-        <input
-          id="uf-email"
-          type="email"
-          required
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          disabled={mode === "edit" || busy}
-          className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm disabled:opacity-60"
-        />
-        {mode === "edit" && (
-          <p className="text-[11px] text-muted-foreground">
-            Email is the login identifier — changing it would require deleting and recreating the user.
-          </p>
-        )}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div className="space-y-1">
+          <label htmlFor="uf-email" className="text-xs font-medium text-muted-foreground">
+            Email
+          </label>
+          <input
+            id="uf-email"
+            type="email"
+            autoComplete="off"
+            required
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            disabled={mode === "edit" || busy}
+            className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm disabled:opacity-60"
+          />
+          {mode === "edit" && (
+            <p className="text-[11px] text-muted-foreground">
+              Email is the login identifier — to change it, delete and recreate the user.
+            </p>
+          )}
+        </div>
+        <div className="space-y-1">
+          <label htmlFor="uf-name" className="text-xs font-medium text-muted-foreground">
+            Full name
+          </label>
+          <input
+            id="uf-name"
+            type="text"
+            value={fullName}
+            onChange={(e) => setFullName(e.target.value)}
+            disabled={busy}
+            className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+          />
+        </div>
       </div>
 
       <div className="space-y-1">
-        <label htmlFor="uf-name" className="text-xs font-medium text-muted-foreground">
-          Full name
-        </label>
-        <input
-          id="uf-name"
-          type="text"
-          value={fullName}
-          onChange={(e) => setFullName(e.target.value)}
-          disabled={busy}
-          className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-        />
+        <div className="flex items-center justify-between">
+          <label className="text-xs font-medium text-muted-foreground">
+            Roles <span className="text-destructive">*</span>
+          </label>
+          <span className="text-xs text-muted-foreground">
+            {selectedRoles.size} of {roles.length} selected
+          </span>
+        </div>
+        <div className="rounded-md border max-h-56 overflow-y-auto divide-y">
+          {sortedRoles.length === 0 ? (
+            <div className="p-3 text-xs text-muted-foreground">
+              No roles defined yet — an admin needs to create at least one role first.
+            </div>
+          ) : (
+            sortedRoles.map((r) => {
+              const on = selectedRoles.has(r.id);
+              return (
+                <label
+                  key={r.id}
+                  className="flex items-start gap-2 p-2 cursor-pointer hover:bg-accent/30 text-sm"
+                >
+                  <input
+                    type="checkbox"
+                    checked={on}
+                    onChange={() => toggleRole(r.id)}
+                    disabled={busy}
+                    className="mt-0.5"
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-center gap-2">
+                      <span className="font-medium">{r.name}</span>
+                      {r.is_system_default && (
+                        <span className="text-[10px] uppercase tracking-wide bg-muted px-1 py-0.5 rounded text-muted-foreground">
+                          system
+                        </span>
+                      )}
+                      <span className="text-[10px] text-muted-foreground">
+                        {r.permissions.length} perm{r.permissions.length === 1 ? "" : "s"}
+                      </span>
+                    </span>
+                    {r.description && (
+                      <span className="block text-[11px] text-muted-foreground leading-snug mt-0.5">
+                        {r.description}
+                      </span>
+                    )}
+                  </span>
+                </label>
+              );
+            })
+          )}
+        </div>
+        <p className="text-[11px] text-muted-foreground">
+          Effective permissions are the union of every selected role's permission bundle.
+        </p>
       </div>
 
       <div className="space-y-1">
-        <label htmlFor="uf-role" className="text-xs font-medium text-muted-foreground">
-          Role
-        </label>
-        <select
-          id="uf-role"
-          value={role}
-          onChange={(e) => setRole(e.target.value as UserRow["role"])}
-          disabled={busy}
-          className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
-        >
-          <option value="viewer">Viewer — read only</option>
-          <option value="operator">Operator — reads + commands + alert lifecycle</option>
-          <option value="admin">Admin — full tenant management</option>
-        </select>
+        <div className="flex items-center justify-between">
+          <label className="text-xs font-medium text-muted-foreground">
+            Physical scope <span className="text-muted-foreground/70">(optional)</span>
+          </label>
+          <span className="text-xs text-muted-foreground">
+            {selectedBuildings.size === 0
+              ? "full tenant"
+              : `${selectedBuildings.size} building${selectedBuildings.size === 1 ? "" : "s"}`}
+          </span>
+        </div>
+        <div className="rounded-md border max-h-48 overflow-y-auto divide-y">
+          {buildings.length === 0 ? (
+            <div className="p-3 text-xs text-muted-foreground">
+              No buildings defined yet — add buildings via Locations first.
+            </div>
+          ) : (
+            buildings.map((b) => {
+              const on = selectedBuildings.has(b.id);
+              return (
+                <label
+                  key={b.id}
+                  className="flex items-center gap-2 p-2 cursor-pointer hover:bg-accent/30 text-sm"
+                >
+                  <input
+                    type="checkbox"
+                    checked={on}
+                    onChange={() => toggleBuilding(b.id)}
+                    disabled={busy}
+                  />
+                  <span className="flex-1 min-w-0">
+                    <span className="block truncate">{b.name}</span>
+                    {b.address && (
+                      <span className="block text-[11px] text-muted-foreground truncate">
+                        {b.address}
+                      </span>
+                    )}
+                  </span>
+                </label>
+              );
+            })
+          )}
+        </div>
+        <p className="text-[11px] text-muted-foreground">
+          Leave empty for full-tenant access. Selecting buildings limits the user to only see and act
+          on those locations. Enforcement is landing in a follow-up slice — for now, scope is stored
+          but not yet filtered in queries.
+        </p>
       </div>
 
       {mode === "create" && (
@@ -392,6 +568,7 @@ function UserForm({
           <input
             id="uf-pw"
             type="password"
+            autoComplete="new-password"
             required
             minLength={12}
             value={password}

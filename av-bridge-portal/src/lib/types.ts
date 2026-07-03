@@ -246,31 +246,45 @@ export interface BulkCommandResponse {
   results: BulkCommandResult[];
 }
 
+// UserRow — a tenant user. role is legacy (a "primary role" name the
+// backend derives from the highest-privilege system-default role the
+// user holds; falls back to the first custom role's name). role_ids +
+// role_names are the authoritative multi-role assignment.
+// building_scope_ids empty = full-tenant scope; non-empty = the user
+// only sees/acts on those buildings once the physical scope engine is
+// live (backend enforcement lands in a later slice).
 export interface UserRow {
   id: string;
   email: string;
   full_name?: string;
-  role: "admin" | "operator" | "viewer";
+  role: string; // legacy primary-role display name
+  role_ids: string[];
+  role_names: string[];
+  building_scope_ids: string[];
   disabled: boolean;
   created_at?: string;
   last_login_at?: string;
 }
 
-// CreateUserBody — password is required on create only; reset flow is
-// separate (/users/{id}/reset-password) so admins can rotate without
-// knowing the old value.
+// CreateUserBody — role_ids is required and must be non-empty. Password
+// is required on create only; reset flow is separate. building_scope_ids
+// empty/omitted = unscoped (full tenant).
 export interface CreateUserBody {
   email: string;
   password: string;
   full_name?: string;
-  role: "admin" | "operator" | "viewer";
+  role_ids: string[];
+  building_scope_ids?: string[];
 }
 
 // UpdateUserBody — every field optional; PATCH semantics on the cloud
-// touch only the columns whose value is provided.
+// touch only the columns whose value is provided. role_ids replaces the
+// user's full role assignment set (a set is a set). building_scope_ids
+// replaces the scope wholesale — pass [] to clear.
 export interface UpdateUserBody {
   full_name?: string;
-  role?: "admin" | "operator" | "viewer";
+  role_ids?: string[];
+  building_scope_ids?: string[];
   disabled?: boolean;
 }
 
