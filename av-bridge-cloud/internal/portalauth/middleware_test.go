@@ -91,42 +91,63 @@ func TestMiddleware_Rejects(t *testing.T) {
 	}
 }
 
-func TestRequireRole(t *testing.T) {
-	// Use a handler that records it was reached.
+func TestRequirePermission(t *testing.T) {
 	reached := false
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		reached = true
 		w.WriteHeader(http.StatusOK)
 	})
 
-	adminOnly := RequireRole("admin")
+	// The static resolver grants every known permission, so a call gated
+	// on any real permission key passes. Pick device.crud arbitrarily.
+	needsDeviceCRUD := RequirePermission(PermDeviceCRUD)
 	res := NewStaticResolver(devToken, devCust, "admin")
-	auth := Middleware(res, adminOnly(inner))
+	auth := Middleware(res, needsDeviceCRUD(inner))
 
-	// admin role passes
 	r := httptest.NewRequest("POST", "/x", nil)
 	r.Header.Set("Authorization", "Bearer "+devToken)
 	w := httptest.NewRecorder()
 	auth.ServeHTTP(w, r)
 	if w.Code != http.StatusOK || !reached {
-		t.Fatalf("admin should pass: code=%d reached=%v", w.Code, reached)
+		t.Fatalf("static admin should pass: code=%d reached=%v", w.Code, reached)
 	}
 
-	// viewer role -> 403
+	// A principal with an empty permission map is 403 for the same call.
+	// Manual construction — the static resolver always grants everything.
 	reached = false
-	viewer := NewStaticResolver(devToken, devCust, "viewer")
-	authV := Middleware(viewer, adminOnly(inner))
+	limited := &staticPermResolver{Principal{CustomerID: devCust, Role: "viewer", Permissions: map[string]struct{}{PermViewDashboard: {}}}}
+	authL := Middleware(limited, needsDeviceCRUD(inner))
 	rv := httptest.NewRequest("POST", "/x", nil)
-	rv.Header.Set("Authorization", "Bearer "+devToken)
+	rv.Header.Set("Authorization", "Bearer whatever")
 	wv := httptest.NewRecorder()
-	authV.ServeHTTP(wv, rv)
+	authL.ServeHTTP(wv, rv)
 	if wv.Code != http.StatusForbidden {
-		t.Fatalf("viewer should be forbidden, got %d", wv.Code)
+		t.Fatalf("caller without device.crud should be forbidden, got %d", wv.Code)
 	}
 	if reached {
-		t.Fatal("inner handler must not run when role check fails")
+		t.Fatal("inner handler must not run when permission check fails")
+	}
+
+	// Vendor principal bypasses the permission check regardless of the
+	// Permissions map contents — HasPermission short-circuits on IsVendor.
+	reached = false
+	vendor := &staticPermResolver{Principal{IsVendor: true, Role: "admin"}}
+	authV := Middleware(vendor, needsDeviceCRUD(inner))
+	rv2 := httptest.NewRequest("POST", "/x", nil)
+	rv2.Header.Set("Authorization", "Bearer whatever")
+	wv2 := httptest.NewRecorder()
+	authV.ServeHTTP(wv2, rv2)
+	if wv2.Code != http.StatusOK || !reached {
+		t.Fatalf("vendor should bypass permission check: code=%d reached=%v", wv2.Code, reached)
 	}
 }
+
+// staticPermResolver is a test-only resolver that always returns a fixed
+// Principal — lets the test dial in a specific permission set without
+// standing up the full LocalResolver stack.
+type staticPermResolver struct{ p Principal }
+
+func (s *staticPermResolver) Resolve(_ string) (Principal, bool) { return s.p, true }
 
 func TestStaticResolver_RejectsEmptyConfiguredToken(t *testing.T) {
 	res := NewStaticResolver("", devCust, devRole)

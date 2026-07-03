@@ -51,6 +51,13 @@ type TenantLookup interface {
 	// given scope (one of customer_id / vendor_tenant_id is set, the other
 	// blank). Returns "" if no mapping matched.
 	ResolveRole(ctx context.Context, customerID, vendorTenantID string, groups []string) (string, error)
+	// SystemRolePermissions returns the permission set of the customer's
+	// system-default role with the given name (admin/operator/viewer). Used
+	// by the mock resolver: mock users don't have user_roles rows, so we
+	// look up what the system role of that name grants and hand it to the
+	// Principal. Vendor calls pass customerID="" — permissions are ignored
+	// because vendor bypasses tenant RBAC.
+	SystemRolePermissions(ctx context.Context, customerID, roleName string) ([]string, error)
 }
 
 // MockJWTResolver decodes a mock token and resolves it against the DB.
@@ -114,12 +121,18 @@ func (m *MockJWTResolver) Resolve(token string) (Principal, bool) {
 		if err != nil || role == "" {
 			return Principal{}, false
 		}
+		// Mock users don't hold user_roles rows (they aren't real DB users),
+		// so look up the customer's system-default role of the same name and
+		// hand its permission bundle to the Principal. A custom role with the
+		// same name is impossible because we reserve those names at the API.
+		perms, _ := m.lookup.SystemRolePermissions(ctx, customerID, role)
 		p := Principal{
-			UserID:     claims.Sub,
-			Email:      claims.Email,
-			Name:       claims.Name,
-			CustomerID: customerID,
-			Role:       role,
+			UserID:      claims.Sub,
+			Email:       claims.Email,
+			Name:        claims.Name,
+			CustomerID:  customerID,
+			Role:        role,
+			Permissions: toPermSet(perms),
 		}
 		m.remember(token, p)
 		return p, true
@@ -130,6 +143,9 @@ func (m *MockJWTResolver) Resolve(token string) (Principal, bool) {
 		if err != nil || role == "" {
 			return Principal{}, false
 		}
+		// Vendor Principal has an empty Permissions map — HasPermission
+		// short-circuits on IsVendor and grants everything inside the
+		// scoped customer.
 		p := Principal{
 			UserID:   claims.Sub,
 			Email:    claims.Email,
@@ -227,6 +243,29 @@ func (d *DBTenantLookup) LookupVendorByEntraTenant(ctx context.Context, tid stri
 	err := d.pool.QueryRow(ctx,
 		`SELECT id::text FROM vendor_tenants WHERE entra_tenant_id = $1`, tid).Scan(&id)
 	return id, err
+}
+
+// SystemRolePermissions returns the permission bundle attached to a
+// customer's system-default role of the given name. Used by mock users
+// (who lack user_roles rows) and by any resolver that wants to honour
+// the on-DB permission catalogue rather than hardcoding a set. Returns
+// an empty slice if no matching role exists.
+func (d *DBTenantLookup) SystemRolePermissions(ctx context.Context, customerID, roleName string) ([]string, error) {
+	if customerID == "" || roleName == "" {
+		return nil, nil
+	}
+	var out []string
+	err := d.pool.QueryRow(ctx, `
+		SELECT COALESCE(array_agg(rp.permission), '{}')
+		  FROM roles r
+		  LEFT JOIN role_permissions rp ON rp.role_id = r.id
+		 WHERE r.customer_id = $1 AND r.name = $2 AND r.is_system_default
+		 GROUP BY r.id`,
+		customerID, roleName).Scan(&out)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // ResolveRole picks the strongest role across the caller's groups within the

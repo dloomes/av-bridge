@@ -713,20 +713,36 @@ func (h *Handler) Whoami(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	type out struct {
-		UserID     string `json:"user_id,omitempty"`
-		Email      string `json:"email,omitempty"`
-		Name       string `json:"name,omitempty"`
-		CustomerID string `json:"customer_id,omitempty"`
-		Role       string `json:"role"`
-		IsVendor   bool   `json:"is_vendor,omitempty"`
+		UserID      string   `json:"user_id,omitempty"`
+		Email       string   `json:"email,omitempty"`
+		Name        string   `json:"name,omitempty"`
+		CustomerID  string   `json:"customer_id,omitempty"`
+		Role        string   `json:"role"`
+		IsVendor    bool     `json:"is_vendor,omitempty"`
+		Permissions []string `json:"permissions"`
+	}
+	// Portal uses this list to gate UI (show/hide buttons) — vendor bypass
+	// still applies server-side, but for the UI we surface the effective
+	// permission set including "all" for vendor calls so the portal
+	// doesn't have to encode the bypass rule twice.
+	perms := make([]string, 0, len(p.Permissions))
+	if p.IsVendor {
+		for k := range portalauth.KnownPermissions {
+			perms = append(perms, k)
+		}
+	} else {
+		for k := range p.Permissions {
+			perms = append(perms, k)
+		}
 	}
 	writeJSON(w, http.StatusOK, out{
-		UserID:     p.UserID,
-		Email:      p.Email,
-		Name:       p.Name,
-		CustomerID: p.CustomerID,
-		Role:       p.Role,
-		IsVendor:   p.IsVendor,
+		UserID:      p.UserID,
+		Email:       p.Email,
+		Name:        p.Name,
+		CustomerID:  p.CustomerID,
+		Role:        p.Role,
+		IsVendor:    p.IsVendor,
+		Permissions: perms,
 	})
 }
 

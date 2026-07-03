@@ -65,17 +65,27 @@ func (l *LocalResolver) Resolve(token string) (Principal, bool) {
 		customerID   *string
 		vendorTenant *string
 		disabledAt   *time.Time
+		perms        []string
 	)
+	// Single query: session → user → user_roles → role_permissions. array_agg
+	// with a FILTER handles the LEFT JOINs: a vendor user (no user_roles
+	// rows) gets an empty perms array; a fresh customer user with no roles
+	// assigned yet gets an empty array too, which is safer than granting
+	// anything by accident.
 	err := l.pool.QueryRow(ctx, `
 		SELECT u.id::text, u.email, u.full_name, u.role,
-		       u.customer_id::text, u.vendor_tenant_id::text, u.disabled_at
+		       u.customer_id::text, u.vendor_tenant_id::text, u.disabled_at,
+		       COALESCE(array_agg(DISTINCT rp.permission) FILTER (WHERE rp.permission IS NOT NULL), '{}') AS perms
 		  FROM user_sessions s
 		  JOIN users u ON u.id = s.user_id
+		  LEFT JOIN user_roles ur         ON ur.user_id = u.id
+		  LEFT JOIN role_permissions rp   ON rp.role_id = ur.role_id
 		 WHERE s.token_hash = $1
 		   AND s.revoked_at IS NULL
-		   AND s.expires_at > now()`,
+		   AND s.expires_at > now()
+		 GROUP BY u.id`,
 		HashToken(token)).
-		Scan(&userID, &email, &fullName, &role, &customerID, &vendorTenant, &disabledAt)
+		Scan(&userID, &email, &fullName, &role, &customerID, &vendorTenant, &disabledAt, &perms)
 	if err != nil {
 		return Principal{}, false
 	}
@@ -84,9 +94,10 @@ func (l *LocalResolver) Resolve(token string) (Principal, bool) {
 	}
 
 	p := Principal{
-		UserID: userID,
-		Email:  email,
-		Role:   role,
+		UserID:      userID,
+		Email:       email,
+		Role:        role,
+		Permissions: toPermSet(perms),
 	}
 	if fullName != nil {
 		p.Name = *fullName
@@ -100,5 +111,15 @@ func (l *LocalResolver) Resolve(token string) (Principal, bool) {
 		// X-Customer-Scope (handled by Middleware).
 	}
 	return p, true
+}
+
+// toPermSet turns a []string permission list into the map form the
+// middleware checks against.
+func toPermSet(perms []string) map[string]struct{} {
+	m := make(map[string]struct{}, len(perms))
+	for _, p := range perms {
+		m[p] = struct{}{}
+	}
+	return m
 }
 

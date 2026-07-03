@@ -28,13 +28,36 @@ import (
 // Audit consumers should prefer Email (real identity) over Role (just the
 // authorisation level) when stamping actor — Role is a fallback for the
 // legacy StaticResolver path where no user identity exists.
+//
+// Permissions is the union of every capability granted to the caller via
+// their role assignments — the resolver computes it at token-resolution time
+// so route middleware doesn't need a DB round-trip per request. Vendor users
+// have an empty Permissions map because RequirePermission short-circuits on
+// IsVendor (they bypass tenant RBAC entirely).
 type Principal struct {
-	UserID     string
-	Email      string
-	Name       string
-	CustomerID string
-	Role       string
-	IsVendor   bool
+	UserID      string
+	Email       string
+	Name        string
+	CustomerID  string
+	Role        string
+	IsVendor    bool
+	Permissions map[string]struct{}
+}
+
+// HasPermission returns true if the principal holds the given capability.
+// Vendor principals return true for every key — vendor callers bypass the
+// customer-tenant RBAC when acting on that customer's data. Handlers should
+// use this over direct map access so the vendor-bypass rule stays in one
+// place.
+func (p Principal) HasPermission(perm string) bool {
+	if p.IsVendor {
+		return true
+	}
+	if p.Permissions == nil {
+		return false
+	}
+	_, ok := p.Permissions[perm]
+	return ok
 }
 
 // ActorLabel returns the best available identifier for audit/log purposes.
@@ -85,7 +108,15 @@ func (s *StaticResolver) Resolve(token string) (Principal, bool) {
 	if subtle.ConstantTimeCompare([]byte(token), []byte(s.token)) != 1 {
 		return Principal{}, false
 	}
-	return Principal{CustomerID: s.customerID, Role: s.role}, true
+	// Static token is an ops/smoke fallback — grant every known permission
+	// so scripts using this token behave as an admin under the RequirePermission
+	// engine. If a deployment wants to gate the static token more tightly,
+	// they should use the local-auth path (users + user_roles) instead.
+	perms := make(map[string]struct{}, len(KnownPermissions))
+	for k := range KnownPermissions {
+		perms[k] = struct{}{}
+	}
+	return Principal{CustomerID: s.customerID, Role: s.role, Permissions: perms}, true
 }
 
 // Middleware enforces a valid bearer token and attaches the Principal to ctx.
@@ -121,14 +152,20 @@ func Middleware(r Resolver, next http.Handler) http.Handler {
 	})
 }
 
-// RequireRole returns a middleware that rejects requests whose Principal's
-// Role isn't in the allowed set. Use to gate write endpoints behind
-// "admin"/"operator"/etc. Must be composed inside Middleware.
-func RequireRole(allowed ...string) func(http.Handler) http.Handler {
-	set := make(map[string]struct{}, len(allowed))
-	for _, r := range allowed {
-		set[r] = struct{}{}
-	}
+// RequirePermission returns a middleware that rejects requests whose
+// Principal doesn't hold the named capability. This is the primary
+// authorization gate for /api/v1 routes — every write endpoint (and every
+// read that needs a specific view.* permission) mounts inside a
+// RequirePermission wrapper, so a caller with a role missing the key gets
+// a 403 before the handler runs.
+//
+// Vendor principals bypass this check entirely (HasPermission returns true
+// for every key) — they're treated as admin-equivalent inside whichever
+// customer they're currently scoped to via X-Customer-Scope. See the
+// Principal type doc for why.
+//
+// Must be composed inside Middleware — reads Principal from context.
+func RequirePermission(perm string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			p, ok := From(r.Context())
@@ -136,8 +173,8 @@ func RequireRole(allowed ...string) func(http.Handler) http.Handler {
 				writeErr(w, http.StatusUnauthorized, "no principal in context")
 				return
 			}
-			if _, ok := set[p.Role]; !ok {
-				writeErr(w, http.StatusForbidden, "insufficient role")
+			if !p.HasPermission(perm) {
+				writeErr(w, http.StatusForbidden, "missing permission: "+perm)
 				return
 			}
 			next.ServeHTTP(w, r)
