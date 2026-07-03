@@ -45,7 +45,18 @@ func (h *Handler) withTenant(w http.ResponseWriter, r *http.Request, fn func(con
 		writeErr(w, http.StatusInternalServerError, "no principal in context")
 		return false
 	}
-	err := h.store.WithTenant(r.Context(), p.CustomerID, func(tx pgx.Tx) error {
+	// Vendor callers bypass physical scope by design — they act as
+	// unscoped admins inside whichever customer they're currently
+	// acting-as. Non-vendor callers honour their user's building
+	// restriction: empty slice = full tenant, non-empty = only rows
+	// hanging off those buildings (enforced by migration 0019's
+	// RESTRICTIVE RLS policies on devices/telemetry/events/alerts/
+	// commands).
+	scope := p.BuildingScopeIDs
+	if p.IsVendor {
+		scope = nil
+	}
+	err := h.store.WithTenantScoped(r.Context(), p.CustomerID, scope, func(tx pgx.Tx) error {
 		return fn(r.Context(), tx)
 	})
 	if err != nil {
@@ -54,6 +65,18 @@ func (h *Handler) withTenant(w http.ResponseWriter, r *http.Request, fn func(con
 		return false
 	}
 	return true
+}
+
+// principalScope returns the effective physical-scope for a Principal:
+// nil (unscoped) for vendor callers, the user's building_scope_ids
+// otherwise. Handlers calling store.WithTenantScoped directly (audit
+// writes after a non-tenant operation, for example) should route their
+// scope choice through here so the vendor-bypass rule stays in one place.
+func principalScope(p portalauth.Principal) []string {
+	if p.IsVendor {
+		return nil
+	}
+	return p.BuildingScopeIDs
 }
 
 func queryInt(r *http.Request, key string, def, max int) int {

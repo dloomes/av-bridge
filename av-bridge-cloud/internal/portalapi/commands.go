@@ -208,7 +208,7 @@ func (h *Handler) submitAndWait(w http.ResponseWriter, r *http.Request, deviceID
 	// Each poll opens a fresh short tx so we don't hold a connection across the wait.
 	final, err := commands.WaitForTerminal(r.Context(), func(ctx context.Context) (commands.Command, error) {
 		var c commands.Command
-		txErr := h.store.WithTenant(ctx, p.CustomerID, func(tx pgx.Tx) error {
+		txErr := h.store.WithTenantScoped(ctx, p.CustomerID, principalScope(p), func(tx pgx.Tx) error {
 			cc, e := commands.Get(ctx, tx, cmdID)
 			c = cc
 			return e

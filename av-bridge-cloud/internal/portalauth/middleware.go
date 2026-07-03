@@ -42,6 +42,12 @@ type Principal struct {
 	Role        string
 	IsVendor    bool
 	Permissions map[string]struct{}
+	// BuildingScopeIDs restricts the caller to a subset of their tenant's
+	// buildings. Empty = full-tenant access. Enforced by the RLS policies
+	// added in migration 0019 whenever a handler runs its query under
+	// Store.WithTenantScoped. Vendor principals ignore this — they act as
+	// unscoped admins inside whichever customer they scope to.
+	BuildingScopeIDs []string
 }
 
 // HasPermission returns true if the principal holds the given capability.

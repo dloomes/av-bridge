@@ -184,7 +184,7 @@ func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = h.store.WithTenant(r.Context(), p.CustomerID, func(tx pgx.Tx) error {
+	_ = h.store.WithTenantScoped(r.Context(), p.CustomerID, principalScope(p), func(tx pgx.Tx) error {
 		return audit.Record(r.Context(), tx, p.CustomerID, audit.Entry{
 			Actor: p.ActorLabel(), Action: "user.create",
 			TargetKind: "user", TargetID: id,
@@ -339,7 +339,7 @@ func (h *Handler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 	if req.RoleIDs != nil {
 		auditPayload["role_ids"] = *req.RoleIDs
 	}
-	_ = h.store.WithTenant(r.Context(), p.CustomerID, func(tx pgx.Tx) error {
+	_ = h.store.WithTenantScoped(r.Context(), p.CustomerID, principalScope(p), func(tx pgx.Tx) error {
 		return audit.Record(r.Context(), tx, p.CustomerID, audit.Entry{
 			Actor: p.ActorLabel(), Action: "user.update",
 			TargetKind: "user", TargetID: id,
@@ -397,7 +397,7 @@ func (h *Handler) ResetUserPassword(w http.ResponseWriter, r *http.Request) {
 		`UPDATE user_sessions SET revoked_at = now()
 		  WHERE user_id = $1 AND revoked_at IS NULL`, id)
 
-	_ = h.store.WithTenant(r.Context(), p.CustomerID, func(tx pgx.Tx) error {
+	_ = h.store.WithTenantScoped(r.Context(), p.CustomerID, principalScope(p), func(tx pgx.Tx) error {
 		return audit.Record(r.Context(), tx, p.CustomerID, audit.Entry{
 			Actor: p.ActorLabel(), Action: "user.reset_password",
 			TargetKind: "user", TargetID: id,
@@ -439,7 +439,7 @@ func (h *Handler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	_ = h.store.WithTenant(r.Context(), p.CustomerID, func(tx pgx.Tx) error {
+	_ = h.store.WithTenantScoped(r.Context(), p.CustomerID, principalScope(p), func(tx pgx.Tx) error {
 		return audit.Record(r.Context(), tx, p.CustomerID, audit.Entry{
 			Actor: p.ActorLabel(), Action: "user.delete",
 			TargetKind: "user", TargetID: id,

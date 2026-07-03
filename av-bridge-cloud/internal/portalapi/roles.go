@@ -179,7 +179,7 @@ func (h *Handler) CreateRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = h.store.WithTenant(r.Context(), p.CustomerID, func(tx pgx.Tx) error {
+	_ = h.store.WithTenantScoped(r.Context(), p.CustomerID, principalScope(p), func(tx pgx.Tx) error {
 		return audit.Record(r.Context(), tx, p.CustomerID, audit.Entry{
 			Actor: p.ActorLabel(), Action: "role.create",
 			TargetKind: "role", TargetID: id,
@@ -309,7 +309,7 @@ func (h *Handler) UpdateRole(w http.ResponseWriter, r *http.Request) {
 	if req.Permissions != nil {
 		auditPayload["permissions"] = *req.Permissions
 	}
-	_ = h.store.WithTenant(r.Context(), p.CustomerID, func(tx pgx.Tx) error {
+	_ = h.store.WithTenantScoped(r.Context(), p.CustomerID, principalScope(p), func(tx pgx.Tx) error {
 		return audit.Record(r.Context(), tx, p.CustomerID, audit.Entry{
 			Actor: p.ActorLabel(), Action: "role.update",
 			TargetKind: "role", TargetID: id,
@@ -375,7 +375,7 @@ func (h *Handler) DeleteRole(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	_ = h.store.WithTenant(r.Context(), p.CustomerID, func(tx pgx.Tx) error {
+	_ = h.store.WithTenantScoped(r.Context(), p.CustomerID, principalScope(p), func(tx pgx.Tx) error {
 		return audit.Record(r.Context(), tx, p.CustomerID, audit.Entry{
 			Actor: p.ActorLabel(), Action: "role.delete",
 			TargetKind: "role", TargetID: id,

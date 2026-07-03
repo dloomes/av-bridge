@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/dloomes/av-bridge-cloud/internal/secrets"
@@ -60,10 +61,27 @@ func (s *Store) WaitReady(ctx context.Context, timeout time.Duration) error {
 	}
 }
 
-// WithTenant runs fn in a transaction scoped to customerID via the RLS session
-// variable. Every per-tenant write goes through here so RLS enforces isolation
-// even on the ingest path.
+// WithTenant runs fn in a transaction scoped to customerID via the RLS
+// session variable. Building scope defaults to empty (full-tenant access) —
+// bridge/ingest callers have no user Principal and need to write across
+// every device.  Portal handlers should use WithTenantScoped so a user's
+// building_scope_ids restricts what their queries can see.
 func (s *Store) WithTenant(ctx context.Context, customerID string, fn func(pgx.Tx) error) error {
+	return s.WithTenantScoped(ctx, customerID, nil, fn)
+}
+
+// WithTenantScoped is WithTenant + a physical-scope restriction. When
+// buildingScope is empty/nil the caller sees every row in their tenant
+// (identical to WithTenant). When non-empty, the RESTRICTIVE policies
+// added in migration 0019 filter devices + telemetry + events + alerts +
+// commands to rows that hang off one of those buildings.
+//
+// Session vars are set with is_local=true so they revert at COMMIT /
+// ROLLBACK. A subsequent WithTenant call on the same pooled connection
+// starts fresh (empty scope). Reviewer note: never pass user-controlled
+// building_scope_ids without validating them against the caller's tenant
+// — an escape by planting foreign UUIDs would defeat the whole point.
+func (s *Store) WithTenantScoped(ctx context.Context, customerID string, buildingScope []string, fn func(pgx.Tx) error) error {
 	tx, err := s.tenant.Begin(ctx)
 	if err != nil {
 		return err
@@ -72,6 +90,11 @@ func (s *Store) WithTenant(ctx context.Context, customerID string, fn func(pgx.T
 
 	if _, err := tx.Exec(ctx, "SELECT set_config('app.current_customer', $1, true)", customerID); err != nil {
 		return fmt.Errorf("set tenant scope: %w", err)
+	}
+	// Comma-joined into a single string because Postgres GUCs are scalar.
+	// Empty string in the RLS policy short-circuits to "unscoped".
+	if _, err := tx.Exec(ctx, "SELECT set_config('app.building_scope', $1, true)", strings.Join(buildingScope, ",")); err != nil {
+		return fmt.Errorf("set building scope: %w", err)
 	}
 	if err := fn(tx); err != nil {
 		return err
