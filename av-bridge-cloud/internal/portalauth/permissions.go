@@ -27,6 +27,7 @@ const (
 	PermViewFirmware      = "view.firmware"
 	PermViewNotifications = "view.notifications"
 	PermViewUsers         = "view.users"
+	PermViewAssets        = "view.assets"
 )
 
 // Device control permissions — send commands, reconnect, fan-out.
@@ -46,6 +47,7 @@ const (
 const (
 	PermDeviceCRUD    = "device.crud"
 	PermHierarchyCRUD = "hierarchy.crud"
+	PermAssetCRUD     = "asset.crud"
 )
 
 // Outbound notifications — channel CRUD is the manage side; test is the
@@ -103,6 +105,8 @@ var KnownPermissions = map[string]struct{}{
 	PermUserDelete:         {},
 	PermRoleCRUD:           {},
 	PermBrandingUpdate:     {},
+	PermViewAssets:         {},
+	PermAssetCRUD:          {},
 }
 
 // IsKnownPermission returns true if the string is a member of the

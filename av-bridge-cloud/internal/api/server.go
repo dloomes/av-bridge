@@ -138,6 +138,16 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 		mux.Handle("GET /api/v1/branding", wrap(portal.Portal.GetBranding))
 		mux.Handle("PATCH /api/v1/branding", wrapPerm(portalauth.PermBrandingUpdate, portal.Portal.UpdateBranding))
 
+		// Assets (CMDB). view.assets covers list + detail so operators and
+		// viewers can browse inventory; asset.crud gates writes for admins
+		// (or custom roles). Physical scope is enforced by the RESTRICTIVE
+		// RLS policy in migration 0022 — nothing to repeat here.
+		mux.Handle("GET /api/v1/assets", wrapPerm(portalauth.PermViewAssets, portal.Portal.ListAssets))
+		mux.Handle("GET /api/v1/assets/{id}", wrapPerm(portalauth.PermViewAssets, portal.Portal.GetAsset))
+		mux.Handle("POST /api/v1/assets", wrapPerm(portalauth.PermAssetCRUD, portal.Portal.CreateAsset))
+		mux.Handle("PATCH /api/v1/assets/{id}", wrapPerm(portalauth.PermAssetCRUD, portal.Portal.UpdateAsset))
+		mux.Handle("DELETE /api/v1/assets/{id}", wrapPerm(portalauth.PermAssetCRUD, portal.Portal.DeleteAsset))
+
 		// User CRUD — every write is a distinct permission so a custom role
 		// can, e.g., grant create-and-update but not delete-and-reset.
 		mux.Handle("POST /api/v1/users", wrapPerm(portalauth.PermUserCreate, portal.Portal.CreateUser))

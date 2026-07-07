@@ -180,6 +180,7 @@ func seedSystemRoles(ctx context.Context, tx pgx.Tx, customerID string) error {
 				"user.create", "user.update", "user.reset_password", "user.delete",
 				"role.crud",
 				"branding.update",
+				"view.assets", "asset.crud",
 			},
 		},
 		{
@@ -188,6 +189,7 @@ func seedSystemRoles(ctx context.Context, tx pgx.Tx, customerID string) error {
 			Perms: []string{
 				"view.dashboard", "view.audit", "view.reports",
 				"view.firmware", "view.notifications", "view.users",
+				"view.assets",
 				"command.device", "command.bulk", "reconnect.device",
 				"alert.acknowledge", "alert.resolve",
 				"notification.test",
@@ -199,6 +201,7 @@ func seedSystemRoles(ctx context.Context, tx pgx.Tx, customerID string) error {
 			Perms: []string{
 				"view.dashboard", "view.audit", "view.reports",
 				"view.firmware", "view.notifications", "view.users",
+				"view.assets",
 			},
 		},
 	}

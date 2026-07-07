@@ -18,7 +18,8 @@ export type PermissionCategory =
   | "Notifications"
   | "Firmware"
   | "Users & Roles"
-  | "Tenant";
+  | "Tenant"
+  | "Assets";
 
 export interface PermissionDef {
   key: string;
@@ -37,6 +38,7 @@ export const PERMISSIONS: readonly PermissionDef[] = [
   { key: "view.firmware",      title: "View firmware",        description: "Fleet firmware histogram + target versions.",              category: "Reads" },
   { key: "view.notifications", title: "View notifications",   description: "List the notification channels configured for the tenant.", category: "Reads" },
   { key: "view.users",         title: "View users",           description: "List of users in the tenant and their assigned roles.",   category: "Reads" },
+  { key: "view.assets",        title: "View assets",          description: "List physical assets (monitored + not) tracked in the tenant's rooms.", category: "Reads" },
 
   // Device control
   { key: "command.device",    title: "Send device commands", description: "Issue single-device commands (power, input, mute, dial...).", category: "Device control" },
@@ -66,6 +68,8 @@ export const PERMISSIONS: readonly PermissionDef[] = [
   { key: "role.crud",           title: "Manage roles",         description: "Create, edit, and delete custom roles inside this tenant.",        category: "Users & Roles" },
   // Tenant
   { key: "branding.update",     title: "Update branding",      description: "Upload the tenant logo, change the accent colour and portal display name.", category: "Tenant" },
+  // Assets
+  { key: "asset.crud",          title: "Manage assets",        description: "Add, edit, and remove assets (physical inventory) in the tenant.", category: "Assets" },
 ];
 
 // PERMISSIONS_BY_CATEGORY is what the matrix renders — same items, grouped
