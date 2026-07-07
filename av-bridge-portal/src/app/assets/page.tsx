@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {
   Boxes,
@@ -21,6 +21,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { DeviceForm } from "@/components/device-form";
 import { Modal } from "@/components/modal";
+import { useToast } from "@/components/toast";
 import { UserMenu } from "@/components/user-menu";
 import { useSession } from "@/hooks/useSession";
 import { api } from "@/lib/api";
@@ -94,12 +95,16 @@ function categoryLabel(c: AssetCategory): string {
 export default function AssetsPage() {
   const session = useSession();
   const admin = isAdmin(session.user?.role) || !!session.user?.is_vendor;
+  const { toast } = useToast();
 
   const [assets, setAssets] = useState<AssetRow[] | null>(null);
   const [buildings, setBuildings] = useState<BuildingRow[] | null>(null);
   const [rooms, setRooms] = useState<NamedRow[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  // Loading state for the destructive Delete confirm — without it, a
+  // slow network makes the modal look frozen between click and dismiss.
+  const [deletingBusy, setDeletingBusy] = useState(false);
 
   // Filters — kept as controlled strings so an empty value means "not
   // filtered". Search is debounced via a timer below.
@@ -186,13 +191,60 @@ export default function AssetsPage() {
   };
 
   const handleDelete = async () => {
-    if (!deleting) return;
+    if (!deleting || deletingBusy) return;
+    // Snapshot the row before the API call so Undo can rebuild it. The
+    // new row will have a new UUID (no true undo of the DELETE), but the
+    // fields the operator cares about survive. We flag this in the toast
+    // copy so it's not misleading.
+    const snapshot = deleting;
+    setDeletingBusy(true);
     try {
-      await api.deleteAsset(deleting.id);
+      await api.deleteAsset(snapshot.id);
       setDeleting(null);
       await loadAssets();
+      toast({
+        title: `Deleted "${snapshot.name}"`,
+        description: snapshot.device_id
+          ? "The linked device stayed online but lost its CMDB link."
+          : undefined,
+        variant: "success",
+        action: {
+          label: "Undo",
+          onClick: async () => {
+            try {
+              await api.createAsset({
+                name: snapshot.name,
+                category: snapshot.category,
+                status: snapshot.status,
+                asset_tag: snapshot.asset_tag,
+                manufacturer: snapshot.manufacturer,
+                model: snapshot.model,
+                serial_number: snapshot.serial_number,
+                room_id: snapshot.room_id ?? undefined,
+                purchase_date: snapshot.purchase_date,
+                warranty_end: snapshot.warranty_end,
+                notes: snapshot.notes,
+              });
+              await loadAssets();
+              toast({ title: "Restored", variant: "success" });
+            } catch (err) {
+              toast({
+                title: "Undo failed",
+                description: (err as Error).message,
+                variant: "destructive",
+              });
+            }
+          },
+        },
+      });
     } catch (e) {
-      alert((e as Error).message);
+      toast({
+        title: "Delete failed",
+        description: (e as Error).message,
+        variant: "destructive",
+      });
+    } finally {
+      setDeletingBusy(false);
     }
   };
 
@@ -212,7 +264,11 @@ export default function AssetsPage() {
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
     } catch (e) {
-      alert(`Export failed: ${(e as Error).message}`);
+      toast({
+        title: "Export failed",
+        description: (e as Error).message,
+        variant: "destructive",
+      });
     }
   };
 
@@ -230,7 +286,11 @@ export default function AssetsPage() {
       // but the operator will want a clean list after dismissing the modal.
       await loadAssets();
     } catch (err) {
-      alert(`Import failed: ${(err as Error).message}`);
+      toast({
+        title: "Import failed",
+        description: (err as Error).message,
+        variant: "destructive",
+      });
     } finally {
       setImporting(false);
     }
@@ -242,26 +302,18 @@ export default function AssetsPage() {
     statusFilter !== "" ||
     buildingFilter !== "";
 
-  // Room name lookup for the edit form — the API returns room by name for
-  // the list, but the form picker needs id→name pairs.
-  const roomsById = useMemo(() => {
-    const m = new Map<string, NamedRow>();
-    for (const r of rooms ?? []) m.set(r.id, r);
-    return m;
-  }, [rooms]);
-
   return (
     <div className="min-h-screen">
       <div className="max-w-6xl mx-auto p-6 space-y-6">
-        <header className="flex items-center justify-between">
-          <div>
+        <header className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
             <h1 className="text-2xl font-semibold">Assets</h1>
             <p className="text-sm text-muted-foreground">
               Physical inventory for this tenant — monitored devices and
               everything else you want to track.
             </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Button
               variant="outline"
               size="sm"
@@ -269,12 +321,13 @@ export default function AssetsPage() {
               disabled={refreshing}
             >
               <RefreshCcw
-                className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`}
+                aria-hidden="true"
+                className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`}
               />
               Refresh
             </Button>
             <Button variant="outline" size="sm" onClick={handleExport}>
-              <Download className="h-3.5 w-3.5" />
+              <Download aria-hidden="true" className="h-4 w-4" />
               Export CSV
             </Button>
             {admin && (
@@ -286,9 +339,9 @@ export default function AssetsPage() {
                   disabled={importing}
                 >
                   {importing ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    <Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" />
                   ) : (
-                    <Upload className="h-3.5 w-3.5" />
+                    <Upload aria-hidden="true" className="h-4 w-4" />
                   )}
                   Import CSV
                 </Button>
@@ -297,10 +350,11 @@ export default function AssetsPage() {
                   type="file"
                   accept=".csv,text/csv"
                   className="hidden"
+                  aria-label="Choose CSV file to import"
                   onChange={handleImportFile}
                 />
                 <Button size="sm" onClick={() => setEditing({ mode: "create" })}>
-                  <Plus className="h-4 w-4" />
+                  <Plus aria-hidden="true" className="h-4 w-4" />
                   New asset
                 </Button>
               </>
@@ -391,8 +445,11 @@ export default function AssetsPage() {
           </div>
         ) : assets.length === 0 ? (
           <Card>
-            <CardContent className="p-10 text-center space-y-2">
-              <Boxes className="h-8 w-8 text-muted-foreground/50 mx-auto" />
+            <CardContent className="p-10 text-center space-y-3">
+              <Boxes
+                aria-hidden="true"
+                className="h-8 w-8 text-muted-foreground/70 mx-auto"
+              />
               <div className="text-sm font-medium">
                 {anyFilterActive ? "No assets match those filters" : "No assets yet"}
               </div>
@@ -403,131 +460,153 @@ export default function AssetsPage() {
                     ? "Assets track everything the tenant owns — monitored gear plus mounts, cables, remotes, and anything else worth cataloguing."
                     : "Nothing has been added yet."}
               </p>
+              {admin && !anyFilterActive && (
+                <div className="pt-2">
+                  <Button size="sm" onClick={() => setEditing({ mode: "create" })}>
+                    <Plus aria-hidden="true" className="h-4 w-4" />
+                    Add your first asset
+                  </Button>
+                </div>
+              )}
             </CardContent>
           </Card>
         ) : (
           <Card>
             <CardContent className="p-0">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b bg-muted/30 text-left text-xs uppercase tracking-wide text-muted-foreground">
-                    <th className="px-4 py-2.5 font-medium">Asset</th>
-                    <th className="px-4 py-2.5 font-medium">Category</th>
-                    <th className="px-4 py-2.5 font-medium">Location</th>
-                    <th className="px-4 py-2.5 font-medium">Status</th>
-                    <th className="px-4 py-2.5 font-medium">Monitored</th>
-                    <th className="px-4 py-2.5 font-medium sr-only">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {assets.map((a) => (
-                    <tr
-                      key={a.id}
-                      className="border-b last:border-0 hover:bg-muted/20"
-                    >
-                      <td className="px-4 py-3">
-                        <div className="font-medium">{a.name}</div>
-                        <div className="text-xs text-muted-foreground flex flex-wrap gap-x-2">
-                          {a.asset_tag && <span>#{a.asset_tag}</span>}
-                          {a.manufacturer && <span>{a.manufacturer}</span>}
-                          {a.model && <span>{a.model}</span>}
-                          {a.serial_number && (
-                            <span className="font-mono">sn:{a.serial_number}</span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-4 py-3">
-                        <span className="text-xs">{categoryLabel(a.category)}</span>
-                      </td>
-                      <td className="px-4 py-3">
-                        {a.room ? (
-                          <>
-                            <div className="text-xs font-medium">{a.room}</div>
-                            <div className="text-[11px] text-muted-foreground">
-                              {[a.region, a.location, a.building].filter(Boolean).join(" · ")}
-                            </div>
-                          </>
-                        ) : (
-                          <span className="text-xs text-muted-foreground">Unplaced</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3">
-                        <Badge variant={statusVariant(a.status)}>
-                          {statusLabel(a.status)}
-                        </Badge>
-                      </td>
-                      <td className="px-4 py-3">
-                        {a.device_id ? (
-                          <Link
-                            href={`/devices/${encodeURIComponent(a.device_id)}`}
-                            className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
-                          >
-                            Yes
-                            <ExternalLink className="h-3 w-3" />
-                          </Link>
-                        ) : admin ? (
-                          <button
-                            type="button"
-                            onClick={() => setMonitoring(a)}
-                            className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-primary"
-                          >
-                            <Radio className="h-3 w-3" />
-                            Set up
-                          </button>
-                        ) : (
-                          <span className="text-xs text-muted-foreground">No</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex justify-end gap-1">
-                          {admin && (
-                            <>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                aria-label="Edit"
-                                onClick={() => setEditing({ mode: "edit", existing: a })}
-                              >
-                                <Pencil className="h-3.5 w-3.5" />
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                aria-label="Delete"
-                                onClick={() => setDeleting(a)}
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </Button>
-                            </>
-                          )}
-                        </div>
-                      </td>
+              {/*
+                overflow-x-auto keeps the table's own scroll separate from
+                the page's — a narrow viewport scrolls the columns
+                horizontally, not the whole page. min-w keeps the columns
+                readable rather than crushing them; below that width the
+                horizontal scrollbar appears.
+              */}
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[720px] text-sm">
+                  <thead>
+                    <tr className="border-b bg-muted/30 text-left text-xs uppercase tracking-wide text-muted-foreground">
+                      <th scope="col" className="px-4 py-2.5 font-medium">Asset</th>
+                      <th scope="col" className="px-4 py-2.5 font-medium">Category</th>
+                      <th scope="col" className="px-4 py-2.5 font-medium">Location</th>
+                      <th scope="col" className="px-4 py-2.5 font-medium">Status</th>
+                      <th scope="col" className="px-4 py-2.5 font-medium">Monitored</th>
+                      <th scope="col" className="px-4 py-2.5 font-medium">
+                        <span className="sr-only">Actions</span>
+                      </th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {assets.map((a) => (
+                      <tr
+                        key={a.id}
+                        className="border-b last:border-0 transition-colors duration-150 hover:bg-muted/20"
+                      >
+                        <td className="px-4 py-3">
+                          <div className="font-medium">{a.name}</div>
+                          <div className="text-xs text-muted-foreground flex flex-wrap gap-x-2">
+                            {a.asset_tag && <span>#{a.asset_tag}</span>}
+                            {a.manufacturer && <span>{a.manufacturer}</span>}
+                            {a.model && <span>{a.model}</span>}
+                            {a.serial_number && (
+                              <span className="font-mono">sn:{a.serial_number}</span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className="text-xs">{categoryLabel(a.category)}</span>
+                        </td>
+                        <td className="px-4 py-3">
+                          {a.room ? (
+                            <>
+                              <div className="text-xs font-medium">{a.room}</div>
+                              <div className="text-xs text-muted-foreground">
+                                {[a.region, a.location, a.building].filter(Boolean).join(" · ")}
+                              </div>
+                            </>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">Unplaced</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3">
+                          <Badge variant={statusVariant(a.status)}>
+                            {statusLabel(a.status)}
+                          </Badge>
+                        </td>
+                        <td className="px-4 py-3">
+                          {a.device_id ? (
+                            <Link
+                              href={`/devices/${encodeURIComponent(a.device_id)}`}
+                              aria-label={`View device linked to ${a.name}`}
+                              className="inline-flex items-center gap-1 rounded px-2 py-1.5 text-xs text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            >
+                              Yes
+                              <ExternalLink aria-hidden="true" className="h-3.5 w-3.5" />
+                            </Link>
+                          ) : admin ? (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => setMonitoring(a)}
+                              aria-label={`Set up monitoring for ${a.name}`}
+                            >
+                              <Radio aria-hidden="true" className="h-3.5 w-3.5" />
+                              Set up
+                            </Button>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">No</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex justify-end gap-1">
+                            {admin && (
+                              <>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  aria-label={`Edit ${a.name}`}
+                                  onClick={() => setEditing({ mode: "edit", existing: a })}
+                                >
+                                  <Pencil aria-hidden="true" className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  aria-label={`Delete ${a.name}`}
+                                  onClick={() => setDeleting(a)}
+                                >
+                                  <Trash2 aria-hidden="true" className="h-4 w-4" />
+                                </Button>
+                              </>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </CardContent>
           </Card>
         )}
 
         {editing && (
-          <Modal
-            open
+          <AssetFormModal
+            mode={editing.mode}
+            existing={editing.existing}
+            rooms={rooms ?? []}
             onClose={() => setEditing(null)}
-            title={editing.mode === "create" ? "New asset" : "Edit asset"}
-          >
-            <AssetForm
-              mode={editing.mode}
-              existing={editing.existing}
-              rooms={rooms ?? []}
-              roomsById={roomsById}
-              onCancel={() => setEditing(null)}
-              onSuccess={() => {
-                setEditing(null);
-                void loadAssets();
-              }}
-            />
-          </Modal>
+            onSuccess={(created) => {
+              setEditing(null);
+              void loadAssets();
+              toast({
+                title:
+                  editing.mode === "create"
+                    ? `Created "${created.name}"`
+                    : `Saved "${created.name}"`,
+                variant: "success",
+              });
+            }}
+          />
         )}
 
         {importResult && (
@@ -647,7 +726,9 @@ export default function AssetsPage() {
         {deleting && (
           <Modal
             open
-            onClose={() => setDeleting(null)}
+            onClose={() => {
+              if (!deletingBusy) setDeleting(null);
+            }}
             title={`Delete ${deleting.name}?`}
             wide={false}
           >
@@ -657,10 +738,26 @@ export default function AssetsPage() {
               asset link.
             </p>
             <div className="mt-4 flex justify-end gap-2">
-              <Button variant="outline" size="sm" onClick={() => setDeleting(null)}>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setDeleting(null)}
+                disabled={deletingBusy}
+              >
                 Cancel
               </Button>
-              <Button variant="destructive" size="sm" onClick={handleDelete}>
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={handleDelete}
+                disabled={deletingBusy}
+              >
+                {deletingBusy && (
+                  <Loader2
+                    aria-hidden="true"
+                    className="h-3.5 w-3.5 animate-spin"
+                  />
+                )}
                 Delete
               </Button>
             </div>
@@ -673,19 +770,110 @@ export default function AssetsPage() {
 
 // ------ form ---------------------------------------------------------------
 
+// AssetFormError describes an inline error on a specific field so we can
+// anchor the message under that input. The generic case (no field key)
+// still shows a top-level banner.
+interface AssetFormError {
+  field?:
+    | "name"
+    | "category"
+    | "asset_tag"
+    | "serial"
+    | "manufacturer"
+    | "model"
+    | "room"
+    | "purchase_date"
+    | "warranty_end"
+    | "notes";
+  message: string;
+}
+
+// mapBackendError inspects a backend error message and tags it to a
+// specific form field where the wording is unambiguous. Falls back to
+// showing the message as a form-level error otherwise. Keeps the mapping
+// in one place so a copy tweak on the backend doesn't scatter breakage.
+function mapBackendError(msg: string): AssetFormError {
+  const m = msg.toLowerCase();
+  if (m.includes("asset_tag") || m.includes("asset tag")) {
+    return { field: "asset_tag", message: msg };
+  }
+  if (m.includes("name is required") || m.includes("name cannot")) {
+    return { field: "name", message: msg };
+  }
+  if (m.includes("category")) {
+    return { field: "category", message: msg };
+  }
+  if (m.includes("room_id") || m.includes("room ")) {
+    return { field: "room", message: msg };
+  }
+  if (m.includes("purchase_date")) {
+    return { field: "purchase_date", message: msg };
+  }
+  if (m.includes("warranty_end")) {
+    return { field: "warranty_end", message: msg };
+  }
+  return { message: msg };
+}
+
+interface AssetFormModalProps {
+  mode: "create" | "edit";
+  existing?: AssetRow;
+  rooms: NamedRow[];
+  onClose: () => void;
+  onSuccess: (asset: { name: string }) => void;
+}
+
+// AssetFormModal wraps the form in the shared Modal so it can drive the
+// modal's `dirty` prop (which prompts before an accidental Esc/scrim
+// close). Keeps AssetForm itself concerned only with the fields.
+function AssetFormModal({
+  mode,
+  existing,
+  rooms,
+  onClose,
+  onSuccess,
+}: AssetFormModalProps) {
+  const [dirty, setDirty] = useState(false);
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={mode === "create" ? "New asset" : "Edit asset"}
+      dirty={dirty}
+      dirtyPrompt="You have unsaved changes. Discard them?"
+    >
+      <AssetForm
+        mode={mode}
+        existing={existing}
+        rooms={rooms}
+        onDirtyChange={setDirty}
+        onCancel={onClose}
+        onSuccess={onSuccess}
+      />
+    </Modal>
+  );
+}
+
 interface AssetFormProps {
   mode: "create" | "edit";
   existing?: AssetRow;
   rooms: NamedRow[];
-  roomsById: Map<string, NamedRow>;
+  onDirtyChange: (dirty: boolean) => void;
   onCancel: () => void;
-  onSuccess: () => void;
+  onSuccess: (asset: { name: string }) => void;
 }
 
 // AssetForm handles both create + edit — the shape of the two requests is
 // nearly identical and the wire types differ only in which fields are
 // required. Keeping them together avoids duplicating the field layout.
-function AssetForm({ mode, existing, rooms, onCancel, onSuccess }: AssetFormProps) {
+function AssetForm({
+  mode,
+  existing,
+  rooms,
+  onDirtyChange,
+  onCancel,
+  onSuccess,
+}: AssetFormProps) {
   const [name, setName] = useState(existing?.name ?? "");
   const [category, setCategory] = useState<AssetCategory>(
     existing?.category ?? "display"
@@ -700,13 +888,53 @@ function AssetForm({ mode, existing, rooms, onCancel, onSuccess }: AssetFormProp
   const [warrantyEnd, setWarrantyEnd] = useState(existing?.warranty_end ?? "");
   const [notes, setNotes] = useState(existing?.notes ?? "");
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<AssetFormError | null>(null);
+
+  // Dirty tracking: compare each field to its initial value so we can
+  // report accurately to the Modal. Cheaper than diffing the whole form
+  // and matches "operator has touched something" intuition.
+  useEffect(() => {
+    const initial = existing;
+    const changed =
+      name !== (initial?.name ?? "") ||
+      category !== (initial?.category ?? "display") ||
+      status !== (initial?.status ?? "in_service") ||
+      roomID !== (initial?.room_id ?? "") ||
+      assetTag !== (initial?.asset_tag ?? "") ||
+      manufacturer !== (initial?.manufacturer ?? "") ||
+      model !== (initial?.model ?? "") ||
+      serial !== (initial?.serial_number ?? "") ||
+      purchaseDate !== (initial?.purchase_date ?? "") ||
+      warrantyEnd !== (initial?.warranty_end ?? "") ||
+      notes !== (initial?.notes ?? "");
+    onDirtyChange(changed);
+  }, [
+    existing,
+    name,
+    category,
+    status,
+    roomID,
+    assetTag,
+    manufacturer,
+    model,
+    serial,
+    purchaseDate,
+    warrantyEnd,
+    notes,
+    onDirtyChange,
+  ]);
+
+  // Refs for focus-on-error so a rejected field grabs focus post-submit
+  // per the WCAG focus-management guideline.
+  const nameRef = useRef<HTMLInputElement>(null);
+  const assetTagRef = useRef<HTMLInputElement>(null);
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
     if (!name.trim()) {
-      setError("Name is required.");
+      setError({ field: "name", message: "Name is required." });
+      nameRef.current?.focus();
       return;
     }
     setSaving(true);
@@ -745,29 +973,60 @@ function AssetForm({ mode, existing, rooms, onCancel, onSuccess }: AssetFormProp
         };
         await api.updateAsset(existing.id, body);
       }
-      onSuccess();
+      onSuccess({ name: name.trim() });
     } catch (e) {
-      setError((e as Error).message);
+      const mapped = mapBackendError((e as Error).message);
+      setError(mapped);
+      // Focus the offending field where we know it — improves recovery.
+      if (mapped.field === "asset_tag") assetTagRef.current?.focus();
+      else if (mapped.field === "name") nameRef.current?.focus();
     } finally {
       setSaving(false);
     }
   }
 
+  // Helper for consistent per-field error rendering. Not extracted to a
+  // separate component because the fields are laid out with different
+  // grid spans and a wrapper would fight the CSS.
+  const fieldErr = (field: AssetFormError["field"]) =>
+    error && error.field === field ? (
+      <span
+        className="text-xs [color:hsl(var(--destructive))]"
+        id={`err-${field}`}
+        role="alert"
+      >
+        {error.message}
+      </span>
+    ) : null;
+
   return (
-    <form onSubmit={handleSave} className="space-y-4">
+    <form onSubmit={handleSave} className="space-y-4" noValidate>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <label className="space-y-1 sm:col-span-2">
-          <span className="text-xs font-medium">Name *</span>
+          <span className="text-xs font-medium">
+            Name <span aria-hidden="true">*</span>
+          </span>
           <input
+            ref={nameRef}
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
             required
-            className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+            aria-required="true"
+            aria-invalid={error?.field === "name" || undefined}
+            aria-describedby={error?.field === "name" ? "err-name" : undefined}
+            className={`w-full rounded-md border bg-background px-3 py-2 text-sm ${
+              error?.field === "name"
+                ? "border-[color:hsl(var(--destructive))]"
+                : ""
+            }`}
           />
+          {fieldErr("name")}
         </label>
         <label className="space-y-1">
-          <span className="text-xs font-medium">Category *</span>
+          <span className="text-xs font-medium">
+            Category <span aria-hidden="true">*</span>
+          </span>
           <select
             value={category}
             onChange={(e) => setCategory(e.target.value as AssetCategory)}
@@ -779,6 +1038,7 @@ function AssetForm({ mode, existing, rooms, onCancel, onSuccess }: AssetFormProp
               </option>
             ))}
           </select>
+          {fieldErr("category")}
         </label>
         <label className="space-y-1">
           <span className="text-xs font-medium">Status</span>
@@ -808,16 +1068,27 @@ function AssetForm({ mode, existing, rooms, onCancel, onSuccess }: AssetFormProp
               </option>
             ))}
           </select>
+          {fieldErr("room")}
         </label>
         <label className="space-y-1">
           <span className="text-xs font-medium">Asset tag</span>
           <input
+            ref={assetTagRef}
             type="text"
             value={assetTag}
             onChange={(e) => setAssetTag(e.target.value)}
             placeholder="AV-042"
-            className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+            aria-invalid={error?.field === "asset_tag" || undefined}
+            aria-describedby={
+              error?.field === "asset_tag" ? "err-asset_tag" : undefined
+            }
+            className={`w-full rounded-md border bg-background px-3 py-2 text-sm ${
+              error?.field === "asset_tag"
+                ? "border-[color:hsl(var(--destructive))]"
+                : ""
+            }`}
           />
+          {fieldErr("asset_tag")}
         </label>
         <label className="space-y-1">
           <span className="text-xs font-medium">Serial number</span>
@@ -854,6 +1125,7 @@ function AssetForm({ mode, existing, rooms, onCancel, onSuccess }: AssetFormProp
             onChange={(e) => setPurchaseDate(e.target.value)}
             className="w-full rounded-md border bg-background px-3 py-2 text-sm"
           />
+          {fieldErr("purchase_date")}
         </label>
         <label className="space-y-1">
           <span className="text-xs font-medium">Warranty end</span>
@@ -863,6 +1135,7 @@ function AssetForm({ mode, existing, rooms, onCancel, onSuccess }: AssetFormProp
             onChange={(e) => setWarrantyEnd(e.target.value)}
             className="w-full rounded-md border bg-background px-3 py-2 text-sm"
           />
+          {fieldErr("warranty_end")}
         </label>
         <label className="space-y-1 sm:col-span-2">
           <span className="text-xs font-medium">Notes</span>
@@ -875,8 +1148,18 @@ function AssetForm({ mode, existing, rooms, onCancel, onSuccess }: AssetFormProp
         </label>
       </div>
 
-      {error && (
-        <div className="text-sm [color:hsl(var(--destructive))]">{error}</div>
+      {/*
+        Form-level fallback error — only shown when the backend returned
+        something we couldn't map to a specific field. Field-anchored
+        errors render next to their input above.
+      */}
+      {error && !error.field && (
+        <div
+          role="alert"
+          className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm [color:hsl(var(--destructive))]"
+        >
+          {error.message}
+        </div>
       )}
 
       <div className="flex items-center justify-end gap-2 pt-2 border-t">
@@ -884,7 +1167,12 @@ function AssetForm({ mode, existing, rooms, onCancel, onSuccess }: AssetFormProp
           Cancel
         </Button>
         <Button type="submit" size="sm" disabled={saving}>
-          {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+          {saving && (
+            <Loader2
+              aria-hidden="true"
+              className="h-3.5 w-3.5 animate-spin"
+            />
+          )}
           {mode === "create" ? "Create asset" : "Save changes"}
         </Button>
       </div>
