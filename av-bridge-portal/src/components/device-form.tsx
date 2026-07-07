@@ -5,6 +5,7 @@ import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
 import type {
+  AssetRow,
   CollectorSummary,
   CreateDeviceBody,
   DeviceDetail,
@@ -49,6 +50,7 @@ interface FormState {
   password: string;
   poll_rate_seconds: string;
   room_id: string;
+  asset_id: string;
   commands_json: string;
   tags_json: string;
   subscriptions_json: string;
@@ -67,6 +69,7 @@ function emptyForm(): FormState {
     password: "",
     poll_rate_seconds: "60",
     room_id: "",
+    asset_id: "",
     commands_json: "",
     tags_json: "",
     subscriptions_json: "",
@@ -86,6 +89,7 @@ function formFromDetail(d: DeviceDetail): FormState {
     password: "",
     poll_rate_seconds: d.poll_rate_seconds ? String(d.poll_rate_seconds) : "",
     room_id: d.room_id ?? "",
+    asset_id: d.asset_id ?? "",
     commands_json: d.commands ? JSON.stringify(d.commands, null, 2) : "",
     tags_json: d.tags ? JSON.stringify(d.tags, null, 2) : "",
     subscriptions_json: d.subscriptions
@@ -120,6 +124,7 @@ export function DeviceForm({ mode, initial, onCancel, onSuccess }: DeviceFormPro
   const [collectors, setCollectors] = useState<CollectorSummary[]>([]);
   const [rooms, setRooms] = useState<NamedRow[]>([]);
   const [buildings, setBuildings] = useState<NamedRow[]>([]);
+  const [assets, setAssets] = useState<AssetRow[]>([]);
   const [loadingLookups, setLoadingLookups] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -130,12 +135,18 @@ export function DeviceForm({ mode, initial, onCancel, onSuccess }: DeviceFormPro
       api.listCollectors(ctrl.signal),
       api.listRooms(ctrl.signal),
       api.listBuildings(ctrl.signal),
+      // Only assets not already linked to another device (device_id null)
+      // are useful for a fresh link; on edit we still need this asset's
+      // own row visible, so include everything and let the dropdown filter
+      // the "in use elsewhere" ones itself.
+      api.listAssets({}, ctrl.signal).catch(() => [] as AssetRow[]),
     ])
-      .then(([cs, rs, bs]) => {
+      .then(([cs, rs, bs, as]) => {
         if (ctrl.signal.aborted) return;
         setCollectors(cs);
         setRooms(rs);
         setBuildings(bs);
+        setAssets(as);
         // Auto-select the only collector when creating, so the operator
         // doesn't have to pick from a list of one.
         if (mode === "create" && cs.length === 1 && !form.collector_id) {
@@ -195,6 +206,7 @@ export function DeviceForm({ mode, initial, onCancel, onSuccess }: DeviceFormPro
             ? Number(form.poll_rate_seconds)
             : undefined,
           room_id: form.room_id || undefined,
+          asset_id: form.asset_id || undefined,
           commands,
           tags,
           subscriptions,
@@ -216,6 +228,7 @@ export function DeviceForm({ mode, initial, onCancel, onSuccess }: DeviceFormPro
             ? Number(form.poll_rate_seconds)
             : 0,
           room_id: form.room_id,
+          asset_id: form.asset_id,
           commands: commands ?? {},
           tags: tags ?? {},
           subscriptions: subscriptions ?? [],
@@ -299,6 +312,32 @@ export function DeviceForm({ mode, initial, onCancel, onSuccess }: DeviceFormPro
                 </option>
               );
             })}
+          </select>
+        </div>
+        <div>
+          <label className={labelClass}>Linked asset</label>
+          <select
+            className={inputClass}
+            value={form.asset_id}
+            onChange={(e) => set("asset_id", e.target.value)}
+            disabled={loadingLookups}
+          >
+            <option value="">— No CMDB link —</option>
+            {assets
+              // Hide assets already linked to a different device; the current
+              // device's own linked asset is always shown so the operator can
+              // see + change it. Backend enforces one-device-per-asset via
+              // FK semantics; this just prevents the awkward silent swap.
+              .filter(
+                (a) => !a.device_id || a.device_id === initial?.id
+              )
+              .map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name}
+                  {a.asset_tag ? ` (#${a.asset_tag})` : ""}
+                  {a.model ? ` — ${a.model}` : ""}
+                </option>
+              ))}
           </select>
         </div>
         <div>

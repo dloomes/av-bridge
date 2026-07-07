@@ -30,6 +30,7 @@ export interface Subscription {
 export interface DeviceDetail extends DeviceSummary {
   collector_id: string;
   room_id?: string | null;
+  asset_id?: string | null;
   reported_id: string;
   ip_address?: string;
   baud_rate?: number;
@@ -54,6 +55,7 @@ export interface CreateDeviceBody {
   tags?: Record<string, string>;
   subscriptions?: Subscription[];
   room_id?: string;
+  asset_id?: string;
 }
 
 // PATCH body. Every field optional — only the ones present are written.

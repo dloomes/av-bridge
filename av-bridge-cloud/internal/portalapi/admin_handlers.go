@@ -860,6 +860,9 @@ type createDeviceReq struct {
 	Tags          map[string]string `json:"tags,omitempty"`
 	Subscriptions []Subscription    `json:"subscriptions,omitempty"`
 	RoomID        string            `json:"room_id,omitempty"`
+	// AssetID optionally links this device to a canonical CMDB asset row.
+	// Empty = no link. RLS on assets already scopes it to this tenant.
+	AssetID       string            `json:"asset_id,omitempty"`
 }
 
 // CreateDevice — POST /api/v1/devices
@@ -904,6 +907,7 @@ func (h *Handler) CreateDevice(w http.ResponseWriter, r *http.Request) {
 		id            string
 		collectorBad  bool
 		roomBad       bool
+		assetBad      bool
 		duplicate     bool
 	)
 	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
@@ -930,10 +934,29 @@ func (h *Handler) CreateDevice(w http.ResponseWriter, r *http.Request) {
 				return nil
 			}
 		}
+		// asset_id, if provided, must reference an asset visible to this
+		// tenant. RLS on assets scopes the SELECT — an out-of-tenant uuid
+		// simply returns no rows, which surfaces as a 400 via assetBad.
+		if req.AssetID != "" {
+			var assetExists bool
+			if err := tx.QueryRow(ctx,
+				`SELECT EXISTS (SELECT 1 FROM assets WHERE id = $1)`, req.AssetID,
+			).Scan(&assetExists); err != nil {
+				return err
+			}
+			if !assetExists {
+				assetBad = true
+				return nil
+			}
+		}
 
 		var roomParam any = nil
 		if req.RoomID != "" {
 			roomParam = req.RoomID
+		}
+		var assetParam any = nil
+		if req.AssetID != "" {
+			assetParam = req.AssetID
 		}
 		// ON CONFLICT DO NOTHING keeps the transaction healthy on a duplicate —
 		// a statement error here would poison the tx and Commit would fail with
@@ -944,12 +967,12 @@ func (h *Handler) CreateDevice(w http.ResponseWriter, r *http.Request) {
 				customer_id, collector_id, room_id, reported_id,
 				name, type, protocol, address, baud_rate,
 				username_enc, password_enc, poll_rate_seconds,
-				commands, tags, subscriptions
+				commands, tags, subscriptions, asset_id
 			) VALUES (
 				$1, $2, $3, $4,
 				NULLIF($5,''), NULLIF($6,''), NULLIF($7,''), NULLIF($8,''), $9,
 				$10, $11, $12,
-				$13::jsonb, $14::jsonb, $15::jsonb
+				$13::jsonb, $14::jsonb, $15::jsonb, $16
 			)
 			ON CONFLICT (collector_id, reported_id) DO NOTHING
 			RETURNING id::text`,
@@ -957,6 +980,7 @@ func (h *Handler) CreateDevice(w http.ResponseWriter, r *http.Request) {
 			req.Name, req.Type, req.Protocol, req.Address, nullIfZero(req.BaudRate),
 			userEnc, passEnc, nullIfZero(req.PollRate),
 			jsonOrNil(req.Commands), jsonOrNil(req.Tags), jsonOrNil(req.Subscriptions),
+			assetParam,
 		).Scan(&id)
 		if errors.Is(err, pgx.ErrNoRows) {
 			duplicate = true
@@ -982,6 +1006,10 @@ func (h *Handler) CreateDevice(w http.ResponseWriter, r *http.Request) {
 	}
 	if roomBad {
 		writeErr(w, http.StatusBadRequest, "room_id not found in this customer")
+		return
+	}
+	if assetBad {
+		writeErr(w, http.StatusBadRequest, "asset_id not found in this customer")
 		return
 	}
 	if duplicate {
@@ -1011,6 +1039,11 @@ type updateDeviceReq struct {
 	// Matches the previous PlaceDevice semantics so the portal's existing
 	// placement flow keeps working through the combined PATCH.
 	RoomID *string `json:"room_id,omitempty"`
+
+	// asset_id: same pointer semantics — nil = untouched, empty string =
+	// clear the CMDB link, uuid = link. The FK is ON DELETE SET NULL so
+	// unlink is always safe.
+	AssetID *string `json:"asset_id,omitempty"`
 }
 
 // UpdateDevice — PATCH /api/v1/devices/{id}
@@ -1091,6 +1124,7 @@ func (h *Handler) UpdateDevice(w http.ResponseWriter, r *http.Request) {
 	// We inline it instead of using `add` so the SQL can carry the EXISTS check.
 	roomTouch := req.RoomID != nil
 	var roomVal any
+	var roomParamIdx int
 	if roomTouch {
 		if *req.RoomID == "" {
 			roomVal = nil
@@ -1098,7 +1132,25 @@ func (h *Handler) UpdateDevice(w http.ResponseWriter, r *http.Request) {
 			roomVal = *req.RoomID
 		}
 		args = append(args, roomVal)
-		set = append(set, "room_id = $"+strconv.Itoa(len(args))+"::uuid")
+		roomParamIdx = len(args)
+		set = append(set, "room_id = $"+strconv.Itoa(roomParamIdx)+"::uuid")
+	}
+
+	// asset_id follows the same pattern. RLS on assets guarantees a
+	// cross-tenant uuid can't be linked — an EXISTS check on non-NULL asset
+	// values keeps the failure path a clean 404 rather than a silent no-op.
+	assetTouch := req.AssetID != nil
+	var assetVal any
+	var assetParamIdx int
+	if assetTouch {
+		if *req.AssetID == "" {
+			assetVal = nil
+		} else {
+			assetVal = *req.AssetID
+		}
+		args = append(args, assetVal)
+		assetParamIdx = len(args)
+		set = append(set, "asset_id = $"+strconv.Itoa(assetParamIdx)+"::uuid")
 	}
 
 	if len(set) == 0 {
@@ -1109,11 +1161,14 @@ func (h *Handler) UpdateDevice(w http.ResponseWriter, r *http.Request) {
 	args = append(args, id)
 	idParam := "$" + strconv.Itoa(len(args))
 
-	// Build WHERE: the device must belong to this customer (RLS), and if a
-	// room_id was provided AND non-NULL, the room must exist in this customer.
+	// Build WHERE: the device must belong to this customer (RLS), and any
+	// non-NULL room_id / asset_id must reference a tenant-visible row.
 	where := "id = " + idParam
 	if roomTouch && roomVal != nil {
-		where += " AND EXISTS (SELECT 1 FROM rooms WHERE id = $" + strconv.Itoa(len(args)-1) + "::uuid)"
+		where += " AND EXISTS (SELECT 1 FROM rooms WHERE id = $" + strconv.Itoa(roomParamIdx) + "::uuid)"
+	}
+	if assetTouch && assetVal != nil {
+		where += " AND EXISTS (SELECT 1 FROM assets WHERE id = $" + strconv.Itoa(assetParamIdx) + "::uuid)"
 	}
 
 	sql := "UPDATE devices SET " + strings.Join(set, ", ") + " WHERE " + where
@@ -1147,7 +1202,8 @@ func (h *Handler) UpdateDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if rowsAffected == 0 {
-		writeErr(w, http.StatusNotFound, "device not found, or room_id not visible to this customer")
+		writeErr(w, http.StatusNotFound,
+			"device not found, or room_id / asset_id not visible to this customer")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{

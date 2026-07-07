@@ -297,6 +297,7 @@ func (h *Handler) GetDevice(w http.ResponseWriter, r *http.Request) {
 		ID          string            `json:"id"`
 		CollectorID string            `json:"collector_id"`
 		RoomID      *string           `json:"room_id,omitempty"`
+		AssetID     *string           `json:"asset_id,omitempty"`
 		ReportedID  string            `json:"reported_id"`
 		Name        string            `json:"name"`
 		Type        string            `json:"type"`
@@ -330,6 +331,7 @@ func (h *Handler) GetDevice(w http.ResponseWriter, r *http.Request) {
 			SELECT d.id::text,
 			       d.collector_id::text,
 			       d.room_id::text,
+			       d.asset_id::text,
 			       COALESCE(d.reported_id, ''),
 			       COALESCE(d.name, d.reported_id, ''),
 			       COALESCE(d.type, ''), COALESCE(d.protocol, ''),
@@ -348,7 +350,7 @@ func (h *Handler) GetDevice(w http.ResponseWriter, r *http.Request) {
 			  LEFT JOIN rooms r ON r.id = d.room_id
 			  LEFT JOIN buildings b ON b.id = r.building_id
 			 WHERE d.id = $1`, id).
-			Scan(&o.ID, &o.CollectorID, &roomID, &o.ReportedID,
+			Scan(&o.ID, &o.CollectorID, &roomID, &o.AssetID, &o.ReportedID,
 				&o.Name, &o.Type, &o.Protocol, &o.Location,
 				&o.Address, &o.IPAddress, &baudRate, &pollRate,
 				&o.Status, &tags, &cmds, &subs)
