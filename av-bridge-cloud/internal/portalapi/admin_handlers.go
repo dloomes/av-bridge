@@ -860,9 +860,43 @@ type createDeviceReq struct {
 	Tags          map[string]string `json:"tags,omitempty"`
 	Subscriptions []Subscription    `json:"subscriptions,omitempty"`
 	RoomID        string            `json:"room_id,omitempty"`
-	// AssetID optionally links this device to a canonical CMDB asset row.
-	// Empty = no link. RLS on assets already scopes it to this tenant.
+	// AssetID optionally links this device to an EXISTING asset row.
+	// Mutually exclusive with Asset (a device can either link to an
+	// existing catalogue entry or create a new one, not both).
 	AssetID       string            `json:"asset_id,omitempty"`
+	// Asset optionally carries fresh CMDB fields for a new asset row.
+	// When any field is populated the device create tx also inserts the
+	// asset and links it — no bounce to /assets required. If AssetID is
+	// also set, Asset is treated as a PATCH against that existing row.
+	Asset *deviceAssetInput `json:"asset,omitempty"`
+}
+
+// deviceAssetInput mirrors the standard asset field set that the device
+// form now surfaces inline. Fields are all optional — a non-empty ANY
+// of these triggers the create-or-patch path. Name defaults to the
+// device's own name so we don't have to duplicate it in the payload.
+type deviceAssetInput struct {
+	AssetTag     string `json:"asset_tag,omitempty"`
+	Category     string `json:"category,omitempty"`
+	Manufacturer string `json:"manufacturer,omitempty"`
+	Model        string `json:"model,omitempty"`
+	SerialNumber string `json:"serial_number,omitempty"`
+	Status       string `json:"status,omitempty"`
+	PurchaseDate string `json:"purchase_date,omitempty"`
+	WarrantyEnd  string `json:"warranty_end,omitempty"`
+	Notes        string `json:"notes,omitempty"`
+}
+
+// hasAny reports whether any field on the sub-object is populated. Empty
+// pointers / all-empty structs mean "no inline asset work requested"; the
+// device row goes through the create path unchanged.
+func (a *deviceAssetInput) hasAny() bool {
+	if a == nil {
+		return false
+	}
+	return a.AssetTag != "" || a.Category != "" || a.Manufacturer != "" ||
+		a.Model != "" || a.SerialNumber != "" || a.Status != "" ||
+		a.PurchaseDate != "" || a.WarrantyEnd != "" || a.Notes != ""
 }
 
 // CreateDevice — POST /api/v1/devices
@@ -904,11 +938,12 @@ func (h *Handler) CreateDevice(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var (
-		id            string
-		collectorBad  bool
-		roomBad       bool
-		assetBad      bool
-		duplicate     bool
+		id             string
+		collectorBad   bool
+		roomBad        bool
+		assetBad       bool
+		duplicate      bool
+		assetInlineErr error
 	)
 	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
 		// Confirm the collector belongs to this customer (RLS-aware).
@@ -957,6 +992,132 @@ func (h *Handler) CreateDevice(w http.ResponseWriter, r *http.Request) {
 		var assetParam any = nil
 		if req.AssetID != "" {
 			assetParam = req.AssetID
+		}
+
+		// Inline asset create — the device form's Physical inventory
+		// section arrived populated but no existing asset was picked. We
+		// insert an asset in the same tx and use its id as the device's
+		// link. If AssetID was also supplied, we PATCH that existing row
+		// with the sub-object's fields instead.
+		if req.Asset.hasAny() {
+			category := req.Asset.Category
+			// Default the category from the device type when the caller
+			// didn't pick one — display→display, camera→camera etc. Any
+			// device type that maps 1:1 to an asset category saves a
+			// keystroke; unknowns fall through to "other".
+			if category == "" {
+				category = deviceTypeToAssetCategory(req.Type)
+			}
+			if !allowedAssetCategories[category] {
+				assetInlineErr = errors.New("asset.category unsupported")
+				return nil
+			}
+			status := req.Asset.Status
+			if status == "" {
+				status = "in_service"
+			}
+			if !allowedAssetStatuses[status] {
+				assetInlineErr = errors.New("asset.status unsupported")
+				return nil
+			}
+			purchase, err := parseDate(req.Asset.PurchaseDate)
+			if err != nil {
+				assetInlineErr = errors.New("asset.purchase_date: " + err.Error())
+				return nil
+			}
+			warranty, err := parseDate(req.Asset.WarrantyEnd)
+			if err != nil {
+				assetInlineErr = errors.New("asset.warranty_end: " + err.Error())
+				return nil
+			}
+			// asset_tag uniqueness pre-check — same pattern as CreateAsset,
+			// keeps the tx healthy on conflict.
+			if req.Asset.AssetTag != "" {
+				var taken bool
+				if err := tx.QueryRow(ctx,
+					`SELECT EXISTS (SELECT 1 FROM assets WHERE asset_tag = $1)`,
+					req.Asset.AssetTag,
+				).Scan(&taken); err != nil {
+					return err
+				}
+				if taken && req.AssetID == "" {
+					// New asset conflicts with an existing tag.
+					assetInlineErr = errors.New("asset.asset_tag already exists in this tenant")
+					return nil
+				}
+			}
+			if req.AssetID == "" {
+				// Create a fresh asset row. Name defaults to the device's
+				// name so the CMDB entry reads naturally in listings.
+				assetName := req.Name
+				if assetName == "" {
+					assetName = req.ReportedID
+				}
+				var newAssetID string
+				if err := tx.QueryRow(ctx, `
+					INSERT INTO assets (
+						customer_id, room_id, asset_tag,
+						name, category, manufacturer, model, serial_number,
+						status, purchase_date, warranty_end, notes
+					) VALUES (
+						$1, $2, NULLIF($3,''),
+						$4, $5, NULLIF($6,''), NULLIF($7,''), NULLIF($8,''),
+						$9, $10, $11, NULLIF($12,'')
+					) RETURNING id::text`,
+					p.CustomerID, roomParam, req.Asset.AssetTag,
+					assetName, category,
+					req.Asset.Manufacturer, req.Asset.Model, req.Asset.SerialNumber,
+					status, purchase, warranty, req.Asset.Notes,
+				).Scan(&newAssetID); err != nil {
+					return err
+				}
+				assetParam = newAssetID
+			} else {
+				// Existing asset — patch the fields the caller supplied.
+				// Category / status stay optional; only overwrite what was
+				// sent so we don't smash existing values with a partial form.
+				patchFields := []string{}
+				patchArgs := []any{req.AssetID}
+				patchAdd := func(col string, val any) {
+					patchArgs = append(patchArgs, val)
+					patchFields = append(patchFields,
+						col+" = $"+strconv.Itoa(len(patchArgs)))
+				}
+				if req.Asset.AssetTag != "" {
+					patchAdd("asset_tag", req.Asset.AssetTag)
+				}
+				if req.Asset.Category != "" {
+					patchAdd("category", category)
+				}
+				if req.Asset.Manufacturer != "" {
+					patchAdd("manufacturer", req.Asset.Manufacturer)
+				}
+				if req.Asset.Model != "" {
+					patchAdd("model", req.Asset.Model)
+				}
+				if req.Asset.SerialNumber != "" {
+					patchAdd("serial_number", req.Asset.SerialNumber)
+				}
+				if req.Asset.Status != "" {
+					patchAdd("status", status)
+				}
+				if req.Asset.PurchaseDate != "" {
+					patchAdd("purchase_date", purchase)
+				}
+				if req.Asset.WarrantyEnd != "" {
+					patchAdd("warranty_end", warranty)
+				}
+				if req.Asset.Notes != "" {
+					patchAdd("notes", req.Asset.Notes)
+				}
+				if len(patchFields) > 0 {
+					if _, err := tx.Exec(ctx,
+						"UPDATE assets SET "+strings.Join(patchFields, ", ")+
+							" WHERE id = $1", patchArgs...); err != nil {
+						return err
+					}
+				}
+			}
 		}
 		// ON CONFLICT DO NOTHING keeps the transaction healthy on a duplicate —
 		// a statement error here would poison the tx and Commit would fail with
@@ -1012,11 +1173,35 @@ func (h *Handler) CreateDevice(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "asset_id not found in this customer")
 		return
 	}
+	if assetInlineErr != nil {
+		writeErr(w, http.StatusBadRequest, assetInlineErr.Error())
+		return
+	}
 	if duplicate {
 		writeErr(w, http.StatusConflict, "reported_id already exists on this collector")
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]string{"id": id})
+}
+
+// deviceTypeToAssetCategory maps the small device type enum onto an asset
+// category so the inline "create asset alongside device" path can default
+// sensibly. Device types that don't correspond to a single physical thing
+// (control, conferencing) fall through to "other" — the operator can
+// override with an explicit category on the form.
+func deviceTypeToAssetCategory(deviceType string) string {
+	switch deviceType {
+	case "display":
+		return "display"
+	case "camera":
+		return "camera"
+	case "audio":
+		return "audio"
+	case "conferencing":
+		return "conferencing"
+	default:
+		return "other"
+	}
 }
 
 // updateDeviceReq — every field is a pointer (or *json.RawMessage for the
@@ -1044,6 +1229,13 @@ type updateDeviceReq struct {
 	// clear the CMDB link, uuid = link. The FK is ON DELETE SET NULL so
 	// unlink is always safe.
 	AssetID *string `json:"asset_id,omitempty"`
+
+	// Asset optionally carries CMDB fields to apply to the linked asset
+	// row. If asset_id is set (either pre-existing or being set in this
+	// same PATCH), the fields PATCH that asset. If asset_id is null and
+	// the sub-object is populated, a fresh asset is created and linked.
+	// Same shape as the create-flow sub-object.
+	Asset *deviceAssetInput `json:"asset,omitempty"`
 }
 
 // UpdateDevice — PATCH /api/v1/devices/{id}
@@ -1153,7 +1345,11 @@ func (h *Handler) UpdateDevice(w http.ResponseWriter, r *http.Request) {
 		set = append(set, "asset_id = $"+strconv.Itoa(assetParamIdx)+"::uuid")
 	}
 
-	if len(set) == 0 {
+	// A PATCH that only carries an inline asset sub-object (no device
+	// fields) is still valid — we skip the device UPDATE in that case
+	// and jump straight to the asset write below.
+	assetOnly := len(set) == 0 && req.Asset.hasAny()
+	if len(set) == 0 && !assetOnly {
 		writeErr(w, http.StatusBadRequest, "no fields to update")
 		return
 	}
@@ -1176,19 +1372,199 @@ func (h *Handler) UpdateDevice(w http.ResponseWriter, r *http.Request) {
 	p, _ := portalauth.From(r.Context())
 
 	var rowsAffected int64
+	var assetInlineErr error
 	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
 		before, err := audit.SnapshotDevice(ctx, tx, id)
 		if err != nil {
 			return err
 		}
-		tag, err := tx.Exec(ctx, sql, args...)
-		if err != nil {
-			return err
+		if !assetOnly {
+			tag, err := tx.Exec(ctx, sql, args...)
+			if err != nil {
+				return err
+			}
+			rowsAffected = tag.RowsAffected()
+			if rowsAffected == 0 {
+				return nil
+			}
+		} else {
+			// No device fields changed — confirm the device exists so a
+			// bogus id gets a 404 rather than a silent asset-only write.
+			var deviceExists bool
+			if err := tx.QueryRow(ctx,
+				`SELECT EXISTS (SELECT 1 FROM devices WHERE id = $1)`, id,
+			).Scan(&deviceExists); err != nil {
+				return err
+			}
+			if !deviceExists {
+				return nil
+			}
+			rowsAffected = 1
 		}
-		rowsAffected = tag.RowsAffected()
-		if rowsAffected == 0 {
-			return nil
+
+		// Inline asset write. Figure out the effective asset_id: what the
+		// device row now points at after the UPDATE (or after we resolved
+		// assetVal in this PATCH). If there's no linked asset yet, create
+		// one and link it in a follow-up UPDATE.
+		if req.Asset.hasAny() {
+			effectiveAssetID := ""
+			if assetTouch && assetVal != nil {
+				effectiveAssetID, _ = assetVal.(string)
+			} else if err := tx.QueryRow(ctx,
+				`SELECT COALESCE(asset_id::text, '') FROM devices WHERE id = $1`, id,
+			).Scan(&effectiveAssetID); err != nil {
+				return err
+			}
+
+			// Validate the inline payload up front so we return a clean 400.
+			category := req.Asset.Category
+			if category == "" {
+				// Fall back to the pre-existing category if this is a PATCH
+				// against an existing asset. On create, default from the
+				// device row's current type.
+				if effectiveAssetID == "" {
+					var currentType *string
+					if err := tx.QueryRow(ctx,
+						`SELECT type FROM devices WHERE id = $1`, id,
+					).Scan(&currentType); err == nil && currentType != nil {
+						category = deviceTypeToAssetCategory(*currentType)
+					} else {
+						category = "other"
+					}
+				}
+			}
+			if category != "" && !allowedAssetCategories[category] {
+				assetInlineErr = errors.New("asset.category unsupported")
+				return nil
+			}
+			status := req.Asset.Status
+			if status != "" && !allowedAssetStatuses[status] {
+				assetInlineErr = errors.New("asset.status unsupported")
+				return nil
+			}
+			purchase, err := parseDate(req.Asset.PurchaseDate)
+			if err != nil {
+				assetInlineErr = errors.New("asset.purchase_date: " + err.Error())
+				return nil
+			}
+			warranty, err := parseDate(req.Asset.WarrantyEnd)
+			if err != nil {
+				assetInlineErr = errors.New("asset.warranty_end: " + err.Error())
+				return nil
+			}
+			if req.Asset.AssetTag != "" {
+				var taken bool
+				if err := tx.QueryRow(ctx,
+					`SELECT EXISTS (SELECT 1 FROM assets WHERE asset_tag = $1 AND id <> COALESCE($2::uuid, '00000000-0000-0000-0000-000000000000'::uuid))`,
+					req.Asset.AssetTag, nullIfEmpty(effectiveAssetID),
+				).Scan(&taken); err != nil {
+					return err
+				}
+				if taken {
+					assetInlineErr = errors.New("asset.asset_tag already exists in this tenant")
+					return nil
+				}
+			}
+
+			if effectiveAssetID == "" {
+				// Create a new asset — inherit the device's current name/room
+				// so the CMDB entry reads naturally.
+				var deviceName, deviceRoom *string
+				if err := tx.QueryRow(ctx,
+					`SELECT name, room_id::text FROM devices WHERE id = $1`, id,
+				).Scan(&deviceName, &deviceRoom); err != nil {
+					return err
+				}
+				assetName := ""
+				if deviceName != nil {
+					assetName = *deviceName
+				}
+				if assetName == "" {
+					// Fall back to reported_id — every device has one.
+					if err := tx.QueryRow(ctx,
+						`SELECT reported_id FROM devices WHERE id = $1`, id,
+					).Scan(&assetName); err != nil {
+						return err
+					}
+				}
+				statusForNew := status
+				if statusForNew == "" {
+					statusForNew = "in_service"
+				}
+				categoryForNew := category
+				if categoryForNew == "" {
+					categoryForNew = "other"
+				}
+				var newAssetID string
+				if err := tx.QueryRow(ctx, `
+					INSERT INTO assets (
+						customer_id, room_id, asset_tag,
+						name, category, manufacturer, model, serial_number,
+						status, purchase_date, warranty_end, notes
+					) VALUES (
+						$1, $2, NULLIF($3,''),
+						$4, $5, NULLIF($6,''), NULLIF($7,''), NULLIF($8,''),
+						$9, $10, $11, NULLIF($12,'')
+					) RETURNING id::text`,
+					p.CustomerID, deviceRoom, req.Asset.AssetTag,
+					assetName, categoryForNew,
+					req.Asset.Manufacturer, req.Asset.Model, req.Asset.SerialNumber,
+					statusForNew, purchase, warranty, req.Asset.Notes,
+				).Scan(&newAssetID); err != nil {
+					return err
+				}
+				if _, err := tx.Exec(ctx,
+					`UPDATE devices SET asset_id = $1 WHERE id = $2`,
+					newAssetID, id); err != nil {
+					return err
+				}
+			} else {
+				// PATCH the linked asset — only overwrite fields the caller
+				// supplied so a partial form doesn't smash existing values.
+				patchFields := []string{}
+				patchArgs := []any{effectiveAssetID}
+				patchAdd := func(col string, val any) {
+					patchArgs = append(patchArgs, val)
+					patchFields = append(patchFields,
+						col+" = $"+strconv.Itoa(len(patchArgs)))
+				}
+				if req.Asset.AssetTag != "" {
+					patchAdd("asset_tag", req.Asset.AssetTag)
+				}
+				if req.Asset.Category != "" {
+					patchAdd("category", category)
+				}
+				if req.Asset.Manufacturer != "" {
+					patchAdd("manufacturer", req.Asset.Manufacturer)
+				}
+				if req.Asset.Model != "" {
+					patchAdd("model", req.Asset.Model)
+				}
+				if req.Asset.SerialNumber != "" {
+					patchAdd("serial_number", req.Asset.SerialNumber)
+				}
+				if req.Asset.Status != "" {
+					patchAdd("status", status)
+				}
+				if req.Asset.PurchaseDate != "" {
+					patchAdd("purchase_date", purchase)
+				}
+				if req.Asset.WarrantyEnd != "" {
+					patchAdd("warranty_end", warranty)
+				}
+				if req.Asset.Notes != "" {
+					patchAdd("notes", req.Asset.Notes)
+				}
+				if len(patchFields) > 0 {
+					if _, err := tx.Exec(ctx,
+						"UPDATE assets SET "+strings.Join(patchFields, ", ")+
+							" WHERE id = $1", patchArgs...); err != nil {
+						return err
+					}
+				}
+			}
 		}
+
 		after, err := audit.SnapshotDevice(ctx, tx, id)
 		if err != nil {
 			return err
@@ -1199,6 +1575,10 @@ func (h *Handler) UpdateDevice(w http.ResponseWriter, r *http.Request) {
 		}))
 	})
 	if !ok {
+		return
+	}
+	if assetInlineErr != nil {
+		writeErr(w, http.StatusBadRequest, assetInlineErr.Error())
 		return
 	}
 	if rowsAffected == 0 {

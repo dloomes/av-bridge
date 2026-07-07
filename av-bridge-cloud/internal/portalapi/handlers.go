@@ -293,11 +293,26 @@ func (h *Handler) GetDevice(w http.ResponseWriter, r *http.Request) {
 		Label     string `json:"label"`
 		Rate      int    `json:"rate,omitempty"`
 	}
+	// deviceAsset mirrors the standard asset fields, embedded so the edit
+	// form can pre-fill the Physical inventory section without a follow-
+	// up /assets fetch.
+	type deviceAsset struct {
+		AssetTag     string `json:"asset_tag,omitempty"`
+		Category     string `json:"category,omitempty"`
+		Manufacturer string `json:"manufacturer,omitempty"`
+		Model        string `json:"model,omitempty"`
+		SerialNumber string `json:"serial_number,omitempty"`
+		Status       string `json:"status,omitempty"`
+		PurchaseDate string `json:"purchase_date,omitempty"`
+		WarrantyEnd  string `json:"warranty_end,omitempty"`
+		Notes        string `json:"notes,omitempty"`
+	}
 	type out struct {
 		ID          string            `json:"id"`
 		CollectorID string            `json:"collector_id"`
 		RoomID      *string           `json:"room_id,omitempty"`
 		AssetID     *string           `json:"asset_id,omitempty"`
+		Asset       *deviceAsset      `json:"asset,omitempty"`
 		ReportedID  string            `json:"reported_id"`
 		Name        string            `json:"name"`
 		Type        string            `json:"type"`
@@ -367,6 +382,56 @@ func (h *Handler) GetDevice(w http.ResponseWriter, r *http.Request) {
 		}
 		if pollRate != nil {
 			o.PollRate = *pollRate
+		}
+		// If the device is linked to a CMDB asset, embed the standard
+		// fields so the edit form's Physical inventory section can
+		// pre-fill in one round-trip. Missing (device has no asset_id)
+		// leaves the field omitted via the omitempty tag.
+		if o.AssetID != nil && *o.AssetID != "" {
+			var (
+				assetTag     *string
+				category     string
+				manufacturer *string
+				model        *string
+				serial       *string
+				assetStatus  string
+				purchase     *time.Time
+				warranty     *time.Time
+				notes        *string
+			)
+			if err := tx.QueryRow(ctx, `
+				SELECT asset_tag, category, manufacturer, model, serial_number,
+				       status, purchase_date, warranty_end, notes
+				  FROM assets WHERE id = $1`, *o.AssetID).
+				Scan(&assetTag, &category, &manufacturer, &model, &serial,
+					&assetStatus, &purchase, &warranty, &notes); err == nil {
+				a := deviceAsset{Category: category, Status: assetStatus}
+				if assetTag != nil {
+					a.AssetTag = *assetTag
+				}
+				if manufacturer != nil {
+					a.Manufacturer = *manufacturer
+				}
+				if model != nil {
+					a.Model = *model
+				}
+				if serial != nil {
+					a.SerialNumber = *serial
+				}
+				if purchase != nil {
+					a.PurchaseDate = purchase.Format("2006-01-02")
+				}
+				if warranty != nil {
+					a.WarrantyEnd = warranty.Format("2006-01-02")
+				}
+				if notes != nil {
+					a.Notes = *notes
+				}
+				o.Asset = &a
+			}
+			// Silent failure on the asset lookup — the device row still
+			// renders; the operator just doesn't see the pre-filled
+			// inventory section. Better than 500-ing the whole page.
 		}
 		if len(tags) > 0 {
 			_ = json.Unmarshal(tags, &o.Tags)

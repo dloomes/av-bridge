@@ -8,6 +8,7 @@ import type {
   AssetRow,
   CollectorSummary,
   CreateDeviceBody,
+  DeviceAssetInput,
   DeviceDetail,
   NamedRow,
   Subscription,
@@ -51,6 +52,18 @@ interface FormState {
   poll_rate_seconds: string;
   room_id: string;
   asset_id: string;
+  // Physical inventory section — populated from initial.asset on edit,
+  // then either PATCHed (asset_id set) or turned into a new asset row
+  // (asset_id empty + any field filled) on submit.
+  asset_tag: string;
+  asset_category: string;
+  asset_manufacturer: string;
+  asset_model: string;
+  asset_serial: string;
+  asset_status: string;
+  asset_purchase_date: string;
+  asset_warranty_end: string;
+  asset_notes: string;
   commands_json: string;
   tags_json: string;
   subscriptions_json: string;
@@ -70,6 +83,15 @@ function emptyForm(): FormState {
     poll_rate_seconds: "60",
     room_id: "",
     asset_id: "",
+    asset_tag: "",
+    asset_category: "",
+    asset_manufacturer: "",
+    asset_model: "",
+    asset_serial: "",
+    asset_status: "",
+    asset_purchase_date: "",
+    asset_warranty_end: "",
+    asset_notes: "",
     commands_json: "",
     tags_json: "",
     subscriptions_json: "",
@@ -90,6 +112,15 @@ function formFromDetail(d: DeviceDetail): FormState {
     poll_rate_seconds: d.poll_rate_seconds ? String(d.poll_rate_seconds) : "",
     room_id: d.room_id ?? "",
     asset_id: d.asset_id ?? "",
+    asset_tag: d.asset?.asset_tag ?? "",
+    asset_category: d.asset?.category ?? "",
+    asset_manufacturer: d.asset?.manufacturer ?? "",
+    asset_model: d.asset?.model ?? "",
+    asset_serial: d.asset?.serial_number ?? "",
+    asset_status: d.asset?.status ?? "",
+    asset_purchase_date: d.asset?.purchase_date ?? "",
+    asset_warranty_end: d.asset?.warranty_end ?? "",
+    asset_notes: d.asset?.notes ?? "",
     commands_json: d.commands ? JSON.stringify(d.commands, null, 2) : "",
     tags_json: d.tags ? JSON.stringify(d.tags, null, 2) : "",
     subscriptions_json: d.subscriptions
@@ -97,6 +128,41 @@ function formFromDetail(d: DeviceDetail): FormState {
       : "",
   };
 }
+
+// buildAssetPayload returns a DeviceAssetInput built from the form's
+// Physical inventory fields — or undefined when nothing is populated, so
+// the backend leaves any existing asset alone. Empty-string fields are
+// dropped rather than sent; the backend treats unpopulated fields as
+// "don't touch" (patch semantics) on the linked-asset path.
+function buildAssetPayload(form: FormState): DeviceAssetInput | undefined {
+  const payload: DeviceAssetInput = {};
+  if (form.asset_tag) payload.asset_tag = form.asset_tag;
+  if (form.asset_category) payload.category = form.asset_category;
+  if (form.asset_manufacturer) payload.manufacturer = form.asset_manufacturer;
+  if (form.asset_model) payload.model = form.asset_model;
+  if (form.asset_serial) payload.serial_number = form.asset_serial;
+  if (form.asset_status) payload.status = form.asset_status;
+  if (form.asset_purchase_date) payload.purchase_date = form.asset_purchase_date;
+  if (form.asset_warranty_end) payload.warranty_end = form.asset_warranty_end;
+  if (form.asset_notes) payload.notes = form.asset_notes;
+  return Object.keys(payload).length > 0 ? payload : undefined;
+}
+
+// Asset category / status labels — kept in the device form so the picker
+// stays self-contained. Values match backend allowedAssetCategories /
+// allowedAssetStatuses in portalapi/assets.go.
+const ASSET_CATEGORIES = [
+  "display", "camera", "audio", "conferencing", "control_panel",
+  "touch_panel", "cable", "mount", "rack", "remote", "microphone",
+  "speaker", "projector", "screen", "computer", "furniture", "storage",
+  "other",
+] as const;
+const ASSET_STATUSES = [
+  { key: "in_service", label: "In service" },
+  { key: "in_storage", label: "In storage" },
+  { key: "in_repair", label: "In repair" },
+  { key: "retired", label: "Retired" },
+] as const;
 
 // parseJsonField returns the parsed value or throws with a friendly label so
 // the form can surface "tags: invalid JSON" rather than a stack trace.
@@ -186,6 +252,11 @@ export function DeviceForm({ mode, initial, onCancel, onSuccess }: DeviceFormPro
       return;
     }
 
+    // Build the inline asset sub-object from the Physical inventory
+    // section — omitted entirely when no field is populated so the
+    // backend leaves any existing asset alone.
+    const assetInline = buildAssetPayload(form);
+
     setSubmitting(true);
     try {
       if (mode === "create") {
@@ -207,6 +278,7 @@ export function DeviceForm({ mode, initial, onCancel, onSuccess }: DeviceFormPro
             : undefined,
           room_id: form.room_id || undefined,
           asset_id: form.asset_id || undefined,
+          asset: assetInline,
           commands,
           tags,
           subscriptions,
@@ -229,6 +301,7 @@ export function DeviceForm({ mode, initial, onCancel, onSuccess }: DeviceFormPro
             : 0,
           room_id: form.room_id,
           asset_id: form.asset_id,
+          asset: assetInline,
           commands: commands ?? {},
           tags: tags ?? {},
           subscriptions: subscriptions ?? [],
@@ -421,6 +494,128 @@ export function DeviceForm({ mode, initial, onCancel, onSuccess }: DeviceFormPro
           />
         </div>
       </div>
+
+      <details
+        className="rounded-md border bg-muted/30 p-3"
+        open={
+          // Auto-open the section when there's existing CMDB data so the
+          // operator can see it at a glance during edit. Stays collapsed
+          // for pristine create-mode forms so the section doesn't dominate
+          // the modal for people just adding a device.
+          !!form.asset_tag ||
+          !!form.asset_manufacturer ||
+          !!form.asset_model ||
+          !!form.asset_serial ||
+          !!form.asset_purchase_date ||
+          !!form.asset_warranty_end ||
+          !!form.asset_notes
+        }
+      >
+        <summary className="cursor-pointer text-xs font-medium text-muted-foreground uppercase tracking-wide">
+          Physical inventory (CMDB)
+        </summary>
+        <p className="mt-2 text-[11px] text-muted-foreground">
+          Optional. Fill any of these to catalogue this device in the asset
+          register (warranty, serial, purchase history). {form.asset_id
+            ? "The linked asset row will be updated."
+            : "A new asset row will be created and linked."}
+        </p>
+        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          <div>
+            <label className={labelClass}>Asset tag</label>
+            <input
+              className={inputClass}
+              value={form.asset_tag}
+              onChange={(e) => set("asset_tag", e.target.value)}
+              placeholder="AV-042"
+            />
+          </div>
+          <div>
+            <label className={labelClass}>Category</label>
+            <select
+              className={inputClass}
+              value={form.asset_category}
+              onChange={(e) => set("asset_category", e.target.value)}
+            >
+              <option value="">— Auto from device type —</option>
+              {ASSET_CATEGORIES.map((c) => (
+                <option key={c} value={c}>
+                  {c.replace("_", " ")}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className={labelClass}>Manufacturer</label>
+            <input
+              className={inputClass}
+              value={form.asset_manufacturer}
+              onChange={(e) => set("asset_manufacturer", e.target.value)}
+              placeholder="Sony"
+            />
+          </div>
+          <div>
+            <label className={labelClass}>Model</label>
+            <input
+              className={inputClass}
+              value={form.asset_model}
+              onChange={(e) => set("asset_model", e.target.value)}
+              placeholder="FW-65BZ40H"
+            />
+          </div>
+          <div>
+            <label className={labelClass}>Serial number</label>
+            <input
+              className={inputClass}
+              value={form.asset_serial}
+              onChange={(e) => set("asset_serial", e.target.value)}
+            />
+          </div>
+          <div>
+            <label className={labelClass}>Status</label>
+            <select
+              className={inputClass}
+              value={form.asset_status}
+              onChange={(e) => set("asset_status", e.target.value)}
+            >
+              <option value="">— Default (in service) —</option>
+              {ASSET_STATUSES.map((s) => (
+                <option key={s.key} value={s.key}>
+                  {s.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className={labelClass}>Purchase date</label>
+            <input
+              type="date"
+              className={inputClass}
+              value={form.asset_purchase_date}
+              onChange={(e) => set("asset_purchase_date", e.target.value)}
+            />
+          </div>
+          <div>
+            <label className={labelClass}>Warranty end</label>
+            <input
+              type="date"
+              className={inputClass}
+              value={form.asset_warranty_end}
+              onChange={(e) => set("asset_warranty_end", e.target.value)}
+            />
+          </div>
+          <div className="sm:col-span-2">
+            <label className={labelClass}>Notes</label>
+            <textarea
+              className={textareaClass}
+              rows={2}
+              value={form.asset_notes}
+              onChange={(e) => set("asset_notes", e.target.value)}
+              placeholder="Purchased under PO#1234 — spare bulb in AV cupboard."
+            />
+          </div>
+        </div>
+      </details>
 
       <details className="rounded-md border bg-muted/30 p-3">
         <summary className="cursor-pointer text-xs font-medium text-muted-foreground uppercase tracking-wide">

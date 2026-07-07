@@ -25,12 +25,32 @@ export interface Subscription {
   rate?: number;
 }
 
+// DeviceAssetInput carries the standard CMDB asset fields when the caller
+// wants to create-or-patch the linked asset alongside a device write.
+// Mirrors the backend's deviceAssetInput struct in admin_handlers.go. All
+// fields optional; any non-empty triggers the create-or-patch path.
+export interface DeviceAssetInput {
+  asset_tag?: string;
+  category?: string;
+  manufacturer?: string;
+  model?: string;
+  serial_number?: string;
+  status?: string;
+  purchase_date?: string;
+  warranty_end?: string;
+  notes?: string;
+}
+
 // DeviceDetail returns the full editable config (creds excluded — write-only).
 // The fields beyond DeviceSummary are what the edit form needs to pre-fill.
+// asset (embedded) is present when this device is linked to a CMDB row —
+// lets the edit form fill its Physical inventory section without a
+// second /assets fetch.
 export interface DeviceDetail extends DeviceSummary {
   collector_id: string;
   room_id?: string | null;
   asset_id?: string | null;
+  asset?: DeviceAssetInput;
   reported_id: string;
   ip_address?: string;
   baud_rate?: number;
@@ -56,6 +76,7 @@ export interface CreateDeviceBody {
   subscriptions?: Subscription[];
   room_id?: string;
   asset_id?: string;
+  asset?: DeviceAssetInput;
 }
 
 // PATCH body. Every field optional — only the ones present are written.
