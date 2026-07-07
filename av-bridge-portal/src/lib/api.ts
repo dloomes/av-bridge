@@ -1,12 +1,14 @@
 import type {
   AlertItem,
   AlertsSummary,
+  AssetRow,
   AuditEntry,
   BuildingRow,
   BulkCommandResponse,
   CollectorSummary,
   CommandRequest,
   CommandResponse,
+  CreateAssetBody,
   CreateCustomerBody,
   CreateCustomerResponse,
   CreateDeviceBody,
@@ -26,6 +28,7 @@ import type {
   RoleRow,
   RoomActivityRow,
   Telemetry,
+  UpdateAssetBody,
   UpdateDeviceBody,
   UpdateRoleBody,
   UpdateUserBody,
@@ -105,7 +108,18 @@ async function request<T>(
       res.status
     );
   }
-  return (await res.json()) as T;
+  // 204 and any zero-length body — callers that use request<void> for
+  // side-effect endpoints (PATCH /branding etc.) would otherwise trip
+  // "Unexpected end of JSON input" from res.json(). Resolve with
+  // undefined so the caller can ignore the return value.
+  if (res.status === 204) {
+    return undefined as T;
+  }
+  const text = await res.text();
+  if (text.length === 0) {
+    return undefined as T;
+  }
+  return JSON.parse(text) as T;
 }
 
 async function requestText(
@@ -321,6 +335,44 @@ export const api = {
 
   listRooms: (signal?: AbortSignal) =>
     request<NamedRow[]>("/api/v1/rooms", { signal }),
+
+  // Assets — CMDB. filters is an optional dict of query params; any
+  // provided keys go on the URL as-is. Backend expects lowercase snake_case
+  // keys (room_id, building_id, category, status, unplaced, q).
+  listAssets: (
+    filters?: Record<string, string | undefined>,
+    signal?: AbortSignal
+  ) => {
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(filters ?? {})) {
+      if (v !== undefined && v !== "") qs.set(k, v);
+    }
+    const query = qs.toString();
+    return request<AssetRow[]>(
+      `/api/v1/assets${query ? `?${query}` : ""}`,
+      { signal }
+    );
+  },
+
+  getAsset: (id: string, signal?: AbortSignal) =>
+    request<AssetRow>(`/api/v1/assets/${encodeURIComponent(id)}`, { signal }),
+
+  createAsset: (body: CreateAssetBody) =>
+    request<{ id: string }>("/api/v1/assets", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  updateAsset: (id: string, body: UpdateAssetBody) =>
+    request<{ id: string }>(`/api/v1/assets/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+
+  deleteAsset: (id: string) =>
+    request<void>(`/api/v1/assets/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    }),
 
   createRegion: (name: string, signal?: AbortSignal) =>
     request<{ id: string; name: string }>("/api/v1/regions", {

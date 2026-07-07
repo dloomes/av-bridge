@@ -6,6 +6,7 @@ import {
   Activity as ActivityIcon,
   BarChart3,
   Bell,
+  Boxes,
   Cpu,
   HeartPulse,
   History,
@@ -61,6 +62,7 @@ const SECTIONS: NavSection[] = [
     title: "Manage",
     items: [
       { href: "/locations", label: "Locations", icon: MapPin },
+      { href: "/assets", label: "Assets", icon: Boxes },
       { href: "/users", label: "Users", icon: Users },
       { href: "/roles", label: "Roles", icon: KeyRound },
       { href: "/notifications", label: "Notifications", icon: Bell },

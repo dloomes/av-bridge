@@ -74,6 +74,79 @@ export interface NamedRow {
   parent_id?: string;
 }
 
+// AssetStatus + AssetCategory mirror the backend's allowlists in
+// portalapi/assets.go. Keep both in sync when adding new options.
+export type AssetStatus = "in_service" | "in_storage" | "retired" | "in_repair";
+export type AssetCategory =
+  | "display"
+  | "camera"
+  | "audio"
+  | "conferencing"
+  | "control_panel"
+  | "touch_panel"
+  | "cable"
+  | "mount"
+  | "rack"
+  | "remote"
+  | "microphone"
+  | "speaker"
+  | "projector"
+  | "screen"
+  | "computer"
+  | "furniture"
+  | "storage"
+  | "other";
+
+export interface AssetRow {
+  id: string;
+  asset_tag?: string;
+  name: string;
+  category: AssetCategory;
+  manufacturer?: string;
+  model?: string;
+  serial_number?: string;
+  status: AssetStatus;
+  room_id?: string | null;
+  room?: string;
+  building?: string;
+  location?: string;
+  region?: string;
+  purchase_date?: string;
+  warranty_end?: string;
+  notes?: string;
+  device_id?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateAssetBody {
+  name: string;
+  category: AssetCategory;
+  asset_tag?: string;
+  manufacturer?: string;
+  model?: string;
+  serial_number?: string;
+  status?: AssetStatus;
+  room_id?: string;
+  purchase_date?: string;
+  warranty_end?: string;
+  notes?: string;
+}
+
+export interface UpdateAssetBody {
+  name?: string;
+  category?: AssetCategory;
+  asset_tag?: string;
+  manufacturer?: string;
+  model?: string;
+  serial_number?: string;
+  status?: AssetStatus;
+  room_id?: string;
+  purchase_date?: string;
+  warranty_end?: string;
+  notes?: string;
+}
+
 // BuildingRow extends NamedRow with the optional address + timezone the
 // buildings list endpoint returns alongside the shared fields. Keeping it
 // separate so the simpler tables don't grow phantom optional columns.
