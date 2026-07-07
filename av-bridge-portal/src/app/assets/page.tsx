@@ -8,6 +8,7 @@ import {
   Loader2,
   Pencil,
   Plus,
+  Radio,
   RefreshCcw,
   Search,
   Trash2,
@@ -16,6 +17,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { DeviceForm } from "@/components/device-form";
 import { Modal } from "@/components/modal";
 import { UserMenu } from "@/components/user-menu";
 import { useSession } from "@/hooks/useSession";
@@ -107,6 +109,10 @@ export default function AssetsPage() {
 
   const [editing, setEditing] = useState<{ mode: "create" | "edit"; existing?: AssetRow } | null>(null);
   const [deleting, setDeleting] = useState<AssetRow | null>(null);
+  // monitoring: the asset the operator wants to bind to a fresh device
+  // via the "Set up monitoring" action. Non-null means the DeviceForm
+  // modal is open in create-mode with the asset pre-linked.
+  const [monitoring, setMonitoring] = useState<AssetRow | null>(null);
 
   // Debounce the free-text search so we don't fire on every keystroke.
   useEffect(() => {
@@ -381,6 +387,15 @@ export default function AssetsPage() {
                             Yes
                             <ExternalLink className="h-3 w-3" />
                           </Link>
+                        ) : admin ? (
+                          <button
+                            type="button"
+                            onClick={() => setMonitoring(a)}
+                            className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-primary"
+                          >
+                            <Radio className="h-3 w-3" />
+                            Set up
+                          </button>
                         ) : (
                           <span className="text-xs text-muted-foreground">No</span>
                         )}
@@ -431,6 +446,30 @@ export default function AssetsPage() {
               onCancel={() => setEditing(null)}
               onSuccess={() => {
                 setEditing(null);
+                void loadAssets();
+              }}
+            />
+          </Modal>
+        )}
+
+        {monitoring && (
+          <Modal
+            open
+            onClose={() => setMonitoring(null)}
+            title={`Set up monitoring — ${monitoring.name}`}
+          >
+            <p className="mb-3 text-xs text-muted-foreground">
+              Creates a monitored device bound to this asset. The bridge
+              will start polling as soon as it picks up the config. Fields
+              are pre-filled from the asset — tweak protocol, address,
+              credentials as needed.
+            </p>
+            <DeviceForm
+              mode="create"
+              assetToLink={monitoring}
+              onCancel={() => setMonitoring(null)}
+              onSuccess={() => {
+                setMonitoring(null);
                 void loadAssets();
               }}
             />

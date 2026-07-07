@@ -31,6 +31,11 @@ interface DeviceFormProps {
   mode: "create" | "edit";
   // edit-mode: pre-filled current values (creds excluded from the API).
   initial?: DeviceDetail;
+  // create-mode "monitor this asset" pre-fill. When supplied, seeds the
+  // form with the asset's room + name and marks the linked asset_id so
+  // the created device is bound to this CMDB row on save. Used by the
+  // /assets page's "Set up monitoring" action.
+  assetToLink?: AssetRow;
   onCancel: () => void;
   // On success the parent decides what to do (close + refresh, navigate, etc).
   // It receives the device id so the parent can navigate to it on create.
@@ -148,6 +153,59 @@ function buildAssetPayload(form: FormState): DeviceAssetInput | undefined {
   return Object.keys(payload).length > 0 ? payload : undefined;
 }
 
+// pullFromDeviceTags reads the discovery tags each adapter writes on
+// connect (see internal/device/adapters/*.go on the bridge) and maps them
+// onto the asset fields. Values across adapters normalise as:
+//   manufacturer ← tags.make || tags.manufacturer || tags.product
+//   model        ← tags.model
+//   serial       ← tags.serial || tags.serial_number
+//   firmware     ← tags.firmware_version   (appended to notes for context)
+// Returns only fields for which the tag was actually captured — the caller
+// merges into the existing form state, so untouched fields keep whatever
+// the operator has already typed.
+function pullFromDeviceTags(
+  tags: Record<string, string> | undefined
+): {
+  manufacturer?: string;
+  model?: string;
+  serial?: string;
+  firmwareNote?: string;
+} {
+  if (!tags) return {};
+  const out: {
+    manufacturer?: string;
+    model?: string;
+    serial?: string;
+    firmwareNote?: string;
+  } = {};
+  const manufacturer =
+    tags.make || tags.manufacturer || tags.product;
+  if (manufacturer) out.manufacturer = manufacturer;
+  if (tags.model) out.model = tags.model;
+  const serial = tags.serial || tags.serial_number;
+  if (serial) out.serial = serial;
+  if (tags.firmware_version) {
+    out.firmwareNote = `Firmware: ${tags.firmware_version}`;
+  }
+  return out;
+}
+
+// suggestProtocolFromManufacturer maps a manufacturer name to the bridge
+// adapter most likely to work. Used by the "Set up monitoring" flow from
+// the /assets page so the operator doesn't stare at an empty protocol
+// picker. Case-insensitive prefix match — a "Sony Corporation" string
+// still hits the sony_bravia suggestion. Returns "" (empty) when nothing
+// obvious matches; the form's default (no selection) then applies.
+function suggestProtocolFromManufacturer(mfr?: string): string {
+  if (!mfr) return "";
+  const m = mfr.toLowerCase();
+  if (m.startsWith("sony")) return "sony_bravia";
+  if (m.startsWith("poly") || m.startsWith("polycom")) return "poly_videoos";
+  if (m.startsWith("aurora")) return "aurora_rxt";
+  if (m.startsWith("biamp") || m.includes("tesira")) return "tesira";
+  return "";
+}
+
 // Asset category / status labels — kept in the device form so the picker
 // stays self-contained. Values match backend allowedAssetCategories /
 // allowedAssetStatuses in portalapi/assets.go.
@@ -183,10 +241,43 @@ const inputClass =
 const textareaClass =
   "w-full rounded-md border border-input bg-background px-3 py-2 text-xs font-mono shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
-export function DeviceForm({ mode, initial, onCancel, onSuccess }: DeviceFormProps) {
-  const [form, setForm] = useState<FormState>(
-    initial ? formFromDetail(initial) : emptyForm()
-  );
+export function DeviceForm({
+  mode,
+  initial,
+  assetToLink,
+  onCancel,
+  onSuccess,
+}: DeviceFormProps) {
+  const [form, setForm] = useState<FormState>(() => {
+    if (initial) return formFromDetail(initial);
+    if (assetToLink) {
+      // Pre-fill create-mode from an asset the user is turning into a
+      // monitored device. Room + name come from the asset; the asset_id
+      // is set so the newly-created device is bound to it on save.
+      return {
+        ...emptyForm(),
+        name: assetToLink.name,
+        room_id: assetToLink.room_id ?? "",
+        asset_id: assetToLink.id,
+        // Best-effort protocol suggestion from make — matches the adapters
+        // we ship today; the operator can override.
+        protocol: suggestProtocolFromManufacturer(assetToLink.manufacturer),
+        // Also mirror the asset fields into the inventory section so the
+        // operator can tweak before creating the device. Category + status
+        // come along so the auto-fill isn't destructive.
+        asset_tag: assetToLink.asset_tag ?? "",
+        asset_category: assetToLink.category ?? "",
+        asset_manufacturer: assetToLink.manufacturer ?? "",
+        asset_model: assetToLink.model ?? "",
+        asset_serial: assetToLink.serial_number ?? "",
+        asset_status: assetToLink.status ?? "",
+        asset_purchase_date: assetToLink.purchase_date ?? "",
+        asset_warranty_end: assetToLink.warranty_end ?? "",
+        asset_notes: assetToLink.notes ?? "",
+      };
+    }
+    return emptyForm();
+  });
   const [collectors, setCollectors] = useState<CollectorSummary[]>([]);
   const [rooms, setRooms] = useState<NamedRow[]>([]);
   const [buildings, setBuildings] = useState<NamedRow[]>([]);
@@ -520,6 +611,47 @@ export function DeviceForm({ mode, initial, onCancel, onSuccess }: DeviceFormPro
             ? "The linked asset row will be updated."
             : "A new asset row will be created and linked."}
         </p>
+        {/*
+          Pull from device — shows only when the device has tags that
+          include at least one discoverable field. Adapters (Sony, Poly,
+          Aurora, Tesira) populate these on connect; if the bridge has
+          been talking to the device for any real time, this fills the
+          form in one click.
+        */}
+        {isEdit &&
+          initial?.tags &&
+          Object.keys(pullFromDeviceTags(initial.tags)).length > 0 && (
+            <div className="mt-2 flex items-center justify-between rounded border border-dashed bg-background/60 px-3 py-2 text-[11px] text-muted-foreground">
+              <span>
+                The bridge discovered inventory info from this device on
+                connect. Pull it in?
+              </span>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  const t = pullFromDeviceTags(initial.tags);
+                  setForm((f) => ({
+                    ...f,
+                    asset_manufacturer:
+                      t.manufacturer ?? f.asset_manufacturer,
+                    asset_model: t.model ?? f.asset_model,
+                    asset_serial: t.serial ?? f.asset_serial,
+                    asset_notes: t.firmwareNote
+                      ? f.asset_notes
+                        ? f.asset_notes.includes(t.firmwareNote)
+                          ? f.asset_notes
+                          : `${f.asset_notes}\n${t.firmwareNote}`
+                        : t.firmwareNote
+                      : f.asset_notes,
+                  }));
+                }}
+              >
+                Pull from device
+              </Button>
+            </div>
+          )}
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
           <div>
             <label className={labelClass}>Asset tag</label>
