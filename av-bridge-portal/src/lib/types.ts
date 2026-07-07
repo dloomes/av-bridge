@@ -8,6 +8,9 @@ export interface DeviceSummary {
   type: DeviceType;
   protocol: string;
   location: string;
+  region?: string;
+  location_name?: string;
+  building?: string;
   room_id?: string | null;
   address?: string;
   status: DeviceStatus;

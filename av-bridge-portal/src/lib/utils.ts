@@ -43,6 +43,11 @@ export interface RoomGroup {
 
 export interface BuildingGroup {
   building: string | null;
+  // Region + location come off the first device in the group — every device
+  // sharing a building shares the region and location above it in the
+  // hierarchy, so they're safe to hoist onto the group header.
+  region?: string;
+  locationName?: string;
   rooms: RoomGroup[];
 }
 
@@ -86,6 +91,7 @@ export function groupDevicesByLocation(
   }
 
   const byBuilding = new Map<string, Map<string, DeviceSummary[]>>();
+  const meta = new Map<string, { region?: string; locationName?: string }>();
   for (const d of devices) {
     const b = buildingFor(d) ?? "Other";
     const r = roomFor(d);
@@ -93,11 +99,19 @@ export function groupDevicesByLocation(
     const rooms = byBuilding.get(b)!;
     if (!rooms.has(r)) rooms.set(r, []);
     rooms.get(r)!.push(d);
+    // First device wins — every device in the same building shares
+    // the region/location above it. Skip empties so we don't overwrite
+    // a real value with a blank from a device missing the fields.
+    if (!meta.has(b) && (d.region || d.location_name)) {
+      meta.set(b, { region: d.region, locationName: d.location_name });
+    }
   }
   return Array.from(byBuilding.entries())
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([building, rooms]) => ({
       building,
+      region: meta.get(building)?.region,
+      locationName: meta.get(building)?.locationName,
       rooms: Array.from(rooms.entries())
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([room, devs]) => ({ room, devices: sortByName(devs) })),

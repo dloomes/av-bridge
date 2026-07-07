@@ -296,9 +296,18 @@ export default function DashboardPage() {
                               }`}
                             />
                             <Building2 className="h-4 w-4 text-muted-foreground" />
-                            <h3 className="text-sm font-semibold">
-                              {g.building}
-                            </h3>
+                            <div className="flex flex-col items-start leading-tight">
+                              {(g.region || g.locationName) && (
+                                <span className="text-[10px] uppercase tracking-wide text-muted-foreground/70">
+                                  {[g.region, g.locationName]
+                                    .filter(Boolean)
+                                    .join(" · ")}
+                                </span>
+                              )}
+                              <h3 className="text-sm font-semibold">
+                                {g.building}
+                              </h3>
+                            </div>
                             <span className="text-[11px] text-muted-foreground/70">
                               · {buildingDevices} device
                               {buildingDevices === 1 ? "" : "s"}

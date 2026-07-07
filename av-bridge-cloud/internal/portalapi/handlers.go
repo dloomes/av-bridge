@@ -209,17 +209,25 @@ func computeCollectorStatus(lastSeen *time.Time, now time.Time) string {
 //
 // room_id is included so callers (e.g. the locations page's delete-impact
 // preview) can group devices by their placement without an extra fetch.
+//
+// region / location_name / building expose the full hierarchy so the portal
+// can breadcrumb it in group headers. Location (the existing "Building / Room"
+// display string) is kept for back-compat with the bridge's own DeviceSummary
+// contract.
 func (h *Handler) ListDevices(w http.ResponseWriter, r *http.Request) {
 	type item struct {
-		ID       string            `json:"id"`
-		Name     string            `json:"name"`
-		Type     string            `json:"type"`
-		Protocol string            `json:"protocol"`
-		Location string            `json:"location"`
-		RoomID   *string           `json:"room_id,omitempty"`
-		Address  string            `json:"address,omitempty"`
-		Status   string            `json:"status"`
-		Tags     map[string]string `json:"tags,omitempty"`
+		ID           string            `json:"id"`
+		Name         string            `json:"name"`
+		Type         string            `json:"type"`
+		Protocol     string            `json:"protocol"`
+		Location     string            `json:"location"`
+		Region       string            `json:"region,omitempty"`
+		LocationName string            `json:"location_name,omitempty"`
+		Building     string            `json:"building,omitempty"`
+		RoomID       *string           `json:"room_id,omitempty"`
+		Address      string            `json:"address,omitempty"`
+		Status       string            `json:"status"`
+		Tags         map[string]string `json:"tags,omitempty"`
 	}
 	out := []item{}
 	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
@@ -232,13 +240,18 @@ func (h *Handler) ListDevices(w http.ResponseWriter, r *http.Request) {
 			         WHEN r.name IS NOT NULL THEN r.name
 			         ELSE ''
 			       END,
+			       COALESCE(reg.name, ''),
+			       COALESCE(loc.name, ''),
+			       COALESCE(b.name, ''),
 			       d.room_id::text,
 			       COALESCE(d.ip_address, ''),
 			       COALESCE(d.latest_status, 'unknown'),
 			       d.tags
 			  FROM devices d
-			  LEFT JOIN rooms r ON r.id = d.room_id
-			  LEFT JOIN buildings b ON b.id = r.building_id
+			  LEFT JOIN rooms r      ON r.id   = d.room_id
+			  LEFT JOIN buildings b  ON b.id   = r.building_id
+			  LEFT JOIN locations loc ON loc.id = b.location_id
+			  LEFT JOIN regions reg  ON reg.id = loc.region_id
 			 ORDER BY d.name NULLS LAST, d.reported_id`)
 		if err != nil {
 			return err
@@ -247,7 +260,9 @@ func (h *Handler) ListDevices(w http.ResponseWriter, r *http.Request) {
 		for rows.Next() {
 			var it item
 			var tags []byte
-			if err := rows.Scan(&it.ID, &it.Name, &it.Type, &it.Protocol, &it.Location, &it.RoomID, &it.Address, &it.Status, &tags); err != nil {
+			if err := rows.Scan(&it.ID, &it.Name, &it.Type, &it.Protocol,
+				&it.Location, &it.Region, &it.LocationName, &it.Building,
+				&it.RoomID, &it.Address, &it.Status, &tags); err != nil {
 				return err
 			}
 			if len(tags) > 0 {
