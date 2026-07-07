@@ -2,8 +2,11 @@ package portalapi
 
 import (
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -636,4 +639,485 @@ func (h *Handler) DeleteAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// ---- CSV export / import ---------------------------------------------------
+
+// assetCSVColumns is the canonical column order emitted on export + accepted
+// on import. Anchored here so a customer's edited export round-trips
+// cleanly. The (building, room) columns identify placement — both blank
+// means the asset is unplaced. If your tenant has multiple buildings with
+// the same name, disambiguate via the /assets page's building filter
+// before editing (import will error on ambiguous placement).
+var assetCSVColumns = []string{
+	"asset_tag", "name", "category", "manufacturer", "model", "serial_number",
+	"status", "building", "room", "purchase_date", "warranty_end", "notes",
+}
+
+// ExportAssets — GET /api/v1/assets/export.csv
+//
+// Streams a CSV of every asset visible to the caller. The response is a
+// direct download; the portal fetches it as a blob rather than parsing.
+// RLS + physical-scope RESTRICTIVE policies are honoured — a scoped
+// viewer exports only their allowed buildings.
+func (h *Handler) ExportAssets(w http.ResponseWriter, r *http.Request) {
+	// Content headers first so downstream errors still produce a valid
+	// browser download (rather than a JSON error the browser will save as
+	// export.csv). This mirrors the /firmware export handler's pattern.
+	filename := fmt.Sprintf("assets-%s.csv", time.Now().UTC().Format("2006-01-02"))
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
+
+	cw := csv.NewWriter(w)
+	if err := cw.Write(assetCSVColumns); err != nil {
+		h.log.Error("csv header write failed", "error", err)
+		return
+	}
+
+	// Use the same query shape as ListAssets — customers expect export
+	// order to match the UI. Room + building are joined so we can emit
+	// them by name; the CSV never leaks internal UUIDs.
+	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `
+			SELECT COALESCE(a.asset_tag, ''),
+			       a.name,
+			       a.category,
+			       COALESCE(a.manufacturer, ''),
+			       COALESCE(a.model, ''),
+			       COALESCE(a.serial_number, ''),
+			       a.status,
+			       COALESCE(b.name, ''),
+			       COALESCE(rm.name, ''),
+			       a.purchase_date,
+			       a.warranty_end,
+			       COALESCE(a.notes, '')
+			  FROM assets a
+			  LEFT JOIN rooms rm    ON rm.id = a.room_id
+			  LEFT JOIN buildings b ON b.id  = rm.building_id
+			 ORDER BY a.name ASC`)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var (
+				assetTag, name, category, manufacturer, model, serial, status string
+				building, room, notes                                          string
+				purchase, warranty                                             *time.Time
+			)
+			if err := rows.Scan(&assetTag, &name, &category, &manufacturer,
+				&model, &serial, &status, &building, &room,
+				&purchase, &warranty, &notes); err != nil {
+				return err
+			}
+			purchaseStr := ""
+			if purchase != nil {
+				purchaseStr = purchase.Format("2006-01-02")
+			}
+			warrantyStr := ""
+			if warranty != nil {
+				warrantyStr = warranty.Format("2006-01-02")
+			}
+			if err := cw.Write([]string{
+				assetTag, name, category, manufacturer, model, serial,
+				status, building, room, purchaseStr, warrantyStr, notes,
+			}); err != nil {
+				return err
+			}
+		}
+		return rows.Err()
+	})
+	// withTenant already surfaced 500 on error, but for CSV streaming the
+	// headers have already gone — best-effort: flush what we have.
+	cw.Flush()
+	_ = ok
+}
+
+// importResult is the JSON response shape for /assets/import. errors
+// carries row-level detail so the portal can render a table.
+type importResult struct {
+	Processed int              `json:"processed"`
+	Created   int              `json:"created"`
+	Updated   int              `json:"updated"`
+	Errors    []importRowError `json:"errors"`
+}
+
+type importRowError struct {
+	Row      int    `json:"row"`
+	AssetTag string `json:"asset_tag,omitempty"`
+	Message  string `json:"message"`
+}
+
+// ImportAssets — POST /api/v1/assets/import
+//
+// Multipart body with a single "file" field carrying the CSV. Columns
+// must match assetCSVColumns (see export). Upsert semantics:
+//
+//   * blank asset_tag       → always CREATE (with fresh uuid, no tag).
+//   * asset_tag not found   → CREATE with that tag.
+//   * asset_tag exists      → UPDATE the existing row's fields.
+//
+// Validation runs on every row up front — if any row fails we return
+// 400 + the error list and don't touch the DB. This is the least
+// surprising failure mode for the "export, edit in Excel, re-upload"
+// loop: either everything applies or nothing does.
+func (h *Handler) ImportAssets(w http.ResponseWriter, r *http.Request) {
+	// Cap the upload — a proper CMDB import is tiny (a few thousand rows
+	// at 1KB each is ~2MB). Reject anything larger up front to avoid
+	// runaway parsing.
+	if err := r.ParseMultipartForm(4 << 20); err != nil {
+		writeErr(w, http.StatusBadRequest, "could not parse multipart body")
+		return
+	}
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "file field is required")
+		return
+	}
+	defer file.Close()
+	if header.Size > 4<<20 {
+		writeErr(w, http.StatusBadRequest, "file exceeds 4MB")
+		return
+	}
+
+	rows, err := parseAssetCSV(file)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if len(rows) == 0 {
+		writeJSON(w, http.StatusOK, importResult{Errors: []importRowError{}})
+		return
+	}
+
+	p, _ := portalauth.From(r.Context())
+	res := importResult{Processed: len(rows), Errors: []importRowError{}}
+
+	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
+		// Phase 1: build the lookup maps once. building name → id and
+		// (building_id, room_name) → room_id. RLS scopes both to the
+		// caller's tenant + physical scope, so a scoped viewer trying to
+		// import an out-of-scope building will hit "building not found"
+		// rather than silently placing rows they can't see back.
+		buildingIDs, err := loadBuildingsByName(ctx, tx)
+		if err != nil {
+			return err
+		}
+		roomIDs, err := loadRoomsByBuildingAndName(ctx, tx)
+		if err != nil {
+			return err
+		}
+		// Existing asset_tag → id, so we know create vs update per row.
+		existingTags, err := loadAssetsByTag(ctx, tx)
+		if err != nil {
+			return err
+		}
+
+		// Phase 2: validate every row. On any failure, accumulate into
+		// res.Errors and DON'T write. Doing all validation before any
+		// writes means the tx stays clean and we can 400-return with the
+		// full picture instead of "row 42 broke halfway through".
+		type resolvedRow struct {
+			raw       csvAssetRow
+			roomID    *string
+			existing  string // asset id if this is an update
+		}
+		resolved := make([]resolvedRow, 0, len(rows))
+		for _, row := range rows {
+			rr := resolvedRow{raw: row}
+			if row.Name == "" {
+				res.Errors = append(res.Errors, importRowError{
+					Row: row.Row, AssetTag: row.AssetTag,
+					Message: "name is required",
+				})
+				continue
+			}
+			if !allowedAssetCategories[row.Category] {
+				res.Errors = append(res.Errors, importRowError{
+					Row: row.Row, AssetTag: row.AssetTag,
+					Message: "category '" + row.Category + "' not in allowlist",
+				})
+				continue
+			}
+			if row.Status != "" && !allowedAssetStatuses[row.Status] {
+				res.Errors = append(res.Errors, importRowError{
+					Row: row.Row, AssetTag: row.AssetTag,
+					Message: "status '" + row.Status + "' not in allowlist",
+				})
+				continue
+			}
+			if row.Building != "" || row.Room != "" {
+				if row.Building == "" || row.Room == "" {
+					res.Errors = append(res.Errors, importRowError{
+						Row: row.Row, AssetTag: row.AssetTag,
+						Message: "building and room must both be filled or both blank",
+					})
+					continue
+				}
+				bIDs, ok := buildingIDs[strings.ToLower(row.Building)]
+				if !ok || len(bIDs) == 0 {
+					res.Errors = append(res.Errors, importRowError{
+						Row: row.Row, AssetTag: row.AssetTag,
+						Message: "building '" + row.Building + "' not found",
+					})
+					continue
+				}
+				if len(bIDs) > 1 {
+					res.Errors = append(res.Errors, importRowError{
+						Row: row.Row, AssetTag: row.AssetTag,
+						Message: "building name '" + row.Building + "' is ambiguous in this tenant — rename one before importing",
+					})
+					continue
+				}
+				rID, ok := roomIDs[bIDs[0]+"|"+strings.ToLower(row.Room)]
+				if !ok {
+					res.Errors = append(res.Errors, importRowError{
+						Row: row.Row, AssetTag: row.AssetTag,
+						Message: "room '" + row.Room + "' not found in building '" + row.Building + "'",
+					})
+					continue
+				}
+				rr.roomID = &rID
+			}
+			if row.AssetTag != "" {
+				if id, ok := existingTags[row.AssetTag]; ok {
+					rr.existing = id
+				}
+			}
+			resolved = append(resolved, rr)
+		}
+		if len(res.Errors) > 0 {
+			// Bail before any writes. Nothing changed.
+			return nil
+		}
+
+		// Phase 3: apply. All in one tx — either every row lands or none.
+		for _, rr := range resolved {
+			row := rr.raw
+			status := row.Status
+			if status == "" {
+				status = "in_service"
+			}
+			purchase, _ := parseDate(row.PurchaseDate)
+			warranty, _ := parseDate(row.WarrantyEnd)
+			var roomParam any
+			if rr.roomID != nil {
+				roomParam = *rr.roomID
+			}
+			if rr.existing != "" {
+				if _, err := tx.Exec(ctx, `
+					UPDATE assets SET
+					  room_id = $2::uuid,
+					  name = $3, category = $4,
+					  manufacturer = NULLIF($5,''), model = NULLIF($6,''), serial_number = NULLIF($7,''),
+					  status = $8,
+					  purchase_date = $9, warranty_end = $10,
+					  notes = NULLIF($11,'')
+					WHERE id = $1`,
+					rr.existing, roomParam,
+					row.Name, row.Category,
+					row.Manufacturer, row.Model, row.Serial,
+					status,
+					purchase, warranty,
+					row.Notes,
+				); err != nil {
+					return fmt.Errorf("update row %d: %w", row.Row, err)
+				}
+				res.Updated++
+			} else {
+				if _, err := tx.Exec(ctx, `
+					INSERT INTO assets (
+						customer_id, room_id, asset_tag,
+						name, category, manufacturer, model, serial_number,
+						status, purchase_date, warranty_end, notes
+					) VALUES (
+						$1, $2, NULLIF($3,''),
+						$4, $5, NULLIF($6,''), NULLIF($7,''), NULLIF($8,''),
+						$9, $10, $11, NULLIF($12,'')
+					)`,
+					p.CustomerID, roomParam, row.AssetTag,
+					row.Name, row.Category, row.Manufacturer, row.Model, row.Serial,
+					status, purchase, warranty, row.Notes,
+				); err != nil {
+					return fmt.Errorf("insert row %d: %w", row.Row, err)
+				}
+				res.Created++
+			}
+		}
+
+		// One audit row for the whole import — a per-row audit would spam
+		// the trail. Metadata carries the totals so a review of the audit
+		// log shows what happened without needing to reconstruct the CSV.
+		return audit.Record(ctx, tx, p.CustomerID, stampActor(p, audit.Entry{
+			Action: "asset.import", TargetKind: "customer", TargetID: p.CustomerID,
+			Metadata: map[string]any{
+				"processed": res.Processed,
+				"created":   res.Created,
+				"updated":   res.Updated,
+				"errors":    len(res.Errors),
+			},
+		}))
+	})
+	if !ok {
+		return
+	}
+	// Row-level validation errors → 400 with the details so the operator
+	// can fix the CSV. Nothing was written in this case.
+	if len(res.Errors) > 0 {
+		writeJSON(w, http.StatusBadRequest, res)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+// csvAssetRow is a parsed CSV row keyed by column name. Row is the 1-based
+// line in the file (excluding the header) so error messages point at
+// something the operator can locate in Excel.
+type csvAssetRow struct {
+	Row          int
+	AssetTag     string
+	Name         string
+	Category     string
+	Manufacturer string
+	Model        string
+	Serial       string
+	Status       string
+	Building     string
+	Room         string
+	PurchaseDate string
+	WarrantyEnd  string
+	Notes        string
+}
+
+// parseAssetCSV reads the file, validates the header, and returns each
+// data row indexed 1-based (matching what Excel shows). Missing columns
+// are an all-or-nothing failure — importing a truncated CSV would silently
+// drop data.
+func parseAssetCSV(r io.Reader) ([]csvAssetRow, error) {
+	cr := csv.NewReader(r)
+	cr.TrimLeadingSpace = true
+	// Allow the number of fields per row to vary — some editors emit
+	// trailing-empty columns for blank cells and we want to accept those.
+	cr.FieldsPerRecord = -1
+	header, err := cr.Read()
+	if err != nil {
+		return nil, errors.New("CSV is empty or unreadable")
+	}
+	idx := map[string]int{}
+	for i, h := range header {
+		idx[strings.ToLower(strings.TrimSpace(h))] = i
+	}
+	for _, want := range assetCSVColumns {
+		if _, ok := idx[want]; !ok {
+			return nil, errors.New("CSV missing required column: " + want)
+		}
+	}
+	get := func(row []string, name string) string {
+		i := idx[name]
+		if i < 0 || i >= len(row) {
+			return ""
+		}
+		return strings.TrimSpace(row[i])
+	}
+	out := []csvAssetRow{}
+	rowNum := 0
+	for {
+		rec, err := cr.Read()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("row %d: %w", rowNum+2, err) // +2: header + 1-based
+		}
+		rowNum++
+		// Skip fully-blank rows — Excel often exports these at the tail.
+		blank := true
+		for _, c := range rec {
+			if strings.TrimSpace(c) != "" {
+				blank = false
+				break
+			}
+		}
+		if blank {
+			continue
+		}
+		out = append(out, csvAssetRow{
+			Row:          rowNum + 1, // 1-based, +1 for the header
+			AssetTag:     get(rec, "asset_tag"),
+			Name:         get(rec, "name"),
+			Category:     get(rec, "category"),
+			Manufacturer: get(rec, "manufacturer"),
+			Model:        get(rec, "model"),
+			Serial:       get(rec, "serial_number"),
+			Status:       get(rec, "status"),
+			Building:     get(rec, "building"),
+			Room:         get(rec, "room"),
+			PurchaseDate: get(rec, "purchase_date"),
+			WarrantyEnd:  get(rec, "warranty_end"),
+			Notes:        get(rec, "notes"),
+		})
+	}
+	return out, nil
+}
+
+// loadBuildingsByName maps a lower-cased building name to the list of
+// matching ids in this tenant. Multiple matches (returned as len > 1) are
+// treated as ambiguous by the caller.
+func loadBuildingsByName(ctx context.Context, tx pgx.Tx) (map[string][]string, error) {
+	out := map[string][]string{}
+	rows, err := tx.Query(ctx, `SELECT id::text, name FROM buildings`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, name string
+		if err := rows.Scan(&id, &name); err != nil {
+			return nil, err
+		}
+		key := strings.ToLower(name)
+		out[key] = append(out[key], id)
+	}
+	return out, rows.Err()
+}
+
+// loadRoomsByBuildingAndName maps "<building_id>|<lowercase room name>" to
+// the room id. Composite key keeps rooms with the same name in different
+// buildings distinguishable.
+func loadRoomsByBuildingAndName(ctx context.Context, tx pgx.Tx) (map[string]string, error) {
+	out := map[string]string{}
+	rows, err := tx.Query(ctx, `SELECT id::text, building_id::text, name FROM rooms`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, buildingID, name string
+		if err := rows.Scan(&id, &buildingID, &name); err != nil {
+			return nil, err
+		}
+		out[buildingID+"|"+strings.ToLower(name)] = id
+	}
+	return out, rows.Err()
+}
+
+// loadAssetsByTag maps asset_tag → id for existing assets in this tenant.
+// Only rows with a non-null tag; blank-tag rows can never be upserted
+// (each blank-tag import row creates a fresh asset).
+func loadAssetsByTag(ctx context.Context, tx pgx.Tx) (map[string]string, error) {
+	out := map[string]string{}
+	rows, err := tx.Query(ctx,
+		`SELECT id::text, asset_tag FROM assets WHERE asset_tag IS NOT NULL`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, tag string
+		if err := rows.Scan(&id, &tag); err != nil {
+			return nil, err
+		}
+		out[tag] = id
+	}
+	return out, rows.Err()
 }

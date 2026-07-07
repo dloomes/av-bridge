@@ -147,6 +147,11 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 		mux.Handle("POST /api/v1/assets", wrapPerm(portalauth.PermAssetCRUD, portal.Portal.CreateAsset))
 		mux.Handle("PATCH /api/v1/assets/{id}", wrapPerm(portalauth.PermAssetCRUD, portal.Portal.UpdateAsset))
 		mux.Handle("DELETE /api/v1/assets/{id}", wrapPerm(portalauth.PermAssetCRUD, portal.Portal.DeleteAsset))
+		// CSV round-trip. Export is a plain read — anyone with view.assets
+		// gets the current fleet; RLS applies. Import mutates so it gates
+		// on asset.crud.
+		mux.Handle("GET /api/v1/assets/export.csv", wrapPerm(portalauth.PermViewAssets, portal.Portal.ExportAssets))
+		mux.Handle("POST /api/v1/assets/import", wrapPerm(portalauth.PermAssetCRUD, portal.Portal.ImportAssets))
 
 		// User CRUD — every write is a distinct permission so a custom role
 		// can, e.g., grant create-and-update but not delete-and-reset.

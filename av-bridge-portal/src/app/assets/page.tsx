@@ -1,9 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   Boxes,
+  Download,
   ExternalLink,
   Loader2,
   Pencil,
@@ -12,6 +13,7 @@ import {
   RefreshCcw,
   Search,
   Trash2,
+  Upload,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -113,6 +115,16 @@ export default function AssetsPage() {
   // via the "Set up monitoring" action. Non-null means the DeviceForm
   // modal is open in create-mode with the asset pre-linked.
   const [monitoring, setMonitoring] = useState<AssetRow | null>(null);
+  const [importing, setImporting] = useState(false);
+  // The result of the last import attempt — held so we can render the
+  // summary + row-level errors in a modal until the operator dismisses.
+  const [importResult, setImportResult] = useState<{
+    processed: number;
+    created: number;
+    updated: number;
+    errors: { row: number; asset_tag?: string; message: string }[];
+  } | null>(null);
+  const importInputRef = useRef<HTMLInputElement>(null);
 
   // Debounce the free-text search so we don't fire on every keystroke.
   useEffect(() => {
@@ -184,6 +196,46 @@ export default function AssetsPage() {
     }
   };
 
+  // Export triggers a client-side download of the CSV blob. Filename
+  // matches the backend's Content-Disposition so opening in Excel later
+  // is unambiguous (assets-YYYY-MM-DD.csv).
+  const handleExport = async () => {
+    try {
+      const csv = await api.exportAssetsCSV();
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `assets-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      alert(`Export failed: ${(e as Error).message}`);
+    }
+  };
+
+  const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    // Reset the input so re-choosing the same file works — file inputs
+    // don't fire change if the value doesn't change.
+    e.target.value = "";
+    if (!file) return;
+    setImporting(true);
+    try {
+      const result = await api.importAssets(file);
+      setImportResult(result);
+      // Refresh the list even on validation errors — nothing was written
+      // but the operator will want a clean list after dismissing the modal.
+      await loadAssets();
+    } catch (err) {
+      alert(`Import failed: ${(err as Error).message}`);
+    } finally {
+      setImporting(false);
+    }
+  };
+
   const anyFilterActive =
     debouncedSearch !== "" ||
     categoryFilter !== "" ||
@@ -221,11 +273,37 @@ export default function AssetsPage() {
               />
               Refresh
             </Button>
+            <Button variant="outline" size="sm" onClick={handleExport}>
+              <Download className="h-3.5 w-3.5" />
+              Export CSV
+            </Button>
             {admin && (
-              <Button size="sm" onClick={() => setEditing({ mode: "create" })}>
-                <Plus className="h-4 w-4" />
-                New asset
-              </Button>
+              <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => importInputRef.current?.click()}
+                  disabled={importing}
+                >
+                  {importing ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Upload className="h-3.5 w-3.5" />
+                  )}
+                  Import CSV
+                </Button>
+                <input
+                  ref={importInputRef}
+                  type="file"
+                  accept=".csv,text/csv"
+                  className="hidden"
+                  onChange={handleImportFile}
+                />
+                <Button size="sm" onClick={() => setEditing({ mode: "create" })}>
+                  <Plus className="h-4 w-4" />
+                  New asset
+                </Button>
+              </>
             )}
             <UserMenu />
           </div>
@@ -449,6 +527,96 @@ export default function AssetsPage() {
                 void loadAssets();
               }}
             />
+          </Modal>
+        )}
+
+        {importResult && (
+          <Modal
+            open
+            onClose={() => setImportResult(null)}
+            title={
+              importResult.errors.length > 0
+                ? "Import needs attention"
+                : "Import complete"
+            }
+          >
+            <div className="space-y-3 text-sm">
+              <div className="grid grid-cols-3 gap-3">
+                <div className="rounded-md border p-3">
+                  <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                    Processed
+                  </div>
+                  <div className="text-2xl font-semibold">
+                    {importResult.processed}
+                  </div>
+                </div>
+                <div className="rounded-md border p-3">
+                  <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                    Created
+                  </div>
+                  <div className="text-2xl font-semibold text-[color:hsl(var(--success))]">
+                    {importResult.created}
+                  </div>
+                </div>
+                <div className="rounded-md border p-3">
+                  <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                    Updated
+                  </div>
+                  <div className="text-2xl font-semibold text-[color:hsl(var(--primary))]">
+                    {importResult.updated}
+                  </div>
+                </div>
+              </div>
+
+              {importResult.errors.length > 0 && (
+                <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 space-y-2">
+                  <div className="text-sm font-medium [color:hsl(var(--destructive))]">
+                    {importResult.errors.length} row
+                    {importResult.errors.length === 1 ? "" : "s"} rejected —
+                    nothing was written.
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Fix the rows below in your CSV and re-import. The upload is
+                    all-or-nothing so a partial import can never leave your data
+                    in a half-updated state.
+                  </p>
+                  <div className="max-h-64 overflow-y-auto rounded border bg-background">
+                    <table className="w-full text-xs">
+                      <thead className="sticky top-0 bg-muted/40">
+                        <tr>
+                          <th className="px-2 py-1.5 text-left font-medium">Row</th>
+                          <th className="px-2 py-1.5 text-left font-medium">Tag</th>
+                          <th className="px-2 py-1.5 text-left font-medium">
+                            Problem
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {importResult.errors.map((e, i) => (
+                          <tr key={i} className="border-t">
+                            <td className="px-2 py-1 font-mono">{e.row}</td>
+                            <td className="px-2 py-1 font-mono">
+                              {e.asset_tag || "—"}
+                            </td>
+                            <td className="px-2 py-1">{e.message}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex justify-end gap-2 pt-2 border-t">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setImportResult(null)}
+                >
+                  Close
+                </Button>
+              </div>
+            </div>
           </Modal>
         )}
 

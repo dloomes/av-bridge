@@ -374,6 +374,57 @@ export const api = {
       method: "DELETE",
     }),
 
+  // Asset CSV round-trip. exportAssetsCSV returns the raw text so the
+  // caller can either offer a download or diff it. importAssets streams
+  // a File via multipart; on validation error the backend still returns
+  // JSON with per-row detail (status 400) which fetch surfaces as
+  // ApiError — the caller catches, parses, and shows the errors.
+  exportAssetsCSV: async (signal?: AbortSignal): Promise<string> => {
+    const res = await fetch(`${API_BASE}/api/v1/assets/export.csv`, {
+      headers: authHeaders(),
+      signal,
+      cache: "no-store",
+    });
+    if (!res.ok) {
+      if (res.status === 401) handle401IfSessionDeath("/api/v1/assets/export.csv");
+      const body = await res.text().catch(() => "");
+      throw new ApiError(
+        `${res.status} ${res.statusText}${body ? `: ${body}` : ""}`,
+        res.status
+      );
+    }
+    return res.text();
+  },
+
+  importAssets: async (
+    file: File
+  ): Promise<{
+    processed: number;
+    created: number;
+    updated: number;
+    errors: { row: number; asset_tag?: string; message: string }[];
+  }> => {
+    const form = new FormData();
+    form.append("file", file);
+    const res = await fetch(`${API_BASE}/api/v1/assets/import`, {
+      method: "POST",
+      headers: authHeaders(), // NB: no Content-Type — fetch sets multipart boundary
+      body: form,
+      cache: "no-store",
+    });
+    // Both 200 and 400 return the same JSON shape (400 carries row
+    // errors, 200 means clean). Anything else is a real failure.
+    if (res.status !== 200 && res.status !== 400) {
+      if (res.status === 401) handle401IfSessionDeath("/api/v1/assets/import");
+      const body = await res.text().catch(() => "");
+      throw new ApiError(
+        `${res.status} ${res.statusText}${body ? `: ${body}` : ""}`,
+        res.status
+      );
+    }
+    return res.json();
+  },
+
   createRegion: (name: string, signal?: AbortSignal) =>
     request<{ id: string; name: string }>("/api/v1/regions", {
       method: "POST",
