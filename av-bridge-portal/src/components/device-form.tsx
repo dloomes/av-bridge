@@ -153,41 +153,127 @@ function buildAssetPayload(form: FormState): DeviceAssetInput | undefined {
   return Object.keys(payload).length > 0 ? payload : undefined;
 }
 
+// protocolToManufacturer covers the case where an adapter doesn't emit a
+// manufacturer tag but the protocol implies one (Sony Bravia doesn't write
+// `make` — its `product` tag is a product-line like "BRAVIA"). This lets
+// the pull button still fill the manufacturer field for those devices.
+function protocolToManufacturer(protocol?: string): string {
+  switch (protocol) {
+    case "sony_bravia":
+      return "Sony";
+    case "poly_videoos":
+      return "Poly";
+    case "aurora_rxt":
+      return "Aurora Multimedia";
+    case "tesira":
+      return "Biamp";
+    default:
+      return "";
+  }
+}
+
+// deviceTypeToAssetCategory mirrors the backend helper in
+// portalapi/admin_handlers.go so the pull can also seed the category
+// picker when the operator hasn't chosen one.
+function deviceTypeToAssetCategory(deviceType?: string): string {
+  switch (deviceType) {
+    case "display":
+      return "display";
+    case "camera":
+      return "camera";
+    case "audio":
+      return "audio";
+    case "conferencing":
+      return "conferencing";
+    default:
+      return "";
+  }
+}
+
 // pullFromDeviceTags reads the discovery tags each adapter writes on
 // connect (see internal/device/adapters/*.go on the bridge) and maps them
-// onto the asset fields. Values across adapters normalise as:
-//   manufacturer ← tags.make || tags.manufacturer || tags.product
-//   model        ← tags.model
-//   serial       ← tags.serial || tags.serial_number
-//   firmware     ← tags.firmware_version   (appended to notes for context)
-// Returns only fields for which the tag was actually captured — the caller
-// merges into the existing form state, so untouched fields keep whatever
-// the operator has already typed.
+// onto the asset fields. Cross-adapter mapping:
+//
+//   manufacturer  ← tags.make || tags.manufacturer  (Poly, others)
+//                   → falls back to a value derived from device.protocol
+//                     so Sony/Aurora/Biamp get a sensible default.
+//   model         ← tags.model || tags.machine_type (Aurora fallback)
+//   serial        ← tags.serial || tags.serial_number
+//   category      ← device.type mapped through the same table the backend
+//                   uses (only offered when the operator hasn't picked
+//                   a category yet — non-destructive).
+//   notes         ← firmware, firmware_date, mac_address, hostname,
+//                   generation, api_version — one line per, appended to
+//                   whatever notes already exist without duplicating.
+//
+// Returns only fields for which we have a value; the caller merges into
+// the existing form state so untouched fields keep the operator's input.
 function pullFromDeviceTags(
-  tags: Record<string, string> | undefined
+  tags: Record<string, string> | undefined,
+  protocol?: string,
+  deviceType?: string
 ): {
   manufacturer?: string;
   model?: string;
   serial?: string;
-  firmwareNote?: string;
+  category?: string;
+  notes?: string[];
 } {
-  if (!tags) return {};
+  const t = tags ?? {};
   const out: {
     manufacturer?: string;
     model?: string;
     serial?: string;
-    firmwareNote?: string;
+    category?: string;
+    notes?: string[];
   } = {};
-  const manufacturer =
-    tags.make || tags.manufacturer || tags.product;
+
+  // Manufacturer: prefer explicit adapter tags, then protocol fallback.
+  // `product` (Sony's productName) is a product-line label rather than a
+  // manufacturer — skip it here and rely on the protocol map instead.
+  let manufacturer = t.make || t.manufacturer;
+  if (!manufacturer) manufacturer = protocolToManufacturer(protocol);
   if (manufacturer) out.manufacturer = manufacturer;
-  if (tags.model) out.model = tags.model;
-  const serial = tags.serial || tags.serial_number;
+
+  if (t.model) out.model = t.model;
+  else if (t.machine_type) out.model = t.machine_type;
+
+  const serial = t.serial || t.serial_number;
   if (serial) out.serial = serial;
-  if (tags.firmware_version) {
-    out.firmwareNote = `Firmware: ${tags.firmware_version}`;
-  }
+
+  const category = deviceTypeToAssetCategory(deviceType);
+  if (category) out.category = category;
+
+  const notes: string[] = [];
+  if (t.firmware_version) notes.push(`Firmware: ${t.firmware_version}`);
+  if (t.firmware_date) notes.push(`Firmware date: ${t.firmware_date}`);
+  if (t.mac_address) notes.push(`MAC: ${t.mac_address}`);
+  if (t.hostname) notes.push(`Hostname: ${t.hostname}`);
+  if (t.generation) notes.push(`Generation: ${t.generation}`);
+  if (t.api_version) notes.push(`API: ${t.api_version}`);
+  if (notes.length > 0) out.notes = notes;
+
   return out;
+}
+
+// mergeNotes appends new lines to an existing notes string, replacing any
+// prior line with the same "Key:" prefix (so pulling twice after a
+// firmware upgrade doesn't leave two "Firmware:" lines) and de-duplicating
+// exact matches. Preserves any operator-written prose in the notes.
+function mergeNotes(existing: string, incoming: string[]): string {
+  if (incoming.length === 0) return existing;
+  const incomingKeys = new Set(
+    incoming
+      .map((line) => line.match(/^([^:]+):/)?.[1]?.trim())
+      .filter((k): k is string => !!k)
+  );
+  const existingLines = existing ? existing.split(/\r?\n/) : [];
+  const kept = existingLines.filter((line) => {
+    const key = line.match(/^([^:]+):/)?.[1]?.trim();
+    if (key && incomingKeys.has(key)) return false; // will be replaced
+    return true;
+  });
+  return [...kept, ...incoming].join("\n").trim();
 }
 
 // suggestProtocolFromManufacturer maps a manufacturer name to the bridge
@@ -612,16 +698,19 @@ export function DeviceForm({
             : "A new asset row will be created and linked."}
         </p>
         {/*
-          Pull from device — shows only when the device has tags that
-          include at least one discoverable field. Adapters (Sony, Poly,
-          Aurora, Tesira) populate these on connect; if the bridge has
-          been talking to the device for any real time, this fills the
-          form in one click.
+          Pull from device — shows in edit mode whenever we can extract at
+          least one field from the device (via tags, protocol, or type).
+          The click merges those fields into the form; existing operator
+          input isn't clobbered — asset_manufacturer/model/serial only
+          write when they'd land a non-empty value, and category only
+          fills when the operator hasn't picked one yet.
         */}
         {isEdit &&
-          initial?.tags &&
-          Object.keys(pullFromDeviceTags(initial.tags)).length > 0 && (
-            <div className="mt-2 flex items-center justify-between rounded border border-dashed bg-background/60 px-3 py-2 text-[11px] text-muted-foreground">
+          initial &&
+          Object.keys(
+            pullFromDeviceTags(initial.tags, initial.protocol, initial.type)
+          ).length > 0 && (
+            <div className="mt-2 flex items-center justify-between gap-3 rounded border border-dashed bg-background/60 px-3 py-2 text-[11px] text-muted-foreground">
               <span>
                 The bridge discovered inventory info from this device on
                 connect. Pull it in?
@@ -631,20 +720,23 @@ export function DeviceForm({
                 variant="outline"
                 size="sm"
                 onClick={() => {
-                  const t = pullFromDeviceTags(initial.tags);
+                  const t = pullFromDeviceTags(
+                    initial.tags,
+                    initial.protocol,
+                    initial.type
+                  );
                   setForm((f) => ({
                     ...f,
                     asset_manufacturer:
                       t.manufacturer ?? f.asset_manufacturer,
                     asset_model: t.model ?? f.asset_model,
                     asset_serial: t.serial ?? f.asset_serial,
-                    asset_notes: t.firmwareNote
-                      ? f.asset_notes
-                        ? f.asset_notes.includes(t.firmwareNote)
-                          ? f.asset_notes
-                          : `${f.asset_notes}\n${t.firmwareNote}`
-                        : t.firmwareNote
-                      : f.asset_notes,
+                    // Category is only filled when the operator hasn't
+                    // picked one — pulling shouldn't overwrite an
+                    // explicit choice.
+                    asset_category:
+                      f.asset_category || (t.category ?? f.asset_category),
+                    asset_notes: mergeNotes(f.asset_notes, t.notes ?? []),
                   }));
                 }}
               >
