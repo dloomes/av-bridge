@@ -71,6 +71,11 @@ const (
 	PermRoleCRUD          = "role.crud"
 )
 
+// Tenant-branding management. Reads are open to any authenticated user in
+// the tenant (the whole portal renders in that customer's colours, so
+// gating the read serves no purpose); writes gate on this permission.
+const PermBrandingUpdate = "branding.update"
+
 // KnownPermissions is the closed set of valid permission keys — used by the
 // roles CRUD handler to reject unknown strings, and by the permission
 // engine to fail-closed if a role somehow references a permission that has
@@ -97,6 +102,7 @@ var KnownPermissions = map[string]struct{}{
 	PermUserResetPassword:  {},
 	PermUserDelete:         {},
 	PermRoleCRUD:           {},
+	PermBrandingUpdate:     {},
 }
 
 // IsKnownPermission returns true if the string is a member of the

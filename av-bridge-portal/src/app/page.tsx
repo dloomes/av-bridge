@@ -19,6 +19,7 @@ import { StatCard } from "@/components/stat-card";
 import { UserMenu } from "@/components/user-menu";
 import { StatusBadge } from "@/components/status-badge";
 import { DeviceCard } from "@/components/device-card";
+import { useBranding } from "@/components/branding-provider";
 import { EventFeed } from "@/components/event-feed";
 import { Modal } from "@/components/modal";
 import { DeviceForm } from "@/components/device-form";
@@ -41,6 +42,7 @@ import type {
 export default function DashboardPage() {
   const session = useSession();
   const router = useRouter();
+  const { branding } = useBranding();
 
   // Vendor users without a customer scope have nothing to show here — every
   // tenant query would 500 with an empty UUID. Push them to the helpdesk
@@ -93,11 +95,22 @@ export default function DashboardPage() {
   return (
     <div className="flex h-screen flex-col">
       <header className="flex flex-wrap items-center justify-between gap-3 border-b bg-card/50 px-6 py-4">
-        <div>
-          <h1 className="text-xl font-semibold">AV Bridge</h1>
-          <p className="text-sm text-muted-foreground">
-            Room overview · auto-refreshing every 15s
-          </p>
+        <div className="flex items-center gap-3">
+          {branding.logo_data_url && (
+            <img
+              src={branding.logo_data_url}
+              alt=""
+              className="h-8 w-8 rounded object-contain"
+            />
+          )}
+          <div>
+            <h1 className="text-xl font-semibold">
+              {branding.display_name || "AV Bridge"}
+            </h1>
+            <p className="text-sm text-muted-foreground">
+              Room overview · auto-refreshing every 15s
+            </p>
+          </div>
         </div>
         <div className="flex items-center gap-3">
           <span className="text-xs text-muted-foreground">

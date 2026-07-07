@@ -17,7 +17,8 @@ export type PermissionCategory =
   | "Fleet management"
   | "Notifications"
   | "Firmware"
-  | "Users & Roles";
+  | "Users & Roles"
+  | "Tenant";
 
 export interface PermissionDef {
   key: string;
@@ -63,6 +64,8 @@ export const PERMISSIONS: readonly PermissionDef[] = [
   { key: "user.reset_password", title: "Reset user passwords", description: "Set a new password for a user without knowing the current one.",   category: "Users & Roles" },
   { key: "user.delete",         title: "Delete users",         description: "Permanently remove a user from the tenant.",                       category: "Users & Roles" },
   { key: "role.crud",           title: "Manage roles",         description: "Create, edit, and delete custom roles inside this tenant.",        category: "Users & Roles" },
+  // Tenant
+  { key: "branding.update",     title: "Update branding",      description: "Upload the tenant logo, change the accent colour and portal display name.", category: "Tenant" },
 ];
 
 // PERMISSIONS_BY_CATEGORY is what the matrix renders — same items, grouped

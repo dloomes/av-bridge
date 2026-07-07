@@ -158,6 +158,22 @@ export interface LoginResponse {
   role: string;
 }
 
+// Per-tenant branding, returned by GET /api/v1/branding. All fields are
+// optional — an unbranded customer sends {} and the portal falls back to
+// its default look. logo_data_url is a "data:image/...;base64,..." URI
+// so it can be used directly as an <img src=>.
+export interface Branding {
+  display_name?: string;
+  accent_color?: string;
+  logo_data_url?: string;
+}
+
+export interface UpdateBrandingBody {
+  display_name?: string;
+  accent_color?: string;
+  logo_data_url?: string;
+}
+
 export const api = {
   // -- auth --------------------------------------------------------------------
   //
@@ -208,6 +224,12 @@ export const api = {
 
   whoami: (signal?: AbortSignal) =>
     request<WhoamiResponse>("/api/v1/whoami", { signal }),
+
+  getBranding: (signal?: AbortSignal) =>
+    request<Branding>("/api/v1/branding", { signal }),
+
+  updateBranding: (body: UpdateBrandingBody) =>
+    request<void>("/api/v1/branding", { method: "PATCH", body: JSON.stringify(body) }),
 
   helpdeskCustomers: (signal?: AbortSignal) =>
     request<HelpdeskCustomer[]>("/api/v1/helpdesk/customers", { signal }),

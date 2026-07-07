@@ -130,6 +130,14 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 		mux.Handle("GET /api/v1/roles", wrapPerm(portalauth.PermViewUsers, portal.Portal.ListRoles))
 		mux.Handle("GET /api/v1/roles/{id}", wrapPerm(portalauth.PermViewUsers, portal.Portal.GetRole))
 
+		// Tenant branding — reads are open to any authed user (the portal
+		// needs the logo/colours for the current tenant to render), writes
+		// gate on branding.update. Vendor cross-tenant editing rides the
+		// same PATCH via X-Customer-Scope + vendor-bypass on the permission
+		// check, so no separate /helpdesk endpoint is needed.
+		mux.Handle("GET /api/v1/branding", wrap(portal.Portal.GetBranding))
+		mux.Handle("PATCH /api/v1/branding", wrapPerm(portalauth.PermBrandingUpdate, portal.Portal.UpdateBranding))
+
 		// User CRUD — every write is a distinct permission so a custom role
 		// can, e.g., grant create-and-update but not delete-and-reset.
 		mux.Handle("POST /api/v1/users", wrapPerm(portalauth.PermUserCreate, portal.Portal.CreateUser))
