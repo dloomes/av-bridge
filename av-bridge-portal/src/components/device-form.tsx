@@ -208,10 +208,21 @@ function deviceTypeToAssetCategory(deviceType?: string): string {
 //
 // Returns only fields for which we have a value; the caller merges into
 // the existing form state so untouched fields keep the operator's input.
+// asString safely coerces a metrics-map value (unknown from the wire) to
+// a non-empty string, or returns "" for anything else. Metrics come in
+// as jsonb — most inventory values are strings but a few adapters emit
+// numbers (uptime seconds, etc.) that we don't want to treat as inventory.
+function asString(v: unknown): string {
+  if (typeof v === "string") return v.trim();
+  return "";
+}
+
 function pullFromDeviceTags(
   tags: Record<string, string> | undefined,
   protocol?: string,
-  deviceType?: string
+  deviceType?: string,
+  metrics?: Record<string, unknown>,
+  lensMetrics?: Record<string, unknown>
 ): {
   manufacturer?: string;
   model?: string;
@@ -220,6 +231,8 @@ function pullFromDeviceTags(
   notes?: string[];
 } {
   const t = tags ?? {};
+  const m = metrics ?? {};
+  const lm = lensMetrics ?? {};
   const out: {
     manufacturer?: string;
     model?: string;
@@ -228,29 +241,52 @@ function pullFromDeviceTags(
     notes?: string[];
   } = {};
 
-  // Manufacturer: prefer explicit adapter tags, then protocol fallback.
-  // `product` (Sony's productName) is a product-line label rather than a
-  // manufacturer — skip it here and rely on the protocol map instead.
-  let manufacturer = t.make || t.manufacturer;
+  // Manufacturer: prefer explicit adapter tags, then Lens (Poly cloud)
+  // manufacturer if available, then the protocol map. Sony's `product`
+  // tag ("BRAVIA") is a product line, so it's skipped here.
+  let manufacturer = t.make || t.manufacturer || asString(lm.manufacturer);
   if (!manufacturer) manufacturer = protocolToManufacturer(protocol);
   if (manufacturer) out.manufacturer = manufacturer;
 
-  if (t.model) out.model = t.model;
-  else if (t.machine_type) out.model = t.machine_type;
+  // Model: tag first, then Aurora's machine_type, then Lens hardware
+  // fields (Poly Studio X70 → hardware_model "PolyStudio-X70").
+  const model =
+    t.model ||
+    t.machine_type ||
+    asString(lm.hardware_model) ||
+    asString(lm.hardware_product);
+  if (model) out.model = model;
 
-  const serial = t.serial || t.serial_number;
+  // Serial: tag first, then telemetry metrics. Poly puts serialNumber
+  // in metrics under `serial_number`, not tags — this is the whole
+  // reason we plumb metrics through here.
+  const serial =
+    t.serial ||
+    t.serial_number ||
+    asString(m.serial_number) ||
+    asString(m.serial);
   if (serial) out.serial = serial;
 
   const category = deviceTypeToAssetCategory(deviceType);
   if (category) out.category = category;
 
   const notes: string[] = [];
-  if (t.firmware_version) notes.push(`Firmware: ${t.firmware_version}`);
+  // Firmware: tag (Sony/Aurora) OR metric software_version (Poly).
+  const firmware =
+    t.firmware_version || asString(m.software_version) || asString(m.firmware_version);
+  if (firmware) notes.push(`Firmware: ${firmware}`);
   if (t.firmware_date) notes.push(`Firmware date: ${t.firmware_date}`);
-  if (t.mac_address) notes.push(`MAC: ${t.mac_address}`);
+  // MAC: tag (Sony/Aurora), metric (rare), or Lens (Poly cloud).
+  const mac = t.mac_address || asString(m.mac_address) || asString(lm.mac_address);
+  if (mac) notes.push(`MAC: ${mac}`);
+  // IP: metric (Poly puts it here) or tag (Aurora).
+  const ip = t.ip_address || asString(m.ip_address);
+  if (ip) notes.push(`IP: ${ip}`);
   if (t.hostname) notes.push(`Hostname: ${t.hostname}`);
   if (t.generation) notes.push(`Generation: ${t.generation}`);
   if (t.api_version) notes.push(`API: ${t.api_version}`);
+  const room = asString(lm.room);
+  if (room) notes.push(`Lens room: ${room}`);
   if (notes.length > 0) out.notes = notes;
 
   return out;
@@ -368,6 +404,11 @@ export function DeviceForm({
   const [rooms, setRooms] = useState<NamedRow[]>([]);
   const [buildings, setBuildings] = useState<NamedRow[]>([]);
   const [assets, setAssets] = useState<AssetRow[]>([]);
+  // Latest telemetry for the device being edited — used by the Pull from
+  // device button to reach adapters that stash inventory in metrics
+  // (Poly serial_number, software_version, ip_address) rather than tags.
+  const [telemetryMetrics, setTelemetryMetrics] = useState<Record<string, unknown> | undefined>(undefined);
+  const [telemetryLensMetrics, setTelemetryLensMetrics] = useState<Record<string, unknown> | undefined>(undefined);
   const [loadingLookups, setLoadingLookups] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -406,6 +447,28 @@ export function DeviceForm({
     return () => ctrl.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Edit mode only — fetch the device's latest telemetry so the pull can
+  // reach adapters (Poly VideoOS) that publish inventory info via metrics
+  // rather than tags. Best-effort: any failure just leaves the pull with
+  // only the tags to work from.
+  useEffect(() => {
+    if (!initial) return;
+    const ctrl = new AbortController();
+    api
+      .getTelemetry(initial.id, ctrl.signal)
+      .then((tel) => {
+        if (ctrl.signal.aborted) return;
+        setTelemetryMetrics(tel.metrics as Record<string, unknown> | undefined);
+        setTelemetryLensMetrics(
+          tel.lens_metrics as Record<string, unknown> | undefined
+        );
+      })
+      .catch(() => {
+        /* device may not have telemetry yet; the pull just skips metrics */
+      });
+    return () => ctrl.abort();
+  }, [initial]);
 
   const set = <K extends keyof FormState>(k: K, v: FormState[K]) =>
     setForm((f) => ({ ...f, [k]: v }));
@@ -708,7 +771,13 @@ export function DeviceForm({
         {isEdit &&
           initial &&
           Object.keys(
-            pullFromDeviceTags(initial.tags, initial.protocol, initial.type)
+            pullFromDeviceTags(
+              initial.tags,
+              initial.protocol,
+              initial.type,
+              telemetryMetrics,
+              telemetryLensMetrics
+            )
           ).length > 0 && (
             <div className="mt-2 flex items-center justify-between gap-3 rounded border border-dashed bg-background/60 px-3 py-2 text-[11px] text-muted-foreground">
               <span>
@@ -723,7 +792,9 @@ export function DeviceForm({
                   const t = pullFromDeviceTags(
                     initial.tags,
                     initial.protocol,
-                    initial.type
+                    initial.type,
+                    telemetryMetrics,
+                    telemetryLensMetrics
                   );
                   setForm((f) => ({
                     ...f,
