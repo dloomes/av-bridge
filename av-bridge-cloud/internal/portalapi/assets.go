@@ -643,16 +643,26 @@ func (h *Handler) DeleteAsset(w http.ResponseWriter, r *http.Request) {
 
 // ---- CSV export / import ---------------------------------------------------
 
-// assetCSVColumns is the canonical column order emitted on export + accepted
-// on import. Anchored here so a customer's edited export round-trips
-// cleanly. The (building, room) columns identify placement — both blank
-// means the asset is unplaced. If your tenant has multiple buildings with
-// the same name, disambiguate via the /assets page's building filter
-// before editing (import will error on ambiguous placement).
+// assetCSVColumns is the canonical column order emitted on export. Import
+// accepts any subset that includes the required columns (see
+// requiredImportColumns) — extra columns are ignored, missing optional
+// columns default to blank. This means CSVs exported before region/
+// location were added still round-trip cleanly.
+//
+// Region + location are informational: (building, room) alone identify
+// placement in a tenant with unique building names. When multiple
+// buildings share a name, the import uses (region, location, building)
+// to disambiguate.
 var assetCSVColumns = []string{
 	"asset_tag", "name", "category", "manufacturer", "model", "serial_number",
-	"status", "building", "room", "purchase_date", "warranty_end", "notes",
+	"status", "region", "location", "building", "room",
+	"purchase_date", "warranty_end", "notes",
 }
+
+// requiredImportColumns is the minimal header set the parser insists on.
+// Name + category are the only fields we can't sensibly default. Missing
+// any other column just means the corresponding value defaults to blank.
+var requiredImportColumns = []string{"name", "category"}
 
 // ExportAssets — GET /api/v1/assets/export.csv
 //
@@ -675,8 +685,9 @@ func (h *Handler) ExportAssets(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Use the same query shape as ListAssets — customers expect export
-	// order to match the UI. Room + building are joined so we can emit
-	// them by name; the CSV never leaks internal UUIDs.
+	// order to match the UI. Region + location + building + room are all
+	// joined so we can emit them by name; the CSV never leaks internal
+	// UUIDs.
 	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `
 			SELECT COALESCE(a.asset_tag, ''),
@@ -686,14 +697,18 @@ func (h *Handler) ExportAssets(w http.ResponseWriter, r *http.Request) {
 			       COALESCE(a.model, ''),
 			       COALESCE(a.serial_number, ''),
 			       a.status,
+			       COALESCE(reg.name, ''),
+			       COALESCE(loc.name, ''),
 			       COALESCE(b.name, ''),
 			       COALESCE(rm.name, ''),
 			       a.purchase_date,
 			       a.warranty_end,
 			       COALESCE(a.notes, '')
 			  FROM assets a
-			  LEFT JOIN rooms rm    ON rm.id = a.room_id
-			  LEFT JOIN buildings b ON b.id  = rm.building_id
+			  LEFT JOIN rooms rm     ON rm.id  = a.room_id
+			  LEFT JOIN buildings b  ON b.id   = rm.building_id
+			  LEFT JOIN locations loc ON loc.id = b.location_id
+			  LEFT JOIN regions reg  ON reg.id = loc.region_id
 			 ORDER BY a.name ASC`)
 		if err != nil {
 			return err
@@ -702,11 +717,12 @@ func (h *Handler) ExportAssets(w http.ResponseWriter, r *http.Request) {
 		for rows.Next() {
 			var (
 				assetTag, name, category, manufacturer, model, serial, status string
-				building, room, notes                                          string
+				region, location, building, room, notes                        string
 				purchase, warranty                                             *time.Time
 			)
 			if err := rows.Scan(&assetTag, &name, &category, &manufacturer,
-				&model, &serial, &status, &building, &room,
+				&model, &serial, &status,
+				&region, &location, &building, &room,
 				&purchase, &warranty, &notes); err != nil {
 				return err
 			}
@@ -720,7 +736,8 @@ func (h *Handler) ExportAssets(w http.ResponseWriter, r *http.Request) {
 			}
 			if err := cw.Write([]string{
 				assetTag, name, category, manufacturer, model, serial,
-				status, building, room, purchaseStr, warrantyStr, notes,
+				status, region, location, building, room,
+				purchaseStr, warrantyStr, notes,
 			}); err != nil {
 				return err
 			}
@@ -854,22 +871,23 @@ func (h *Handler) ImportAssets(w http.ResponseWriter, r *http.Request) {
 					})
 					continue
 				}
-				bIDs, ok := buildingIDs[strings.ToLower(row.Building)]
-				if !ok || len(bIDs) == 0 {
+				matches := buildingIDs[strings.ToLower(row.Building)]
+				if len(matches) == 0 {
 					res.Errors = append(res.Errors, importRowError{
 						Row: row.Row, AssetTag: row.AssetTag,
 						Message: "building '" + row.Building + "' not found",
 					})
 					continue
 				}
-				if len(bIDs) > 1 {
+				buildingID, resolveErr := resolveBuilding(matches, row.Region, row.Location)
+				if resolveErr != "" {
 					res.Errors = append(res.Errors, importRowError{
 						Row: row.Row, AssetTag: row.AssetTag,
-						Message: "building name '" + row.Building + "' is ambiguous in this tenant — rename one before importing",
+						Message: "building '" + row.Building + "' " + resolveErr,
 					})
 					continue
 				}
-				rID, ok := roomIDs[bIDs[0]+"|"+strings.ToLower(row.Room)]
+				rID, ok := roomIDs[buildingID+"|"+strings.ToLower(row.Room)]
 				if !ok {
 					res.Errors = append(res.Errors, importRowError{
 						Row: row.Row, AssetTag: row.AssetTag,
@@ -973,6 +991,11 @@ func (h *Handler) ImportAssets(w http.ResponseWriter, r *http.Request) {
 // csvAssetRow is a parsed CSV row keyed by column name. Row is the 1-based
 // line in the file (excluding the header) so error messages point at
 // something the operator can locate in Excel.
+//
+// Region + Location are optional; they only affect resolution when the
+// tenant has multiple buildings sharing a name, in which case they
+// disambiguate. Otherwise they're carried through informationally so an
+// operator glancing at a CSV knows which site each row belongs to.
 type csvAssetRow struct {
 	Row          int
 	AssetTag     string
@@ -982,6 +1005,8 @@ type csvAssetRow struct {
 	Model        string
 	Serial       string
 	Status       string
+	Region       string
+	Location     string
 	Building     string
 	Room         string
 	PurchaseDate string
@@ -1007,14 +1032,18 @@ func parseAssetCSV(r io.Reader) ([]csvAssetRow, error) {
 	for i, h := range header {
 		idx[strings.ToLower(strings.TrimSpace(h))] = i
 	}
-	for _, want := range assetCSVColumns {
+	// Only name + category are strictly required. Every other column
+	// (asset_tag, room hierarchy, dates, notes) defaults to blank when
+	// absent, so CSVs exported before a column was added still import
+	// cleanly.
+	for _, want := range requiredImportColumns {
 		if _, ok := idx[want]; !ok {
 			return nil, errors.New("CSV missing required column: " + want)
 		}
 	}
 	get := func(row []string, name string) string {
-		i := idx[name]
-		if i < 0 || i >= len(row) {
+		i, ok := idx[name]
+		if !ok || i < 0 || i >= len(row) {
 			return ""
 		}
 		return strings.TrimSpace(row[i])
@@ -1050,6 +1079,8 @@ func parseAssetCSV(r io.Reader) ([]csvAssetRow, error) {
 			Model:        get(rec, "model"),
 			Serial:       get(rec, "serial_number"),
 			Status:       get(rec, "status"),
+			Region:       get(rec, "region"),
+			Location:     get(rec, "location"),
 			Building:     get(rec, "building"),
 			Room:         get(rec, "room"),
 			PurchaseDate: get(rec, "purchase_date"),
@@ -1060,25 +1091,73 @@ func parseAssetCSV(r io.Reader) ([]csvAssetRow, error) {
 	return out, nil
 }
 
+// buildingLookup carries the hierarchy info needed to resolve a
+// (region, location, building) tuple to a single id. Region + location
+// are only consulted when a building name is ambiguous.
+type buildingLookup struct {
+	id       string
+	location string
+	region   string
+}
+
 // loadBuildingsByName maps a lower-cased building name to the list of
-// matching ids in this tenant. Multiple matches (returned as len > 1) are
-// treated as ambiguous by the caller.
-func loadBuildingsByName(ctx context.Context, tx pgx.Tx) (map[string][]string, error) {
-	out := map[string][]string{}
-	rows, err := tx.Query(ctx, `SELECT id::text, name FROM buildings`)
+// matching entries in this tenant. Multiple matches (len > 1) are handled
+// by the caller via region + location disambiguation.
+func loadBuildingsByName(ctx context.Context, tx pgx.Tx) (map[string][]buildingLookup, error) {
+	out := map[string][]buildingLookup{}
+	rows, err := tx.Query(ctx, `
+		SELECT b.id::text, b.name,
+		       COALESCE(loc.name, ''),
+		       COALESCE(reg.name, '')
+		  FROM buildings b
+		  LEFT JOIN locations loc ON loc.id = b.location_id
+		  LEFT JOIN regions reg  ON reg.id = loc.region_id`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var id, name string
-		if err := rows.Scan(&id, &name); err != nil {
+		var e buildingLookup
+		var name string
+		if err := rows.Scan(&e.id, &name, &e.location, &e.region); err != nil {
 			return nil, err
 		}
 		key := strings.ToLower(name)
-		out[key] = append(out[key], id)
+		out[key] = append(out[key], e)
 	}
 	return out, rows.Err()
+}
+
+// resolveBuilding picks a single building id from a set of same-named
+// matches, using region + location to disambiguate when supplied. Returns
+// an empty id + an error message suitable for a row-level import error.
+func resolveBuilding(matches []buildingLookup, region, location string) (string, string) {
+	if len(matches) == 0 {
+		return "", "not found"
+	}
+	if len(matches) == 1 {
+		return matches[0].id, ""
+	}
+	// Ambiguous — try filtering by the region/location hints. Compare
+	// case-insensitively and skip empty hints so blank region/location
+	// columns don't accidentally over-filter.
+	filtered := matches[:0:0]
+	for _, m := range matches {
+		if region != "" && !strings.EqualFold(m.region, region) {
+			continue
+		}
+		if location != "" && !strings.EqualFold(m.location, location) {
+			continue
+		}
+		filtered = append(filtered, m)
+	}
+	if len(filtered) == 1 {
+		return filtered[0].id, ""
+	}
+	if len(filtered) == 0 {
+		return "", "ambiguous — no match under region/location hints"
+	}
+	return "", "ambiguous — fill both region and location to disambiguate"
 }
 
 // loadRoomsByBuildingAndName maps "<building_id>|<lowercase room name>" to
