@@ -1,0 +1,129 @@
+name: Release av-bridge
+
+# Publishes signed Linux binaries + tarballs for the on-prem bridge whenever
+# a v-prefixed tag is pushed (v1.2.3, v0.4.0-rc1, etc). The av-bridge-ops
+# Ansible role downloads from this release: it hard-requires both binaries
+# and checksums.txt at the paths this workflow produces —
+#   releases/download/<tag>/av-bridge-linux-amd64
+#   releases/download/<tag>/av-bridge-linux-arm64
+#   releases/download/<tag>/checksums.txt
+# The .tar.gz bundles are for manual installs on a fresh Pi (they bundle the
+# binary + systemd unit + install.sh + config.example.yaml so a single
+# scp + ./install.sh gets a device online).
+
+# Quoted so strict YAML parsers don't coerce the key to boolean true;
+# GitHub Actions accepts either form.
+"on":
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version tag (e.g. v0.1.0-test). Used for artefact naming; does not create a git tag."
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build & publish
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: av-bridge
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Full history so `git describe --tags` in the Makefile resolves
+          # cleanly to the tag we're building.
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: av-bridge/go.mod
+          cache-dependency-path: av-bridge/go.sum
+
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ inputs.version }}"
+          else
+            VERSION="${GITHUB_REF##*/}"
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Building av-bridge ${VERSION}"
+
+      # Sanity gate — never ship a broken binary. Race detector off so this
+      # matches the release build; a separate CI workflow can run -race.
+      - name: Run tests
+        run: make test
+
+      - name: Build linux/amd64
+        run: make dist-amd64 VERSION=${{ steps.version.outputs.version }}
+
+      - name: Build linux/arm64
+        run: make dist-arm64 VERSION=${{ steps.version.outputs.version }}
+
+      # Assemble everything the release page needs into av-bridge/dist/.
+      # The Makefile leaves the plain binaries at av-bridge/ root and the
+      # tarballs in av-bridge/dist/, so we consolidate + checksum in one
+      # directory. All hashes live in checksums.txt so the on-device
+      # updater can verify them with a single fetch.
+      - name: Assemble release artefacts
+        working-directory: av-bridge/dist
+        shell: bash
+        run: |
+          cp ../av-bridge-linux-amd64 ./av-bridge-linux-amd64
+          cp ../av-bridge-linux-arm64 ./av-bridge-linux-arm64
+          sha256sum \
+            av-bridge-linux-amd64 \
+            av-bridge-linux-arm64 \
+            av-bridge-linux-amd64.tar.gz \
+            av-bridge-linux-arm64.tar.gz \
+            > checksums.txt
+          echo "--- checksums.txt ---"
+          cat checksums.txt
+
+      # Verify the version baked into the binary matches the tag — catches
+      # any Makefile/ldflags regression before publishing. The binary is
+      # linux/amd64 which runs on ubuntu-latest natively.
+      - name: Verify version stamp
+        working-directory: av-bridge/dist
+        shell: bash
+        run: |
+          chmod +x av-bridge-linux-amd64
+          STAMPED=$(./av-bridge-linux-amd64 -version | awk '{print $3}')
+          echo "Binary reports: $STAMPED"
+          echo "Expected:       ${{ steps.version.outputs.version }}"
+          if [ "$STAMPED" != "${{ steps.version.outputs.version }}" ]; then
+            echo "::error::Version mismatch — binary was built with $STAMPED but tag is ${{ steps.version.outputs.version }}"
+            exit 1
+          fi
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          # softprops runs at repo root, not the job's default working-directory.
+          # Paths must therefore be repo-root-relative.
+          name: av-bridge ${{ steps.version.outputs.version }}
+          tag_name: ${{ steps.version.outputs.version }}
+          draft: false
+          # Anything after a hyphen in the version (e.g. -rc1, -beta) marks
+          # it as a pre-release so the "latest" symlink stays on stable tags.
+          prerelease: ${{ contains(steps.version.outputs.version, '-') }}
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+          files: |
+            av-bridge/dist/av-bridge-linux-amd64
+            av-bridge/dist/av-bridge-linux-arm64
+            av-bridge/dist/av-bridge-linux-amd64.tar.gz
+            av-bridge/dist/av-bridge-linux-arm64.tar.gz
+            av-bridge/dist/checksums.txt
