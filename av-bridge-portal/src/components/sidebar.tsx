@@ -12,6 +12,7 @@ import {
   History,
   LayoutDashboard,
   MapPin,
+  Moon,
   Palette,
   Radio,
   ShieldCheck,
@@ -63,6 +64,7 @@ const SECTIONS: NavSection[] = [
     items: [
       { href: "/locations", label: "Locations", icon: MapPin },
       { href: "/assets", label: "Assets", icon: Boxes },
+      { href: "/nightly/schedule", label: "Room Readiness", icon: Moon },
       { href: "/users", label: "Users", icon: Users },
       { href: "/roles", label: "Roles", icon: KeyRound },
       { href: "/notifications", label: "Notifications", icon: Bell },

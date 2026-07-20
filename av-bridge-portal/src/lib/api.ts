@@ -188,6 +188,38 @@ export interface UpdateBrandingBody {
   logo_data_url?: string;
 }
 
+// Nightly Room Readiness schedule — the customer-level default row. See
+// docs/nightly-lifecycle-spec.md for the full data model. Slice 1 exposes
+// only this row; per-room overrides and recipe CRUD land in later slices.
+//
+// GET /api/v1/nightly/schedule auto-provisions defaults on first read, so
+// the portal never needs a "create schedule" flow.
+export interface NightlySchedule {
+  power_off_time: string;      // HH:MM (24h)
+  power_on_time: string;       // HH:MM (24h)
+  days_of_week: number[];      // ISO weekdays 1 (Mon) … 7 (Sun)
+  timezone: string;            // IANA name
+  test_recipe_id?: string;     // recipe not yet wired — slice 2 territory
+  helpdesk_email?: string;
+  retention_days: number;      // floor of 30
+  enabled: boolean;
+  updated_at?: string;
+}
+
+// UpdateNightlyScheduleBody — pointer-per-field so an omitted field leaves
+// the stored value alone, and an empty string clears the two nullable text
+// fields (helpdesk_email, test_recipe_id).
+export interface UpdateNightlyScheduleBody {
+  power_off_time?: string;
+  power_on_time?: string;
+  days_of_week?: number[];
+  timezone?: string;
+  test_recipe_id?: string;
+  helpdesk_email?: string;
+  retention_days?: number;
+  enabled?: boolean;
+}
+
 export const api = {
   // -- auth --------------------------------------------------------------------
   //
@@ -244,6 +276,15 @@ export const api = {
 
   updateBranding: (body: UpdateBrandingBody) =>
     request<void>("/api/v1/branding", { method: "PATCH", body: JSON.stringify(body) }),
+
+  getNightlySchedule: (signal?: AbortSignal) =>
+    request<NightlySchedule>("/api/v1/nightly/schedule", { signal }),
+
+  updateNightlySchedule: (body: UpdateNightlyScheduleBody) =>
+    request<void>("/api/v1/nightly/schedule", {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
 
   helpdeskCustomers: (signal?: AbortSignal) =>
     request<HelpdeskCustomer[]>("/api/v1/helpdesk/customers", { signal }),

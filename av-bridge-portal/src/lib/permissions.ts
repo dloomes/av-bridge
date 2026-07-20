@@ -19,7 +19,8 @@ export type PermissionCategory =
   | "Firmware"
   | "Users & Roles"
   | "Tenant"
-  | "Assets";
+  | "Assets"
+  | "Room Readiness";
 
 export interface PermissionDef {
   key: string;
@@ -70,6 +71,9 @@ export const PERMISSIONS: readonly PermissionDef[] = [
   { key: "branding.update",     title: "Update branding",      description: "Upload the tenant logo, change the accent colour and portal display name.", category: "Tenant" },
   // Assets
   { key: "asset.crud",          title: "Manage assets",        description: "Add, edit, and remove assets (physical inventory) in the tenant.", category: "Assets" },
+  // Room Readiness (nightly lifecycle)
+  { key: "nightly.view",        title: "View Room Readiness",  description: "See nightly schedules, recipes, and run history.",                       category: "Room Readiness" },
+  { key: "nightly.manage",      title: "Manage Room Readiness", description: "Edit the nightly schedule, room overrides, and test recipes.",         category: "Room Readiness" },
 ];
 
 // PERMISSIONS_BY_CATEGORY is what the matrix renders — same items, grouped
