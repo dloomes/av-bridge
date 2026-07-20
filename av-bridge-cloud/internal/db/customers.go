@@ -181,6 +181,7 @@ func seedSystemRoles(ctx context.Context, tx pgx.Tx, customerID string) error {
 				"role.crud",
 				"branding.update",
 				"view.assets", "asset.crud",
+				"nightly.view", "nightly.manage",
 			},
 		},
 		{
@@ -190,6 +191,7 @@ func seedSystemRoles(ctx context.Context, tx pgx.Tx, customerID string) error {
 				"view.dashboard", "view.audit", "view.reports",
 				"view.firmware", "view.notifications", "view.users",
 				"view.assets",
+				"nightly.view",
 				"command.device", "command.bulk", "reconnect.device",
 				"alert.acknowledge", "alert.resolve",
 				"notification.test",
@@ -202,6 +204,7 @@ func seedSystemRoles(ctx context.Context, tx pgx.Tx, customerID string) error {
 				"view.dashboard", "view.audit", "view.reports",
 				"view.firmware", "view.notifications", "view.users",
 				"view.assets",
+				"nightly.view",
 			},
 		},
 	}

@@ -153,6 +153,13 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 		mux.Handle("GET /api/v1/assets/export.csv", wrapPerm(portalauth.PermViewAssets, portal.Portal.ExportAssets))
 		mux.Handle("POST /api/v1/assets/import", wrapPerm(portalauth.PermAssetCRUD, portal.Portal.ImportAssets))
 
+		// Nightly Room Readiness — schedule CRUD. Slice 1 exposes only the
+		// customer-level schedule row; room overrides and recipe CRUD land
+		// in subsequent slices. GET auto-provisions defaults so the portal
+		// never needs a "create" step.
+		mux.Handle("GET /api/v1/nightly/schedule", wrapPerm(portalauth.PermNightlyView, portal.Portal.GetNightlySchedule))
+		mux.Handle("PATCH /api/v1/nightly/schedule", wrapPerm(portalauth.PermNightlyManage, portal.Portal.UpdateNightlySchedule))
+
 		// User CRUD — every write is a distinct permission so a custom role
 		// can, e.g., grant create-and-update but not delete-and-reset.
 		mux.Handle("POST /api/v1/users", wrapPerm(portalauth.PermUserCreate, portal.Portal.CreateUser))

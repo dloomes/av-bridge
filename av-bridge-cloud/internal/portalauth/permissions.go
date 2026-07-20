@@ -78,6 +78,14 @@ const (
 // gating the read serves no purpose); writes gate on this permission.
 const PermBrandingUpdate = "branding.update"
 
+// Nightly lifecycle (Room Readiness). view lets a user see schedules,
+// recipes, and run history; manage lets an admin edit schedules, author
+// recipes, set per-room overrides. Operators + viewers get view only.
+const (
+	PermNightlyView   = "nightly.view"
+	PermNightlyManage = "nightly.manage"
+)
+
 // KnownPermissions is the closed set of valid permission keys — used by the
 // roles CRUD handler to reject unknown strings, and by the permission
 // engine to fail-closed if a role somehow references a permission that has
@@ -107,6 +115,8 @@ var KnownPermissions = map[string]struct{}{
 	PermBrandingUpdate:     {},
 	PermViewAssets:         {},
 	PermAssetCRUD:          {},
+	PermNightlyView:        {},
+	PermNightlyManage:      {},
 }
 
 // IsKnownPermission returns true if the string is a member of the
