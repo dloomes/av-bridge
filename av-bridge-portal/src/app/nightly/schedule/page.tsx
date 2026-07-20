@@ -1,7 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { CircleSlash, Loader2, Moon, RotateCcw, Settings2 } from "lucide-react";
+import Link from "next/link";
+import {
+  CircleSlash,
+  FileCode2,
+  Loader2,
+  Moon,
+  RotateCcw,
+  Settings2,
+} from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -11,6 +19,7 @@ import { useSession } from "@/hooks/useSession";
 import { api } from "@/lib/api";
 import { isAdmin } from "@/lib/session";
 import type {
+  NightlyRecipeRow,
   NightlyRoomRow,
   NightlySchedule,
   UpdateNightlyScheduleBody,
@@ -99,7 +108,13 @@ export default function NightlySchedulePage() {
   const [timezone, setTimezone] = useState("Europe/London");
   const [helpdeskEmail, setHelpdeskEmail] = useState("");
   const [retentionDays, setRetentionDays] = useState(90);
+  const [testRecipeID, setTestRecipeID] = useState<string>("");
   const [saving, setSaving] = useState(false);
+
+  // Recipe list — small, loaded once, refreshed after any edit that
+  // might create/delete recipes (in slice 2B: just page mount + when
+  // returning to /nightly/schedule from the recipes list).
+  const [recipes, setRecipes] = useState<NightlyRecipeRow[] | null>(null);
 
   // ── Room overrides state ───────────────────────────────────────────────
 
@@ -120,8 +135,20 @@ export default function NightlySchedulePage() {
       setTimezone(s.timezone);
       setHelpdeskEmail(s.helpdesk_email ?? "");
       setRetentionDays(s.retention_days);
+      setTestRecipeID(s.test_recipe_id ?? "");
     } catch (e) {
       if (!signal?.aborted) setLoadError((e as Error).message);
+    }
+  }, []);
+
+  const loadRecipes = useCallback(async (signal?: AbortSignal) => {
+    try {
+      const list = await api.listNightlyRecipes(signal);
+      if (signal?.aborted) return;
+      setRecipes(list);
+    } catch {
+      // Non-fatal — recipe picker just shows "none available" if the
+      // fetch fails; the rest of the page still functions.
     }
   }, []);
 
@@ -140,8 +167,9 @@ export default function NightlySchedulePage() {
     const ctrl = new AbortController();
     void loadCustomerSchedule(ctrl.signal);
     void loadRooms(ctrl.signal);
+    void loadRecipes(ctrl.signal);
     return () => ctrl.abort();
-  }, [loadCustomerSchedule, loadRooms]);
+  }, [loadCustomerSchedule, loadRooms, loadRecipes]);
 
   const toggleDay = (iso: number) => {
     setDays((prev) =>
@@ -160,7 +188,8 @@ export default function NightlySchedulePage() {
         JSON.stringify([...loaded.days_of_week].sort((a, b) => a - b)) ||
       timezone !== loaded.timezone ||
       helpdeskEmail !== (loaded.helpdesk_email ?? "") ||
-      retentionDays !== loaded.retention_days);
+      retentionDays !== loaded.retention_days ||
+      testRecipeID !== (loaded.test_recipe_id ?? ""));
 
   const handleSave = async () => {
     if (!loaded) return;
@@ -180,6 +209,11 @@ export default function NightlySchedulePage() {
     }
     if (retentionDays !== loaded.retention_days) {
       body.retention_days = retentionDays;
+    }
+    if (testRecipeID !== (loaded.test_recipe_id ?? "")) {
+      // Empty string clears the recipe assignment on the backend; a
+      // non-empty UUID sets it. Backend normalises "" → NULL.
+      body.test_recipe_id = testRecipeID;
     }
     if (Object.keys(body).length === 0) return;
 
@@ -435,6 +469,58 @@ export default function NightlySchedulePage() {
                 </CardContent>
               </Card>
 
+              {/* ── Test recipe ─────────────────────────────────────── */}
+              <Card>
+                <CardContent className="p-6 space-y-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <h2 className="text-sm font-semibold flex items-center gap-1.5">
+                        <FileCode2
+                          aria-hidden="true"
+                          className="h-3.5 w-3.5 text-muted-foreground"
+                        />
+                        Test recipe
+                      </h2>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Runs after power-on to verify the room is ready.
+                        Leave unset to power-cycle only. The recipe runner
+                        lands in Phase B; assignment is safe now.
+                      </p>
+                    </div>
+                    <Link
+                      href="/nightly/recipes"
+                      className="text-xs text-primary hover:underline shrink-0"
+                    >
+                      Manage recipes →
+                    </Link>
+                  </div>
+                  <div className="space-y-1 max-w-md">
+                    <label htmlFor="recipe" className="text-xs font-medium">
+                      Assigned recipe
+                    </label>
+                    <select
+                      id="recipe"
+                      value={testRecipeID}
+                      onChange={(e) => setTestRecipeID(e.target.value)}
+                      disabled={inputsDisabled}
+                      className="w-full rounded-md border bg-background px-3 py-2 text-sm disabled:opacity-50"
+                    >
+                      <option value="">
+                        {recipes && recipes.length === 0
+                          ? "No recipes yet — leave blank or create one"
+                          : "— none (power-cycle only) —"}
+                      </option>
+                      {(recipes ?? []).map((r) => (
+                        <option key={r.id} value={r.id}>
+                          {r.name} ({r.step_count}{" "}
+                          {r.step_count === 1 ? "step" : "steps"})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </CardContent>
+              </Card>
+
               {/* ── Notifications ─────────────────────────────────────── */}
               <Card>
                 <CardContent className="p-6 space-y-4">
@@ -670,17 +756,13 @@ export default function NightlySchedulePage() {
                 </CardContent>
               </Card>
 
-              {/* ── Placeholder: recipe + runs come in later slices ────── */}
+              {/* ── Placeholder: runs heatmap comes in the next slice ─── */}
               <Card className="opacity-70">
                 <CardContent className="p-6 space-y-2">
                   <h2 className="text-sm font-semibold text-muted-foreground">
-                    Coming in the next slices
+                    Coming in the next slice
                   </h2>
                   <ul className="text-xs text-muted-foreground list-disc list-inside space-y-1">
-                    <li>
-                      <span className="font-medium">Test recipe editor</span> —
-                      author reusable functional tests that run after power-on.
-                    </li>
                     <li>
                       <span className="font-medium">Run history heatmap</span>{" "}
                       — see the last N nights across the estate, drill into

@@ -166,6 +166,13 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 		mux.Handle("GET /api/v1/nightly/rooms", wrapPerm(portalauth.PermNightlyView, portal.Portal.ListNightlyRooms))
 		mux.Handle("PATCH /api/v1/nightly/rooms/{id}", wrapPerm(portalauth.PermNightlyManage, portal.Portal.UpdateRoomOverride))
 		mux.Handle("DELETE /api/v1/nightly/rooms/{id}", wrapPerm(portalauth.PermNightlyManage, portal.Portal.DeleteRoomOverride))
+		// Test recipes — slice 2B. Read gated on nightly.view (viewers
+		// can browse existing recipes); writes on nightly.manage.
+		mux.Handle("GET /api/v1/nightly/recipes", wrapPerm(portalauth.PermNightlyView, portal.Portal.ListNightlyRecipes))
+		mux.Handle("GET /api/v1/nightly/recipes/{id}", wrapPerm(portalauth.PermNightlyView, portal.Portal.GetNightlyRecipe))
+		mux.Handle("POST /api/v1/nightly/recipes", wrapPerm(portalauth.PermNightlyManage, portal.Portal.CreateNightlyRecipe))
+		mux.Handle("PATCH /api/v1/nightly/recipes/{id}", wrapPerm(portalauth.PermNightlyManage, portal.Portal.UpdateNightlyRecipe))
+		mux.Handle("DELETE /api/v1/nightly/recipes/{id}", wrapPerm(portalauth.PermNightlyManage, portal.Portal.DeleteNightlyRecipe))
 
 		// User CRUD — every write is a distinct permission so a custom role
 		// can, e.g., grant create-and-update but not delete-and-reset.

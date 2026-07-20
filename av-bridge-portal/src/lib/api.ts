@@ -255,6 +255,39 @@ export interface UpdateRoomOverrideBody {
   excluded_until?: string | null;    // YYYY-MM-DD
 }
 
+// Nightly test recipe — reusable step sequence executed after power-on.
+// Slice 2B handles storage only; step execution is Phase B territory.
+export interface NightlyRecipeRow {
+  id: string;
+  name: string;
+  description?: string;
+  step_count: number;
+  updated_at: string;
+}
+
+export interface NightlyRecipeDetail {
+  id: string;
+  name: string;
+  description?: string;
+  // Steps are an opaque JSON array here; a structured builder can layer
+  // types on later. `unknown[]` (not `any[]`) so consumers must narrow.
+  steps: unknown[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateNightlyRecipeBody {
+  name: string;
+  description?: string;
+  steps: unknown[];
+}
+
+export interface UpdateNightlyRecipeBody {
+  name?: string;
+  description?: string;
+  steps?: unknown[];
+}
+
 export const api = {
   // -- auth --------------------------------------------------------------------
   //
@@ -332,6 +365,32 @@ export const api = {
 
   deleteRoomOverride: (roomID: string) =>
     request<void>(`/api/v1/nightly/rooms/${encodeURIComponent(roomID)}`, {
+      method: "DELETE",
+    }),
+
+  listNightlyRecipes: (signal?: AbortSignal) =>
+    request<NightlyRecipeRow[]>("/api/v1/nightly/recipes", { signal }),
+
+  getNightlyRecipe: (id: string, signal?: AbortSignal) =>
+    request<NightlyRecipeDetail>(
+      `/api/v1/nightly/recipes/${encodeURIComponent(id)}`,
+      { signal }
+    ),
+
+  createNightlyRecipe: (body: CreateNightlyRecipeBody) =>
+    request<{ id: string }>("/api/v1/nightly/recipes", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  updateNightlyRecipe: (id: string, body: UpdateNightlyRecipeBody) =>
+    request<void>(`/api/v1/nightly/recipes/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+
+  deleteNightlyRecipe: (id: string) =>
+    request<void>(`/api/v1/nightly/recipes/${encodeURIComponent(id)}`, {
       method: "DELETE",
     }),
 
