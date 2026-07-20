@@ -53,6 +53,15 @@ type Config struct {
 	CommandMaxClaims     int
 	CommandSweepInterval time.Duration
 
+	// Session cleanup — deletes user_sessions rows that have been
+	// non-functional (expired or revoked) for longer than the retention
+	// window. Cheap DELETE on an indexed column; hourly by default is
+	// more than enough to keep the table trim without creating a
+	// hot-path burden. 7-day retention leaves a grace window for any
+	// future "recent sessions" audit view.
+	SessionCleanupInterval  time.Duration
+	SessionCleanupRetention time.Duration
+
 	// SMTP relay for outbound alert notifications. SMTPHost empty = dry-run
 	// (sends log instead of actually emailing) so dev can exercise the
 	// channel-config UI without standing up a mail server. SMTPFrom defaults
@@ -86,6 +95,14 @@ func FromEnv() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	sessionCleanupInterval, err := getenvDuration("SESSION_CLEANUP_INTERVAL", 1*time.Hour)
+	if err != nil {
+		return Config{}, err
+	}
+	sessionCleanupRetention, err := getenvDuration("SESSION_CLEANUP_RETENTION", 7*24*time.Hour)
+	if err != nil {
+		return Config{}, err
+	}
 
 	c := Config{
 		ListenAddr:           getenv("CLOUD_LISTEN_ADDR", ":8090"),
@@ -101,9 +118,11 @@ func FromEnv() (Config, error) {
 		PoCBridgeID:          getenv("POC_BRIDGE_COLLECTOR_ID", "poc-collector-01"),
 		PoCCustomerName:      getenv("POC_CUSTOMER_NAME", "PoC Customer"),
 		PoCHMACSecret:        os.Getenv("POC_HMAC_SECRET"),
-		CommandStaleAfter:    staleAfter,
-		CommandMaxClaims:     maxClaims,
-		CommandSweepInterval: sweepInterval,
+		CommandStaleAfter:       staleAfter,
+		CommandMaxClaims:        maxClaims,
+		CommandSweepInterval:    sweepInterval,
+		SessionCleanupInterval:  sessionCleanupInterval,
+		SessionCleanupRetention: sessionCleanupRetention,
 		SMTPHost:             os.Getenv("POC_SMTP_HOST"),
 		SMTPPort:             getenv("POC_SMTP_PORT", "587"),
 		SMTPUsername:         os.Getenv("POC_SMTP_USERNAME"),

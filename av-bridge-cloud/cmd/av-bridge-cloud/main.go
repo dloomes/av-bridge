@@ -21,6 +21,7 @@ import (
 	"github.com/dloomes/av-bridge-cloud/internal/portalapi"
 	"github.com/dloomes/av-bridge-cloud/internal/portalauth"
 	"github.com/dloomes/av-bridge-cloud/internal/secrets"
+	"github.com/dloomes/av-bridge-cloud/internal/sessioncleanup"
 	"github.com/dloomes/av-bridge-cloud/internal/wsfanout"
 )
 
@@ -176,6 +177,18 @@ func main() {
 		log,
 	)
 	go sweeper.Run(sweeperCtx)
+
+	// Portal session housekeeping — deletes user_sessions rows that have
+	// been non-functional (expired or revoked) for longer than the
+	// retention window. Shares sweeperCtx so shutdown stops both loops
+	// via the same stopSweeper() call.
+	sessionCleaner := sessioncleanup.NewCleaner(
+		store.AdminPool(),
+		cfg.SessionCleanupInterval,
+		cfg.SessionCleanupRetention,
+		log,
+	)
+	go sessionCleaner.Run(sweeperCtx)
 
 	go func() {
 		log.Info("cloud ingest listening", "addr", cfg.ListenAddr)
