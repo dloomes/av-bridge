@@ -220,6 +220,41 @@ export interface UpdateNightlyScheduleBody {
   enabled?: boolean;
 }
 
+// Nightly-lifecycle per-room override row. Returned by
+// GET /api/v1/nightly/rooms. Effective values are already resolved against
+// the customer default; `has_override` badges rooms whose behaviour
+// diverges from inherit.
+export interface NightlyRoomRow {
+  room_id: string;
+  room_name: string;
+  building_id: string;
+  building_name: string;
+  location_name?: string;
+  region_name?: string;
+  effective_power_off_time: string;   // HH:MM
+  effective_power_on_time: string;    // HH:MM
+  effective_days_of_week: number[];   // ISO 1-7
+  has_override: boolean;
+  override_power_off_time?: string;   // present only when override sets it
+  override_power_on_time?: string;
+  override_days_of_week?: number[];
+  excluded_until?: string;            // YYYY-MM-DD, if excluded through a date
+}
+
+// UpdateRoomOverrideBody — three-state fields.
+//   - undefined  → field omitted from request; server leaves stored value alone
+//   - null       → explicit clear; server drops the override, room inherits
+//                  the customer default for that field
+//   - value      → set the override to this value
+//
+// TypeScript's `| null` on optional fields models this exactly.
+export interface UpdateRoomOverrideBody {
+  power_off_time?: string | null;
+  power_on_time?: string | null;
+  days_of_week?: number[] | null;
+  excluded_until?: string | null;    // YYYY-MM-DD
+}
+
 export const api = {
   // -- auth --------------------------------------------------------------------
   //
@@ -284,6 +319,20 @@ export const api = {
     request<void>("/api/v1/nightly/schedule", {
       method: "PATCH",
       body: JSON.stringify(body),
+    }),
+
+  listNightlyRooms: (signal?: AbortSignal) =>
+    request<NightlyRoomRow[]>("/api/v1/nightly/rooms", { signal }),
+
+  updateRoomOverride: (roomID: string, body: UpdateRoomOverrideBody) =>
+    request<void>(`/api/v1/nightly/rooms/${encodeURIComponent(roomID)}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+
+  deleteRoomOverride: (roomID: string) =>
+    request<void>(`/api/v1/nightly/rooms/${encodeURIComponent(roomID)}`, {
+      method: "DELETE",
     }),
 
   helpdeskCustomers: (signal?: AbortSignal) =>

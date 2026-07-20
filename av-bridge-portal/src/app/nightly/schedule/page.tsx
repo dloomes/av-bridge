@@ -1,21 +1,28 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Loader2, Moon } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { CircleSlash, Loader2, Moon, RotateCcw, Settings2 } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Modal } from "@/components/modal";
 import { useToast } from "@/components/toast";
 import { useSession } from "@/hooks/useSession";
 import { api } from "@/lib/api";
 import { isAdmin } from "@/lib/session";
-import type { NightlySchedule, UpdateNightlyScheduleBody } from "@/lib/api";
+import type {
+  NightlyRoomRow,
+  NightlySchedule,
+  UpdateNightlyScheduleBody,
+  UpdateRoomOverrideBody,
+} from "@/lib/api";
 
-// Room Readiness — customer-level schedule editor.
+// Room Readiness — customer-level schedule editor + per-room overrides.
 //
-// Slice 2C: this page consumes GET/PATCH /api/v1/nightly/schedule. Per-room
-// overrides + recipe editor + runs heatmap live in later slices; the
-// "coming next" placeholders exist here to reserve their visual space so
-// the layout doesn't shift when they land.
+// Slice 2C shipped the customer default; slice 2A adds the per-room
+// override list + editor modal below. Recipe editor + runs heatmap still
+// live in later slices; the placeholder card at the bottom lists what's
+// coming next.
 
 // Curated timezone options. The customer's stored value is added
 // dynamically if it doesn't appear in this list, so bespoke IANA names set
@@ -45,14 +52,43 @@ const DAY_BUTTONS: { iso: number; label: string; full: string }[] = [
   { iso: 7, label: "Sun", full: "Sunday" },
 ];
 
+// Shorthand ISO-day-to-label lookup used in the compact per-row summary.
+const DAY_LABELS_SHORT = ["", "Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
+
+function summariseDays(days: number[]): string {
+  const s = [...days].sort((a, b) => a - b);
+  // Recognise Mon-Fri as the common weekday shorthand.
+  if (
+    s.length === 5 &&
+    s[0] === 1 &&
+    s[1] === 2 &&
+    s[2] === 3 &&
+    s[3] === 4 &&
+    s[4] === 5
+  ) {
+    return "Weekdays";
+  }
+  if (s.length === 7) return "Every day";
+  return s.map((d) => DAY_LABELS_SHORT[d]).join(" · ");
+}
+
+// isFutureDate — true if the YYYY-MM-DD string is today or later. Used to
+// decide whether the excluded_until date is still active. Backend keeps
+// past values but the UI treats them as "not excluded" for display.
+function isFutureDate(iso: string): boolean {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const d = new Date(iso + "T00:00:00");
+  return d.getTime() >= today.getTime();
+}
+
 export default function NightlySchedulePage() {
   const session = useSession();
   const canManage = isAdmin(session.user?.role) || !!session.user?.is_vendor;
   const { toast } = useToast();
 
-  // Loaded state (what the server currently has). Local draft state below
-  // tracks user edits; the save handler diffs draft vs loaded to build the
-  // PATCH body.
+  // ── Customer default state ─────────────────────────────────────────────
+
   const [loaded, setLoaded] = useState<NightlySchedule | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -65,26 +101,47 @@ export default function NightlySchedulePage() {
   const [retentionDays, setRetentionDays] = useState(90);
   const [saving, setSaving] = useState(false);
 
+  // ── Room overrides state ───────────────────────────────────────────────
+
+  const [rooms, setRooms] = useState<NightlyRoomRow[] | null>(null);
+  const [roomsError, setRoomsError] = useState<string | null>(null);
+  const [editingRoom, setEditingRoom] = useState<NightlyRoomRow | null>(null);
+  const [resettingRoomID, setResettingRoomID] = useState<string | null>(null);
+
+  const loadCustomerSchedule = useCallback(async (signal?: AbortSignal) => {
+    try {
+      const s = await api.getNightlySchedule(signal);
+      if (signal?.aborted) return;
+      setLoaded(s);
+      setEnabled(s.enabled);
+      setPowerOff(s.power_off_time);
+      setPowerOn(s.power_on_time);
+      setDays([...s.days_of_week].sort((a, b) => a - b));
+      setTimezone(s.timezone);
+      setHelpdeskEmail(s.helpdesk_email ?? "");
+      setRetentionDays(s.retention_days);
+    } catch (e) {
+      if (!signal?.aborted) setLoadError((e as Error).message);
+    }
+  }, []);
+
+  const loadRooms = useCallback(async (signal?: AbortSignal) => {
+    try {
+      const list = await api.listNightlyRooms(signal);
+      if (signal?.aborted) return;
+      setRooms(list);
+      setRoomsError(null);
+    } catch (e) {
+      if (!signal?.aborted) setRoomsError((e as Error).message);
+    }
+  }, []);
+
   useEffect(() => {
     const ctrl = new AbortController();
-    api
-      .getNightlySchedule(ctrl.signal)
-      .then((s) => {
-        if (ctrl.signal.aborted) return;
-        setLoaded(s);
-        setEnabled(s.enabled);
-        setPowerOff(s.power_off_time);
-        setPowerOn(s.power_on_time);
-        setDays([...s.days_of_week].sort((a, b) => a - b));
-        setTimezone(s.timezone);
-        setHelpdeskEmail(s.helpdesk_email ?? "");
-        setRetentionDays(s.retention_days);
-      })
-      .catch((e) => {
-        if (!ctrl.signal.aborted) setLoadError((e as Error).message);
-      });
+    void loadCustomerSchedule(ctrl.signal);
+    void loadRooms(ctrl.signal);
     return () => ctrl.abort();
-  }, []);
+  }, [loadCustomerSchedule, loadRooms]);
 
   const toggleDay = (iso: number) => {
     setDays((prev) =>
@@ -107,8 +164,6 @@ export default function NightlySchedulePage() {
 
   const handleSave = async () => {
     if (!loaded) return;
-    // Diff loaded vs draft; only send changed fields. Empty helpdesk_email
-    // sends "" to clear the value; unchanged omits the field entirely.
     const body: UpdateNightlyScheduleBody = {};
     if (enabled !== loaded.enabled) body.enabled = enabled;
     if (powerOff !== loaded.power_off_time) body.power_off_time = powerOff;
@@ -131,10 +186,11 @@ export default function NightlySchedulePage() {
     setSaving(true);
     try {
       await api.updateNightlySchedule(body);
-      // Refetch so updated_at and any server-side normalisation land in
-      // local state; keeps dirty tracking honest.
       const fresh = await api.getNightlySchedule();
       setLoaded(fresh);
+      // Room list's effective values depend on the customer default, so a
+      // change here can shift every inheriting room. Refresh both.
+      void loadRooms();
       toast({ title: "Schedule saved", variant: "success" });
     } catch (e) {
       toast({
@@ -147,6 +203,28 @@ export default function NightlySchedulePage() {
     }
   };
 
+  // Room override — reset via DELETE. Idempotent, so no confirmation prompt.
+  const handleResetOverride = async (row: NightlyRoomRow) => {
+    setResettingRoomID(row.room_id);
+    try {
+      await api.deleteRoomOverride(row.room_id);
+      await loadRooms();
+      toast({
+        title: `Reset "${row.room_name}"`,
+        description: "The room now inherits the customer default.",
+        variant: "success",
+      });
+    } catch (e) {
+      toast({
+        title: "Reset failed",
+        description: (e as Error).message,
+        variant: "destructive",
+      });
+    } finally {
+      setResettingRoomID(null);
+    }
+  };
+
   // If the stored timezone is a value not in the curated select, splice it
   // in so the user isn't forced to change it just to save something else.
   const timezoneOptions = COMMON_TIMEZONES.includes(timezone)
@@ -154,6 +232,30 @@ export default function NightlySchedulePage() {
     : [timezone, ...COMMON_TIMEZONES];
 
   const inputsDisabled = !canManage || saving;
+
+  // Group rooms by building — makes a table with dozens of rows scannable.
+  // Region · location · building forms the section header; rooms within a
+  // building sort alphabetically.
+  const roomGroups = useMemo(() => {
+    if (!rooms) return [];
+    const map = new Map<
+      string,
+      { region: string; location: string; building: string; rows: NightlyRoomRow[] }
+    >();
+    for (const r of rooms) {
+      const key = `${r.region_name ?? ""}|${r.location_name ?? ""}|${r.building_id}`;
+      if (!map.has(key)) {
+        map.set(key, {
+          region: r.region_name ?? "",
+          location: r.location_name ?? "",
+          building: r.building_name,
+          rows: [],
+        });
+      }
+      map.get(key)!.rows.push(r);
+    }
+    return Array.from(map.values());
+  }, [rooms]);
 
   return (
     <div className="flex flex-col h-screen">
@@ -399,7 +501,176 @@ export default function NightlySchedulePage() {
                 </CardContent>
               </Card>
 
-              {/* ── Placeholder: recipe + room overrides come in later slices */}
+              {/* ── Per-room overrides ─────────────────────────────────── */}
+              <Card>
+                <CardContent className="p-6 space-y-4">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <h2 className="text-sm font-semibold">
+                        Per-room overrides
+                      </h2>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Rooms inherit the customer default above. Override
+                        times, days, or exclude a room until a specific date
+                        (for a fit-out, refurb, or bank holiday closure).
+                      </p>
+                    </div>
+                  </div>
+
+                  {roomsError && (
+                    <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs [color:hsl(var(--destructive))]">
+                      {roomsError}
+                    </div>
+                  )}
+
+                  {rooms === null && !roomsError && (
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      Loading rooms…
+                    </div>
+                  )}
+
+                  {rooms !== null && rooms.length === 0 && (
+                    <div className="text-xs text-muted-foreground italic">
+                      No rooms visible under your scope.
+                    </div>
+                  )}
+
+                  {roomGroups.length > 0 && (
+                    <div className="space-y-4">
+                      {roomGroups.map((g) => (
+                        <div key={`${g.region}|${g.location}|${g.building}`}>
+                          <div className="mb-1 flex items-baseline gap-1.5 text-xs text-muted-foreground">
+                            {(g.region || g.location) && (
+                              <span className="uppercase tracking-wide text-[10px]">
+                                {[g.region, g.location].filter(Boolean).join(" · ")}
+                              </span>
+                            )}
+                            <span className="font-medium text-foreground">
+                              {g.building}
+                            </span>
+                          </div>
+                          <div className="overflow-x-auto rounded-md border">
+                            <table className="w-full min-w-[560px] text-sm">
+                              <thead>
+                                <tr className="border-b bg-muted/40 text-left text-[10px] uppercase tracking-wide text-muted-foreground">
+                                  <th scope="col" className="px-3 py-2 font-medium">
+                                    Room
+                                  </th>
+                                  <th scope="col" className="px-3 py-2 font-medium">
+                                    Schedule
+                                  </th>
+                                  <th scope="col" className="px-3 py-2 font-medium">
+                                    Status
+                                  </th>
+                                  <th scope="col" className="px-3 py-2 font-medium text-right">
+                                    <span className="sr-only">Actions</span>
+                                  </th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {g.rows.map((r) => {
+                                  const excluded =
+                                    r.excluded_until &&
+                                    isFutureDate(r.excluded_until);
+                                  return (
+                                    <tr
+                                      key={r.room_id}
+                                      className="border-b last:border-0 transition-colors hover:bg-primary/[0.04]"
+                                    >
+                                      <td className="px-3 py-2.5">
+                                        <div className="font-medium">
+                                          {r.room_name}
+                                        </div>
+                                      </td>
+                                      <td className="px-3 py-2.5 text-xs text-muted-foreground">
+                                        <span className="font-mono">
+                                          {r.effective_power_off_time}
+                                          {" → "}
+                                          {r.effective_power_on_time}
+                                        </span>
+                                        <span className="ml-2">
+                                          {summariseDays(r.effective_days_of_week)}
+                                        </span>
+                                      </td>
+                                      <td className="px-3 py-2.5">
+                                        {excluded ? (
+                                          <Badge variant="warning">
+                                            Excluded until{" "}
+                                            {r.excluded_until}
+                                          </Badge>
+                                        ) : r.has_override ? (
+                                          <Badge variant="secondary">
+                                            Customised
+                                          </Badge>
+                                        ) : (
+                                          <span className="text-xs text-muted-foreground">
+                                            Inherits default
+                                          </span>
+                                        )}
+                                      </td>
+                                      <td className="px-3 py-2.5">
+                                        <div className="flex items-center justify-end gap-1">
+                                          {canManage && (
+                                            <>
+                                              <Button
+                                                variant="ghost"
+                                                size="sm"
+                                                className="h-8"
+                                                onClick={() => setEditingRoom(r)}
+                                                aria-label={`Customise ${r.room_name}`}
+                                              >
+                                                <Settings2
+                                                  aria-hidden="true"
+                                                  className="h-3.5 w-3.5"
+                                                />
+                                                {r.has_override ? "Edit" : "Customise"}
+                                              </Button>
+                                              {r.has_override && (
+                                                <Button
+                                                  variant="ghost"
+                                                  size="sm"
+                                                  className="h-8"
+                                                  disabled={
+                                                    resettingRoomID === r.room_id
+                                                  }
+                                                  onClick={() =>
+                                                    handleResetOverride(r)
+                                                  }
+                                                  aria-label={`Reset ${r.room_name} to inherit`}
+                                                >
+                                                  {resettingRoomID === r.room_id ? (
+                                                    <Loader2
+                                                      aria-hidden="true"
+                                                      className="h-3.5 w-3.5 animate-spin"
+                                                    />
+                                                  ) : (
+                                                    <RotateCcw
+                                                      aria-hidden="true"
+                                                      className="h-3.5 w-3.5"
+                                                    />
+                                                  )}
+                                                  Reset
+                                                </Button>
+                                              )}
+                                            </>
+                                          )}
+                                        </div>
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* ── Placeholder: recipe + runs come in later slices ────── */}
               <Card className="opacity-70">
                 <CardContent className="p-6 space-y-2">
                   <h2 className="text-sm font-semibold text-muted-foreground">
@@ -411,11 +682,6 @@ export default function NightlySchedulePage() {
                       author reusable functional tests that run after power-on.
                     </li>
                     <li>
-                      <span className="font-medium">Per-room overrides</span> —
-                      customise the schedule / exclude a room until a date
-                      per-room.
-                    </li>
-                    <li>
                       <span className="font-medium">Run history heatmap</span>{" "}
                       — see the last N nights across the estate, drill into
                       per-step results, export as CSV.
@@ -424,7 +690,7 @@ export default function NightlySchedulePage() {
                 </CardContent>
               </Card>
 
-              {/* ── Save ──────────────────────────────────────────────── */}
+              {/* ── Save (customer default) ──────────────────────────── */}
               {canManage && (
                 <div className="sticky bottom-0 -mx-6 border-t bg-background/95 backdrop-blur px-6 py-3">
                   <div className="max-w-3xl flex items-center justify-end gap-2">
@@ -462,6 +728,287 @@ export default function NightlySchedulePage() {
           )}
         </div>
       </div>
+
+      {editingRoom && loaded && (
+        <RoomOverrideModal
+          room={editingRoom}
+          customerDefault={loaded}
+          onClose={() => setEditingRoom(null)}
+          onSaved={() => {
+            setEditingRoom(null);
+            void loadRooms();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Room override modal
+// ─────────────────────────────────────────────────────────────────────────
+//
+// Each of the three schedule fields (power-off, power-on, days) has a
+// "customise" toggle:
+//   - toggle OFF → this field inherits the customer default
+//   - toggle ON  → the field's own value takes effect (with a picker to set it)
+//
+// excluded_until is orthogonal: sets a "skip this room until date" no
+// matter what the schedule fields say. Set to empty to clear.
+//
+// On save the modal always sends explicit values for all four fields —
+// null for "inherit" (or "not excluded"), value for "custom". That gives
+// atomic write semantics: the row after save exactly matches what the
+// modal shows.
+
+function RoomOverrideModal({
+  room,
+  customerDefault,
+  onClose,
+  onSaved,
+}: {
+  room: NightlyRoomRow;
+  customerDefault: NightlySchedule;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const { toast } = useToast();
+
+  const [customPowerOff, setCustomPowerOff] = useState(
+    room.override_power_off_time !== undefined
+  );
+  const [customPowerOn, setCustomPowerOn] = useState(
+    room.override_power_on_time !== undefined
+  );
+  const [customDays, setCustomDays] = useState(
+    room.override_days_of_week !== undefined
+  );
+  const [powerOff, setPowerOff] = useState(
+    room.override_power_off_time ?? customerDefault.power_off_time
+  );
+  const [powerOn, setPowerOn] = useState(
+    room.override_power_on_time ?? customerDefault.power_on_time
+  );
+  const [days, setDays] = useState<number[]>(
+    [...(room.override_days_of_week ?? customerDefault.days_of_week)].sort(
+      (a, b) => a - b
+    )
+  );
+  const [excludedUntil, setExcludedUntil] = useState(
+    room.excluded_until ?? ""
+  );
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const toggleDay = (iso: number) => {
+    setDays((prev) =>
+      prev.includes(iso)
+        ? prev.filter((d) => d !== iso)
+        : [...prev, iso].sort((a, b) => a - b)
+    );
+  };
+
+  const dirty = true; // modal always allows save; the dirty prompt would just add friction here.
+
+  const handleSave = async () => {
+    setSaving(true);
+    setError(null);
+    const body: UpdateRoomOverrideBody = {
+      // Explicit null = clear the override, inherit customer default. Value
+      // = set the override. Every field is always in the payload so the
+      // resulting row exactly reflects the modal state.
+      power_off_time: customPowerOff ? powerOff : null,
+      power_on_time: customPowerOn ? powerOn : null,
+      days_of_week: customDays ? days : null,
+      excluded_until: excludedUntil.trim() === "" ? null : excludedUntil,
+    };
+    try {
+      await api.updateRoomOverride(room.room_id, body);
+      toast({
+        title: `Saved override for "${room.room_name}"`,
+        variant: "success",
+      });
+      onSaved();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={`Customise "${room.room_name}"`}
+      wide={false}
+      dirty={dirty}
+      dirtyPrompt="Discard changes to this room override?"
+    >
+      <div className="space-y-5">
+        <p className="text-xs text-muted-foreground">
+          Anything not customised inherits the customer default (
+          <span className="font-mono">
+            {customerDefault.power_off_time} → {customerDefault.power_on_time}
+          </span>
+          , {summariseDays(customerDefault.days_of_week)}).
+        </p>
+
+        {/* Power off */}
+        <OverrideRow
+          label="Power off at"
+          custom={customPowerOff}
+          onToggle={() => setCustomPowerOff((v) => !v)}
+          inheritValue={customerDefault.power_off_time}
+        >
+          <input
+            type="time"
+            value={powerOff}
+            onChange={(e) => setPowerOff(e.target.value)}
+            disabled={saving}
+            className="w-full rounded-md border bg-background px-3 py-2 text-sm disabled:opacity-50"
+          />
+        </OverrideRow>
+
+        {/* Power on */}
+        <OverrideRow
+          label="Power on at"
+          custom={customPowerOn}
+          onToggle={() => setCustomPowerOn((v) => !v)}
+          inheritValue={customerDefault.power_on_time}
+        >
+          <input
+            type="time"
+            value={powerOn}
+            onChange={(e) => setPowerOn(e.target.value)}
+            disabled={saving}
+            className="w-full rounded-md border bg-background px-3 py-2 text-sm disabled:opacity-50"
+          />
+        </OverrideRow>
+
+        {/* Days */}
+        <OverrideRow
+          label="Days of week"
+          custom={customDays}
+          onToggle={() => setCustomDays((v) => !v)}
+          inheritValue={summariseDays(customerDefault.days_of_week)}
+        >
+          <div className="flex flex-wrap gap-1">
+            {DAY_BUTTONS.map((d) => {
+              const active = days.includes(d.iso);
+              return (
+                <button
+                  key={d.iso}
+                  type="button"
+                  aria-pressed={active}
+                  aria-label={d.full}
+                  disabled={saving}
+                  onClick={() => toggleDay(d.iso)}
+                  className={`w-10 rounded-md border px-2 py-1.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 ${
+                    active
+                      ? "bg-primary text-primary-foreground border-primary"
+                      : "bg-background hover:bg-accent"
+                  }`}
+                >
+                  {d.label}
+                </button>
+              );
+            })}
+          </div>
+        </OverrideRow>
+
+        {/* Exclusion — orthogonal to the schedule fields. */}
+        <div className="space-y-2 rounded-md border p-3">
+          <div className="flex items-center gap-2 text-sm font-medium">
+            <CircleSlash
+              aria-hidden="true"
+              className="h-4 w-4 text-muted-foreground"
+            />
+            Exclude this room
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Skip this room from the nightly lifecycle until (and including)
+            the chosen date. Leave blank to keep the room in the schedule.
+          </p>
+          <div className="flex items-center gap-2">
+            <input
+              type="date"
+              value={excludedUntil}
+              onChange={(e) => setExcludedUntil(e.target.value)}
+              disabled={saving}
+              className="rounded-md border bg-background px-3 py-2 text-sm disabled:opacity-50"
+            />
+            {excludedUntil && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setExcludedUntil("")}
+                disabled={saving}
+              >
+                Clear
+              </Button>
+            )}
+          </div>
+        </div>
+
+        {error && (
+          <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm [color:hsl(var(--destructive))]">
+            {error}
+          </div>
+        )}
+
+        <div className="flex items-center justify-end gap-2 pt-2 border-t">
+          <Button variant="outline" size="sm" onClick={onClose} disabled={saving}>
+            Cancel
+          </Button>
+          <Button size="sm" onClick={handleSave} disabled={saving}>
+            {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+            Save override
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// OverrideRow — a single "custom vs inherit" field row used inside the
+// override modal. When the checkbox is off the inherited value is shown as
+// a subtle muted label; when it's on the caller-provided editor renders.
+function OverrideRow({
+  label,
+  custom,
+  onToggle,
+  inheritValue,
+  children,
+}: {
+  label: string;
+  custom: boolean;
+  onToggle: () => void;
+  inheritValue: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-medium">{label}</span>
+        <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer">
+          <input
+            type="checkbox"
+            checked={custom}
+            onChange={onToggle}
+            className="h-3.5 w-3.5 rounded border-input"
+          />
+          Customise
+        </label>
+      </div>
+      {custom ? (
+        children
+      ) : (
+        <div className="text-xs text-muted-foreground">
+          Inherits customer default:{" "}
+          <span className="font-mono text-foreground">{inheritValue}</span>
+        </div>
+      )}
     </div>
   );
 }

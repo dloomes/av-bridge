@@ -159,6 +159,13 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 		// never needs a "create" step.
 		mux.Handle("GET /api/v1/nightly/schedule", wrapPerm(portalauth.PermNightlyView, portal.Portal.GetNightlySchedule))
 		mux.Handle("PATCH /api/v1/nightly/schedule", wrapPerm(portalauth.PermNightlyManage, portal.Portal.UpdateNightlySchedule))
+		// Per-room overrides — slice 2A. GET lists rooms + effective
+		// schedule (COALESCE'd against customer default); PATCH upserts an
+		// override with explicit-null-clears semantics; DELETE removes the
+		// row entirely so the room reverts to inheriting.
+		mux.Handle("GET /api/v1/nightly/rooms", wrapPerm(portalauth.PermNightlyView, portal.Portal.ListNightlyRooms))
+		mux.Handle("PATCH /api/v1/nightly/rooms/{id}", wrapPerm(portalauth.PermNightlyManage, portal.Portal.UpdateRoomOverride))
+		mux.Handle("DELETE /api/v1/nightly/rooms/{id}", wrapPerm(portalauth.PermNightlyManage, portal.Portal.DeleteRoomOverride))
 
 		// User CRUD — every write is a distinct permission so a custom role
 		// can, e.g., grant create-and-update but not delete-and-reset.
