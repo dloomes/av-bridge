@@ -305,55 +305,84 @@ export default function AssetsPage() {
   return (
     <div className="min-h-screen">
       <div className="max-w-6xl mx-auto p-6 space-y-6">
-        <header className="flex flex-wrap items-start justify-between gap-3">
+        <header className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
-            <h1 className="text-2xl font-semibold">Assets</h1>
-            <p className="text-sm text-muted-foreground">
+            <h1 className="text-2xl font-semibold tracking-tight">Assets</h1>
+            <p className="mt-1 text-sm text-muted-foreground">
               Physical inventory for this tenant — monitored devices and
-              everything else you want to track.
+              everything else worth tracking.
             </p>
+            {assets && (
+              <p className="mt-2 text-xs text-muted-foreground">
+                <span className="font-medium text-foreground">
+                  {assets.length}
+                </span>{" "}
+                {assets.length === 1 ? "asset" : "assets"}
+                {anyFilterActive ? " match your filters" : " in the CMDB"}
+              </p>
+            )}
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={refresh}
-              disabled={refreshing}
-            >
-              <RefreshCcw
-                aria-hidden="true"
-                className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`}
-              />
-              Refresh
-            </Button>
-            <Button variant="outline" size="sm" onClick={handleExport}>
-              <Download aria-hidden="true" className="h-4 w-4" />
-              Export CSV
-            </Button>
+            {/* Utility cluster: sits to the left of the divider so the
+                primary CTA reads as the affirmative action rather than
+                just another button in the row. */}
+            <div className="flex items-center gap-1.5">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={refresh}
+                disabled={refreshing}
+                aria-label="Refresh asset list"
+              >
+                <RefreshCcw
+                  aria-hidden="true"
+                  className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`}
+                />
+                Refresh
+              </Button>
+              <Button variant="ghost" size="sm" onClick={handleExport}>
+                <Download aria-hidden="true" className="h-4 w-4" />
+                Export
+              </Button>
+              {admin && (
+                <>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => importInputRef.current?.click()}
+                    disabled={importing}
+                  >
+                    {importing ? (
+                      <Loader2
+                        aria-hidden="true"
+                        className="h-4 w-4 animate-spin"
+                      />
+                    ) : (
+                      <Upload aria-hidden="true" className="h-4 w-4" />
+                    )}
+                    Import
+                  </Button>
+                  <input
+                    ref={importInputRef}
+                    type="file"
+                    accept=".csv,text/csv"
+                    className="hidden"
+                    aria-label="Choose CSV file to import"
+                    onChange={handleImportFile}
+                  />
+                </>
+              )}
+            </div>
             {admin && (
               <>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => importInputRef.current?.click()}
-                  disabled={importing}
-                >
-                  {importing ? (
-                    <Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Upload aria-hidden="true" className="h-4 w-4" />
-                  )}
-                  Import CSV
-                </Button>
-                <input
-                  ref={importInputRef}
-                  type="file"
-                  accept=".csv,text/csv"
-                  className="hidden"
-                  aria-label="Choose CSV file to import"
-                  onChange={handleImportFile}
+                <div
+                  aria-hidden="true"
+                  className="h-6 w-px bg-border mx-0.5"
                 />
-                <Button size="sm" onClick={() => setEditing({ mode: "create" })}>
+                <Button
+                  size="sm"
+                  onClick={() => setEditing({ mode: "create" })}
+                >
                   <Plus aria-hidden="true" className="h-4 w-4" />
                   New asset
                 </Button>
@@ -445,24 +474,37 @@ export default function AssetsPage() {
           </div>
         ) : assets.length === 0 ? (
           <Card>
-            <CardContent className="p-10 text-center space-y-3">
-              <Boxes
+            <CardContent className="p-12 text-center space-y-4">
+              {/* Empty state is the moment the operator lands on a fresh
+                  tenant — give it enough presence to feel intentional,
+                  not like a broken table. Circle + accent tint hints at
+                  the tenant colour without being loud. */}
+              <div
                 aria-hidden="true"
-                className="h-8 w-8 text-muted-foreground/70 mx-auto"
-              />
-              <div className="text-sm font-medium">
-                {anyFilterActive ? "No assets match those filters" : "No assets yet"}
+                className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-primary/10"
+              >
+                <Boxes className="h-7 w-7 [color:hsl(var(--primary))]" />
               </div>
-              <p className="text-xs text-muted-foreground max-w-md mx-auto">
-                {anyFilterActive
-                  ? "Try clearing filters or search terms."
-                  : admin
-                    ? "Assets track everything the tenant owns — monitored gear plus mounts, cables, remotes, and anything else worth cataloguing."
-                    : "Nothing has been added yet."}
-              </p>
+              <div className="space-y-1">
+                <div className="text-base font-semibold">
+                  {anyFilterActive
+                    ? "No assets match those filters"
+                    : "No assets yet"}
+                </div>
+                <p className="text-sm text-muted-foreground max-w-md mx-auto">
+                  {anyFilterActive
+                    ? "Try clearing filters or search terms."
+                    : admin
+                      ? "Assets track everything the tenant owns — monitored gear plus mounts, cables, remotes, and anything else worth cataloguing."
+                      : "Nothing has been added yet."}
+                </p>
+              </div>
               {admin && !anyFilterActive && (
-                <div className="pt-2">
-                  <Button size="sm" onClick={() => setEditing({ mode: "create" })}>
+                <div className="pt-1">
+                  <Button
+                    size="sm"
+                    onClick={() => setEditing({ mode: "create" })}
+                  >
                     <Plus aria-hidden="true" className="h-4 w-4" />
                     Add your first asset
                   </Button>
@@ -483,13 +525,23 @@ export default function AssetsPage() {
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[720px] text-sm">
                   <thead>
-                    <tr className="border-b bg-muted/30 text-left text-xs uppercase tracking-wide text-muted-foreground">
-                      <th scope="col" className="px-4 py-2.5 font-medium">Asset</th>
-                      <th scope="col" className="px-4 py-2.5 font-medium">Category</th>
-                      <th scope="col" className="px-4 py-2.5 font-medium">Location</th>
-                      <th scope="col" className="px-4 py-2.5 font-medium">Status</th>
-                      <th scope="col" className="px-4 py-2.5 font-medium">Monitored</th>
-                      <th scope="col" className="px-4 py-2.5 font-medium">
+                    <tr className="border-b bg-muted/40 text-left text-[11px] uppercase tracking-[0.08em] text-muted-foreground">
+                      <th scope="col" className="px-4 py-3 font-medium">
+                        Asset
+                      </th>
+                      <th scope="col" className="px-4 py-3 font-medium">
+                        Category
+                      </th>
+                      <th scope="col" className="px-4 py-3 font-medium">
+                        Location
+                      </th>
+                      <th scope="col" className="px-4 py-3 font-medium">
+                        Status
+                      </th>
+                      <th scope="col" className="px-4 py-3 font-medium">
+                        Monitored
+                      </th>
+                      <th scope="col" className="px-4 py-3 font-medium">
                         <span className="sr-only">Actions</span>
                       </th>
                     </tr>
@@ -498,83 +550,132 @@ export default function AssetsPage() {
                     {assets.map((a) => (
                       <tr
                         key={a.id}
-                        className="border-b last:border-0 transition-colors duration-150 hover:bg-muted/20"
+                        className="border-b last:border-0 transition-colors duration-150 hover:bg-primary/[0.04]"
                       >
-                        <td className="px-4 py-3">
-                          <div className="font-medium">{a.name}</div>
-                          <div className="text-xs text-muted-foreground flex flex-wrap gap-x-2">
-                            {a.asset_tag && <span>#{a.asset_tag}</span>}
-                            {a.manufacturer && <span>{a.manufacturer}</span>}
-                            {a.model && <span>{a.model}</span>}
-                            {a.serial_number && (
-                              <span className="font-mono">sn:{a.serial_number}</span>
-                            )}
+                        <td className="px-4 py-3.5 align-top">
+                          {/* Two-line stack: name is the primary read,
+                              meta line is dim so the eye moves down the
+                              column quickly. */}
+                          <div className="text-[15px] font-semibold leading-tight">
+                            {a.name}
                           </div>
-                        </td>
-                        <td className="px-4 py-3">
-                          <span className="text-xs">{categoryLabel(a.category)}</span>
-                        </td>
-                        <td className="px-4 py-3">
-                          {a.room ? (
-                            <>
-                              <div className="text-xs font-medium">{a.room}</div>
-                              <div className="text-xs text-muted-foreground">
-                                {[a.region, a.location, a.building].filter(Boolean).join(" · ")}
-                              </div>
-                            </>
-                          ) : (
-                            <span className="text-xs text-muted-foreground">Unplaced</span>
+                          {(a.asset_tag ||
+                            a.manufacturer ||
+                            a.model ||
+                            a.serial_number) && (
+                            <div className="mt-1 text-xs text-muted-foreground flex flex-wrap gap-x-2.5 gap-y-0.5">
+                              {a.asset_tag && (
+                                <span className="font-mono">
+                                  #{a.asset_tag}
+                                </span>
+                              )}
+                              {a.manufacturer && <span>{a.manufacturer}</span>}
+                              {a.model && <span>{a.model}</span>}
+                              {a.serial_number && (
+                                <span className="font-mono">
+                                  sn:{a.serial_number}
+                                </span>
+                              )}
+                            </div>
                           )}
                         </td>
-                        <td className="px-4 py-3">
+                        <td className="px-4 py-3.5 align-top text-sm">
+                          {categoryLabel(a.category)}
+                        </td>
+                        <td className="px-4 py-3.5 align-top">
+                          {a.room ? (
+                            <>
+                              <div className="text-sm font-medium leading-tight">
+                                {a.room}
+                              </div>
+                              {[a.region, a.location, a.building].filter(
+                                Boolean
+                              ).length > 0 && (
+                                <div className="mt-0.5 text-xs text-muted-foreground">
+                                  {[a.region, a.location, a.building]
+                                    .filter(Boolean)
+                                    .join(" · ")}
+                                </div>
+                              )}
+                            </>
+                          ) : (
+                            <span className="text-sm text-muted-foreground italic">
+                              Unplaced
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3.5 align-top">
                           <Badge variant={statusVariant(a.status)}>
                             {statusLabel(a.status)}
                           </Badge>
                         </td>
-                        <td className="px-4 py-3">
+                        <td className="px-4 py-3.5 align-top">
                           {a.device_id ? (
                             <Link
                               href={`/devices/${encodeURIComponent(a.device_id)}`}
                               aria-label={`View device linked to ${a.name}`}
-                              className="inline-flex items-center gap-1 rounded px-2 py-1.5 text-xs text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                              className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium [color:hsl(var(--primary))] hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                             >
-                              Yes
-                              <ExternalLink aria-hidden="true" className="h-3.5 w-3.5" />
+                              <span
+                                aria-hidden="true"
+                                className="inline-block h-1.5 w-1.5 rounded-full bg-[color:hsl(var(--success))]"
+                              />
+                              Live
+                              <ExternalLink
+                                aria-hidden="true"
+                                className="h-3.5 w-3.5"
+                              />
                             </Link>
                           ) : admin ? (
                             <Button
                               type="button"
-                              variant="ghost"
+                              variant="outline"
                               size="sm"
                               onClick={() => setMonitoring(a)}
                               aria-label={`Set up monitoring for ${a.name}`}
+                              className="h-8 text-xs"
                             >
-                              <Radio aria-hidden="true" className="h-3.5 w-3.5" />
+                              <Radio
+                                aria-hidden="true"
+                                className="h-3.5 w-3.5"
+                              />
                               Set up
                             </Button>
                           ) : (
-                            <span className="text-xs text-muted-foreground">No</span>
+                            <span className="text-xs text-muted-foreground">
+                              —
+                            </span>
                           )}
                         </td>
-                        <td className="px-4 py-3">
-                          <div className="flex justify-end gap-1">
+                        <td className="px-4 py-3.5 align-top">
+                          <div className="flex justify-end gap-0.5">
                             {admin && (
                               <>
                                 <Button
                                   variant="ghost"
                                   size="icon"
+                                  className="h-8 w-8"
                                   aria-label={`Edit ${a.name}`}
-                                  onClick={() => setEditing({ mode: "edit", existing: a })}
+                                  onClick={() =>
+                                    setEditing({ mode: "edit", existing: a })
+                                  }
                                 >
-                                  <Pencil aria-hidden="true" className="h-4 w-4" />
+                                  <Pencil
+                                    aria-hidden="true"
+                                    className="h-3.5 w-3.5"
+                                  />
                                 </Button>
                                 <Button
                                   variant="ghost"
                                   size="icon"
+                                  className="h-8 w-8 hover:[color:hsl(var(--destructive))]"
                                   aria-label={`Delete ${a.name}`}
                                   onClick={() => setDeleting(a)}
                                 >
-                                  <Trash2 aria-hidden="true" className="h-4 w-4" />
+                                  <Trash2
+                                    aria-hidden="true"
+                                    className="h-3.5 w-3.5"
+                                  />
                                 </Button>
                               </>
                             )}
@@ -619,29 +720,33 @@ export default function AssetsPage() {
                 : "Import complete"
             }
           >
-            <div className="space-y-3 text-sm">
-              <div className="grid grid-cols-3 gap-3">
+            <div className="space-y-4 text-sm">
+              <div className="grid grid-cols-3 gap-2">
+                {/* Stat row: labels and numbers now share a tighter
+                    scale so the jump from meta to headline isn't jarring.
+                    Each card gets a coloured accent stripe on the border
+                    so status is legible at a glance. */}
                 <div className="rounded-md border p-3">
-                  <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                  <div className="text-xs text-muted-foreground">
                     Processed
                   </div>
-                  <div className="text-2xl font-semibold">
+                  <div className="mt-1 text-xl font-semibold tabular-nums">
                     {importResult.processed}
                   </div>
                 </div>
-                <div className="rounded-md border p-3">
-                  <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                <div className="rounded-md border border-[color:hsl(var(--success))]/30 bg-[color:hsl(var(--success))]/5 p-3">
+                  <div className="text-xs [color:hsl(var(--success))]">
                     Created
                   </div>
-                  <div className="text-2xl font-semibold text-[color:hsl(var(--success))]">
+                  <div className="mt-1 text-xl font-semibold tabular-nums [color:hsl(var(--success))]">
                     {importResult.created}
                   </div>
                 </div>
-                <div className="rounded-md border p-3">
-                  <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                <div className="rounded-md border border-primary/30 bg-primary/5 p-3">
+                  <div className="text-xs [color:hsl(var(--primary))]">
                     Updated
                   </div>
-                  <div className="text-2xl font-semibold text-[color:hsl(var(--primary))]">
+                  <div className="mt-1 text-xl font-semibold tabular-nums [color:hsl(var(--primary))]">
                     {importResult.updated}
                   </div>
                 </div>
