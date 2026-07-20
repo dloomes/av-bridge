@@ -288,6 +288,76 @@ export interface UpdateNightlyRecipeBody {
   steps?: unknown[];
 }
 
+// Nightly run — one row per scheduled cycle. Written by the scheduler
+// (see internal/nightly.Scheduler); the portal is read-only here.
+export interface NightlyRunRow {
+  id: string;
+  room_id: string;
+  room_name: string;
+  building_id: string;
+  building_name: string;
+  location_name?: string;
+  region_name?: string;
+  recipe_id?: string;
+  recipe_name?: string;
+  phase: NightlyPhase;
+  status: NightlyStatus;
+  scheduled_at: string;
+  started_at?: string;
+  completed_at?: string;
+  duration_seconds?: number;
+  failure_reason?: string;
+}
+
+// Every phase the state machine can be in. Kept in sync with the CHECK
+// constraint in migration 0023 — a new phase there means adding here too.
+export type NightlyPhase =
+  | "pending"
+  | "scheduled_off"
+  | "off"
+  | "scheduled_on"
+  | "waking"
+  | "warming"
+  | "testing"
+  | "ready"
+  | "failed";
+
+export type NightlyStatus =
+  | "pending"
+  | "in_progress"
+  | "succeeded"
+  | "failed"
+  | "skipped";
+
+// Step result inside a run. Phase B populates these; slice 3 dry-run
+// leaves them empty (the runs list still works, detail page shows a
+// "no step results yet" hint until the recipe runner lands).
+export interface NightlyStepRow {
+  step_index: number;
+  step_name: string;
+  step_type: string;
+  device_id?: string;
+  device_name?: string;
+  expected?: unknown;
+  actual?: unknown;
+  passed: boolean;
+  error?: string;
+  started_at?: string;
+  completed_at?: string;
+}
+
+export interface NightlyRunDetail extends NightlyRunRow {
+  steps: NightlyStepRow[];
+}
+
+export interface ListRunsOpts {
+  from?: string;         // RFC 3339
+  to?: string;           // RFC 3339
+  room_id?: string;
+  status?: string;       // csv of NightlyStatus values
+  limit?: number;
+}
+
 export const api = {
   // -- auth --------------------------------------------------------------------
   //
@@ -393,6 +463,26 @@ export const api = {
     request<void>(`/api/v1/nightly/recipes/${encodeURIComponent(id)}`, {
       method: "DELETE",
     }),
+
+  listNightlyRuns: (opts?: ListRunsOpts, signal?: AbortSignal) => {
+    const params = new URLSearchParams();
+    if (opts?.from) params.set("from", opts.from);
+    if (opts?.to) params.set("to", opts.to);
+    if (opts?.room_id) params.set("room_id", opts.room_id);
+    if (opts?.status) params.set("status", opts.status);
+    if (opts?.limit) params.set("limit", String(opts.limit));
+    const q = params.toString();
+    return request<NightlyRunRow[]>(
+      "/api/v1/nightly/runs" + (q ? `?${q}` : ""),
+      { signal }
+    );
+  },
+
+  getNightlyRun: (id: string, signal?: AbortSignal) =>
+    request<NightlyRunDetail>(
+      `/api/v1/nightly/runs/${encodeURIComponent(id)}`,
+      { signal }
+    ),
 
   helpdeskCustomers: (signal?: AbortSignal) =>
     request<HelpdeskCustomer[]>("/api/v1/helpdesk/customers", { signal }),

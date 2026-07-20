@@ -173,6 +173,9 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 		mux.Handle("POST /api/v1/nightly/recipes", wrapPerm(portalauth.PermNightlyManage, portal.Portal.CreateNightlyRecipe))
 		mux.Handle("PATCH /api/v1/nightly/recipes/{id}", wrapPerm(portalauth.PermNightlyManage, portal.Portal.UpdateNightlyRecipe))
 		mux.Handle("DELETE /api/v1/nightly/recipes/{id}", wrapPerm(portalauth.PermNightlyManage, portal.Portal.DeleteNightlyRecipe))
+		// Run history — slice 4. Read only; the scheduler is the writer.
+		mux.Handle("GET /api/v1/nightly/runs", wrapPerm(portalauth.PermNightlyView, portal.Portal.ListNightlyRuns))
+		mux.Handle("GET /api/v1/nightly/runs/{id}", wrapPerm(portalauth.PermNightlyView, portal.Portal.GetNightlyRun))
 
 		// User CRUD — every write is a distinct permission so a custom role
 		// can, e.g., grant create-and-update but not delete-and-reset.

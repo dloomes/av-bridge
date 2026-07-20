@@ -756,19 +756,26 @@ export default function NightlySchedulePage() {
                 </CardContent>
               </Card>
 
-              {/* ── Placeholder: runs heatmap comes in the next slice ─── */}
-              <Card className="opacity-70">
-                <CardContent className="p-6 space-y-2">
-                  <h2 className="text-sm font-semibold text-muted-foreground">
-                    Coming in the next slice
-                  </h2>
-                  <ul className="text-xs text-muted-foreground list-disc list-inside space-y-1">
-                    <li>
-                      <span className="font-medium">Run history heatmap</span>{" "}
-                      — see the last N nights across the estate, drill into
-                      per-step results, export as CSV.
-                    </li>
-                  </ul>
+              {/* ── Run history link ─────────────────────────────────── */}
+              <Card>
+                <CardContent className="p-6">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <h2 className="text-sm font-semibold">Run history</h2>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Every night the scheduler creates a run per room,
+                        walks it through power-off → power-on → ready, and
+                        records the outcome. Review the estate's nightly
+                        health here.
+                      </p>
+                    </div>
+                    <Link
+                      href="/nightly/runs"
+                      className="shrink-0 text-xs text-primary hover:underline"
+                    >
+                      View runs →
+                    </Link>
+                  </div>
                 </CardContent>
               </Card>
 
