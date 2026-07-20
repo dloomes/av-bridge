@@ -176,6 +176,9 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 		// Run history — slice 4. Read only; the scheduler is the writer.
 		mux.Handle("GET /api/v1/nightly/runs", wrapPerm(portalauth.PermNightlyView, portal.Portal.ListNightlyRuns))
 		mux.Handle("GET /api/v1/nightly/runs/{id}", wrapPerm(portalauth.PermNightlyView, portal.Portal.GetNightlyRun))
+		// Morning digest — slice 5. The goroutine sends automatically; this
+		// endpoint lets an operator trigger a preview send on demand.
+		mux.Handle("POST /api/v1/nightly/digest/send-now", wrapPerm(portalauth.PermNightlyManage, portal.Portal.SendNightlyDigest))
 
 		// User CRUD — every write is a distinct permission so a custom role
 		// can, e.g., grant create-and-update but not delete-and-reset.

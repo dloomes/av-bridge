@@ -484,6 +484,11 @@ export const api = {
       { signal }
     ),
 
+  sendNightlyDigestNow: () =>
+    request<{ status: string }>("/api/v1/nightly/digest/send-now", {
+      method: "POST",
+    }),
+
   helpdeskCustomers: (signal?: AbortSignal) =>
     request<HelpdeskCustomer[]>("/api/v1/helpdesk/customers", { signal }),
 

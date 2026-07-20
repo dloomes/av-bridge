@@ -16,6 +16,7 @@ import (
 
 	"github.com/dloomes/av-bridge-cloud/internal/audit"
 	"github.com/dloomes/av-bridge-cloud/internal/db"
+	"github.com/dloomes/av-bridge-cloud/internal/nightly"
 	"github.com/dloomes/av-bridge-cloud/internal/notify"
 	"github.com/dloomes/av-bridge-cloud/internal/portalauth"
 	"github.com/dloomes/av-bridge-cloud/internal/secrets"
@@ -26,13 +27,15 @@ type Handler struct {
 	store      *db.Store
 	cipher     secrets.Cipher
 	dispatcher *notify.Dispatcher
+	digest     *nightly.DigestSender
 	log        *slog.Logger
 }
 
 // New. dispatcher may be nil — the notification channel endpoints still
-// serve reads and CRUD but the test-send endpoint returns 503.
-func New(store *db.Store, cipher secrets.Cipher, dispatcher *notify.Dispatcher, log *slog.Logger) *Handler {
-	return &Handler{store: store, cipher: cipher, dispatcher: dispatcher, log: log}
+// serve reads and CRUD but the test-send endpoint returns 503. digest may
+// be nil — the nightly send-now endpoint returns 503 in that case.
+func New(store *db.Store, cipher secrets.Cipher, dispatcher *notify.Dispatcher, digest *nightly.DigestSender, log *slog.Logger) *Handler {
+	return &Handler{store: store, cipher: cipher, dispatcher: dispatcher, digest: digest, log: log}
 }
 
 // withTenant runs fn under the caller's customer scope. On error it writes a

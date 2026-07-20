@@ -123,6 +123,9 @@ export default function NightlySchedulePage() {
   const [editingRoom, setEditingRoom] = useState<NightlyRoomRow | null>(null);
   const [resettingRoomID, setResettingRoomID] = useState<string | null>(null);
 
+  // ── Digest send-now state ──────────────────────────────────────────────
+  const [sendingDigest, setSendingDigest] = useState(false);
+
   const loadCustomerSchedule = useCallback(async (signal?: AbortSignal) => {
     try {
       const s = await api.getNightlySchedule(signal);
@@ -234,6 +237,32 @@ export default function NightlySchedulePage() {
       });
     } finally {
       setSaving(false);
+    }
+  };
+
+  // Fire the morning digest on demand — same pipeline the goroutine uses
+  // at power_on_time + 30m, but forced immediately so the operator can
+  // preview the email + confirm SMTP + confirm recipients. Doesn't stamp
+  // digest_last_sent_for, so the real morning digest still fires later.
+  const handleSendDigestNow = async () => {
+    setSendingDigest(true);
+    try {
+      await api.sendNightlyDigestNow();
+      toast({
+        title: "Digest sent",
+        description: helpdeskEmail
+          ? `Preview sent to configured recipients and cc'd to ${helpdeskEmail}.`
+          : "Preview sent to configured recipients.",
+        variant: "success",
+      });
+    } catch (e) {
+      toast({
+        title: "Digest send failed",
+        description: (e as Error).message,
+        variant: "destructive",
+      });
+    } finally {
+      setSendingDigest(false);
     }
   };
 
@@ -542,10 +571,46 @@ export default function NightlySchedulePage() {
                       className="w-full rounded-md border bg-background px-3 py-2 text-sm disabled:opacity-50"
                     />
                     <p className="text-xs text-muted-foreground">
-                      Lifecycle-failure alerts and the morning digest are
-                      cc'd here on behalf of the customer, so Involve helpdesk
-                      picks up incidents proactively. Leave blank to skip.
+                      The morning digest is cc'd here on behalf of the
+                      customer, so the Involve helpdesk picks up incidents
+                      proactively. Leave blank to skip.
                     </p>
+                  </div>
+                  <div className="rounded-md border bg-muted/30 p-4 space-y-2">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="text-xs font-semibold">
+                          Morning digest
+                        </div>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Every morning at power-on&nbsp;+&nbsp;30&nbsp;min in
+                          your timezone, an HTML digest of last night's runs
+                          is sent to every enabled email notification channel
+                          {helpdeskEmail
+                            ? ", cc'd to the helpdesk address above"
+                            : ""}
+                          .
+                        </p>
+                      </div>
+                      {canManage && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={handleSendDigestNow}
+                          disabled={sendingDigest}
+                          className="shrink-0"
+                        >
+                          {sendingDigest && (
+                            <Loader2
+                              aria-hidden="true"
+                              className="h-3.5 w-3.5 animate-spin"
+                            />
+                          )}
+                          Send test digest
+                        </Button>
+                      )}
+                    </div>
                   </div>
                 </CardContent>
               </Card>

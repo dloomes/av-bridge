@@ -119,6 +119,26 @@ func main() {
 		log.Info("notify: SMTP configured", "host", cfg.SMTPHost, "from", cfg.SMTPFrom)
 	}
 
+	// Nightly morning digest sender — constructed early so the portal
+	// send-now endpoint can call into it. The goroutine is started later
+	// alongside the other background loops so all share the same shutdown
+	// context. See docs/nightly-lifecycle-spec.md §10.1.
+	nightlyDigest := nightly.NewDigestSender(
+		store.AdminPool(),
+		nightly.DigestConfig{
+			TickInterval:    cfg.NightlyDigestTickInterval,
+			SendAfterOffset: cfg.NightlyDigestSendAfterOffset,
+			SMTP: notify.SMTPConfig{
+				Host:     cfg.SMTPHost,
+				Port:     cfg.SMTPPort,
+				Username: cfg.SMTPUsername,
+				Password: cfg.SMTPPassword,
+				From:     cfg.SMTPFrom,
+			},
+		},
+		log,
+	)
+
 	h := ingest.NewHandler(store, cipher, hub, dispatcher, log)
 
 	var adminH http.Handler
@@ -143,7 +163,7 @@ func main() {
 		resolver := portalauth.NewChainResolver(local, mock, static)
 		portalRoutes = &api.PortalRoutes{
 			Resolver: resolver,
-			Portal:   portalapi.New(store, cipher, dispatcher, log),
+			Portal:   portalapi.New(store, cipher, dispatcher, nightlyDigest, log),
 			WSHub:    hub,
 		}
 		log.Info("portal API enabled",
@@ -207,6 +227,11 @@ func main() {
 		log,
 	)
 	go nightlyScheduler.Run(sweeperCtx)
+
+	// Kick off the nightly digest sender goroutine — the sender itself
+	// was constructed earlier (main.go, right after the notify
+	// dispatcher) so the portal handler could take a reference.
+	go nightlyDigest.Run(sweeperCtx)
 
 	go func() {
 		log.Info("cloud ingest listening", "addr", cfg.ListenAddr)

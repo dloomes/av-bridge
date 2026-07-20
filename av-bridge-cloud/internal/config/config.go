@@ -75,6 +75,15 @@ type Config struct {
 	NightlyWarmupSeconds int
 	NightlyDryRun        bool
 
+	// Nightly digest sender — the morning email. TickInterval controls how
+	// often the sender wakes to check whether any customer's digest is due
+	// (spec: "power_on_time + 30min" local). SendAfterOffset is the delay
+	// after the customer's local power_on_time before we send — 30m by
+	// default so every room has time to finish its warm-up (+ Phase B
+	// recipe) before the digest is generated.
+	NightlyDigestTickInterval    time.Duration
+	NightlyDigestSendAfterOffset time.Duration
+
 	// SMTP relay for outbound alert notifications. SMTPHost empty = dry-run
 	// (sends log instead of actually emailing) so dev can exercise the
 	// channel-config UI without standing up a mail server. SMTPFrom defaults
@@ -128,6 +137,14 @@ func FromEnv() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	nightlyDigestTick, err := getenvDuration("NIGHTLY_DIGEST_TICK_INTERVAL", 60*time.Second)
+	if err != nil {
+		return Config{}, err
+	}
+	nightlyDigestOffset, err := getenvDuration("NIGHTLY_DIGEST_SEND_AFTER_OFFSET", 30*time.Minute)
+	if err != nil {
+		return Config{}, err
+	}
 
 	c := Config{
 		ListenAddr:           getenv("CLOUD_LISTEN_ADDR", ":8090"),
@@ -154,7 +171,9 @@ func FromEnv() (Config, error) {
 		// Default true: safer to no-op than to power-cycle a room by
 		// surprise. Operators flip NIGHTLY_DRY_RUN=false once they've
 		// wired the command queue in the follow-up slice.
-		NightlyDryRun: getenv("NIGHTLY_DRY_RUN", "true") != "false",
+		NightlyDryRun:                getenv("NIGHTLY_DRY_RUN", "true") != "false",
+		NightlyDigestTickInterval:    nightlyDigestTick,
+		NightlyDigestSendAfterOffset: nightlyDigestOffset,
 		SMTPHost:             os.Getenv("POC_SMTP_HOST"),
 		SMTPPort:             getenv("POC_SMTP_PORT", "587"),
 		SMTPUsername:         os.Getenv("POC_SMTP_USERNAME"),
