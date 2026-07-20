@@ -62,6 +62,19 @@ type Config struct {
 	SessionCleanupInterval  time.Duration
 	SessionCleanupRetention time.Duration
 
+	// Nightly Room Readiness — see docs/nightly-lifecycle-spec.md and
+	// internal/nightly. TickInterval is how often the scheduler wakes;
+	// GraceWindow bounds how late an event can still fire (protects
+	// against fresh restarts triggering stale events); WarmupSeconds is
+	// the total post-power-on wait before the room is declared ready.
+	// DryRun means "log the intended device commands but don't send
+	// them" — Slice 3 default is true so we can observe timing +
+	// state-machine behaviour without touching real devices.
+	NightlyTickInterval  time.Duration
+	NightlyGraceWindow   time.Duration
+	NightlyWarmupSeconds int
+	NightlyDryRun        bool
+
 	// SMTP relay for outbound alert notifications. SMTPHost empty = dry-run
 	// (sends log instead of actually emailing) so dev can exercise the
 	// channel-config UI without standing up a mail server. SMTPFrom defaults
@@ -103,6 +116,18 @@ func FromEnv() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	nightlyTick, err := getenvDuration("NIGHTLY_TICK_INTERVAL", 60*time.Second)
+	if err != nil {
+		return Config{}, err
+	}
+	nightlyGrace, err := getenvDuration("NIGHTLY_GRACE_WINDOW", 30*time.Minute)
+	if err != nil {
+		return Config{}, err
+	}
+	nightlyWarmup, err := getenvInt("NIGHTLY_WARMUP_SECONDS", 60)
+	if err != nil {
+		return Config{}, err
+	}
 
 	c := Config{
 		ListenAddr:           getenv("CLOUD_LISTEN_ADDR", ":8090"),
@@ -123,6 +148,13 @@ func FromEnv() (Config, error) {
 		CommandSweepInterval:    sweepInterval,
 		SessionCleanupInterval:  sessionCleanupInterval,
 		SessionCleanupRetention: sessionCleanupRetention,
+		NightlyTickInterval:     nightlyTick,
+		NightlyGraceWindow:      nightlyGrace,
+		NightlyWarmupSeconds:    nightlyWarmup,
+		// Default true: safer to no-op than to power-cycle a room by
+		// surprise. Operators flip NIGHTLY_DRY_RUN=false once they've
+		// wired the command queue in the follow-up slice.
+		NightlyDryRun: getenv("NIGHTLY_DRY_RUN", "true") != "false",
 		SMTPHost:             os.Getenv("POC_SMTP_HOST"),
 		SMTPPort:             getenv("POC_SMTP_PORT", "587"),
 		SMTPUsername:         os.Getenv("POC_SMTP_USERNAME"),

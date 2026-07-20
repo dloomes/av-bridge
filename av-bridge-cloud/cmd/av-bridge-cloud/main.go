@@ -17,6 +17,7 @@ import (
 	"github.com/dloomes/av-bridge-cloud/internal/config"
 	"github.com/dloomes/av-bridge-cloud/internal/db"
 	"github.com/dloomes/av-bridge-cloud/internal/ingest"
+	"github.com/dloomes/av-bridge-cloud/internal/nightly"
 	"github.com/dloomes/av-bridge-cloud/internal/notify"
 	"github.com/dloomes/av-bridge-cloud/internal/portalapi"
 	"github.com/dloomes/av-bridge-cloud/internal/portalauth"
@@ -189,6 +190,23 @@ func main() {
 		log,
 	)
 	go sessionCleaner.Run(sweeperCtx)
+
+	// Nightly Room Readiness scheduler — enacts the customer + per-room
+	// schedules by creating nightly_run rows and walking each room
+	// through its power-off / power-on state machine. In DRY-RUN mode
+	// (Slice 3 default), device commands are logged only, not dispatched.
+	// See docs/nightly-lifecycle-spec.md.
+	nightlyScheduler := nightly.NewScheduler(
+		store.AdminPool(),
+		nightly.Config{
+			TickInterval:  cfg.NightlyTickInterval,
+			GraceWindow:   cfg.NightlyGraceWindow,
+			WarmupSeconds: cfg.NightlyWarmupSeconds,
+			DryRun:        cfg.NightlyDryRun,
+		},
+		log,
+	)
+	go nightlyScheduler.Run(sweeperCtx)
 
 	go func() {
 		log.Info("cloud ingest listening", "addr", cfg.ListenAddr)
