@@ -29,7 +29,7 @@ Three concrete outcomes:
 
 Our differentiation:
 - **Vendor-agnostic** — works across any device our adapters support. No driver-library lock-in.
-- **Customer-authorable recipes** — each customer defines what "ready" means for their rooms.
+- **Customer-authorable routines** — each customer defines what "ready" means for their rooms.
 - **Managed-service native** — helpdesk-queue routing is a first-class feature, not an integration afterthought.
 - **UK/EU hostable** — matches broader positioning.
 
@@ -47,7 +47,7 @@ Our differentiation:
 | Notifications — helpdesk | New `helpdesk_email` field on customer record. Cc'd on every lifecycle-failure alert. |
 | New alert type | `nightly_lifecycle_failed` — routes differently from ordinary telemetry alerts. |
 | Digest email | HTML, sent every morning regardless of outcome. Failed rooms at top expanded; successful rooms collapsed into a summary line. Deep-links per room to portal detail. |
-| Portal | `/nightly/runs` (heatmap + filters + CSV export), `/nightly/runs/[id]` (detail), `/nightly/schedule`, `/nightly/recipes`. |
+| Portal | `/nightly/runs` (heatmap + filters + CSV export), `/nightly/runs/[id]` (detail), `/nightly/schedule`, `/nightly/routines`. |
 | Cross-tenant helpdesk view | Reuses existing vendor-tenant scope. Adds "failed only" filter. |
 | Retention | Detailed step results: 90 days default, customer-configurable. Run-level summary: kept forever. |
 | SIP loopback | Customer provides SIP URI. We do not host the bridge. |
@@ -66,7 +66,7 @@ New tables in the cloud DB, tenant-scoped under existing RLS (unless noted).
 | power_on_time | time | e.g. `07:30` |
 | days_of_week | int[] | ISO weekdays 1–7 (Mon–Sun) |
 | timezone | text | IANA name, e.g. `Europe/London` |
-| test_recipe_id | uuid FK | → `nightly_test_recipe.id` |
+| test_routine_id | uuid FK | → `nightly_test_routine.id` |
 | helpdesk_email | text | Nullable. Vendor's helpdesk address for this customer. |
 | enabled | bool | Master on/off for the customer |
 | created_at / updated_at | timestamptz | |
@@ -80,12 +80,12 @@ New tables in the cloud DB, tenant-scoped under existing RLS (unless noted).
 | power_off_time | time | Nullable — null = inherit |
 | power_on_time | time | Nullable |
 | days_of_week | int[] | Nullable |
-| test_recipe_id | uuid FK | Nullable |
+| test_routine_id | uuid FK | Nullable |
 | excluded_until | date | Nullable. Room skipped from lifecycle until this date. |
 | notification_recipients | jsonb | Nullable — override the customer default. Shape: `[{"channel":"email","target":"..."}]` |
 | created_at / updated_at | timestamptz | |
 
-### 5.3 `nightly_test_recipe` — reusable functional-test definition
+### 5.3 `nightly_test_routine` — reusable functional-test definition
 
 | Column | Type | Notes |
 |---|---|---|
@@ -103,7 +103,7 @@ New tables in the cloud DB, tenant-scoped under existing RLS (unless noted).
 | id | uuid PK | |
 | customer_id | uuid FK | |
 | room_id | uuid FK | |
-| recipe_id | uuid FK | Snapshot of which recipe was in effect |
+| routine_id | uuid FK | Snapshot of which routine was in effect |
 | phase | text | `scheduled_off` / `off` / `scheduled_on` / `waking` / `warming` / `testing` / `ready` / `failed` |
 | status | text | `pending` / `in_progress` / `succeeded` / `failed` / `skipped` |
 | scheduled_at | timestamptz | Local-time-resolved instant when the run should start |
@@ -119,8 +119,8 @@ New tables in the cloud DB, tenant-scoped under existing RLS (unless noted).
 | id | uuid PK | |
 | run_id | uuid FK | |
 | device_id | uuid FK | Nullable — some steps are room-scoped |
-| step_index | int | 0-based position in recipe |
-| step_name | text | Snapshot from recipe |
+| step_index | int | 0-based position in routine |
+| step_name | text | Snapshot from routine |
 | step_type | text | See §7 |
 | expected | jsonb | What the step required |
 | actual | jsonb | What was observed |
@@ -156,14 +156,14 @@ Orchestrates the phases per room:
 [scheduled_on]   → send power-on commands via command queue
 [waking]         → wait for power-on confirmation (timeout: 120s)
 [warming]        → fixed wait for steady state (default: 60s)
-[testing]        → execute recipe (see §7)
+[testing]        → execute routine (see §7)
 [ready]          → success — record run, emit digest tile as green
 [failed]         → any prior phase failed — emit alert, digest tile red
 ```
 
 Each phase persists `nightly_run.phase` so a portal viewer can see live progress.
 
-### 6.3 Recipe executor
+### 6.3 Routine executor
 
 Iterates `steps` array, dispatches each step by `type`, records outcome to `nightly_step_result`. Honours `on_failure` policy per step.
 
@@ -177,9 +177,9 @@ Reuses existing `notify.Dispatcher`. New alert kind `nightly_lifecycle_failed` i
 
 Separate goroutine that fires once per customer per morning at `power_on_time + 30 minutes` (giving all rooms time to complete). Aggregates the night's runs into a single HTML email, sends to nominated recipients + cc'd helpdesk.
 
-## 7. Test recipe schema
+## 7. Test routine schema
 
-Recipes are JSON documents stored in `nightly_test_recipe.steps`. Every step:
+Routines are JSON documents stored in `nightly_test_routine.steps`. Every step:
 
 ```
 {
@@ -210,7 +210,7 @@ Target selector shapes:
 - `{"device_id": "uuid"}` — one specific device
 - `{"device_tag": "audio_primary"}` — devices matching a tag key
 
-### 7.1 Canonical recipe — Standard room readiness
+### 7.1 Canonical routine — Standard room readiness
 
 Encodes the flow you supplied. Uses a customer-supplied SIP URI as the dial target.
 
@@ -290,11 +290,11 @@ Shape:
 }
 ```
 
-The portal recipe editor reads `capabilities` per device to offer valid commands / metrics only — no way to author a recipe that references a command a device doesn't support.
+The portal routine editor reads `capabilities` per device to offer valid commands / metrics only — no way to author a routine that references a command a device doesn't support.
 
 ### 8.1 Adapters that need extending
 
-| Adapter | Current | Needed for the canonical recipe |
+| Adapter | Current | Needed for the canonical routine |
 |---|---|---|
 | Poly VideoOS | Status read only | Add `dial` + `disconnect` write commands |
 | Biamp Tesira | Status + metric polling | Add live meter reads (`input_level_dbfs`) |
@@ -319,15 +319,15 @@ The portal recipe editor reads `capabilities` per device to offer valid commands
 
 ### 9.3 `/nightly/schedule` — schedule editor
 
-- Customer default at top: time pickers, days-of-week, timezone, helpdesk email, enabled toggle, recipe selector.
+- Customer default at top: time pickers, days-of-week, timezone, helpdesk email, enabled toggle, routine selector.
 - Room override list below: table of rooms showing effective schedule (inherited or customised), "customise" per row opens override editor.
 - Exclusion widget per room: date picker for `excluded_until`.
 
-### 9.4 `/nightly/recipes` — recipe author
+### 9.4 `/nightly/routines` — routine author
 
-- List of customer recipes.
+- List of customer routines.
 - Editor: step-by-step builder. Each step type has its own form. Target selector shows only valid options based on adapter capabilities.
-- Preview: renders the recipe as a numbered list matching what the digest will show.
+- Preview: renders the routine as a numbered list matching what the digest will show.
 
 ## 10. Notification model
 
@@ -374,9 +374,9 @@ The portal recipe editor reads `capabilities` per device to offer valid commands
 
 Everything except the functional test itself. Ship this first — already a substantial product.
 
-- Data model: all tables except `nightly_test_recipe` and `nightly_step_result` (or with `test_recipe_id` nullable and step-results empty).
+- Data model: all tables except `nightly_test_routine` and `nightly_step_result` (or with `test_routine_id` nullable and step-results empty).
 - Scheduler goroutine + lifecycle runner up to `[ready]` phase.
-- Recipes limited to `power_on` + `wait` step types initially.
+- Routines limited to `power_on` + `wait` step types initially.
 - Adapter capability declaration in ingest payload + `devices.capabilities` column.
 - Adapter extensions: power-on / power-off write commands where the device supports it (displays, PCs via WoL later, codecs).
 - Portal: `/nightly/runs`, `/nightly/runs/[id]` (limited step display), `/nightly/schedule`.
@@ -389,8 +389,8 @@ Everything except the functional test itself. Ship this first — already a subs
 
 Adds the functional-test layer that makes the readiness check meaningful.
 
-- Recipe step types: `device_command`, `check_metric`, `expect_status`.
-- Recipe editor in the portal (`/nightly/recipes`).
+- Routine step types: `device_command`, `check_metric`, `expect_status`.
+- Routine editor in the portal (`/nightly/routines`).
 - Adapter extensions: Poly VideoOS `dial` / `disconnect`, Biamp Tesira meter reads.
 - Recommended-action heuristics on the run detail view.
 - CSV export.
@@ -406,14 +406,14 @@ Adds the functional-test layer that makes the readiness check meaningful.
 - Weekly / monthly executive rollup
 - Per-device reliability trend view
 - Per-building timezones
-- Recipe templates / marketplace
+- Routine templates / marketplace
 
 ## 14. Open items
 
 - **Room device inventory freshness.** The scheduler needs to know which devices are in a room at the time the schedule runs. If a device is added/removed between schedule creation and execution, the run reflects the room-as-configured at execution time — not at schedule-creation time.
 - **Concurrent runs.** If a room's power-on happens across day boundaries (e.g. 23:55 off / 00:05 on for an all-night room), that's not a realistic case for v1 — the schedule assumes off < on within the same 24h window. Documented as a v1 constraint.
 - **What if the room is in use during the off time?** v1 answer: it powers off anyway. If a customer flags this as a problem, calendar integration in Phase C resolves it.
-- **How does a customer test their recipe without waiting 24h?** Portal needs a "run now" button on the schedule / recipe pages that dispatches an ad-hoc run against a chosen room. Not blocking for Phase A but worth adding early in Phase B.
+- **How does a customer test their routine without waiting 24h?** Portal needs a "run now" button on the schedule / routine pages that dispatches an ad-hoc run against a chosen room. Not blocking for Phase A but worth adding early in Phase B.
 
 ---
 

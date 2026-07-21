@@ -14,26 +14,26 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// Nightly Room Readiness — test-recipe CRUD.
+// Nightly Room Readiness — test-routine CRUD.
 //
-// Slice 2B. Recipes are the reusable JSON step definitions the runner
+// Slice 2B. Routines are the reusable JSON step definitions the runner
 // executes after power-on (see docs/nightly-lifecycle-spec.md §7). This
 // slice only handles storage — actual step execution is Phase B.
 //
 // Endpoints:
-//   GET    /api/v1/nightly/recipes         list customer's recipes
-//   GET    /api/v1/nightly/recipes/{id}    single recipe with steps
-//   POST   /api/v1/nightly/recipes         create
-//   PATCH  /api/v1/nightly/recipes/{id}    update
-//   DELETE /api/v1/nightly/recipes/{id}    delete (recipe references in
-//                                          nightly_schedule / room_nightly_config
-//                                          are ON DELETE SET NULL, so
-//                                          schedules just lose their test)
+//   GET    /api/v1/nightly/routines         list customer's routines
+//   GET    /api/v1/nightly/routines/{id}    single routine with steps
+//   POST   /api/v1/nightly/routines         create
+//   PATCH  /api/v1/nightly/routines/{id}    update
+//   DELETE /api/v1/nightly/routines/{id}    delete (routine references in
+//                                           nightly_schedule / room_nightly_config
+//                                           are ON DELETE SET NULL, so
+//                                           schedules just lose their test)
 
-// recipeListRow — trimmed shape for the list endpoint. Steps are omitted
-// because most recipes are 5-15 steps each; the list is a picker, not a
+// routineListRow — trimmed shape for the list endpoint. Steps are omitted
+// because most routines are 5-15 steps each; the list is a picker, not a
 // browse-all view. Detail endpoint returns the full steps array.
-type recipeListRow struct {
+type routineListRow struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
@@ -41,7 +41,7 @@ type recipeListRow struct {
 	UpdatedAt   string `json:"updated_at"`
 }
 
-type recipeDetail struct {
+type routineDetail struct {
 	ID          string          `json:"id"`
 	Name        string          `json:"name"`
 	Description string          `json:"description,omitempty"`
@@ -50,13 +50,13 @@ type recipeDetail struct {
 	UpdatedAt   string          `json:"updated_at"`
 }
 
-// ListNightlyRecipes — GET /api/v1/nightly/recipes
-func (h *Handler) ListNightlyRecipes(w http.ResponseWriter, r *http.Request) {
-	out := []recipeListRow{}
+// ListNightlyRoutines — GET /api/v1/nightly/routines
+func (h *Handler) ListNightlyRoutines(w http.ResponseWriter, r *http.Request) {
+	out := []routineListRow{}
 	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `
 			SELECT id::text, name, description, jsonb_array_length(steps), updated_at
-			  FROM nightly_test_recipe
+			  FROM nightly_test_routine
 			 ORDER BY lower(name)
 		`)
 		if err != nil {
@@ -65,7 +65,7 @@ func (h *Handler) ListNightlyRecipes(w http.ResponseWriter, r *http.Request) {
 		defer rows.Close()
 		for rows.Next() {
 			var (
-				row  recipeListRow
+				row  routineListRow
 				desc *string
 				upd  time.Time
 			)
@@ -86,15 +86,15 @@ func (h *Handler) ListNightlyRecipes(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-// GetNightlyRecipe — GET /api/v1/nightly/recipes/{id}
-func (h *Handler) GetNightlyRecipe(w http.ResponseWriter, r *http.Request) {
+// GetNightlyRoutine — GET /api/v1/nightly/routines/{id}
+func (h *Handler) GetNightlyRoutine(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
-		writeErr(w, http.StatusBadRequest, "recipe id required")
+		writeErr(w, http.StatusBadRequest, "routine id required")
 		return
 	}
 	var (
-		out      recipeDetail
+		out      routineDetail
 		notFound bool
 	)
 	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
@@ -106,7 +106,7 @@ func (h *Handler) GetNightlyRecipe(w http.ResponseWriter, r *http.Request) {
 		)
 		err := tx.QueryRow(ctx, `
 			SELECT id::text, name, description, steps, created_at, updated_at
-			  FROM nightly_test_recipe
+			  FROM nightly_test_routine
 			 WHERE id = $1
 		`, id).Scan(&out.ID, &out.Name, &desc, &steps, &cre, &upd)
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -128,25 +128,25 @@ func (h *Handler) GetNightlyRecipe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if notFound {
-		writeErr(w, http.StatusNotFound, "recipe not found")
+		writeErr(w, http.StatusNotFound, "routine not found")
 		return
 	}
 	writeJSON(w, http.StatusOK, out)
 }
 
-// createRecipeReq is the wire shape for POST. Steps must be a JSON array
+// createRoutineReq is the wire shape for POST. Steps must be a JSON array
 // but we don't validate step-object shape here — Phase B (the runner) is
 // the source of truth for what a valid step is, and validating shape in
 // two places invites drift.
-type createRecipeReq struct {
+type createRoutineReq struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description,omitempty"`
 	Steps       json.RawMessage `json:"steps"`
 }
 
-// CreateNightlyRecipe — POST /api/v1/nightly/recipes
-func (h *Handler) CreateNightlyRecipe(w http.ResponseWriter, r *http.Request) {
-	var req createRecipeReq
+// CreateNightlyRoutine — POST /api/v1/nightly/routines
+func (h *Handler) CreateNightlyRoutine(w http.ResponseWriter, r *http.Request) {
+	var req createRoutineReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid JSON")
 		return
@@ -170,15 +170,15 @@ func (h *Handler) CreateNightlyRecipe(w http.ResponseWriter, r *http.Request) {
 			descArg = strings.TrimSpace(req.Description)
 		}
 		if err := tx.QueryRow(ctx, `
-			INSERT INTO nightly_test_recipe (customer_id, name, description, steps)
+			INSERT INTO nightly_test_routine (customer_id, name, description, steps)
 			VALUES ($1, $2, $3, $4::jsonb)
 			RETURNING id::text
 		`, p.CustomerID, name, descArg, steps).Scan(&newID); err != nil {
 			return err
 		}
 		return audit.Record(ctx, tx, p.CustomerID, stampActor(p, audit.Entry{
-			Action:     "nightly.recipe.create",
-			TargetKind: "nightly_recipe", TargetID: newID,
+			Action:     "nightly.routine.create",
+			TargetKind: "nightly_routine", TargetID: newID,
 			After: mustJSON(map[string]any{
 				"name":       name,
 				"step_count": approximateStepCount(steps),
@@ -191,22 +191,22 @@ func (h *Handler) CreateNightlyRecipe(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]string{"id": newID})
 }
 
-// updateRecipeReq — pointer fields so absent = leave alone. Steps + name
+// updateRoutineReq — pointer fields so absent = leave alone. Steps + name
 // are always fully replaced (no merge semantics inside the array).
-type updateRecipeReq struct {
+type updateRoutineReq struct {
 	Name        *string          `json:"name,omitempty"`
 	Description *string          `json:"description,omitempty"`
 	Steps       *json.RawMessage `json:"steps,omitempty"`
 }
 
-// UpdateNightlyRecipe — PATCH /api/v1/nightly/recipes/{id}
-func (h *Handler) UpdateNightlyRecipe(w http.ResponseWriter, r *http.Request) {
+// UpdateNightlyRoutine — PATCH /api/v1/nightly/routines/{id}
+func (h *Handler) UpdateNightlyRoutine(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
-		writeErr(w, http.StatusBadRequest, "recipe id required")
+		writeErr(w, http.StatusBadRequest, "routine id required")
 		return
 	}
-	var req updateRecipeReq
+	var req updateRoutineReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid JSON")
 		return
@@ -228,10 +228,10 @@ func (h *Handler) UpdateNightlyRecipe(w http.ResponseWriter, r *http.Request) {
 	p, _ := portalauth.From(r.Context())
 	notFound := false
 	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
-		// Verify the recipe exists inside the caller's scope first.
+		// Verify the routine exists inside the caller's scope first.
 		var exists bool
 		if err := tx.QueryRow(ctx,
-			`SELECT true FROM nightly_test_recipe WHERE id = $1`, id,
+			`SELECT true FROM nightly_test_routine WHERE id = $1`, id,
 		).Scan(&exists); errors.Is(err, pgx.ErrNoRows) {
 			notFound = true
 			return nil
@@ -264,7 +264,7 @@ func (h *Handler) UpdateNightlyRecipe(w http.ResponseWriter, r *http.Request) {
 		if len(set) == 0 {
 			return nil
 		}
-		sql := "UPDATE nightly_test_recipe SET " + strings.Join(set, ", ") +
+		sql := "UPDATE nightly_test_routine SET " + strings.Join(set, ", ") +
 			" WHERE id = $1"
 		if _, err := tx.Exec(ctx, sql, args...); err != nil {
 			return err
@@ -281,8 +281,8 @@ func (h *Handler) UpdateNightlyRecipe(w http.ResponseWriter, r *http.Request) {
 			payload["step_count"] = approximateStepCount(normalisedSteps)
 		}
 		return audit.Record(ctx, tx, p.CustomerID, stampActor(p, audit.Entry{
-			Action:     "nightly.recipe.update",
-			TargetKind: "nightly_recipe", TargetID: id,
+			Action:     "nightly.routine.update",
+			TargetKind: "nightly_routine", TargetID: id,
 			After: mustJSON(payload),
 		}))
 	})
@@ -290,29 +290,29 @@ func (h *Handler) UpdateNightlyRecipe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if notFound {
-		writeErr(w, http.StatusNotFound, "recipe not found")
+		writeErr(w, http.StatusNotFound, "routine not found")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// DeleteNightlyRecipe — DELETE /api/v1/nightly/recipes/{id}
+// DeleteNightlyRoutine — DELETE /api/v1/nightly/routines/{id}
 //
 // The schedule + room_override FK columns are ON DELETE SET NULL, so
-// dropping a recipe doesn't cascade — dependent rows just lose their
-// test_recipe_id and fall back to "power cycle only, no test". Callers
-// see 204 on success, 404 if the recipe wasn't visible.
-func (h *Handler) DeleteNightlyRecipe(w http.ResponseWriter, r *http.Request) {
+// dropping a routine doesn't cascade — dependent rows just lose their
+// test_routine_id and fall back to "power cycle only, no test". Callers
+// see 204 on success, 404 if the routine wasn't visible.
+func (h *Handler) DeleteNightlyRoutine(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
-		writeErr(w, http.StatusBadRequest, "recipe id required")
+		writeErr(w, http.StatusBadRequest, "routine id required")
 		return
 	}
 	p, _ := portalauth.From(r.Context())
 	notFound := false
 	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
 		res, err := tx.Exec(ctx,
-			`DELETE FROM nightly_test_recipe WHERE id = $1`, id)
+			`DELETE FROM nightly_test_routine WHERE id = $1`, id)
 		if err != nil {
 			return err
 		}
@@ -321,8 +321,8 @@ func (h *Handler) DeleteNightlyRecipe(w http.ResponseWriter, r *http.Request) {
 			return nil
 		}
 		return audit.Record(ctx, tx, p.CustomerID, stampActor(p, audit.Entry{
-			Action:     "nightly.recipe.delete",
-			TargetKind: "nightly_recipe", TargetID: id,
+			Action:     "nightly.routine.delete",
+			TargetKind: "nightly_routine", TargetID: id,
 			After: mustJSON(map[string]any{"id": id}),
 		}))
 	})
@@ -330,7 +330,7 @@ func (h *Handler) DeleteNightlyRecipe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if notFound {
-		writeErr(w, http.StatusNotFound, "recipe not found")
+		writeErr(w, http.StatusNotFound, "routine not found")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -338,7 +338,7 @@ func (h *Handler) DeleteNightlyRecipe(w http.ResponseWriter, r *http.Request) {
 
 // normaliseStepsJSON accepts the raw steps payload and returns a cleaned
 // []byte suitable for a jsonb cast. Empty / null / undefined become "[]"
-// so a fresh recipe can be saved before any steps are authored. Anything
+// so a fresh routine can be saved before any steps are authored. Anything
 // else must parse as a JSON array; step-object shape is Phase B's problem.
 func normaliseStepsJSON(raw json.RawMessage) ([]byte, error) {
 	trimmed := strings.TrimSpace(string(raw))

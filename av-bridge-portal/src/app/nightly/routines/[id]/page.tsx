@@ -10,27 +10,27 @@ import { useToast } from "@/components/toast";
 import { useSession } from "@/hooks/useSession";
 import { api } from "@/lib/api";
 import { isAdmin } from "@/lib/session";
-import type { NightlyRecipeDetail, UpdateNightlyRecipeBody } from "@/lib/api";
+import type { NightlyRoutineDetail, UpdateNightlyRoutineBody } from "@/lib/api";
 
-// Room Readiness — recipe editor.
+// Room Readiness — routine editor.
 //
 // Slice 2B ships a JSON textarea editor: honest, fast to build, and gives
-// technical users full control over recipe shape. A structured
+// technical users full control over routine shape. A structured
 // step-by-step builder is a follow-up slice once we know which shapes
 // customers actually want (the schema will settle after Phase B lands).
 // For now, the docs/nightly-lifecycle-spec.md §7 step catalogue is the
 // reference — the "From standard template" flow on the list page
 // pre-fills a working example.
 
-export default function RecipeEditorPage() {
+export default function RoutineEditorPage() {
   const params = useParams<{ id: string }>();
-  const recipeID = params.id;
+  const routineID = params.id;
   const session = useSession();
   const canManage = isAdmin(session.user?.role) || !!session.user?.is_vendor;
   const router = useRouter();
   const { toast } = useToast();
 
-  const [loaded, setLoaded] = useState<NightlyRecipeDetail | null>(null);
+  const [loaded, setLoaded] = useState<NightlyRoutineDetail | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const [name, setName] = useState("");
@@ -42,7 +42,7 @@ export default function RecipeEditorPage() {
   useEffect(() => {
     const ctrl = new AbortController();
     api
-      .getNightlyRecipe(recipeID, ctrl.signal)
+      .getNightlyRoutine(routineID, ctrl.signal)
       .then((r) => {
         if (ctrl.signal.aborted) return;
         setLoaded(r);
@@ -54,7 +54,7 @@ export default function RecipeEditorPage() {
         if (!ctrl.signal.aborted) setLoadError((e as Error).message);
       });
     return () => ctrl.abort();
-  }, [recipeID]);
+  }, [routineID]);
 
   // Client-side JSON validation — save button stays disabled while the
   // steps text is malformed so a bad paste doesn't reach the server.
@@ -86,7 +86,7 @@ export default function RecipeEditorPage() {
 
   const handleSave = async () => {
     if (!loaded || !parsedSteps.ok) return;
-    const body: UpdateNightlyRecipeBody = {};
+    const body: UpdateNightlyRoutineBody = {};
     if (name !== loaded.name) body.name = name;
     if (description !== (loaded.description ?? "")) body.description = description;
     if (
@@ -97,13 +97,13 @@ export default function RecipeEditorPage() {
     if (Object.keys(body).length === 0) return;
     setSaving(true);
     try {
-      await api.updateNightlyRecipe(recipeID, body);
-      const fresh = await api.getNightlyRecipe(recipeID);
+      await api.updateNightlyRoutine(routineID, body);
+      const fresh = await api.getNightlyRoutine(routineID);
       setLoaded(fresh);
       setName(fresh.name);
       setDescription(fresh.description ?? "");
       setStepsText(JSON.stringify(fresh.steps, null, 2));
-      toast({ title: "Recipe saved", variant: "success" });
+      toast({ title: "Routine saved", variant: "success" });
     } catch (e) {
       toast({
         title: "Save failed",
@@ -127,15 +127,15 @@ export default function RecipeEditorPage() {
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
               <Link
-                href="/nightly/recipes"
+                href="/nightly/routines"
                 className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
               >
                 <ArrowLeft aria-hidden="true" className="h-3 w-3" />
-                All recipes
+                All routines
               </Link>
             </div>
             <h1 className="text-xl font-semibold leading-tight">
-              {loaded?.name ?? "Recipe"}
+              {loaded?.name ?? "Routine"}
             </h1>
           </div>
         </div>
@@ -152,7 +152,7 @@ export default function RecipeEditorPage() {
           {loaded === null && !loadError && (
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" />
-              Loading recipe…
+              Loading routine…
             </div>
           )}
 
@@ -186,7 +186,7 @@ export default function RecipeEditorPage() {
                       value={description}
                       onChange={(e) => setDescription(e.target.value)}
                       disabled={inputsDisabled}
-                      placeholder="What this recipe verifies (one line)"
+                      placeholder="What this routine verifies (one line)"
                       className="w-full rounded-md border bg-background px-3 py-2 text-sm disabled:opacity-50"
                     />
                   </div>
@@ -246,7 +246,7 @@ export default function RecipeEditorPage() {
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => router.push("/nightly/recipes")}
+                      onClick={() => router.push("/nightly/routines")}
                       disabled={saving}
                     >
                       Done
@@ -270,7 +270,7 @@ export default function RecipeEditorPage() {
 
               {!canManage && (
                 <div className="text-xs text-muted-foreground italic">
-                  Read-only — you need Manage Room Readiness to edit recipes.
+                  Read-only — you need Manage Room Readiness to edit routines.
                 </div>
               )}
             </>

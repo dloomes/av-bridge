@@ -190,7 +190,7 @@ export interface UpdateBrandingBody {
 
 // Nightly Room Readiness schedule — the customer-level default row. See
 // docs/nightly-lifecycle-spec.md for the full data model. Slice 1 exposes
-// only this row; per-room overrides and recipe CRUD land in later slices.
+// only this row; per-room overrides and routine CRUD land in later slices.
 //
 // GET /api/v1/nightly/schedule auto-provisions defaults on first read, so
 // the portal never needs a "create schedule" flow.
@@ -199,7 +199,7 @@ export interface NightlySchedule {
   power_on_time: string;       // HH:MM (24h)
   days_of_week: number[];      // ISO weekdays 1 (Mon) … 7 (Sun)
   timezone: string;            // IANA name
-  test_recipe_id?: string;     // recipe not yet wired — slice 2 territory
+  test_routine_id?: string;     // routine not yet wired — slice 2 territory
   helpdesk_email?: string;
   retention_days: number;      // floor of 30
   enabled: boolean;
@@ -208,13 +208,13 @@ export interface NightlySchedule {
 
 // UpdateNightlyScheduleBody — pointer-per-field so an omitted field leaves
 // the stored value alone, and an empty string clears the two nullable text
-// fields (helpdesk_email, test_recipe_id).
+// fields (helpdesk_email, test_routine_id).
 export interface UpdateNightlyScheduleBody {
   power_off_time?: string;
   power_on_time?: string;
   days_of_week?: number[];
   timezone?: string;
-  test_recipe_id?: string;
+  test_routine_id?: string;
   helpdesk_email?: string;
   retention_days?: number;
   enabled?: boolean;
@@ -255,9 +255,9 @@ export interface UpdateRoomOverrideBody {
   excluded_until?: string | null;    // YYYY-MM-DD
 }
 
-// Nightly test recipe — reusable step sequence executed after power-on.
+// Nightly test routine — reusable step sequence executed after power-on.
 // Slice 2B handles storage only; step execution is Phase B territory.
-export interface NightlyRecipeRow {
+export interface NightlyRoutineRow {
   id: string;
   name: string;
   description?: string;
@@ -265,7 +265,7 @@ export interface NightlyRecipeRow {
   updated_at: string;
 }
 
-export interface NightlyRecipeDetail {
+export interface NightlyRoutineDetail {
   id: string;
   name: string;
   description?: string;
@@ -276,13 +276,13 @@ export interface NightlyRecipeDetail {
   updated_at: string;
 }
 
-export interface CreateNightlyRecipeBody {
+export interface CreateNightlyRoutineBody {
   name: string;
   description?: string;
   steps: unknown[];
 }
 
-export interface UpdateNightlyRecipeBody {
+export interface UpdateNightlyRoutineBody {
   name?: string;
   description?: string;
   steps?: unknown[];
@@ -298,8 +298,8 @@ export interface NightlyRunRow {
   building_name: string;
   location_name?: string;
   region_name?: string;
-  recipe_id?: string;
-  recipe_name?: string;
+  routine_id?: string;
+  routine_name?: string;
   phase: NightlyPhase;
   status: NightlyStatus;
   scheduled_at: string;
@@ -331,7 +331,7 @@ export type NightlyStatus =
 
 // Step result inside a run. Phase B populates these; slice 3 dry-run
 // leaves them empty (the runs list still works, detail page shows a
-// "no step results yet" hint until the recipe runner lands).
+// "no step results yet" hint until the routine runner lands).
 export interface NightlyStepRow {
   step_index: number;
   step_name: string;
@@ -438,29 +438,29 @@ export const api = {
       method: "DELETE",
     }),
 
-  listNightlyRecipes: (signal?: AbortSignal) =>
-    request<NightlyRecipeRow[]>("/api/v1/nightly/recipes", { signal }),
+  listNightlyRoutines: (signal?: AbortSignal) =>
+    request<NightlyRoutineRow[]>("/api/v1/nightly/routines", { signal }),
 
-  getNightlyRecipe: (id: string, signal?: AbortSignal) =>
-    request<NightlyRecipeDetail>(
-      `/api/v1/nightly/recipes/${encodeURIComponent(id)}`,
+  getNightlyRoutine: (id: string, signal?: AbortSignal) =>
+    request<NightlyRoutineDetail>(
+      `/api/v1/nightly/routines/${encodeURIComponent(id)}`,
       { signal }
     ),
 
-  createNightlyRecipe: (body: CreateNightlyRecipeBody) =>
-    request<{ id: string }>("/api/v1/nightly/recipes", {
+  createNightlyRoutine: (body: CreateNightlyRoutineBody) =>
+    request<{ id: string }>("/api/v1/nightly/routines", {
       method: "POST",
       body: JSON.stringify(body),
     }),
 
-  updateNightlyRecipe: (id: string, body: UpdateNightlyRecipeBody) =>
-    request<void>(`/api/v1/nightly/recipes/${encodeURIComponent(id)}`, {
+  updateNightlyRoutine: (id: string, body: UpdateNightlyRoutineBody) =>
+    request<void>(`/api/v1/nightly/routines/${encodeURIComponent(id)}`, {
       method: "PATCH",
       body: JSON.stringify(body),
     }),
 
-  deleteNightlyRecipe: (id: string) =>
-    request<void>(`/api/v1/nightly/recipes/${encodeURIComponent(id)}`, {
+  deleteNightlyRoutine: (id: string) =>
+    request<void>(`/api/v1/nightly/routines/${encodeURIComponent(id)}`, {
       method: "DELETE",
     }),
 

@@ -40,7 +40,7 @@ type DigestConfig struct {
 
 	// SendAfterOffset — how long after the customer's `power_on_time` we
 	// wait before sending the digest. Gives every room time to complete
-	// its warm-up + (Phase B) recipe. Spec default 30 minutes.
+	// its warm-up + (Phase B) routine. Spec default 30 minutes.
 	SendAfterOffset time.Duration
 
 	// SMTP relay config. Empty Host = dry-run (log the intended send).

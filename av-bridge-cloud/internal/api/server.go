@@ -154,7 +154,7 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 		mux.Handle("POST /api/v1/assets/import", wrapPerm(portalauth.PermAssetCRUD, portal.Portal.ImportAssets))
 
 		// Nightly Room Readiness — schedule CRUD. Slice 1 exposes only the
-		// customer-level schedule row; room overrides and recipe CRUD land
+		// customer-level schedule row; room overrides and routine CRUD land
 		// in subsequent slices. GET auto-provisions defaults so the portal
 		// never needs a "create" step.
 		mux.Handle("GET /api/v1/nightly/schedule", wrapPerm(portalauth.PermNightlyView, portal.Portal.GetNightlySchedule))
@@ -166,13 +166,13 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 		mux.Handle("GET /api/v1/nightly/rooms", wrapPerm(portalauth.PermNightlyView, portal.Portal.ListNightlyRooms))
 		mux.Handle("PATCH /api/v1/nightly/rooms/{id}", wrapPerm(portalauth.PermNightlyManage, portal.Portal.UpdateRoomOverride))
 		mux.Handle("DELETE /api/v1/nightly/rooms/{id}", wrapPerm(portalauth.PermNightlyManage, portal.Portal.DeleteRoomOverride))
-		// Test recipes — slice 2B. Read gated on nightly.view (viewers
-		// can browse existing recipes); writes on nightly.manage.
-		mux.Handle("GET /api/v1/nightly/recipes", wrapPerm(portalauth.PermNightlyView, portal.Portal.ListNightlyRecipes))
-		mux.Handle("GET /api/v1/nightly/recipes/{id}", wrapPerm(portalauth.PermNightlyView, portal.Portal.GetNightlyRecipe))
-		mux.Handle("POST /api/v1/nightly/recipes", wrapPerm(portalauth.PermNightlyManage, portal.Portal.CreateNightlyRecipe))
-		mux.Handle("PATCH /api/v1/nightly/recipes/{id}", wrapPerm(portalauth.PermNightlyManage, portal.Portal.UpdateNightlyRecipe))
-		mux.Handle("DELETE /api/v1/nightly/recipes/{id}", wrapPerm(portalauth.PermNightlyManage, portal.Portal.DeleteNightlyRecipe))
+		// Test routines — slice 2B. Read gated on nightly.view (viewers
+		// can browse existing routines); writes on nightly.manage.
+		mux.Handle("GET /api/v1/nightly/routines", wrapPerm(portalauth.PermNightlyView, portal.Portal.ListNightlyRoutines))
+		mux.Handle("GET /api/v1/nightly/routines/{id}", wrapPerm(portalauth.PermNightlyView, portal.Portal.GetNightlyRoutine))
+		mux.Handle("POST /api/v1/nightly/routines", wrapPerm(portalauth.PermNightlyManage, portal.Portal.CreateNightlyRoutine))
+		mux.Handle("PATCH /api/v1/nightly/routines/{id}", wrapPerm(portalauth.PermNightlyManage, portal.Portal.UpdateNightlyRoutine))
+		mux.Handle("DELETE /api/v1/nightly/routines/{id}", wrapPerm(portalauth.PermNightlyManage, portal.Portal.DeleteNightlyRoutine))
 		// Run history — slice 4. Read only; the scheduler is the writer.
 		mux.Handle("GET /api/v1/nightly/runs", wrapPerm(portalauth.PermNightlyView, portal.Portal.ListNightlyRuns))
 		mux.Handle("GET /api/v1/nightly/runs/{id}", wrapPerm(portalauth.PermNightlyView, portal.Portal.GetNightlyRun))

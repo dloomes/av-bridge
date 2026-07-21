@@ -17,7 +17,7 @@ import (
 // Nightly Room Readiness — schedule CRUD.
 //
 // Slice 1 of Phase A. Covers the customer-level schedule row only; per-room
-// override endpoints and recipe CRUD land in subsequent slices. See
+// override endpoints and routine CRUD land in subsequent slices. See
 // docs/nightly-lifecycle-spec.md for the full design.
 //
 // One row per customer, auto-provisioned with sensible defaults on first
@@ -30,7 +30,7 @@ type scheduleOut struct {
 	PowerOnTime   string `json:"power_on_time"`   // HH:MM
 	DaysOfWeek    []int  `json:"days_of_week"`    // ISO 1-7
 	Timezone      string `json:"timezone"`        // IANA
-	TestRecipeID  string `json:"test_recipe_id,omitempty"`
+	TestRoutineID  string `json:"test_routine_id,omitempty"`
 	HelpdeskEmail string `json:"helpdesk_email,omitempty"`
 	RetentionDays int    `json:"retention_days"`
 	Enabled       bool   `json:"enabled"`
@@ -73,7 +73,7 @@ type updateNightlyScheduleReq struct {
 	PowerOnTime   *string `json:"power_on_time,omitempty"`
 	DaysOfWeek    *[]int  `json:"days_of_week,omitempty"`
 	Timezone      *string `json:"timezone,omitempty"`
-	TestRecipeID  *string `json:"test_recipe_id,omitempty"`
+	TestRoutineID  *string `json:"test_routine_id,omitempty"`
 	HelpdeskEmail *string `json:"helpdesk_email,omitempty"`
 	RetentionDays *int    `json:"retention_days,omitempty"`
 	Enabled       *bool   `json:"enabled,omitempty"`
@@ -168,11 +168,11 @@ func (h *Handler) UpdateNightlySchedule(w http.ResponseWriter, r *http.Request) 
 		if req.Timezone != nil {
 			add("timezone", *req.Timezone)
 		}
-		if req.TestRecipeID != nil {
-			if *req.TestRecipeID == "" {
-				add("test_recipe_id", nil)
+		if req.TestRoutineID != nil {
+			if *req.TestRoutineID == "" {
+				add("test_routine_id", nil)
 			} else {
-				add("test_recipe_id", *req.TestRecipeID)
+				add("test_routine_id", *req.TestRoutineID)
 			}
 		}
 		if req.HelpdeskEmail != nil {
@@ -211,8 +211,8 @@ func (h *Handler) UpdateNightlySchedule(w http.ResponseWriter, r *http.Request) 
 		if req.Timezone != nil {
 			payload["timezone"] = *req.Timezone
 		}
-		if req.TestRecipeID != nil {
-			payload["test_recipe_id"] = *req.TestRecipeID
+		if req.TestRoutineID != nil {
+			payload["test_routine_id"] = *req.TestRoutineID
 		}
 		if req.HelpdeskEmail != nil {
 			// Log presence, not value — helpdesk email is arguably PII.
@@ -249,18 +249,18 @@ func loadSchedule(ctx context.Context, tx pgx.Tx) (scheduleOut, error) {
 		powerOff     time.Time
 		powerOn      time.Time
 		days         []int32
-		recipeID     *string
+		routineID    *string
 		helpdeskAddr *string
 		updatedAt    time.Time
 	)
 	err := tx.QueryRow(ctx, `
 		SELECT power_off_time, power_on_time, days_of_week, timezone,
-		       test_recipe_id, helpdesk_email, retention_days, enabled,
+		       test_routine_id, helpdesk_email, retention_days, enabled,
 		       updated_at
 		  FROM nightly_schedule LIMIT 1
 	`).Scan(
 		&powerOff, &powerOn, &days, &out.Timezone,
-		&recipeID, &helpdeskAddr, &out.RetentionDays, &out.Enabled,
+		&routineID, &helpdeskAddr, &out.RetentionDays, &out.Enabled,
 		&updatedAt,
 	)
 	if err != nil {
@@ -273,8 +273,8 @@ func loadSchedule(ctx context.Context, tx pgx.Tx) (scheduleOut, error) {
 	for i, d := range days {
 		out.DaysOfWeek[i] = int(d)
 	}
-	if recipeID != nil {
-		out.TestRecipeID = *recipeID
+	if routineID != nil {
+		out.TestRoutineID = *routineID
 	}
 	if helpdeskAddr != nil {
 		out.HelpdeskEmail = *helpdeskAddr

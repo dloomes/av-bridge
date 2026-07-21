@@ -79,8 +79,8 @@ const (
 const PermBrandingUpdate = "branding.update"
 
 // Nightly lifecycle (Room Readiness). view lets a user see schedules,
-// recipes, and run history; manage lets an admin edit schedules, author
-// recipes, set per-room overrides. Operators + viewers get view only.
+// routines, and run history; manage lets an admin edit schedules, author
+// routines, set per-room overrides. Operators + viewers get view only.
 const (
 	PermNightlyView   = "nightly.view"
 	PermNightlyManage = "nightly.manage"

@@ -25,7 +25,7 @@ import type {
 //   - Room + hierarchy breadcrumb
 //   - Timing: scheduled / started / completed / duration
 //   - Phase timeline with the current phase highlighted (or "failed" red)
-//   - Recipe reference (link back to the editor)
+//   - Routine reference (link back to the editor)
 //   - Failure reason (if any)
 //   - Step results table (empty until Phase B populates it)
 
@@ -167,16 +167,16 @@ export default function NightlyRunDetailPage() {
                         </span>
                       </div>
                     </div>
-                    {loaded.recipe_id && (
+                    {loaded.routine_id && (
                       <div className="min-w-0">
                         <div className="text-xs uppercase tracking-wide text-muted-foreground">
-                          Recipe
+                          Routine
                         </div>
                         <Link
-                          href={`/nightly/recipes/${loaded.recipe_id}`}
+                          href={`/nightly/routines/${loaded.routine_id}`}
                           className="mt-1 inline-block text-sm text-primary hover:underline"
                         >
-                          {loaded.recipe_name ?? "(deleted)"}
+                          {loaded.routine_name ?? "(deleted)"}
                         </Link>
                       </div>
                     )}
@@ -222,9 +222,9 @@ export default function NightlyRunDetailPage() {
                   {loaded.steps.length === 0 ? (
                     <div className="rounded-md border border-dashed p-6 text-center">
                       <div className="text-sm text-muted-foreground">
-                        {loaded.recipe_id
-                          ? "No step results yet — the recipe runner lands in Phase B."
-                          : "No recipe was assigned when this run executed."}
+                        {loaded.routine_id
+                          ? "No step results yet — the routine runner lands in Phase B."
+                          : "No routine was assigned when this run executed."}
                       </div>
                     </div>
                   ) : (

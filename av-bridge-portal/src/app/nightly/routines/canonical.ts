@@ -1,13 +1,13 @@
-// Canonical Room Readiness recipe, mirroring docs/nightly-lifecycle-spec.md
+// Canonical Room Readiness routine, mirroring docs/nightly-lifecycle-spec.md
 // §7.1. Used as the starting template when a customer clicks "From
 // standard template" — encodes the VC + audio-loopback flow discussed
 // with the product team.
 //
 // The SIP URI is a placeholder; the customer edits it to point at their
 // own loopback bridge. Kept as a string constant here (not fetched) so
-// the template is available offline / when the recipes list is empty.
+// the template is available offline / when the routines list is empty.
 
-export const CANONICAL_RECIPE = {
+export const CANONICAL_ROUTINE = {
   name: "Standard room readiness — VC + audio loopback",
   description:
     "Powers on every device, dials a SIP loopback from the video codec, verifies the mics hear the returning audio, then hangs up and resets the DSP.",

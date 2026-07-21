@@ -33,8 +33,8 @@ type nightlyRunRow struct {
 	BuildingName    string  `json:"building_name"`
 	LocationName    string  `json:"location_name,omitempty"`
 	RegionName      string  `json:"region_name,omitempty"`
-	RecipeID        string  `json:"recipe_id,omitempty"`
-	RecipeName      string  `json:"recipe_name,omitempty"`
+	RoutineID        string  `json:"routine_id,omitempty"`
+	RoutineName      string  `json:"routine_name,omitempty"`
 	Phase           string  `json:"phase"`
 	Status          string  `json:"status"`
 	ScheduledAt     string  `json:"scheduled_at"`
@@ -105,7 +105,7 @@ func (h *Handler) ListNightlyRuns(w http.ResponseWriter, r *http.Request) {
 			       b.id::text, b.name AS building_name,
 			       loc.name AS location_name,
 			       reg.name AS region_name,
-			       nr.recipe_id::text, tr.name AS recipe_name,
+			       nr.routine_id::text, tr.name AS routine_name,
 			       nr.phase, nr.status,
 			       nr.scheduled_at, nr.started_at, nr.completed_at,
 			       nr.failure_reason
@@ -114,7 +114,7 @@ func (h *Handler) ListNightlyRuns(w http.ResponseWriter, r *http.Request) {
 			  LEFT JOIN buildings b              ON b.id = r.building_id
 			  LEFT JOIN locations loc            ON loc.id = b.location_id
 			  LEFT JOIN regions   reg            ON reg.id = loc.region_id
-			  LEFT JOIN nightly_test_recipe tr   ON tr.id = nr.recipe_id
+			  LEFT JOIN nightly_test_routine tr   ON tr.id = nr.routine_id
 			 WHERE nr.scheduled_at >= $1
 			   AND nr.scheduled_at < $2`
 		if roomFilter != "" {
@@ -137,8 +137,8 @@ func (h *Handler) ListNightlyRuns(w http.ResponseWriter, r *http.Request) {
 		for rows.Next() {
 			var (
 				row                          nightlyRunRow
-				locName, regName, recipeName *string
-				recipeID                     *string
+				locName, regName, routineName *string
+				routineID                     *string
 				sched                        time.Time
 				started, completed           *time.Time
 				failure                      *string
@@ -148,7 +148,7 @@ func (h *Handler) ListNightlyRuns(w http.ResponseWriter, r *http.Request) {
 				&row.RoomID, &row.RoomName,
 				&row.BuildingID, &row.BuildingName,
 				&locName, &regName,
-				&recipeID, &recipeName,
+				&routineID, &routineName,
 				&row.Phase, &row.Status,
 				&sched, &started, &completed,
 				&failure,
@@ -161,11 +161,11 @@ func (h *Handler) ListNightlyRuns(w http.ResponseWriter, r *http.Request) {
 			if regName != nil {
 				row.RegionName = *regName
 			}
-			if recipeID != nil {
-				row.RecipeID = *recipeID
+			if routineID != nil {
+				row.RoutineID = *routineID
 			}
-			if recipeName != nil {
-				row.RecipeName = *recipeName
+			if routineName != nil {
+				row.RoutineName = *routineName
 			}
 			row.ScheduledAt = sched.UTC().Format(time.RFC3339)
 			if started != nil {
@@ -224,8 +224,8 @@ func (h *Handler) GetNightlyRun(w http.ResponseWriter, r *http.Request) {
 	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
 		// Base row.
 		var (
-			locName, regName, recipeName *string
-			recipeID                     *string
+			locName, regName, routineName *string
+			routineID                     *string
 			sched                        time.Time
 			started, completed           *time.Time
 			failure                      *string
@@ -235,7 +235,7 @@ func (h *Handler) GetNightlyRun(w http.ResponseWriter, r *http.Request) {
 			       nr.room_id::text, r.name,
 			       b.id::text, b.name,
 			       loc.name, reg.name,
-			       nr.recipe_id::text, tr.name,
+			       nr.routine_id::text, tr.name,
 			       nr.phase, nr.status,
 			       nr.scheduled_at, nr.started_at, nr.completed_at,
 			       nr.failure_reason
@@ -244,14 +244,14 @@ func (h *Handler) GetNightlyRun(w http.ResponseWriter, r *http.Request) {
 			  LEFT JOIN buildings b              ON b.id = r.building_id
 			  LEFT JOIN locations loc            ON loc.id = b.location_id
 			  LEFT JOIN regions   reg            ON reg.id = loc.region_id
-			  LEFT JOIN nightly_test_recipe tr   ON tr.id = nr.recipe_id
+			  LEFT JOIN nightly_test_routine tr   ON tr.id = nr.routine_id
 			 WHERE nr.id = $1
 		`, runID).Scan(
 			&out.ID,
 			&out.RoomID, &out.RoomName,
 			&out.BuildingID, &out.BuildingName,
 			&locName, &regName,
-			&recipeID, &recipeName,
+			&routineID, &routineName,
 			&out.Phase, &out.Status,
 			&sched, &started, &completed,
 			&failure,
@@ -269,11 +269,11 @@ func (h *Handler) GetNightlyRun(w http.ResponseWriter, r *http.Request) {
 		if regName != nil {
 			out.RegionName = *regName
 		}
-		if recipeID != nil {
-			out.RecipeID = *recipeID
+		if routineID != nil {
+			out.RoutineID = *routineID
 		}
-		if recipeName != nil {
-			out.RecipeName = *recipeName
+		if routineName != nil {
+			out.RoutineName = *routineName
 		}
 		out.ScheduledAt = sched.UTC().Format(time.RFC3339)
 		if started != nil {

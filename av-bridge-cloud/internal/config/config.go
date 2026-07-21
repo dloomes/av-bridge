@@ -80,7 +80,7 @@ type Config struct {
 	// (spec: "power_on_time + 30min" local). SendAfterOffset is the delay
 	// after the customer's local power_on_time before we send — 30m by
 	// default so every room has time to finish its warm-up (+ Phase B
-	// recipe) before the digest is generated.
+	// routine) before the digest is generated.
 	NightlyDigestTickInterval    time.Duration
 	NightlyDigestSendAfterOffset time.Duration
 

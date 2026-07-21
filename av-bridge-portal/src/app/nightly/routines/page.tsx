@@ -18,33 +18,33 @@ import { useToast } from "@/components/toast";
 import { useSession } from "@/hooks/useSession";
 import { api } from "@/lib/api";
 import { isAdmin } from "@/lib/session";
-import { CANONICAL_RECIPE } from "./canonical";
-import type { NightlyRecipeRow } from "@/lib/api";
+import { CANONICAL_ROUTINE } from "./canonical";
+import type { NightlyRoutineRow } from "@/lib/api";
 
-// Room Readiness — recipe list page.
+// Room Readiness — routine list page.
 //
-// Slice 2B. Recipes are the reusable functional-test definitions the
+// Slice 2B. Routines are the reusable functional-test definitions the
 // Phase B runner will execute after power-on. This page provides list +
-// delete + create-with-template flows. The per-recipe editor lives at
-// /nightly/recipes/[id]/page.tsx.
+// delete + create-with-template flows. The per-routine editor lives at
+// /nightly/routines/[id]/page.tsx.
 
-export default function RecipesListPage() {
+export default function RoutinesListPage() {
   const session = useSession();
   const canManage = isAdmin(session.user?.role) || !!session.user?.is_vendor;
   const router = useRouter();
   const { toast } = useToast();
 
-  const [recipes, setRecipes] = useState<NightlyRecipeRow[] | null>(null);
+  const [routines, setRoutines] = useState<NightlyRoutineRow[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
-  const [deleting, setDeleting] = useState<NightlyRecipeRow | null>(null);
+  const [deleting, setDeleting] = useState<NightlyRoutineRow | null>(null);
   const [deletingBusy, setDeletingBusy] = useState(false);
 
-  const loadRecipes = useCallback(async (signal?: AbortSignal) => {
+  const loadRoutines = useCallback(async (signal?: AbortSignal) => {
     try {
-      const list = await api.listNightlyRecipes(signal);
+      const list = await api.listNightlyRoutines(signal);
       if (signal?.aborted) return;
-      setRecipes(list);
+      setRoutines(list);
       setLoadError(null);
     } catch (e) {
       if (!signal?.aborted) setLoadError((e as Error).message);
@@ -53,21 +53,21 @@ export default function RecipesListPage() {
 
   useEffect(() => {
     const ctrl = new AbortController();
-    void loadRecipes(ctrl.signal);
+    void loadRoutines(ctrl.signal);
     return () => ctrl.abort();
-  }, [loadRecipes]);
+  }, [loadRoutines]);
 
   const handleCreate = async (fromTemplate: boolean) => {
     setCreating(true);
     try {
-      const res = await api.createNightlyRecipe({
-        name: fromTemplate ? CANONICAL_RECIPE.name : "Untitled recipe",
-        description: fromTemplate ? CANONICAL_RECIPE.description : "",
-        steps: fromTemplate ? CANONICAL_RECIPE.steps : [],
+      const res = await api.createNightlyRoutine({
+        name: fromTemplate ? CANONICAL_ROUTINE.name : "Untitled routine",
+        description: fromTemplate ? CANONICAL_ROUTINE.description : "",
+        steps: fromTemplate ? CANONICAL_ROUTINE.steps : [],
       });
       // Land the user straight in the editor so they can immediately
       // tweak the name / steps — that's the flow this page exists for.
-      router.push(`/nightly/recipes/${res.id}`);
+      router.push(`/nightly/routines/${res.id}`);
     } catch (e) {
       toast({
         title: "Create failed",
@@ -82,13 +82,13 @@ export default function RecipesListPage() {
     if (!deleting) return;
     setDeletingBusy(true);
     try {
-      await api.deleteNightlyRecipe(deleting.id);
+      await api.deleteNightlyRoutine(deleting.id);
       setDeleting(null);
-      await loadRecipes();
+      await loadRoutines();
       toast({
         title: `Deleted "${deleting.name}"`,
         description:
-          "Schedules referencing this recipe now run power-cycle only until you assign a new one.",
+          "Schedules referencing this routine now run power-cycle only until you assign a new one.",
         variant: "success",
       });
     } catch (e) {
@@ -120,7 +120,7 @@ export default function RecipesListPage() {
               </Link>
             </div>
             <h1 className="text-xl font-semibold leading-tight">
-              Test recipes
+              Test routines
             </h1>
             <p className="text-sm text-muted-foreground leading-tight">
               Reusable step sequences the readiness runner executes after
@@ -140,7 +140,7 @@ export default function RecipesListPage() {
                 ) : (
                   <Plus aria-hidden="true" className="h-4 w-4" />
                 )}
-                Blank recipe
+                Blank routine
               </Button>
               <Button
                 size="sm"
@@ -167,14 +167,14 @@ export default function RecipesListPage() {
             </div>
           )}
 
-          {recipes === null && !loadError && (
+          {routines === null && !loadError && (
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" />
-              Loading recipes…
+              Loading routines…
             </div>
           )}
 
-          {recipes !== null && recipes.length === 0 && (
+          {routines !== null && routines.length === 0 && (
             <Card>
               <CardContent className="p-10 text-center space-y-3">
                 <div
@@ -183,11 +183,11 @@ export default function RecipesListPage() {
                 >
                   <FileCode2 className="h-6 w-6 [color:hsl(var(--primary))]" />
                 </div>
-                <div className="text-base font-semibold">No recipes yet</div>
+                <div className="text-base font-semibold">No routines yet</div>
                 <p className="mx-auto max-w-md text-sm text-muted-foreground">
-                  A recipe is a JSON step sequence — power on the room, place a
+                  A routine is a JSON step sequence — power on the room, place a
                   test call, check the microphones hear audio, hang up.
-                  The scheduler runs the assigned recipe after power-on.
+                  The scheduler runs the assigned routine after power-on.
                 </p>
                 {canManage && (
                   <div className="pt-1 flex justify-center gap-2">
@@ -198,7 +198,7 @@ export default function RecipesListPage() {
                       onClick={() => handleCreate(false)}
                     >
                       <Plus aria-hidden="true" className="h-4 w-4" />
-                      Blank recipe
+                      Blank routine
                     </Button>
                     <Button
                       size="sm"
@@ -214,7 +214,7 @@ export default function RecipesListPage() {
             </Card>
           )}
 
-          {recipes !== null && recipes.length > 0 && (
+          {routines !== null && routines.length > 0 && (
             <Card>
               <CardContent className="p-0">
                 <div className="overflow-x-auto">
@@ -222,7 +222,7 @@ export default function RecipesListPage() {
                     <thead>
                       <tr className="border-b bg-muted/40 text-left text-[10px] uppercase tracking-wider text-muted-foreground">
                         <th scope="col" className="px-4 py-3 font-medium">
-                          Recipe
+                          Routine
                         </th>
                         <th scope="col" className="px-4 py-3 font-medium">
                           Steps
@@ -236,14 +236,14 @@ export default function RecipesListPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {recipes.map((r) => (
+                      {routines.map((r) => (
                         <tr
                           key={r.id}
                           className="border-b last:border-0 transition-colors hover:bg-primary/[0.04]"
                         >
                           <td className="px-4 py-3">
                             <Link
-                              href={`/nightly/recipes/${r.id}`}
+                              href={`/nightly/routines/${r.id}`}
                               className="font-medium text-foreground hover:underline"
                             >
                               {r.name}
@@ -262,7 +262,7 @@ export default function RecipesListPage() {
                           </td>
                           <td className="px-4 py-3">
                             <div className="flex items-center justify-end gap-0.5">
-                              <Link href={`/nightly/recipes/${r.id}`}>
+                              <Link href={`/nightly/routines/${r.id}`}>
                                 <Button
                                   variant="ghost"
                                   size="icon"
@@ -312,7 +312,7 @@ export default function RecipesListPage() {
           wide={false}
         >
           <p className="text-sm text-muted-foreground">
-            Schedules referencing this recipe will lose their test and run
+            Schedules referencing this routine will lose their test and run
             power-cycle only until you assign a new one. Runs already
             executed keep their step results.
           </p>

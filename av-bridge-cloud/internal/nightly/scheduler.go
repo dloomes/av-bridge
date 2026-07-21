@@ -1,6 +1,6 @@
 // Package nightly drives the Room Readiness lifecycle: enacting scheduled
 // power-off / power-on cycles per room and (eventually) executing test
-// recipes after warm-up.
+// routines after warm-up.
 //
 // Slice 3 (this file): the scheduler + state-machine skeleton. Dispatches
 // power commands in DRY-RUN mode by default — logs "would send X to
@@ -42,7 +42,7 @@ type Config struct {
 
 	// WarmupSeconds — after power-on completes, how long to wait before
 	// declaring the room ready (or in Phase B, before starting the test
-	// recipe). Displays typically need 30-60s to reach steady state.
+	// routine). Displays typically need 30-60s to reach steady state.
 	WarmupSeconds int
 
 	// DryRun — when true, no device commands are dispatched. The state
@@ -443,7 +443,7 @@ func (s *Scheduler) decideTransition(
 
 	case "warming":
 		// The second half of warm-up before we mark the room ready. In
-		// Phase B this is where the test recipe kicks off.
+		// Phase B this is where the test routine kicks off.
 		if s.cfg.WarmupSeconds <= 0 {
 			return "ready", "no warm-up configured", true
 		}

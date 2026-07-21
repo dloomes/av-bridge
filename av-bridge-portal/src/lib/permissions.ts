@@ -72,8 +72,8 @@ export const PERMISSIONS: readonly PermissionDef[] = [
   // Assets
   { key: "asset.crud",          title: "Manage assets",        description: "Add, edit, and remove assets (physical inventory) in the tenant.", category: "Assets" },
   // Room Readiness (nightly lifecycle)
-  { key: "nightly.view",        title: "View Room Readiness",  description: "See nightly schedules, recipes, and run history.",                       category: "Room Readiness" },
-  { key: "nightly.manage",      title: "Manage Room Readiness", description: "Edit the nightly schedule, room overrides, and test recipes.",         category: "Room Readiness" },
+  { key: "nightly.view",        title: "View Room Readiness",  description: "See nightly schedules, routines, and run history.",                       category: "Room Readiness" },
+  { key: "nightly.manage",      title: "Manage Room Readiness", description: "Edit the nightly schedule, room overrides, and test routines.",         category: "Room Readiness" },
 ];
 
 // PERMISSIONS_BY_CATEGORY is what the matrix renders — same items, grouped
