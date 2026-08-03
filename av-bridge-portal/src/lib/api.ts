@@ -489,6 +489,15 @@ export const api = {
       method: "POST",
     }),
 
+  runRoutineNow: (roomID: string, routineID?: string) =>
+    request<{ run_id: string; routine_id: string }>(
+      `/api/v1/nightly/rooms/${encodeURIComponent(roomID)}/run-now`,
+      {
+        method: "POST",
+        body: routineID ? JSON.stringify({ routine_id: routineID }) : undefined,
+      },
+    ),
+
   helpdeskCustomers: (signal?: AbortSignal) =>
     request<HelpdeskCustomer[]>("/api/v1/helpdesk/customers", { signal }),
 

@@ -2,11 +2,13 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   CircleSlash,
   FileCode2,
   Loader2,
   Moon,
+  Play,
   RotateCcw,
   Settings2,
 } from "lucide-react";
@@ -264,6 +266,36 @@ export default function NightlySchedulePage() {
     } finally {
       setSendingDigest(false);
     }
+  };
+
+  // Run-now — fires an ad-hoc routine execution against a specific
+  // room, bypassing the schedule. The backend inserts a run directly in
+  // the `testing` phase (skipping the power-cycle preamble) and hands
+  // it to the executor. On success we navigate to the run detail so the
+  // operator can watch step_results appear live.
+  const router = useRouter();
+  const [runningRoomID, setRunningRoomID] = useState<string | null>(null);
+  const handleRunNow = async (row: NightlyRoomRow) => {
+    setRunningRoomID(row.room_id);
+    try {
+      const res = await api.runRoutineNow(row.room_id);
+      toast({
+        title: `Started routine on "${row.room_name}"`,
+        description: "Navigating to the run detail so you can watch it live.",
+        variant: "success",
+      });
+      router.push(`/nightly/runs/${res.run_id}`);
+    } catch (e) {
+      toast({
+        title: "Run failed to start",
+        description: (e as Error).message,
+        variant: "destructive",
+      });
+      setRunningRoomID(null);
+    }
+    // Deliberately don't clear runningRoomID on success — the router
+    // push unmounts the page anyway, and clearing early would let the
+    // user re-click during navigation.
   };
 
   // Room override — reset via DELETE. Idempotent, so no confirmation prompt.
@@ -764,6 +796,28 @@ export default function NightlySchedulePage() {
                                         <div className="flex items-center justify-end gap-1">
                                           {canManage && (
                                             <>
+                                              <Button
+                                                variant="ghost"
+                                                size="sm"
+                                                className="h-8"
+                                                disabled={runningRoomID === r.room_id}
+                                                onClick={() => handleRunNow(r)}
+                                                aria-label={`Run routine now on ${r.room_name}`}
+                                                title="Run this room's routine now (skips power-cycle)"
+                                              >
+                                                {runningRoomID === r.room_id ? (
+                                                  <Loader2
+                                                    aria-hidden="true"
+                                                    className="h-3.5 w-3.5 animate-spin"
+                                                  />
+                                                ) : (
+                                                  <Play
+                                                    aria-hidden="true"
+                                                    className="h-3.5 w-3.5"
+                                                  />
+                                                )}
+                                                Run now
+                                              </Button>
                                               <Button
                                                 variant="ghost"
                                                 size="sm"

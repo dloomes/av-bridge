@@ -28,14 +28,16 @@ type Handler struct {
 	cipher     secrets.Cipher
 	dispatcher *notify.Dispatcher
 	digest     *nightly.DigestSender
+	executor   *nightly.Executor
 	log        *slog.Logger
 }
 
 // New. dispatcher may be nil — the notification channel endpoints still
 // serve reads and CRUD but the test-send endpoint returns 503. digest may
 // be nil — the nightly send-now endpoint returns 503 in that case.
-func New(store *db.Store, cipher secrets.Cipher, dispatcher *notify.Dispatcher, digest *nightly.DigestSender, log *slog.Logger) *Handler {
-	return &Handler{store: store, cipher: cipher, dispatcher: dispatcher, digest: digest, log: log}
+// executor may be nil or disabled — the run-now endpoint returns 503.
+func New(store *db.Store, cipher secrets.Cipher, dispatcher *notify.Dispatcher, digest *nightly.DigestSender, executor *nightly.Executor, log *slog.Logger) *Handler {
+	return &Handler{store: store, cipher: cipher, dispatcher: dispatcher, digest: digest, executor: executor, log: log}
 }
 
 // withTenant runs fn under the caller's customer scope. On error it writes a

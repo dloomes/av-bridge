@@ -179,6 +179,11 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 		// Morning digest — slice 5. The goroutine sends automatically; this
 		// endpoint lets an operator trigger a preview send on demand.
 		mux.Handle("POST /api/v1/nightly/digest/send-now", wrapPerm(portalauth.PermNightlyManage, portal.Portal.SendNightlyDigest))
+		// Ad-hoc routine trigger — Phase B slice 1. Runs the routine
+		// against the chosen room immediately, skipping the power-cycle
+		// preamble. Body accepts an optional {routine_id} override for
+		// "test this routine against this room" from the editor.
+		mux.Handle("POST /api/v1/nightly/rooms/{id}/run-now", wrapPerm(portalauth.PermNightlyManage, portal.Portal.SendRoutineRunNow))
 
 		// User CRUD — every write is a distinct permission so a custom role
 		// can, e.g., grant create-and-update but not delete-and-reset.

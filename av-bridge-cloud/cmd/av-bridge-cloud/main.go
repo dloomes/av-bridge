@@ -141,6 +141,43 @@ func main() {
 
 	h := ingest.NewHandler(store, cipher, hub, dispatcher, log)
 
+	// Shared shutdown-context for every background goroutine (sweeper,
+	// session cleaner, nightly scheduler + digest + executor). Cancel
+	// once during SIGINT/SIGTERM and every loop stops. Created up here
+	// (rather than after the API server construction like it used to)
+	// because the routine executor needs it at construction time — and
+	// the portal handler needs the executor to wire the run-now
+	// endpoint. Everything else that consumed sweeperCtx before still
+	// works because we don't cancel it here.
+	sweeperCtx, stopSweeper := context.WithCancel(context.Background())
+	defer stopSweeper()
+
+	// Routine executor — Phase B slice 1. Constructed early so the
+	// portal handler can hold a reference for the run-now endpoint.
+	// Goroutine work is entirely lazy: it only spawns when the
+	// scheduler or run-now hands off a specific run. See
+	// internal/nightly/executor.go.
+	nightlyExecutor := nightly.NewExecutor(
+		store.AdminPool(),
+		nightly.ExecutorConfig{
+			Enabled:     cfg.NightlyExecEnabled,
+			StepTimeout: cfg.NightlyExecStepTimeout,
+			DryRun:      cfg.NightlyDryRun,
+			StuckAfter:  cfg.NightlyExecStuckAfter,
+		},
+		log,
+		sweeperCtx,
+	)
+	if cfg.NightlyExecEnabled {
+		log.Info("nightly executor enabled",
+			"step_timeout", cfg.NightlyExecStepTimeout,
+			"stuck_after", cfg.NightlyExecStuckAfter,
+			"dry_run_writes", cfg.NightlyDryRun,
+		)
+	} else {
+		log.Info("nightly executor disabled — warming → ready (no testing phase)")
+	}
+
 	var adminH http.Handler
 	if cfg.AdminAPIToken != "" {
 		adminH = admin.NewCollectorHandler(store.AdminPool(), cipher, cfg.AdminAPIToken, log)
@@ -163,7 +200,7 @@ func main() {
 		resolver := portalauth.NewChainResolver(local, mock, static)
 		portalRoutes = &api.PortalRoutes{
 			Resolver: resolver,
-			Portal:   portalapi.New(store, cipher, dispatcher, nightlyDigest, log),
+			Portal:   portalapi.New(store, cipher, dispatcher, nightlyDigest, nightlyExecutor, log),
 			WSHub:    hub,
 		}
 		log.Info("portal API enabled",
@@ -188,8 +225,8 @@ func main() {
 	srv := api.NewServer(cfg.ListenAddr, h, adminH, portalRoutes, bridgeRoutes, bridgeConfigRoutes, log)
 
 	// Slice 3.1 — sweep stuck in_progress commands across all tenants.
-	sweeperCtx, stopSweeper := context.WithCancel(context.Background())
-	defer stopSweeper()
+	// sweeperCtx / stopSweeper were declared earlier (before executor
+	// construction); reused here for the sweeper's own goroutine.
 	sweeper := commands.NewSweeper(
 		store.AdminPool(),
 		cfg.CommandSweepInterval,
@@ -227,35 +264,11 @@ func main() {
 		log,
 	)
 
-	// Routine executor — Phase B slice 1. When enabled, takes ownership
-	// of a run entering the `testing` phase and iterates its routine's
-	// steps. Read-side steps (check_metric, expect_status) execute for
-	// real; write-side steps (power/command) log-only until real
-	// command dispatch is wired. Parent context is sweeperCtx so
-	// executor goroutines cancel on shutdown alongside the other
-	// background loops.
-	nightlyExecutor := nightly.NewExecutor(
-		store.AdminPool(),
-		nightly.ExecutorConfig{
-			Enabled:     cfg.NightlyExecEnabled,
-			StepTimeout: cfg.NightlyExecStepTimeout,
-			DryRun:      cfg.NightlyDryRun,
-			StuckAfter:  cfg.NightlyExecStuckAfter,
-		},
-		log,
-		sweeperCtx,
-	)
+	// Wire the executor into the scheduler now that both are
+	// constructed. The executor itself was created earlier (before the
+	// portal handler init) so the portal's run-now endpoint has a
+	// reference to it.
 	nightlyScheduler.SetExecutor(nightlyExecutor)
-	if cfg.NightlyExecEnabled {
-		log.Info("nightly executor enabled",
-			"step_timeout", cfg.NightlyExecStepTimeout,
-			"stuck_after", cfg.NightlyExecStuckAfter,
-			"dry_run_writes", cfg.NightlyDryRun,
-		)
-	} else {
-		log.Info("nightly executor disabled — warming → ready (no testing phase)")
-	}
-
 	go nightlyScheduler.Run(sweeperCtx)
 
 	// Kick off the nightly digest sender goroutine — the sender itself
