@@ -226,6 +226,36 @@ func main() {
 		},
 		log,
 	)
+
+	// Routine executor — Phase B slice 1. When enabled, takes ownership
+	// of a run entering the `testing` phase and iterates its routine's
+	// steps. Read-side steps (check_metric, expect_status) execute for
+	// real; write-side steps (power/command) log-only until real
+	// command dispatch is wired. Parent context is sweeperCtx so
+	// executor goroutines cancel on shutdown alongside the other
+	// background loops.
+	nightlyExecutor := nightly.NewExecutor(
+		store.AdminPool(),
+		nightly.ExecutorConfig{
+			Enabled:     cfg.NightlyExecEnabled,
+			StepTimeout: cfg.NightlyExecStepTimeout,
+			DryRun:      cfg.NightlyDryRun,
+			StuckAfter:  cfg.NightlyExecStuckAfter,
+		},
+		log,
+		sweeperCtx,
+	)
+	nightlyScheduler.SetExecutor(nightlyExecutor)
+	if cfg.NightlyExecEnabled {
+		log.Info("nightly executor enabled",
+			"step_timeout", cfg.NightlyExecStepTimeout,
+			"stuck_after", cfg.NightlyExecStuckAfter,
+			"dry_run_writes", cfg.NightlyDryRun,
+		)
+	} else {
+		log.Info("nightly executor disabled — warming → ready (no testing phase)")
+	}
+
 	go nightlyScheduler.Run(sweeperCtx)
 
 	// Kick off the nightly digest sender goroutine — the sender itself

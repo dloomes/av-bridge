@@ -53,6 +53,11 @@ services:
       VENDOR_ADMIN_EMAIL: "dloomes@involve.vc"
       VENDOR_ADMIN_PASSWORD: "ChangeMeOnFirstRun!"
       VENDOR_ADMIN_NAME: "Daniel Loomes"
+      # Phase B slice 1 — routine executor. When true, a run whose routine
+      # has steps takes the `testing` phase branch after warming. Reads
+      # (check_metric, expect_status) run for real; writes (power/command)
+      # respect NIGHTLY_DRY_RUN.
+      NIGHTLY_EXEC_ENABLED: "true"
     ports:
       - "8090:8090"
 

@@ -58,6 +58,13 @@ type Scheduler struct {
 	cfg  Config
 	log  *slog.Logger
 
+	// executor — the routine runner. When set (non-nil) AND enabled in
+	// its own config, a warming-phase run whose routine has steps
+	// delegates to the executor instead of finishing as ready
+	// directly. Absent executor keeps existing warming → ready
+	// behaviour. See internal/nightly/executor.go.
+	executor *Executor
+
 	// now overrides time.Now for tests. Nil in prod → uses time.Now().
 	now func() time.Time
 }
@@ -65,6 +72,11 @@ type Scheduler struct {
 func NewScheduler(pool *pgxpool.Pool, cfg Config, log *slog.Logger) *Scheduler {
 	return &Scheduler{pool: pool, cfg: cfg, log: log}
 }
+
+// SetExecutor wires the routine executor into the scheduler. Called
+// from main.go after both are constructed. Optional — a nil executor
+// (or one whose Enabled is false) leaves the state machine untouched.
+func (s *Scheduler) SetExecutor(e *Executor) { s.executor = e }
 
 // Run blocks until ctx is cancelled, ticking on cfg.TickInterval.
 func (s *Scheduler) Run(ctx context.Context) {
@@ -77,7 +89,19 @@ func (s *Scheduler) Run(ctx context.Context) {
 		"grace", s.cfg.GraceWindow,
 		"warmup_seconds", s.cfg.WarmupSeconds,
 		"dry_run", s.cfg.DryRun,
+		"executor_enabled", s.executor != nil && s.executor.cfg.Enabled,
 	)
+
+	// Startup housekeeping: any run stuck in `testing` phase from a
+	// prior process (crash / kill / SIGTERM before the executor's
+	// goroutine finished) is marked failed with a clear reason so it
+	// doesn't sit in-flight forever.
+	if s.executor != nil {
+		if err := s.executor.SweepStuck(ctx); err != nil {
+			s.log.Warn("nightly executor: sweep-stuck failed", "error", err)
+		}
+	}
+
 	t := time.NewTicker(s.cfg.TickInterval)
 	defer t.Stop()
 	for {
@@ -122,6 +146,7 @@ type roomView struct {
 	daysOfWeek    []int // ISO 1-7
 	timezone      string
 	excludedUntil *time.Time // if non-nil AND today or later → skip
+	testRoutineID *string    // effective routine for this room (per-room override ∪ customer default)
 }
 
 func (s *Scheduler) collectEnabledRooms(ctx context.Context) ([]roomView, error) {
@@ -134,7 +159,8 @@ func (s *Scheduler) collectEnabledRooms(ctx context.Context) ([]roomView, error)
 		  COALESCE(rnc.power_on_time,  ns.power_on_time)    AS eff_power_on,
 		  COALESCE(rnc.days_of_week,   ns.days_of_week)     AS eff_days,
 		  ns.timezone,
-		  rnc.excluded_until
+		  rnc.excluded_until,
+		  COALESCE(rnc.test_routine_id, ns.test_routine_id)::text AS eff_routine
 		FROM nightly_schedule ns
 		JOIN rooms r                        ON r.customer_id = ns.customer_id
 		LEFT JOIN room_nightly_config rnc   ON rnc.room_id = r.id
@@ -151,10 +177,11 @@ func (s *Scheduler) collectEnabledRooms(ctx context.Context) ([]roomView, error)
 			off, on                time.Time
 			days                   []int32
 			excludedUntil          *time.Time
+			routineID              *string
 		)
 		if err := rows.Scan(
 			&rv.customerID, &rv.roomID, &rv.roomName,
-			&off, &on, &days, &rv.timezone, &excludedUntil,
+			&off, &on, &days, &rv.timezone, &excludedUntil, &routineID,
 		); err != nil {
 			return nil, err
 		}
@@ -162,6 +189,7 @@ func (s *Scheduler) collectEnabledRooms(ctx context.Context) ([]roomView, error)
 		rv.powerOnTime = timeOfDayToDuration(on)
 		rv.daysOfWeek = int32sToIntSlice(days)
 		rv.excludedUntil = excludedUntil
+		rv.testRoutineID = routineID
 		out = append(out, rv)
 	}
 	return out, rows.Err()
@@ -228,12 +256,18 @@ func (s *Scheduler) createDueRuns(ctx context.Context) error {
 		}
 
 		// Insert the run row. Uniqueness on (room_id, scheduled_at) keeps
-		// duplicate ticks harmless.
+		// duplicate ticks harmless. Snapshot the effective routine at
+		// creation time so the executor still has a reference even if
+		// the customer changes their schedule mid-cycle.
+		var routineArg any
+		if rv.testRoutineID != nil && *rv.testRoutineID != "" {
+			routineArg = *rv.testRoutineID
+		}
 		res, err := s.pool.Exec(ctx, `
-			INSERT INTO nightly_run (customer_id, room_id, scheduled_at, phase, status, started_at)
-			VALUES ($1, $2, $3, 'scheduled_off', 'in_progress', now())
+			INSERT INTO nightly_run (customer_id, room_id, routine_id, scheduled_at, phase, status, started_at)
+			VALUES ($1, $2, $3, $4, 'scheduled_off', 'in_progress', now())
 			ON CONFLICT (room_id, scheduled_at) DO NOTHING
-		`, rv.customerID, rv.roomID, scheduledUTC)
+		`, rv.customerID, rv.roomID, routineArg, scheduledUTC)
 		if err != nil {
 			s.log.Warn("nightly: insert run failed",
 				"room", rv.roomID, "scheduled_at", scheduledUTC, "error", err)
@@ -275,7 +309,8 @@ func (s *Scheduler) advanceRuns(ctx context.Context) error {
 		       nr.phase, nr.scheduled_at, nr.started_at,
 		       COALESCE(rnc.power_on_time, ns.power_on_time) AS eff_power_on,
 		       COALESCE(rnc.days_of_week,  ns.days_of_week)  AS eff_days,
-		       ns.timezone
+		       ns.timezone,
+		       nr.routine_id::text
 		  FROM nightly_run nr
 		  JOIN rooms r                       ON r.id = nr.room_id
 		  JOIN nightly_schedule ns           ON ns.customer_id = nr.customer_id
@@ -292,6 +327,7 @@ func (s *Scheduler) advanceRuns(ctx context.Context) error {
 		powerOnTime                      time.Duration
 		daysOfWeek                       []int
 		timezone                         string
+		routineID                        *string
 	}
 	var runs []liveRun
 	for rows.Next() {
@@ -300,11 +336,13 @@ func (s *Scheduler) advanceRuns(ctx context.Context) error {
 			startedAt  *time.Time
 			powerOn    time.Time
 			days       []int32
+			routineID  *string
 		)
 		if err := rows.Scan(
 			&r.id, &r.customerID, &r.roomID, &r.roomName,
 			&r.phase, &r.scheduledAt, &startedAt,
 			&powerOn, &days, &r.timezone,
+			&routineID,
 		); err != nil {
 			rows.Close()
 			return err
@@ -314,6 +352,7 @@ func (s *Scheduler) advanceRuns(ctx context.Context) error {
 		}
 		r.powerOnTime = timeOfDayToDuration(powerOn)
 		r.daysOfWeek = int32sToIntSlice(days)
+		r.routineID = routineID
 		runs = append(runs, r)
 	}
 	rows.Close()
@@ -357,6 +396,33 @@ func (s *Scheduler) advanceRuns(ctx context.Context) error {
 				s.log.Warn("nightly: phase update failed", "run", r.id, "error", err)
 			}
 		case "ready":
+			// Warming just finished. If a routine is assigned AND the
+			// executor is wired, transition into the `testing` phase
+			// and let the executor own the run from here — it'll
+			// finish the run itself (ready or failed) when it's
+			// walked all the steps. If the executor declines (no
+			// routine / no steps / disabled), fall through to the
+			// existing ready-finish behaviour.
+			if s.executor != nil {
+				runCtx := RunContext{
+					RunID: r.id, CustomerID: r.customerID,
+					RoomID: r.roomID, RoomName: r.roomName,
+					RoutineID: r.routineID,
+				}
+				took, err := s.executor.MaybeStart(ctx, runCtx)
+				if err != nil {
+					s.log.Warn("nightly executor: MaybeStart failed",
+						"run", r.id, "error", err)
+				} else if took {
+					s.log.Info("nightly executor: entered testing phase",
+						"run", r.id, "room", r.roomID, "reason", reason)
+					if err := s.setPhase(ctx, r.id, "testing"); err != nil {
+						s.log.Warn("nightly: phase update failed",
+							"run", r.id, "error", err)
+					}
+					continue
+				}
+			}
 			s.log.Info("nightly: room ready", "run", r.id, "room", r.roomID, "reason", reason)
 			if err := s.finish(ctx, r.id, "ready", "succeeded", ""); err != nil {
 				s.log.Warn("nightly: finish failed", "run", r.id, "error", err)

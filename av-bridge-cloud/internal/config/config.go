@@ -84,6 +84,18 @@ type Config struct {
 	NightlyDigestTickInterval    time.Duration
 	NightlyDigestSendAfterOffset time.Duration
 
+	// Nightly routine executor — Phase B slice 1. When enabled, a run
+	// whose routine has steps takes the `testing` phase branch after
+	// warming instead of going straight to `ready`. Read-side steps
+	// (check_metric, expect_status) execute for real; write-side steps
+	// (power/command) respect NightlyDryRun. StepTimeout caps a single
+	// step's execution (default 5m); StuckAfter is how long a run can
+	// sit in `testing` phase before startup-sweep marks it failed
+	// (default 15m — comfortably longer than any reasonable routine).
+	NightlyExecEnabled    bool
+	NightlyExecStepTimeout time.Duration
+	NightlyExecStuckAfter  time.Duration
+
 	// SMTP relay for outbound alert notifications. SMTPHost empty = dry-run
 	// (sends log instead of actually emailing) so dev can exercise the
 	// channel-config UI without standing up a mail server. SMTPFrom defaults
@@ -145,6 +157,14 @@ func FromEnv() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	nightlyExecStepTimeout, err := getenvDuration("NIGHTLY_EXEC_STEP_TIMEOUT", 5*time.Minute)
+	if err != nil {
+		return Config{}, err
+	}
+	nightlyExecStuckAfter, err := getenvDuration("NIGHTLY_EXEC_STUCK_AFTER", 15*time.Minute)
+	if err != nil {
+		return Config{}, err
+	}
 
 	c := Config{
 		ListenAddr:           getenv("CLOUD_LISTEN_ADDR", ":8090"),
@@ -174,6 +194,11 @@ func FromEnv() (Config, error) {
 		NightlyDryRun:                getenv("NIGHTLY_DRY_RUN", "true") != "false",
 		NightlyDigestTickInterval:    nightlyDigestTick,
 		NightlyDigestSendAfterOffset: nightlyDigestOffset,
+		// Executor default false — opt-in per environment. Once enabled,
+		// warming-phase runs with a routine assigned go via testing.
+		NightlyExecEnabled:     getenv("NIGHTLY_EXEC_ENABLED", "false") == "true",
+		NightlyExecStepTimeout: nightlyExecStepTimeout,
+		NightlyExecStuckAfter:  nightlyExecStuckAfter,
 		SMTPHost:             os.Getenv("POC_SMTP_HOST"),
 		SMTPPort:             getenv("POC_SMTP_PORT", "587"),
 		SMTPUsername:         os.Getenv("POC_SMTP_USERNAME"),
