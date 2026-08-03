@@ -299,6 +299,16 @@ func (h *Hub) manageDevice(ctx context.Context, dev device.Device) {
 				log.Warn("poll error", "error", err)
 				continue
 			}
+			// Attach static capabilities from the adapter — done here
+			// (once per poll) rather than in every adapter's Poll so
+			// each vendor implementation stays focused on state, not
+			// declaration. Cloud writes this to devices.capabilities
+			// on ingest; the portal routine builder + executor read
+			// it to know what actions the device can accept.
+			if tel.Capabilities == nil {
+				caps := dev.Capabilities()
+				tel.Capabilities = &caps
+			}
 			h.cloud.EnqueueTelemetry(tel)
 			log.Debug("polled device", "status", tel.Status)
 

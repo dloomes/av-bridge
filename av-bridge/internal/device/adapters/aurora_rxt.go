@@ -411,6 +411,37 @@ func (a *AuroraAdapter) resolveCommand(req device.CommandRequest) string {
 	return ""
 }
 
+// ── Capabilities ─────────────────────────────────────────────────────────────
+//
+// Static capability declaration for the Aurora RXT touch panel range.
+// Aurora exposes the built-in speaker, LCD brightness, relays and the
+// proximity sensor — no dedicated power state, so power_on/off stay
+// false. Reboot is a command, not a power action.
+
+var auroraCapabilities = device.Capabilities{
+	Power: device.PowerCapability{On: false, Off: false},
+	Commands: []string{
+		"reboot", "factory_default", "test_audio",
+		"mute", "unmute",
+		"auto_brightness_on", "auto_brightness_off",
+		"relay_1_on", "relay_1_off", "relay_1_toggle",
+		"relay_2_on", "relay_2_off", "relay_2_toggle",
+	},
+	Metrics: []string{
+		"volume", "mute",
+		"lcd_brightness", "lcd_timeout",
+		"lux", "proximity",
+		"auto_brightness",
+		"relay_1", "relay_2",
+		"event_manager",
+		"response_ms",
+	},
+}
+
+func (a *AuroraAdapter) Capabilities() device.Capabilities {
+	return auroraCapabilities
+}
+
 // ── Transport ────────────────────────────────────────────────────────────────
 
 // exec writes one command and reads one JSON response. Serialised via cmdMu

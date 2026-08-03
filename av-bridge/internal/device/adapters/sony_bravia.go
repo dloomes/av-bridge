@@ -440,6 +440,34 @@ func (a *SonyBraviaAdapter) call(ctx context.Context, service, method string, pa
 	return sonyResp.Result, nil
 }
 
+// ── Capabilities ─────────────────────────────────────────────────────────────
+//
+// Static declaration of what the Sony BRAVIA adapter supports. Sony's
+// professional displays have first-class power on/off APIs (the codecs
+// don't) so this adapter contributes power_on / power_off to the room's
+// power-cycle set. Keep this list in sync with SendCommand's cases +
+// Poll's metric keys.
+
+var sonyBraviaCapabilities = device.Capabilities{
+	Power: device.PowerCapability{On: true, Off: true},
+	Commands: []string{
+		"power_on", "power_off",
+		"input_hdmi1", "input_hdmi2", "input_hdmi3", "input_hdmi4",
+		"mute", "unmute",
+		"volume_up", "volume_down",
+	},
+	Metrics: []string{
+		"power_status", "power_saving_mode",
+		"current_input", "input_title", "input_source",
+		"volume_speaker", "mute_speaker",
+		"response_ms",
+	},
+}
+
+func (a *SonyBraviaAdapter) Capabilities() device.Capabilities {
+	return sonyBraviaCapabilities
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 // setTags writes a batch of tag values into the adapter's device config,

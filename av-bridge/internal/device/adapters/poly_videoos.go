@@ -620,6 +620,44 @@ func (a *PolyVideoOSAdapter) SendCommand(ctx context.Context, req device.Command
 	}, nil
 }
 
+// ── Capabilities ────────────────────────────────────────────────────────────
+//
+// Static declaration of what the Poly VideoOS adapter supports. Consumed
+// by the cloud (persisted to devices.capabilities), the portal routine
+// builder's palette, and the executor's target-validation. Kept in sync
+// with SendCommand's case list + Poll's metrics — if you add a command
+// or a metric, add it here too.
+
+// polyCapabilities is the fixed capability list for the Poly VideoOS
+// adapter. Package-level so it's allocated once, not per-poll.
+var polyCapabilities = device.Capabilities{
+	Power: device.PowerCapability{
+		// VideoOS doesn't expose a power API in this adapter — the
+		// codecs stay warm; reboot is the closest thing and it's a
+		// command, not a power state.
+		On:  false,
+		Off: false,
+	},
+	Commands: []string{
+		"dial", "hangup",
+		"mute", "unmute",
+		"vol_up", "vol_dn",
+		"reboot",
+	},
+	Metrics: []string{
+		"call_state", "active_calls",
+		"mic_mute", "volume",
+		"device_mode_active",
+		"response_ms",
+	},
+}
+
+// Capabilities satisfies device.Device — returns the static Poly
+// VideoOS capability declaration.
+func (a *PolyVideoOSAdapter) Capabilities() device.Capabilities {
+	return polyCapabilities
+}
+
 // ── HTTP helpers ─────────────────────────────────────────────────────────────
 
 func (a *PolyVideoOSAdapter) get(ctx context.Context, path string) ([]byte, error) {

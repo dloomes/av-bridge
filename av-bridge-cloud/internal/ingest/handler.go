@@ -24,17 +24,24 @@ const maxBody = 8 << 20 // 8 MiB
 // bridge's cloud.Payload / device.Telemetry / device.Event JSON exactly.
 
 type telemetryDTO struct {
-	DeviceID    string            `json:"device_id"`
-	DeviceName  string            `json:"device_name"`
-	DeviceType  string            `json:"device_type"`
-	Location    string            `json:"location"`
-	Protocol    string            `json:"protocol"`
-	Status      string            `json:"status"`
-	Timestamp   time.Time         `json:"timestamp"`
-	Metrics     map[string]any    `json:"metrics"`
-	LensMetrics map[string]any    `json:"lens_metrics"`
-	Tags        map[string]string `json:"tags"`
-	Error       string            `json:"error"`
+	DeviceID     string            `json:"device_id"`
+	DeviceName   string            `json:"device_name"`
+	DeviceType   string            `json:"device_type"`
+	Location     string            `json:"location"`
+	Protocol     string            `json:"protocol"`
+	Status       string            `json:"status"`
+	Timestamp    time.Time         `json:"timestamp"`
+	Metrics      map[string]any    `json:"metrics"`
+	LensMetrics  map[string]any    `json:"lens_metrics"`
+	Tags         map[string]string `json:"tags"`
+	Error        string            `json:"error"`
+	// Capabilities is the adapter's static declaration of what this
+	// device supports (power, commands, metrics). Persisted as-is to
+	// devices.capabilities so the portal + routine executor can gate
+	// authoring + validate targets. Nullable: transport-only adapters
+	// omit it; the writer stores NULL and dependent features degrade
+	// gracefully ("cannot power-cycle; skip in lifecycle").
+	Capabilities json.RawMessage `json:"capabilities,omitempty"`
 }
 
 type eventDTO struct {
@@ -206,8 +213,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 const upsertDeviceSQL = `
 INSERT INTO devices (customer_id, collector_id, reported_id, name, type, protocol,
                      make, model, serial_number, firmware_version, mac_address, ip_address,
-                     tags, latest_status, latest_metrics, last_seen_at)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14,$15::jsonb,$16)
+                     tags, latest_status, latest_metrics, last_seen_at, capabilities)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14,$15::jsonb,$16,$17::jsonb)
 ON CONFLICT (collector_id, reported_id) DO UPDATE SET
   name             = COALESCE(EXCLUDED.name, devices.name),
   type             = COALESCE(EXCLUDED.type, devices.type),
@@ -221,7 +228,8 @@ ON CONFLICT (collector_id, reported_id) DO UPDATE SET
   tags             = COALESCE(EXCLUDED.tags, devices.tags),
   latest_status    = COALESCE(EXCLUDED.latest_status, devices.latest_status),
   latest_metrics   = COALESCE(EXCLUDED.latest_metrics, devices.latest_metrics),
-  last_seen_at     = COALESCE(EXCLUDED.last_seen_at, devices.last_seen_at)
+  last_seen_at     = COALESCE(EXCLUDED.last_seen_at, devices.last_seen_at),
+  capabilities     = COALESCE(EXCLUDED.capabilities, devices.capabilities)
 RETURNING id::text`
 
 func upsertDeviceFromTelemetry(ctx context.Context, tx pgx.Tx, customerID, collectorID string, t telemetryDTO) (string, error) {
@@ -250,6 +258,7 @@ func upsertDeviceFromTelemetry(ctx context.Context, tx pgx.Tx, customerID, colle
 		nilIfEmpty(t.Status),
 		jsonbMap(t.Metrics),
 		nilIfZeroTime(t.Timestamp),
+		nilIfEmptyRaw(t.Capabilities),
 	).Scan(&id)
 	return id, err
 }
@@ -260,7 +269,7 @@ func upsertDeviceMinimal(ctx context.Context, tx pgx.Tx, customerID, collectorID
 		customerID, collectorID, reportedID,
 		nilIfEmpty(name), nilIfEmpty(typ), nil,
 		nil, nil, nil, nil, nil, nil,
-		nil, nil, nil, nil,
+		nil, nil, nil, nil, nil,
 	).Scan(&id)
 	return id, err
 }
@@ -295,6 +304,24 @@ func nilIfZeroTime(t time.Time) any {
 		return nil
 	}
 	return t
+}
+
+// nilIfEmptyRaw treats a zero-length or JSON-null RawMessage as SQL
+// NULL — otherwise passes the bytes through as-is. Used for the
+// capabilities column so transport-only adapters (which don't declare
+// capabilities) don't stomp existing values with an empty payload.
+func nilIfEmptyRaw(b json.RawMessage) any {
+	if len(b) == 0 {
+		return nil
+	}
+	// Trim whitespace-ish payloads and treat literal "null" as nil.
+	// Any non-null JSON — including "{}" — passes through so callers
+	// can deliberately clear individual capability sub-fields by
+	// sending an object with missing keys.
+	if string(b) == "null" {
+		return nil
+	}
+	return []byte(b)
 }
 
 func firstNonEmpty(vals ...string) string {

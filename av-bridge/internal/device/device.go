@@ -25,17 +25,48 @@ const (
 // LensMetrics carries values fetched from Poly Lens (or any future external
 // inventory source). Adapters without a secondary source leave LensMetrics nil.
 type Telemetry struct {
-	DeviceID    string            `json:"device_id"`
-	DeviceName  string            `json:"device_name"`
-	DeviceType  string            `json:"device_type"`
-	Location    string            `json:"location,omitempty"`
-	Protocol    string            `json:"protocol"`
-	Status      Status            `json:"status"`
-	Timestamp   time.Time         `json:"timestamp"`
-	Metrics     map[string]any    `json:"metrics,omitempty"`
-	LensMetrics map[string]any    `json:"lens_metrics,omitempty"`
-	Tags        map[string]string `json:"tags,omitempty"`
-	Error       string            `json:"error,omitempty"`
+	DeviceID     string            `json:"device_id"`
+	DeviceName   string            `json:"device_name"`
+	DeviceType   string            `json:"device_type"`
+	Location     string            `json:"location,omitempty"`
+	Protocol     string            `json:"protocol"`
+	Status       Status            `json:"status"`
+	Timestamp    time.Time         `json:"timestamp"`
+	Metrics      map[string]any    `json:"metrics,omitempty"`
+	LensMetrics  map[string]any    `json:"lens_metrics,omitempty"`
+	Tags         map[string]string `json:"tags,omitempty"`
+	Error        string            `json:"error,omitempty"`
+	// Capabilities — what this device supports. Static per adapter,
+	// declared once in each vendor implementation. Carried on every
+	// telemetry payload for simplicity (bandwidth is trivial and the
+	// cloud writer just idempotently updates devices.capabilities).
+	// Nil for transport-only adapters that don't declare capabilities.
+	Capabilities *Capabilities `json:"capabilities,omitempty"`
+}
+
+// Capabilities is what an adapter says its device can do. Consumers
+// (portal routine builder, cloud runner) use this to gate authoring
+// and validate step targets. Shape mirrors what's stored in the
+// devices.capabilities jsonb column and what the routine-builder
+// palette expects.
+//
+// Design: kept flat and simple. If we later need per-command detail
+// (e.g. required args, output types), those can be added as sibling
+// maps without breaking wire-compat.
+type Capabilities struct {
+	Power    PowerCapability `json:"power"`
+	Commands []string        `json:"commands,omitempty"`
+	Metrics  []string        `json:"metrics,omitempty"`
+}
+
+// PowerCapability describes whether the adapter can turn a device
+// on / off. Two flags rather than one — a display might support
+// power_off (standby) but not power_on (no wake-on-LAN), and vice
+// versa. Runners consult these before scheduling a room's power
+// cycle to skip devices that can't participate.
+type PowerCapability struct {
+	On  bool `json:"on"`
+	Off bool `json:"off"`
 }
 
 // Event is an async notification pushed from a device (input, state change, alert)
@@ -71,6 +102,13 @@ type Device interface {
 	SendCommand(ctx context.Context, req CommandRequest) (*CommandResponse, error)
 	Events() <-chan *Event
 	Status() Status
+	// Capabilities returns the static declaration of what this device
+	// supports (power actions, commands, metrics). Called once per
+	// telemetry cycle by the sender and embedded in each payload so
+	// cloud storage stays in sync. Base provides an empty default so
+	// generic transport adapters (rest, telnet, serial, websocket)
+	// don't have to opt in; vendor adapters override.
+	Capabilities() Capabilities
 }
 
 // -------------------------------------------------------------------
@@ -127,4 +165,13 @@ func (b *Base) BaseTelemetry() *Telemetry {
 		Timestamp:  time.Now().UTC(),
 		Tags:       b.Cfg.Tags,
 	}
+}
+
+// Capabilities returns the default (empty) capability declaration.
+// Generic transport adapters (rest, telnet, serial, websocket) get
+// this for free by embedding Base. Vendor adapters override with a
+// method on the concrete type — Go's method promotion + shadowing
+// picks the vendor implementation automatically.
+func (b *Base) Capabilities() Capabilities {
+	return Capabilities{}
 }

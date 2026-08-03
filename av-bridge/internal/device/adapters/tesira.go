@@ -495,6 +495,69 @@ func (a *TesiraAdapter) SendCommand(ctx context.Context, req device.CommandReque
 	}, nil
 }
 
+// ── Capabilities ─────────────────────────────────────────────────────────────
+//
+// Tesira is unusual — the adapter accepts arbitrary TTP command strings,
+// and customers bind their own names to those strings via config.yaml's
+// commands: map. So there's no vendor-fixed command list to declare;
+// what a device can do depends entirely on which TTP commands the
+// customer has configured. Same story for metrics: they come from the
+// Subscriptions block.
+//
+// We surface both dynamically. The routine builder gets a live view of
+// what this particular Tesira instance has been wired up to do —
+// exactly the shape it needs.
+
+// Capabilities returns the config-derived capability list for this
+// Tesira instance. Called once per poll by the bridge sender; runtime
+// cost is a couple of map iterations, immaterial.
+func (a *TesiraAdapter) Capabilities() device.Capabilities {
+	caps := device.Capabilities{
+		// Tesiras stay powered. There's no power-off command in the
+		// TTP protocol that the adapter understands — always false.
+		Power: device.PowerCapability{On: false, Off: false},
+	}
+
+	// Commands = the customer-defined names in config.yaml. Sorted
+	// for stable JSON so the cloud writer's COALESCE-guarded upsert
+	// doesn't churn on identical-set-different-order.
+	if len(a.Cfg.Commands) > 0 {
+		caps.Commands = make([]string, 0, len(a.Cfg.Commands))
+		for name := range a.Cfg.Commands {
+			caps.Commands = append(caps.Commands, name)
+		}
+		sortStrings(caps.Commands)
+	}
+
+	// Metrics = the subscription tag/attribute names the customer
+	// registered. Each subscription entry pushes updates under a
+	// specific label; that label is what shows up in Metrics on the
+	// telemetry payload, so it's what the routine builder should
+	// offer for check_metric.
+	if len(a.Cfg.Subscriptions) > 0 {
+		caps.Metrics = make([]string, 0, len(a.Cfg.Subscriptions))
+		for _, s := range a.Cfg.Subscriptions {
+			if s.Label != "" {
+				caps.Metrics = append(caps.Metrics, s.Label)
+			}
+		}
+		sortStrings(caps.Metrics)
+	}
+
+	return caps
+}
+
+// sortStrings — tiny in-package helper. Could import sort.Strings but
+// a) avoids adding an import for one-line use, b) makes intent
+// explicit that we're sorting for JSON stability.
+func sortStrings(s []string) {
+	for i := 1; i < len(s); i++ {
+		for j := i; j > 0 && s[j-1] > s[j]; j-- {
+			s[j-1], s[j] = s[j], s[j-1]
+		}
+	}
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 // sendAndReceive writes a TTP command and blocks until a response is received
