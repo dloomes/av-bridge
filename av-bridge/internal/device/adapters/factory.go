@@ -43,8 +43,11 @@ func New(cfg config.DeviceConfig, deps Deps) (device.Device, error) {
 	case "aurora_rxt":
 		// Aurora Multimedia RXT-x WM touch panels — JSON-RPC over Telnet (port 6975)
 		return NewAuroraAdapter(cfg), nil
+	case "ping":
+		// ICMP reachability probe for devices with no vendor API
+		return NewPingAdapter(cfg), nil
 
 	default:
-		return nil, fmt.Errorf("unsupported protocol: %q (supported: rest, websocket, telnet, serial, tesira, sony_bravia, poly_videoos, aurora_rxt)", cfg.Protocol)
+		return nil, fmt.Errorf("unsupported protocol: %q (supported: rest, websocket, telnet, serial, tesira, sony_bravia, poly_videoos, aurora_rxt, ping)", cfg.Protocol)
 	}
 }
