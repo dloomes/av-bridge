@@ -81,6 +81,11 @@ jobs:
         working-directory: av-bridge/dist
         shell: bash
         run: |
+          # dist-{amd64,arm64} above leaves same-named bundle directories
+          # here (dist/av-bridge-linux-amd64/ + .tar.gz); nuke the dirs
+          # so cp can drop the plain binaries at those filenames instead
+          # of copying INTO the dirs.
+          rm -rf av-bridge-linux-amd64 av-bridge-linux-arm64
           cp ../av-bridge-linux-amd64 ./av-bridge-linux-amd64
           cp ../av-bridge-linux-arm64 ./av-bridge-linux-arm64
           sha256sum \
