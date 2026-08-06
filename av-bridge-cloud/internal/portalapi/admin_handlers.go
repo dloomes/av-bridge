@@ -827,6 +827,7 @@ var (
 	allowedProtocols = map[string]bool{
 		"rest": true, "websocket": true, "telnet": true, "serial": true,
 		"tesira": true, "sony_bravia": true, "poly_videoos": true, "aurora_rxt": true,
+		"ping": true,
 	}
 	allowedTypes = map[string]bool{
 		"display": true, "conferencing": true, "audio": true,

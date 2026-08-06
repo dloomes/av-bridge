@@ -24,6 +24,7 @@ const PROTOCOLS = [
   "sony_bravia",
   "poly_videoos",
   "aurora_rxt",
+  "ping",
 ] as const;
 const TYPES = ["display", "conferencing", "audio", "camera", "control"] as const;
 
