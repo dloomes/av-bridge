@@ -18,14 +18,20 @@ import (
 	"github.com/dloomes/av-bridge/internal/device"
 )
 
-// Payload is the envelope sent to the cloud webhook
+// Payload is the envelope sent to the cloud webhook.
+//
+// BridgeVersion + BridgeBuildTime are what this binary reports about itself
+// (set from -ldflags at build). The cloud persists them onto the collectors
+// row so support can answer "what code is this site running?" without SSH.
 type Payload struct {
-	Source      string              `json:"source"`
-	Timestamp   time.Time           `json:"timestamp"`
-	CollectorID string              `json:"collector_id,omitempty"`
-	SiteID      string              `json:"site_id,omitempty"`
-	Telemetry   []*device.Telemetry `json:"telemetry,omitempty"`
-	Events      []*device.Event     `json:"events,omitempty"`
+	Source          string              `json:"source"`
+	Timestamp       time.Time           `json:"timestamp"`
+	CollectorID     string              `json:"collector_id,omitempty"`
+	SiteID          string              `json:"site_id,omitempty"`
+	BridgeVersion   string              `json:"bridge_version,omitempty"`
+	BridgeBuildTime string              `json:"bridge_build_time,omitempty"`
+	Telemetry       []*device.Telemetry `json:"telemetry,omitempty"`
+	Events          []*device.Event     `json:"events,omitempty"`
 }
 
 // Client batches telemetry and events and pushes them to the cloud portal.
@@ -33,6 +39,8 @@ type Client struct {
 	cfg         config.CloudConfig
 	collectorID string
 	siteID      string
+	version     string
+	buildTime   string
 	http        *http.Client
 	telemu      sync.Mutex
 	pending     []*device.Telemetry
@@ -40,7 +48,10 @@ type Client struct {
 	pendingEv   []*device.Event
 }
 
-func NewClient(cfg config.CloudConfig, collectorID, siteID string) *Client {
+// NewClient returns a cloud publisher. version and buildTime are attached
+// to every payload so the cloud can render "what version each site is on"
+// without a separate control-plane call.
+func NewClient(cfg config.CloudConfig, collectorID, siteID, version, buildTime string) *Client {
 	transport := &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: cfg.TLSSkipVerify},
 	}
@@ -48,6 +59,8 @@ func NewClient(cfg config.CloudConfig, collectorID, siteID string) *Client {
 		cfg:         cfg,
 		collectorID: collectorID,
 		siteID:      siteID,
+		version:     version,
+		buildTime:   buildTime,
 		http: &http.Client{
 			Timeout:   15 * time.Second,
 			Transport: transport,
@@ -104,12 +117,14 @@ func (c *Client) flush(ctx context.Context) {
 	}
 
 	payload := Payload{
-		Source:      "av-bridge",
-		Timestamp:   time.Now().UTC(),
-		CollectorID: c.collectorID,
-		SiteID:      c.siteID,
-		Telemetry:   tel,
-		Events:      evs,
+		Source:          "av-bridge",
+		Timestamp:       time.Now().UTC(),
+		CollectorID:     c.collectorID,
+		SiteID:          c.siteID,
+		BridgeVersion:   c.version,
+		BridgeBuildTime: buildTimeRFC3339(c.buildTime),
+		Telemetry:       tel,
+		Events:          evs,
 	}
 
 	slog.Debug("flushing to cloud", "telemetry", len(tel), "events", len(evs))
@@ -134,6 +149,18 @@ func (c *Client) flush(ctx context.Context) {
 
 	slog.Error("cloud push permanently failed, data lost", "error", lastErr,
 		"lost_telemetry", len(tel), "lost_events", len(evs))
+}
+
+// buildTimeRFC3339 returns bt unchanged if it parses as RFC3339, otherwise
+// the empty string. The cloud stores this as timestamptz; sending the
+// placeholder "unknown" (what -ldflags default to on a plain `go build`
+// without the Makefile) would fail the SQL cast. Empty is fine — cloud
+// preserves the previously-recorded value via COALESCE.
+func buildTimeRFC3339(bt string) string {
+	if _, err := time.Parse(time.RFC3339, bt); err != nil {
+		return ""
+	}
+	return bt
 }
 
 func (c *Client) send(ctx context.Context, payload Payload) error {

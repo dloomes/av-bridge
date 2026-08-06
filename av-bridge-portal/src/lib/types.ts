@@ -12,6 +12,7 @@ export interface DeviceSummary {
   location_name?: string;
   building?: string;
   room_id?: string | null;
+  collector_id?: string;
   address?: string;
   status: DeviceStatus;
   tags?: Record<string, string>;
@@ -87,8 +88,14 @@ export interface CollectorSummary {
   id: string;
   bridge_collector_id: string;
   name: string;
+  building_name?: string;
   status: string;
   last_seen_at?: string;
+  device_count: number;
+  bridge_version?: string;
+  bridge_build_time?: string;
+  last_config_pull_at?: string;
+  config_sync_status: "current" | "stale" | "unknown";
 }
 
 export interface NamedRow {

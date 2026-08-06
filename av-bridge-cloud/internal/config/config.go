@@ -62,6 +62,13 @@ type Config struct {
 	SessionCleanupInterval  time.Duration
 	SessionCleanupRetention time.Duration
 
+	// Collector-health watcher — opens collector_offline alerts when a
+	// bridge stops phoning home for OfflineAfter. Interval controls the
+	// scan cadence; keep it below OfflineAfter so a fresh-offline
+	// collector doesn't wait a full window before being noticed.
+	CollectorHealthInterval     time.Duration
+	CollectorHealthOfflineAfter time.Duration
+
 	// Nightly Room Readiness — see docs/nightly-lifecycle-spec.md and
 	// internal/nightly. TickInterval is how often the scheduler wakes;
 	// GraceWindow bounds how late an event can still fire (protects
@@ -137,6 +144,18 @@ func FromEnv() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	// Collector-health defaults: sweep every minute, flag a collector
+	// offline after 5 min. Matches computeCollectorStatus's offline
+	// threshold in portalapi so the /collectors page and the alert
+	// generator agree on what "offline" means.
+	collectorHealthInterval, err := getenvDuration("COLLECTOR_HEALTH_INTERVAL", 60*time.Second)
+	if err != nil {
+		return Config{}, err
+	}
+	collectorHealthOfflineAfter, err := getenvDuration("COLLECTOR_HEALTH_OFFLINE_AFTER", 5*time.Minute)
+	if err != nil {
+		return Config{}, err
+	}
 	nightlyTick, err := getenvDuration("NIGHTLY_TICK_INTERVAL", 60*time.Second)
 	if err != nil {
 		return Config{}, err
@@ -185,6 +204,8 @@ func FromEnv() (Config, error) {
 		CommandSweepInterval:    sweepInterval,
 		SessionCleanupInterval:  sessionCleanupInterval,
 		SessionCleanupRetention: sessionCleanupRetention,
+		CollectorHealthInterval:     collectorHealthInterval,
+		CollectorHealthOfflineAfter: collectorHealthOfflineAfter,
 		NightlyTickInterval:     nightlyTick,
 		NightlyGraceWindow:      nightlyGrace,
 		NightlyWarmupSeconds:    nightlyWarmup,

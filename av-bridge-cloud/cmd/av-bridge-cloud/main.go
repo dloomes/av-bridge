@@ -22,6 +22,7 @@ import (
 	"github.com/dloomes/av-bridge-cloud/internal/portalapi"
 	"github.com/dloomes/av-bridge-cloud/internal/portalauth"
 	"github.com/dloomes/av-bridge-cloud/internal/secrets"
+	"github.com/dloomes/av-bridge-cloud/internal/collectorhealth"
 	"github.com/dloomes/av-bridge-cloud/internal/sessioncleanup"
 	"github.com/dloomes/av-bridge-cloud/internal/wsfanout"
 )
@@ -247,6 +248,19 @@ func main() {
 		log,
 	)
 	go sessionCleaner.Run(sweeperCtx)
+
+	// Collector-health watcher — opens collector_offline alerts when a
+	// bridge stops phoning home, auto-resolves them when it returns.
+	// Uses the same notification dispatcher as device alerts so email /
+	// Teams / webhook channels fire without extra wiring.
+	collectorWatcher := collectorhealth.NewWatcher(
+		store.AdminPool(),
+		dispatcher,
+		cfg.CollectorHealthInterval,
+		cfg.CollectorHealthOfflineAfter,
+		log,
+	)
+	go collectorWatcher.Run(sweeperCtx)
 
 	// Nightly Room Readiness scheduler — enacts the customer + per-room
 	// schedules by creating nightly_run rows and walking each room

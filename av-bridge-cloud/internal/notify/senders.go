@@ -112,13 +112,13 @@ func buildRFC822(from, to, subject, body string) []byte {
 
 func renderEmail(evt AlertEvent) (subject, body string) {
 	severity := strings.ToUpper(evt.Severity)
-	subject = fmt.Sprintf("[%s] %s — %s", severity, evt.DeviceName, evt.AlertKey)
+	subject = fmt.Sprintf("[%s] %s — %s", severity, evt.SubjectName(), evt.AlertKey)
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "Severity: %s\n", severity)
-	fmt.Fprintf(&b, "Device:   %s\n", evt.DeviceName)
-	fmt.Fprintf(&b, "Alert:    %s\n", evt.AlertKey)
-	fmt.Fprintf(&b, "Opened:   %s\n", evt.OpenedAt.UTC().Format(time.RFC3339))
+	fmt.Fprintf(&b, "Severity:  %s\n", severity)
+	fmt.Fprintf(&b, "%-9s %s\n", evt.SubjectLabel()+":", evt.SubjectName())
+	fmt.Fprintf(&b, "Alert:     %s\n", evt.AlertKey)
+	fmt.Fprintf(&b, "Opened:    %s\n", evt.OpenedAt.UTC().Format(time.RFC3339))
 	if evt.Message != "" {
 		fmt.Fprintf(&b, "\n%s\n", evt.Message)
 	}
@@ -148,11 +148,12 @@ func (s *Senders) sendTeams(ctx context.Context, ch Channel, evt AlertEvent) err
 		"@type":      "MessageCard",
 		"@context":   "https://schema.org/extensions",
 		"themeColor": colour,
-		"summary":    fmt.Sprintf("%s: %s", evt.DeviceName, evt.AlertKey),
-		"title":      fmt.Sprintf("[%s] %s", strings.ToUpper(evt.Severity), evt.DeviceName),
+		"summary":    fmt.Sprintf("%s: %s", evt.SubjectName(), evt.AlertKey),
+		"title":      fmt.Sprintf("[%s] %s", strings.ToUpper(evt.Severity), evt.SubjectName()),
 		"text":       evt.Message,
 		"sections": []map[string]any{{
 			"facts": []map[string]string{
+				{"name": evt.SubjectLabel(), "value": evt.SubjectName()},
 				{"name": "Alert", "value": evt.AlertKey},
 				{"name": "Opened", "value": evt.OpenedAt.UTC().Format(time.RFC3339)},
 			},
@@ -173,13 +174,21 @@ func (s *Senders) sendWebhook(ctx context.Context, ch Channel, evt AlertEvent) e
 	}
 	body := map[string]any{
 		"customer_id": evt.CustomerID,
-		"device_id":   evt.DeviceID,
-		"device_name": evt.DeviceName,
 		"alert_key":   evt.AlertKey,
 		"severity":    evt.Severity,
 		"message":     evt.Message,
 		"opened_at":   evt.OpenedAt.UTC().Format(time.RFC3339),
 		"payload":     evt.Payload,
+	}
+	// Only include the subject fields that are actually populated — so a
+	// collector alert doesn't ship an empty device_id/device_name and
+	// vice-versa.
+	if evt.CollectorID != "" {
+		body["collector_id"] = evt.CollectorID
+		body["collector_name"] = evt.CollectorName
+	} else {
+		body["device_id"] = evt.DeviceID
+		body["device_name"] = evt.DeviceName
 	}
 	headers := map[string]string{}
 	if hdrs, ok := ch.Config["headers"].(map[string]any); ok {

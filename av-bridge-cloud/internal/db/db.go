@@ -119,6 +119,30 @@ func (s *Store) TouchCollector(ctx context.Context, id string) error {
 	return err
 }
 
+// MarkCollectorSeen records a fresh /ingest — same last_seen_at bump as
+// TouchCollector, plus the bridge's self-reported version and build time
+// when supplied. Empty inputs are preserved via COALESCE(NULLIF(...), …)
+// so a pre-Tier-1 bridge that doesn't report these fields doesn't wipe
+// values that a later build set.
+func (s *Store) MarkCollectorSeen(ctx context.Context, id, version, buildTime string) error {
+	_, err := s.admin.Exec(ctx, `
+		UPDATE collectors
+		   SET last_seen_at       = now(),
+		       bridge_version     = COALESCE(NULLIF($2, ''), bridge_version),
+		       bridge_build_time  = COALESCE(NULLIF($3, '')::timestamptz, bridge_build_time)
+		 WHERE id = $1`, id, version, buildTime)
+	return err
+}
+
+// TouchCollectorConfigPull stamps last_config_pull_at = now(). Called from
+// the /bridge/config GET handler so the /collectors page can distinguish
+// "bridge is pushing telemetry but hasn't refreshed its config in a while"
+// from "bridge is fully healthy".
+func (s *Store) TouchCollectorConfigPull(ctx context.Context, id string) error {
+	_, err := s.admin.Exec(ctx, `UPDATE collectors SET last_config_pull_at = now() WHERE id = $1`, id)
+	return err
+}
+
 // LookupCollectorByBridgeID resolves the id the bridge reports to a collector
 // row. Runs as app_admin (cross-tenant) — we don't know the customer yet.
 func (s *Store) LookupCollectorByBridgeID(ctx context.Context, bridgeID string) (Collector, error) {

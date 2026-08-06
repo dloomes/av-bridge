@@ -151,6 +151,11 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 	if devices == nil {
 		devices = []Device{}
 	}
+	// Record the successful pull so the /collectors page can flag stale
+	// config sync — best-effort, don't block the response on failure.
+	if err := h.store.TouchCollectorConfigPull(r.Context(), col.ID); err != nil {
+		h.log.Warn("touch collector config pull failed", "collector", col.ID, "error", err)
+	}
 	bridgeauth.WriteJSON(w, http.StatusOK, getResp{Devices: devices})
 }
 

@@ -58,8 +58,13 @@ type payloadDTO struct {
 	Timestamp   time.Time      `json:"timestamp"`
 	CollectorID string         `json:"collector_id"`
 	SiteID      string         `json:"site_id"`
-	Telemetry   []telemetryDTO `json:"telemetry"`
-	Events      []eventDTO     `json:"events"`
+	// BridgeVersion + BridgeBuildTime are what the bridge reports about its
+	// own binary — set from -ldflags at build. Empty on older bridges;
+	// MarkCollectorSeen preserves prior values when empty.
+	BridgeVersion   string         `json:"bridge_version,omitempty"`
+	BridgeBuildTime string         `json:"bridge_build_time,omitempty"`
+	Telemetry       []telemetryDTO `json:"telemetry"`
+	Events          []eventDTO     `json:"events"`
 }
 
 type Handler struct {
@@ -118,8 +123,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnauthorized, "authentication failed")
 		return
 	}
-	if err := h.store.TouchCollector(ctx, col.ID); err != nil {
-		h.log.Warn("touch collector failed", "collector", col.ID, "error", err)
+	if err := h.store.MarkCollectorSeen(ctx, col.ID, p.BridgeVersion, p.BridgeBuildTime); err != nil {
+		h.log.Warn("mark collector seen failed", "collector", col.ID, "error", err)
 	}
 
 	// 2. Tenant-scoped writes (RLS-enforced as app_tenant).

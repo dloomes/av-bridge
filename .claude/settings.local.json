@@ -11,7 +11,8 @@
       "WebFetch(domain:kaas.hpcloud.hp.com)",
       "Bash(pdftotext -layout \"C:/Users/DLoomes/.claude/projects/c--Users-DLoomes-OneDrive---Involve-Visual-Collaboration-Ltd-Desktop-av-bridge/18560822-6409-4e7a-8a3b-2b787702a2a8/tool-results/webfetch-1777368825455-7j2d2j.pdf\" \"/tmp/poly-videos.txt\")",
       "Read(//tmp/**)",
-      "Bash(go test *)"
+      "Bash(go test *)",
+      "Bash(docker exec *)"
     ]
   }
 }

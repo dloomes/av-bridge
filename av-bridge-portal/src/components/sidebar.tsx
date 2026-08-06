@@ -15,6 +15,7 @@ import {
   Moon,
   Palette,
   Radio,
+  Server,
   ShieldCheck,
   Users,
   KeyRound,
@@ -54,6 +55,8 @@ const SECTIONS: NavSection[] = [
     items: [
       { href: "/", label: "Overview", icon: LayoutDashboard, matchExact: true },
       { href: "/alerts", label: "Alerts", icon: Bell, badgeKey: "alerts_open" },
+      { href: "/collectors", label: "Collectors", icon: Server },
+      { href: "/devices", label: "Devices", icon: Radio },
       { href: "/reports", label: "Reports", icon: BarChart3 },
       { href: "/firmware", label: "Firmware", icon: Cpu },
       { href: "/audit", label: "Activity", icon: History },

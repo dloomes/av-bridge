@@ -510,8 +510,18 @@ export const api = {
   fleetStatus: (signal?: AbortSignal) =>
     request<FleetStatus>("/api/v1/status", { signal }),
 
-  listDevices: (signal?: AbortSignal) =>
-    request<DeviceSummary[]>("/api/v1/devices", { signal }),
+  listDevices: (
+    signal?: AbortSignal,
+    filters?: { collectorID?: string }
+  ) => {
+    const qs = new URLSearchParams();
+    if (filters?.collectorID) qs.set("collector_id", filters.collectorID);
+    const q = qs.toString();
+    return request<DeviceSummary[]>(
+      "/api/v1/devices" + (q ? `?${q}` : ""),
+      { signal }
+    );
+  },
 
   getDevice: (id: string, signal?: AbortSignal) =>
     request<DeviceDetail>(`/api/v1/devices/${encodeURIComponent(id)}`, {

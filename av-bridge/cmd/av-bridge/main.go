@@ -121,7 +121,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	cloudClient := cloud.NewClient(cfg.Cloud, cfg.Hub.CollectorID, cfg.Hub.SiteID)
+	cloudClient := cloud.NewClient(cfg.Cloud, cfg.Hub.CollectorID, cfg.Hub.SiteID, version, buildTime)
 
 	var lensClient *lens.Client
 	if cfg.Lens.Enabled {

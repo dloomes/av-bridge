@@ -25,16 +25,41 @@ import (
 )
 
 // AlertEvent is the minimal shape the dispatcher needs to format and send a
-// notification. Constructed at ingest time so we don't have to re-query.
+// notification. Constructed at open-time so we don't have to re-query.
+//
+// The subject of the alert is either a device or a collector — exactly one
+// of DeviceID / CollectorID is populated. Renderers branch on which is set
+// to pick the correct label and to include the right identifiers in the
+// outbound webhook payload.
 type AlertEvent struct {
-	CustomerID string
-	DeviceID   string
-	DeviceName string
-	AlertKey   string
-	Severity   string
-	Message    string
-	OpenedAt   time.Time
-	Payload    map[string]any
+	CustomerID    string
+	DeviceID      string
+	DeviceName    string
+	CollectorID   string
+	CollectorName string
+	AlertKey      string
+	Severity      string
+	Message       string
+	OpenedAt      time.Time
+	Payload       map[string]any
+}
+
+// SubjectName returns whichever of DeviceName / CollectorName is set. Used
+// by the senders so their subject-line construction doesn't have to branch.
+func (a AlertEvent) SubjectName() string {
+	if a.CollectorID != "" {
+		return a.CollectorName
+	}
+	return a.DeviceName
+}
+
+// SubjectLabel returns "Collector" or "Device" depending on which subject
+// the alert is about. Used to render "Device: X" / "Collector: X" lines.
+func (a AlertEvent) SubjectLabel() string {
+	if a.CollectorID != "" {
+		return "Collector"
+	}
+	return "Device"
 }
 
 // Channel is the in-memory shape of a notification_channels row. Kept small

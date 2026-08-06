@@ -10,6 +10,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -161,30 +162,55 @@ const (
 )
 
 // ListCollectors — GET /api/v1/collectors
+//
+// Returns one row per collector visible under RLS, joined against the
+// collector's building for context and with a device count so the /collectors
+// fleet page can render without a second round-trip. Ordered so ops sees the
+// broken ones first: offline → degraded → unknown → online, then by name.
 func (h *Handler) ListCollectors(w http.ResponseWriter, r *http.Request) {
 	type item struct {
 		ID                string     `json:"id"`
 		BridgeCollectorID string     `json:"bridge_collector_id"`
 		Name              string     `json:"name"`
+		BuildingName      string     `json:"building_name,omitempty"`
 		Status            string     `json:"status"`
 		LastSeenAt        *time.Time `json:"last_seen_at,omitempty"`
+		DeviceCount       int        `json:"device_count"`
+		BridgeVersion     string     `json:"bridge_version,omitempty"`
+		BridgeBuildTime   *time.Time `json:"bridge_build_time,omitempty"`
+		LastConfigPullAt  *time.Time `json:"last_config_pull_at,omitempty"`
+		ConfigSyncStatus  string     `json:"config_sync_status"`
 	}
 	out := []item{}
 	now := time.Now()
 	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
-		rows, err := tx.Query(ctx,
-			`SELECT id::text, COALESCE(bridge_collector_id,''), name, last_seen_at
-			   FROM collectors ORDER BY name`)
+		rows, err := tx.Query(ctx, `
+			SELECT c.id::text,
+			       COALESCE(c.bridge_collector_id, ''),
+			       c.name,
+			       COALESCE(b.name, ''),
+			       c.last_seen_at,
+			       (SELECT count(*) FROM devices d WHERE d.collector_id = c.id) AS device_count,
+			       COALESCE(c.bridge_version, ''),
+			       c.bridge_build_time,
+			       c.last_config_pull_at
+			  FROM collectors c
+			  LEFT JOIN buildings b ON b.id = c.building_id
+			 ORDER BY c.name`)
 		if err != nil {
 			return err
 		}
 		defer rows.Close()
 		for rows.Next() {
 			var c item
-			if err := rows.Scan(&c.ID, &c.BridgeCollectorID, &c.Name, &c.LastSeenAt); err != nil {
+			if err := rows.Scan(&c.ID, &c.BridgeCollectorID, &c.Name, &c.BuildingName,
+				&c.LastSeenAt, &c.DeviceCount,
+				&c.BridgeVersion, &c.BridgeBuildTime, &c.LastConfigPullAt,
+			); err != nil {
 				return err
 			}
 			c.Status = computeCollectorStatus(c.LastSeenAt, now)
+			c.ConfigSyncStatus = computeConfigSyncStatus(c.LastConfigPullAt, now)
 			out = append(out, c)
 		}
 		return rows.Err()
@@ -192,7 +218,32 @@ func (h *Handler) ListCollectors(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Sort ops-first: broken collectors bubble to the top. SQL ORDER BY
+	// alone can't do this cleanly because status is derived in Go from
+	// last_seen_at + wall clock, not stored on the row.
+	sort.SliceStable(out, func(i, j int) bool {
+		si, sj := statusPriority(out[i].Status), statusPriority(out[j].Status)
+		if si != sj {
+			return si < sj
+		}
+		return out[i].Name < out[j].Name
+	})
 	writeJSON(w, http.StatusOK, out)
+}
+
+// statusPriority orders collector statuses for the /collectors table so the
+// worst state floats to the top. Lower number = higher priority.
+func statusPriority(status string) int {
+	switch status {
+	case "offline":
+		return 0
+	case "degraded":
+		return 1
+	case "unknown":
+		return 2
+	default:
+		return 3
+	}
 }
 
 func computeCollectorStatus(lastSeen *time.Time, now time.Time) string {
@@ -210,6 +261,22 @@ func computeCollectorStatus(lastSeen *time.Time, now time.Time) string {
 	}
 }
 
+// Config-pull freshness threshold. Bridges reconcile config on a
+// device_sync_interval tick (default 5m), so 15m without a pull means the
+// bridge is either stopped or unable to reach the cloud even though it
+// might still have pushed stale telemetry from its in-memory queue.
+const configPullStaleAfter = 15 * time.Minute
+
+func computeConfigSyncStatus(lastPull *time.Time, now time.Time) string {
+	if lastPull == nil {
+		return "unknown"
+	}
+	if now.Sub(*lastPull) >= configPullStaleAfter {
+		return "stale"
+	}
+	return "current"
+}
+
 // ListDevices — GET /api/v1/devices. Shape matches the bridge's DeviceSummary.
 //
 // room_id is included so callers (e.g. the locations page's delete-impact
@@ -220,6 +287,11 @@ func computeCollectorStatus(lastSeen *time.Time, now time.Time) string {
 // display string) is kept for back-compat with the bridge's own DeviceSummary
 // contract.
 func (h *Handler) ListDevices(w http.ResponseWriter, r *http.Request) {
+	// Optional filter: ?collector_id=<uuid>. Empty string means "all
+	// devices". Validated only loosely — a garbage value returns an empty
+	// list rather than 400, which is friendlier for /devices deep-links.
+	collectorFilter := strings.TrimSpace(r.URL.Query().Get("collector_id"))
+
 	type item struct {
 		ID           string            `json:"id"`
 		Name         string            `json:"name"`
@@ -230,13 +302,14 @@ func (h *Handler) ListDevices(w http.ResponseWriter, r *http.Request) {
 		LocationName string            `json:"location_name,omitempty"`
 		Building     string            `json:"building,omitempty"`
 		RoomID       *string           `json:"room_id,omitempty"`
+		CollectorID  string            `json:"collector_id,omitempty"`
 		Address      string            `json:"address,omitempty"`
 		Status       string            `json:"status"`
 		Tags         map[string]string `json:"tags,omitempty"`
 	}
 	out := []item{}
 	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, `
+		sql := `
 			SELECT d.id::text,
 			       COALESCE(d.name, d.reported_id, ''),
 			       COALESCE(d.type, ''), COALESCE(d.protocol, ''),
@@ -249,6 +322,7 @@ func (h *Handler) ListDevices(w http.ResponseWriter, r *http.Request) {
 			       COALESCE(loc.name, ''),
 			       COALESCE(b.name, ''),
 			       d.room_id::text,
+			       d.collector_id::text,
 			       COALESCE(d.ip_address, ''),
 			       COALESCE(d.latest_status, 'unknown'),
 			       d.tags
@@ -256,8 +330,15 @@ func (h *Handler) ListDevices(w http.ResponseWriter, r *http.Request) {
 			  LEFT JOIN rooms r      ON r.id   = d.room_id
 			  LEFT JOIN buildings b  ON b.id   = r.building_id
 			  LEFT JOIN locations loc ON loc.id = b.location_id
-			  LEFT JOIN regions reg  ON reg.id = loc.region_id
-			 ORDER BY d.name NULLS LAST, d.reported_id`)
+			  LEFT JOIN regions reg  ON reg.id = loc.region_id`
+		args := []any{}
+		if collectorFilter != "" {
+			args = append(args, collectorFilter)
+			sql += " WHERE d.collector_id::text = $1"
+		}
+		sql += " ORDER BY d.name NULLS LAST, d.reported_id"
+
+		rows, err := tx.Query(ctx, sql, args...)
 		if err != nil {
 			return err
 		}
@@ -267,7 +348,7 @@ func (h *Handler) ListDevices(w http.ResponseWriter, r *http.Request) {
 			var tags []byte
 			if err := rows.Scan(&it.ID, &it.Name, &it.Type, &it.Protocol,
 				&it.Location, &it.Region, &it.LocationName, &it.Building,
-				&it.RoomID, &it.Address, &it.Status, &tags); err != nil {
+				&it.RoomID, &it.CollectorID, &it.Address, &it.Status, &tags); err != nil {
 				return err
 			}
 			if len(tags) > 0 {
@@ -686,8 +767,11 @@ func (h *Handler) ListAlerts(w http.ResponseWriter, r *http.Request) {
 
 	type item struct {
 		ID              string          `json:"id"`
-		DeviceID        string          `json:"device_id"`
-		DeviceName      string          `json:"device_name"`
+		SubjectKind     string          `json:"subject_kind"` // "device" | "collector"
+		DeviceID        string          `json:"device_id,omitempty"`
+		DeviceName      string          `json:"device_name,omitempty"`
+		CollectorID     string          `json:"collector_id,omitempty"`
+		CollectorName   string          `json:"collector_name,omitempty"`
 		AlertKey        string          `json:"alert_key"`
 		Severity        string          `json:"severity"`
 		Message         string          `json:"message"`
@@ -701,13 +785,21 @@ func (h *Handler) ListAlerts(w http.ResponseWriter, r *http.Request) {
 	}
 	out := []item{}
 
-	sql := `SELECT a.id::text, a.device_id::text,
+	// LEFT JOIN both device and collector tables so alerts of either
+	// subject appear. CASE picks the subject kind based on which column
+	// is populated — the CHECK constraint guarantees exactly one is set.
+	sql := `SELECT a.id::text,
+	               CASE WHEN a.collector_id IS NOT NULL THEN 'collector' ELSE 'device' END AS subject_kind,
+	               COALESCE(a.device_id::text, ''),
 	               COALESCE(d.name, d.reported_id, ''),
+	               COALESCE(a.collector_id::text, ''),
+	               COALESCE(c.name, ''),
 	               a.alert_key, a.severity, a.message, a.payload, a.status,
 	               a.opened_at, a.acknowledged_at, COALESCE(a.acknowledged_by,''),
 	               a.resolved_at, COALESCE(a.resolved_by,'')
 	          FROM alerts a
-	          JOIN devices d ON d.id = a.device_id`
+	          LEFT JOIN devices d ON d.id = a.device_id
+	          LEFT JOIN collectors c ON c.id = a.collector_id`
 	args := []any{}
 	if status != "" {
 		args = append(args, status)
@@ -724,7 +816,9 @@ func (h *Handler) ListAlerts(w http.ResponseWriter, r *http.Request) {
 		defer rows.Close()
 		for rows.Next() {
 			var it item
-			if err := rows.Scan(&it.ID, &it.DeviceID, &it.DeviceName,
+			if err := rows.Scan(&it.ID, &it.SubjectKind,
+				&it.DeviceID, &it.DeviceName,
+				&it.CollectorID, &it.CollectorName,
 				&it.AlertKey, &it.Severity, &it.Message, &it.Payload, &it.Status,
 				&it.OpenedAt, &it.AcknowledgedAt, &it.AcknowledgedBy,
 				&it.ResolvedAt, &it.ResolvedBy); err != nil {
