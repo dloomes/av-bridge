@@ -24,6 +24,7 @@ const PROTOCOLS = [
   "sony_bravia",
   "poly_videoos",
   "aurora_rxt",
+  "aurora_vpx",
   "ping",
 ] as const;
 const TYPES = ["display", "conferencing", "audio", "camera", "control"] as const;
@@ -165,6 +166,8 @@ function protocolToManufacturer(protocol?: string): string {
     case "poly_videoos":
       return "Poly";
     case "aurora_rxt":
+      return "Aurora Multimedia";
+    case "aurora_vpx":
       return "Aurora Multimedia";
     case "tesira":
       return "Biamp";
