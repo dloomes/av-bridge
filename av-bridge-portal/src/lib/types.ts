@@ -16,6 +16,14 @@ export interface DeviceSummary {
   address?: string;
   status: DeviceStatus;
   tags?: Record<string, string>;
+  // Adapter-declared capabilities. Populated by the ingest handler
+  // from the bridge's per-device Capabilities() output. Used by the
+  // routine builder palette to gate step types.
+  capabilities?: {
+    power: { on: boolean; off: boolean };
+    commands?: string[];
+    metrics?: string[];
+  };
 }
 
 export interface Subscription {

@@ -11,16 +11,24 @@ import { useSession } from "@/hooks/useSession";
 import { api } from "@/lib/api";
 import { isAdmin } from "@/lib/session";
 import type { NightlyRoutineDetail, UpdateNightlyRoutineBody } from "@/lib/api";
+import {
+  RoutineBuilder,
+  hydrateSteps,
+  serializeSteps,
+  type UIStep,
+} from "@/components/routine-builder/RoutineBuilder";
 
 // Room Readiness — routine editor.
 //
-// Slice 2B ships a JSON textarea editor: honest, fast to build, and gives
-// technical users full control over routine shape. A structured
-// step-by-step builder is a follow-up slice once we know which shapes
-// customers actually want (the schema will settle after Phase B lands).
-// For now, the docs/nightly-lifecycle-spec.md §7 step catalogue is the
-// reference — the "From standard template" flow on the list page
-// pre-fills a working example.
+// Two modes:
+//   Builder (default) — structured DnD builder from @/components/routine-builder.
+//   Advanced JSON     — raw textarea, kept as a fallback for unusual shapes
+//                       the structured builder doesn't cover.
+//
+// Both edit the same underlying `steps` array — switching tabs re-syncs
+// from whichever side was last edited.
+
+type Mode = "builder" | "json";
 
 export default function RoutineEditorPage() {
   const params = useParams<{ id: string }>();
@@ -35,8 +43,10 @@ export default function RoutineEditorPage() {
 
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [uiSteps, setUISteps] = useState<UIStep[]>([]);
   const [stepsText, setStepsText] = useState("");
   const [stepsError, setStepsError] = useState<string | null>(null);
+  const [mode, setMode] = useState<Mode>("builder");
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -48,6 +58,7 @@ export default function RoutineEditorPage() {
         setLoaded(r);
         setName(r.name);
         setDescription(r.description ?? "");
+        setUISteps(hydrateSteps(r.steps));
         setStepsText(JSON.stringify(r.steps, null, 2));
       })
       .catch((e) => {
@@ -56,11 +67,45 @@ export default function RoutineEditorPage() {
     return () => ctrl.abort();
   }, [routineID]);
 
-  // Client-side JSON validation — save button stays disabled while the
-  // steps text is malformed so a bad paste doesn't reach the server.
-  const parsedSteps = useMemo<
+  // Builder is the source of truth by default. When the user switches
+  // to Advanced JSON we serialize the current builder state into the
+  // textarea; on switch back we parse the textarea back into UISteps.
+  // This avoids drift while keeping either editor honest.
+  const switchMode = (next: Mode) => {
+    if (next === mode) return;
+    if (mode === "builder" && next === "json") {
+      setStepsText(JSON.stringify(serializeSteps(uiSteps), null, 2));
+      setStepsError(null);
+    } else if (mode === "json" && next === "builder") {
+      // Try to parse the current JSON; if it fails, stay in JSON mode
+      // and surface the error rather than silently discarding edits.
+      const trimmed = stepsText.trim();
+      if (trimmed === "") {
+        setUISteps([]);
+      } else {
+        try {
+          const parsed = JSON.parse(trimmed);
+          if (!Array.isArray(parsed)) {
+            setStepsError("Top-level value must be a JSON array.");
+            return;
+          }
+          setUISteps(hydrateSteps(parsed as unknown[]));
+          setStepsError(null);
+        } catch (e) {
+          setStepsError((e as Error).message);
+          return;
+        }
+      }
+    }
+    setMode(next);
+  };
+
+  // Live JSON validation while in JSON mode — save button disables until
+  // the textarea holds valid JSON.
+  const parsedJSON = useMemo<
     { ok: true; value: unknown[] } | { ok: false; error: string }
   >(() => {
+    if (mode !== "json") return { ok: true, value: [] };
     const trimmed = stepsText.trim();
     if (trimmed === "") return { ok: true, value: [] };
     try {
@@ -72,27 +117,32 @@ export default function RoutineEditorPage() {
     } catch (e) {
       return { ok: false, error: (e as Error).message };
     }
-  }, [stepsText]);
+  }, [mode, stepsText]);
 
   useEffect(() => {
-    setStepsError(parsedSteps.ok ? null : parsedSteps.error);
-  }, [parsedSteps]);
+    if (mode === "json") setStepsError(parsedJSON.ok ? null : parsedJSON.error);
+  }, [mode, parsedJSON]);
+
+  // Effective steps to save = whichever editor is active.
+  const effectiveSteps = useMemo<unknown[]>(() => {
+    if (mode === "json") return parsedJSON.ok ? parsedJSON.value : loaded?.steps ?? [];
+    return serializeSteps(uiSteps);
+  }, [mode, parsedJSON, uiSteps, loaded]);
 
   const dirty =
     loaded !== null &&
     (name !== loaded.name ||
       description !== (loaded.description ?? "") ||
-      stepsText.trim() !== JSON.stringify(loaded.steps, null, 2).trim());
+      JSON.stringify(effectiveSteps) !== JSON.stringify(loaded.steps));
 
   const handleSave = async () => {
-    if (!loaded || !parsedSteps.ok) return;
+    if (!loaded) return;
+    if (mode === "json" && !parsedJSON.ok) return;
     const body: UpdateNightlyRoutineBody = {};
     if (name !== loaded.name) body.name = name;
     if (description !== (loaded.description ?? "")) body.description = description;
-    if (
-      stepsText.trim() !== JSON.stringify(loaded.steps, null, 2).trim()
-    ) {
-      body.steps = parsedSteps.value;
+    if (JSON.stringify(effectiveSteps) !== JSON.stringify(loaded.steps)) {
+      body.steps = effectiveSteps;
     }
     if (Object.keys(body).length === 0) return;
     setSaving(true);
@@ -102,6 +152,7 @@ export default function RoutineEditorPage() {
       setLoaded(fresh);
       setName(fresh.name);
       setDescription(fresh.description ?? "");
+      setUISteps(hydrateSteps(fresh.steps));
       setStepsText(JSON.stringify(fresh.steps, null, 2));
       toast({ title: "Routine saved", variant: "success" });
     } catch (e) {
@@ -142,7 +193,7 @@ export default function RoutineEditorPage() {
       </header>
 
       <div className="flex-1 min-h-0 overflow-y-auto px-6 py-6">
-        <div className="max-w-3xl space-y-6">
+        <div className="max-w-6xl space-y-6">
           {loadError && (
             <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm [color:hsl(var(--destructive))]">
               {loadError}
@@ -174,10 +225,7 @@ export default function RoutineEditorPage() {
                     />
                   </div>
                   <div className="space-y-1">
-                    <label
-                      htmlFor="description"
-                      className="text-xs font-medium"
-                    >
+                    <label htmlFor="description" className="text-xs font-medium">
                       Description
                     </label>
                     <input
@@ -193,49 +241,75 @@ export default function RoutineEditorPage() {
                 </CardContent>
               </Card>
 
-              <Card>
-                <CardContent className="p-6 space-y-3">
-                  <div className="flex items-baseline justify-between">
-                    <h2 className="text-sm font-semibold">Steps</h2>
-                    <span className="text-xs text-muted-foreground">
-                      {parsedSteps.ok
-                        ? `${parsedSteps.value.length} ${parsedSteps.value.length === 1 ? "step" : "steps"}`
-                        : "invalid JSON"}
-                    </span>
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    JSON array of step objects. Step types recognised by the
-                    runner (see docs/nightly-lifecycle-spec.md §7):{" "}
-                    <span className="font-mono">power_on</span>,{" "}
-                    <span className="font-mono">power_off</span>,{" "}
-                    <span className="font-mono">wait</span>,{" "}
-                    <span className="font-mono">device_command</span>,{" "}
-                    <span className="font-mono">check_metric</span>,{" "}
-                    <span className="font-mono">expect_status</span>.
-                  </p>
-                  <textarea
-                    value={stepsText}
-                    onChange={(e) => setStepsText(e.target.value)}
-                    disabled={inputsDisabled}
-                    spellCheck={false}
-                    rows={22}
-                    className={`w-full rounded-md border bg-background px-3 py-2 text-xs font-mono leading-relaxed disabled:opacity-50 ${
-                      stepsError
-                        ? "border-[color:hsl(var(--destructive))]"
-                        : ""
+              <div className="flex items-center justify-between">
+                <h2 className="text-sm font-semibold">Steps</h2>
+                <div className="inline-flex rounded-md border bg-background p-0.5 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => switchMode("builder")}
+                    className={`px-3 py-1 rounded-sm transition-colors ${
+                      mode === "builder"
+                        ? "bg-primary text-primary-foreground"
+                        : "text-muted-foreground hover:text-foreground"
                     }`}
-                  />
-                  {stepsError && (
-                    <div className="text-xs [color:hsl(var(--destructive))]">
-                      {stepsError}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
+                  >
+                    Builder
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => switchMode("json")}
+                    className={`px-3 py-1 rounded-sm transition-colors ${
+                      mode === "json"
+                        ? "bg-primary text-primary-foreground"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    Advanced JSON
+                  </button>
+                </div>
+              </div>
+
+              {mode === "builder" ? (
+                <RoutineBuilder
+                  steps={uiSteps}
+                  onStepsChange={setUISteps}
+                  disabled={inputsDisabled}
+                />
+              ) : (
+                <Card>
+                  <CardContent className="p-6 space-y-3">
+                    <p className="text-xs text-muted-foreground">
+                      JSON array of step objects. Step types recognised by the runner
+                      (see docs/nightly-lifecycle-spec.md §7):{" "}
+                      <span className="font-mono">power_on</span>,{" "}
+                      <span className="font-mono">power_off</span>,{" "}
+                      <span className="font-mono">wait</span>,{" "}
+                      <span className="font-mono">device_command</span>,{" "}
+                      <span className="font-mono">check_metric</span>,{" "}
+                      <span className="font-mono">expect_status</span>.
+                    </p>
+                    <textarea
+                      value={stepsText}
+                      onChange={(e) => setStepsText(e.target.value)}
+                      disabled={inputsDisabled}
+                      spellCheck={false}
+                      rows={22}
+                      className={`w-full rounded-md border bg-background px-3 py-2 text-xs font-mono leading-relaxed disabled:opacity-50 ${
+                        stepsError ? "border-[color:hsl(var(--destructive))]" : ""
+                      }`}
+                    />
+                    {stepsError && (
+                      <div className="text-xs [color:hsl(var(--destructive))]">
+                        {stepsError}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
 
               {canManage && (
                 <div className="sticky bottom-0 -mx-6 border-t bg-background/95 backdrop-blur px-6 py-3">
-                  <div className="max-w-3xl flex items-center justify-end gap-2">
+                  <div className="max-w-6xl flex items-center justify-end gap-2">
                     <div className="mr-auto text-xs text-muted-foreground">
                       {dirty
                         ? "You have unsaved changes."
@@ -254,7 +328,9 @@ export default function RoutineEditorPage() {
                     <Button
                       size="sm"
                       onClick={handleSave}
-                      disabled={!dirty || saving || !parsedSteps.ok}
+                      disabled={
+                        !dirty || saving || (mode === "json" && !parsedJSON.ok)
+                      }
                     >
                       {saving && (
                         <Loader2

@@ -306,6 +306,11 @@ func (h *Handler) ListDevices(w http.ResponseWriter, r *http.Request) {
 		Address      string            `json:"address,omitempty"`
 		Status       string            `json:"status"`
 		Tags         map[string]string `json:"tags,omitempty"`
+		// Capabilities is the adapter-declared shape (power/commands/metrics)
+		// stored on the devices row via the ingest handler. Included in the
+		// listing so the routine builder's palette can gate step types
+		// against what's actually available in the picked room.
+		Capabilities json.RawMessage `json:"capabilities,omitempty"`
 	}
 	out := []item{}
 	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
@@ -325,7 +330,8 @@ func (h *Handler) ListDevices(w http.ResponseWriter, r *http.Request) {
 			       d.collector_id::text,
 			       COALESCE(d.ip_address, ''),
 			       COALESCE(d.latest_status, 'unknown'),
-			       d.tags
+			       d.tags,
+			       d.capabilities
 			  FROM devices d
 			  LEFT JOIN rooms r      ON r.id   = d.room_id
 			  LEFT JOIN buildings b  ON b.id   = r.building_id
@@ -346,13 +352,17 @@ func (h *Handler) ListDevices(w http.ResponseWriter, r *http.Request) {
 		for rows.Next() {
 			var it item
 			var tags []byte
+			var caps []byte
 			if err := rows.Scan(&it.ID, &it.Name, &it.Type, &it.Protocol,
 				&it.Location, &it.Region, &it.LocationName, &it.Building,
-				&it.RoomID, &it.CollectorID, &it.Address, &it.Status, &tags); err != nil {
+				&it.RoomID, &it.CollectorID, &it.Address, &it.Status, &tags, &caps); err != nil {
 				return err
 			}
 			if len(tags) > 0 {
 				_ = json.Unmarshal(tags, &it.Tags)
+			}
+			if len(caps) > 0 && string(caps) != "null" {
+				it.Capabilities = json.RawMessage(caps)
 			}
 			out = append(out, it)
 		}
