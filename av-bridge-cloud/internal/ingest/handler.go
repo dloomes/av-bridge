@@ -223,7 +223,12 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14,$15::jsonb,$16,$17
 ON CONFLICT (collector_id, reported_id) DO UPDATE SET
   name             = COALESCE(EXCLUDED.name, devices.name),
   type             = COALESCE(EXCLUDED.type, devices.type),
-  protocol         = COALESCE(EXCLUDED.protocol, devices.protocol),
+  -- protocol is NOT updated on conflict. It's config, not observation
+  -- — the cloud is authoritative for it (portal / /bridge/config PUT
+  -- seed). Overwriting it here would revert any protocol change made
+  -- via the portal the moment the bridge's next telemetry lands still
+  -- using the pre-change adapter. Insert path (line above) still sets
+  -- it for brand-new devices created via first-telemetry.
   make             = COALESCE(EXCLUDED.make, devices.make),
   model            = COALESCE(EXCLUDED.model, devices.model),
   serial_number    = COALESCE(EXCLUDED.serial_number, devices.serial_number),
