@@ -311,9 +311,79 @@ func (a *AuroraVPXAdapter) SendCommand(ctx context.Context, cmd device.CommandRe
 	if err != nil {
 		return nil, err
 	}
+
+	// reboot is fire-and-forget by design. The device sometimes writes a
+	// {"status":"PROCESSING"} ack before dropping the telnet session, and
+	// sometimes just closes the socket. Treat any read failure after a
+	// successful write as a normal reboot; the next Poll will reconnect.
+	if cmd.Name == vpxCmdReboot {
+		return a.sendReboot(ctx, wire, started)
+	}
+
 	resp, err := a.request(ctx, wire)
 	if err != nil {
 		return nil, err
+	}
+
+	raw, _ := json.Marshal(resp)
+	return &device.CommandResponse{
+		Raw:     string(raw),
+		Parsed:  resp,
+		Latency: time.Since(started),
+	}, nil
+}
+
+// sendReboot writes the reboot command, then briefly waits for the optional
+// PROCESSING ack the firmware may emit before it cuts the socket. Any read
+// error — EOF, deadline, connection reset — is normal here, so we synthesize
+// a {"status":"REBOOTING"} response rather than surfacing a failure to the
+// caller. The connection is force-closed so the Poll goroutine reconnects
+// cleanly once the device is back up.
+func (a *AuroraVPXAdapter) sendReboot(ctx context.Context, wire string, started time.Time) (*device.CommandResponse, error) {
+	a.cmdMu.Lock()
+	defer a.cmdMu.Unlock()
+
+	a.connMu.Lock()
+	conn, dec := a.conn, a.dec
+	a.connMu.Unlock()
+
+	if conn == nil || dec == nil {
+		return nil, errors.New("aurora_vpx: not connected")
+	}
+
+	// Short read window — if the device is going to ack, it does so almost
+	// immediately. We don't want to hold the caller for the full poll
+	// interval waiting for a reply that will never come.
+	deadline := time.Now().Add(2 * time.Second)
+	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
+		deadline = d
+	}
+	_ = conn.SetDeadline(deadline)
+
+	if _, err := conn.Write([]byte(wire + "\r\n")); err != nil {
+		// Write failure is a real error — the device isn't reachable yet.
+		return nil, fmt.Errorf("aurora_vpx write %q: %w", wire, err)
+	}
+
+	resp := map[string]any{}
+	decErr := dec.Decode(&resp)
+
+	// Whatever happened, the connection is going away. Drop it so the next
+	// Poll opens a fresh one instead of blocking on a dead socket.
+	a.connMu.Lock()
+	if a.conn != nil {
+		_ = a.conn.Close()
+		a.conn = nil
+		a.dec = nil
+	}
+	a.connMu.Unlock()
+
+	if decErr != nil {
+		resp = map[string]any{
+			"status":  "REBOOTING",
+			"command": wire,
+			"note":    "device closed connection without ack — this is normal for reboot",
+		}
 	}
 
 	raw, _ := json.Marshal(resp)
