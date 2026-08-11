@@ -5,6 +5,7 @@ import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
 import type {
+  AdapterInfo,
   AssetRow,
   CollectorSummary,
   CreateDeviceBody,
@@ -15,19 +16,17 @@ import type {
   UpdateDeviceBody,
 } from "@/lib/types";
 
-const PROTOCOLS = [
-  "rest",
-  "websocket",
-  "telnet",
-  "serial",
-  "tesira",
-  "sony_bravia",
-  "poly_videoos",
-  "aurora_rxt",
-  "aurora_vpx",
-  "ping",
-] as const;
 const TYPES = ["display", "conferencing", "audio", "camera", "control"] as const;
+
+// Human-readable labels for the adapter-kind optgroups in the protocol
+// picker. Order here is display order in the dropdown — vendor integrations
+// first (what people want), transports as generic escape hatches, probes last.
+const KIND_LABELS: Record<AdapterInfo["kind"], string> = {
+  vendor: "Vendor integrations",
+  transport: "Generic transports",
+  probe: "Probes",
+};
+const KIND_ORDER: AdapterInfo["kind"][] = ["vendor", "transport", "probe"];
 
 interface DeviceFormProps {
   mode: "create" | "edit";
@@ -157,23 +156,16 @@ function buildAssetPayload(form: FormState): DeviceAssetInput | undefined {
 
 // protocolToManufacturer covers the case where an adapter doesn't emit a
 // manufacturer tag but the protocol implies one (Sony Bravia doesn't write
-// `make` — its `product` tag is a product-line like "BRAVIA"). This lets
-// the pull button still fill the manufacturer field for those devices.
-function protocolToManufacturer(protocol?: string): string {
-  switch (protocol) {
-    case "sony_bravia":
-      return "Sony";
-    case "poly_videoos":
-      return "Poly";
-    case "aurora_rxt":
-      return "Aurora Multimedia";
-    case "aurora_vpx":
-      return "Aurora Multimedia";
-    case "tesira":
-      return "Biamp";
-    default:
-      return "";
-  }
+// `make` — its `product` tag is a product-line like "BRAVIA"). Reads
+// straight from the adapter catalogue so a new vendor auto-populates
+// here as soon as its cloud entry lands, no separate map to maintain.
+function protocolToManufacturer(
+  adapters: AdapterInfo[],
+  protocol?: string
+): string {
+  if (!protocol) return "";
+  const a = adapters.find((x) => x.id === protocol);
+  return a?.vendor ?? "";
 }
 
 // deviceTypeToAssetCategory mirrors the backend helper in
@@ -222,6 +214,7 @@ function asString(v: unknown): string {
 }
 
 function pullFromDeviceTags(
+  adapters: AdapterInfo[],
   tags: Record<string, string> | undefined,
   protocol?: string,
   deviceType?: string,
@@ -249,7 +242,7 @@ function pullFromDeviceTags(
   // manufacturer if available, then the protocol map. Sony's `product`
   // tag ("BRAVIA") is a product line, so it's skipped here.
   let manufacturer = t.make || t.manufacturer || asString(lm.manufacturer);
-  if (!manufacturer) manufacturer = protocolToManufacturer(protocol);
+  if (!manufacturer) manufacturer = protocolToManufacturer(adapters, protocol);
   if (manufacturer) out.manufacturer = manufacturer;
 
   // Model: tag first, then Aurora's machine_type, then Lens hardware
@@ -319,16 +312,27 @@ function mergeNotes(existing: string, incoming: string[]): string {
 // suggestProtocolFromManufacturer maps a manufacturer name to the bridge
 // adapter most likely to work. Used by the "Set up monitoring" flow from
 // the /assets page so the operator doesn't stare at an empty protocol
-// picker. Case-insensitive prefix match — a "Sony Corporation" string
-// still hits the sony_bravia suggestion. Returns "" (empty) when nothing
-// obvious matches; the form's default (no selection) then applies.
-function suggestProtocolFromManufacturer(mfr?: string): string {
+// picker. Case-insensitive prefix match against the vendor field of every
+// vendor-kind adapter in the catalogue, so new vendors auto-suggest as
+// soon as they land. Returns "" when nothing obvious matches; the form's
+// default (no selection) then applies.
+//
+// Legacy alias handling: "Polycom" strings still route to poly_videoos
+// even though the vendor field says "HP / Poly" — Polycom-branded gear
+// predates the HP acquisition and is still in service.
+function suggestProtocolFromManufacturer(
+  adapters: AdapterInfo[],
+  mfr?: string
+): string {
   if (!mfr) return "";
   const m = mfr.toLowerCase();
-  if (m.startsWith("sony")) return "sony_bravia";
-  if (m.startsWith("poly") || m.startsWith("polycom")) return "poly_videoos";
-  if (m.startsWith("aurora")) return "aurora_rxt";
-  if (m.startsWith("biamp") || m.includes("tesira")) return "tesira";
+  for (const a of adapters) {
+    if (a.kind !== "vendor" || !a.vendor) continue;
+    if (m.startsWith(a.vendor.toLowerCase())) return a.id;
+  }
+  if (m.startsWith("polycom")) {
+    return adapters.find((a) => a.id === "poly_videoos")?.id ?? "";
+  }
   return "";
 }
 
@@ -380,14 +384,15 @@ export function DeviceForm({
       // Pre-fill create-mode from an asset the user is turning into a
       // monitored device. Room + name come from the asset; the asset_id
       // is set so the newly-created device is bound to it on save.
+      // Protocol is filled in a follow-up effect once /api/v1/adapters
+      // has loaded — suggestProtocolFromManufacturer needs the catalogue
+      // to match against and that's a network call.
       return {
         ...emptyForm(),
         name: assetToLink.name,
         room_id: assetToLink.room_id ?? "",
         asset_id: assetToLink.id,
-        // Best-effort protocol suggestion from make — matches the adapters
-        // we ship today; the operator can override.
-        protocol: suggestProtocolFromManufacturer(assetToLink.manufacturer),
+        protocol: "",
         // Also mirror the asset fields into the inventory section so the
         // operator can tweak before creating the device. Category + status
         // come along so the auto-fill isn't destructive.
@@ -408,6 +413,12 @@ export function DeviceForm({
   const [rooms, setRooms] = useState<NamedRow[]>([]);
   const [buildings, setBuildings] = useState<NamedRow[]>([]);
   const [assets, setAssets] = useState<AssetRow[]>([]);
+  // Adapter catalogue drives the protocol picker and the pull-from-device
+  // manufacturer default. Sourced from GET /api/v1/adapters (backed by
+  // av-bridge-cloud/internal/adapters/catalogue.go) so adding a new
+  // adapter to the cloud catalogue immediately makes it selectable here
+  // without a portal code change.
+  const [adapters, setAdapters] = useState<AdapterInfo[]>([]);
   // Latest telemetry for the device being edited — used by the Pull from
   // device button to reach adapters that stash inventory in metrics
   // (Poly serial_number, software_version, ip_address) rather than tags.
@@ -428,17 +439,36 @@ export function DeviceForm({
       // own row visible, so include everything and let the dropdown filter
       // the "in use elsewhere" ones itself.
       api.listAssets({}, ctrl.signal).catch(() => [] as AssetRow[]),
+      api.listAdapters(ctrl.signal).catch(() => [] as AdapterInfo[]),
     ])
-      .then(([cs, rs, bs, as]) => {
+      .then(([cs, rs, bs, as, ads]) => {
         if (ctrl.signal.aborted) return;
         setCollectors(cs);
         setRooms(rs);
         setBuildings(bs);
         setAssets(as);
+        setAdapters(ads);
         // Auto-select the only collector when creating, so the operator
         // doesn't have to pick from a list of one.
         if (mode === "create" && cs.length === 1 && !form.collector_id) {
           setForm((f) => ({ ...f, collector_id: cs[0].id }));
+        }
+        // Retro-fill the protocol suggestion for the assetToLink flow now
+        // that the catalogue is available. Only writes when the field is
+        // still blank — the operator's explicit choice always wins.
+        if (
+          mode === "create" &&
+          assetToLink &&
+          ads.length > 0 &&
+          !form.protocol
+        ) {
+          const suggested = suggestProtocolFromManufacturer(
+            ads,
+            assetToLink.manufacturer
+          );
+          if (suggested) {
+            setForm((f) => (f.protocol ? f : { ...f, protocol: suggested }));
+          }
         }
       })
       .catch((e) => {
@@ -678,13 +708,36 @@ export function DeviceForm({
             className={inputClass}
             value={form.protocol}
             onChange={(e) => set("protocol", e.target.value)}
+            disabled={loadingLookups}
           >
             <option value="">— Select —</option>
-            {PROTOCOLS.map((p) => (
-              <option key={p} value={p}>
-                {p}
-              </option>
-            ))}
+            {/*
+              Grouped by adapter kind so vendor integrations surface
+              above the generic transports and the ping probe. If the
+              device is on a protocol the catalogue no longer knows about
+              (adapter removed, or the operator's on a stale portal),
+              render it as an orphan option at the top so the picker
+              still faithfully shows what's on the device.
+            */}
+            {form.protocol &&
+              !adapters.some((a) => a.id === form.protocol) && (
+                <option value={form.protocol}>
+                  {form.protocol} (not in catalogue)
+                </option>
+              )}
+            {KIND_ORDER.map((kind) => {
+              const group = adapters.filter((a) => a.kind === kind);
+              if (group.length === 0) return null;
+              return (
+                <optgroup key={kind} label={KIND_LABELS[kind]}>
+                  {group.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.name}
+                    </option>
+                  ))}
+                </optgroup>
+              );
+            })}
           </select>
         </div>
         <div className="sm:col-span-2">
@@ -776,6 +829,7 @@ export function DeviceForm({
           initial &&
           Object.keys(
             pullFromDeviceTags(
+              adapters,
               initial.tags,
               initial.protocol,
               initial.type,
@@ -794,6 +848,7 @@ export function DeviceForm({
                 size="sm"
                 onClick={() => {
                   const t = pullFromDeviceTags(
+                    adapters,
                     initial.tags,
                     initial.protocol,
                     initial.type,
