@@ -112,6 +112,7 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 		mux.Handle("GET /api/v1/locations", wrapPerm(portalauth.PermViewDashboard, portal.Portal.ListLocations))
 		mux.Handle("GET /api/v1/buildings", wrapPerm(portalauth.PermViewDashboard, portal.Portal.ListBuildings))
 		mux.Handle("GET /api/v1/rooms", wrapPerm(portalauth.PermViewDashboard, portal.Portal.ListRooms))
+		mux.Handle("GET /api/v1/adapters", wrapPerm(portalauth.PermViewDashboard, portal.Portal.ListAdapters))
 		mux.Handle("GET /api/v1/commands/{id}", wrapPerm(portalauth.PermViewDashboard, portal.Portal.GetCommand))
 		if portal.WSHub != nil {
 			mux.Handle("GET /ws/events",

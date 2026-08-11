@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dloomes/av-bridge-cloud/internal/adapters"
 	"github.com/dloomes/av-bridge-cloud/internal/audit"
 	"github.com/dloomes/av-bridge-cloud/internal/notify"
 	"github.com/dloomes/av-bridge-cloud/internal/portalauth"
@@ -823,18 +824,14 @@ func (h *Handler) DeleteRoom(w http.ResponseWriter, r *http.Request) {
 // bridge module so we duplicate the enum — small, stable, and worth catching
 // bad input here before the bridge silently drops the device.
 
-var (
-	allowedProtocols = map[string]bool{
-		"rest": true, "websocket": true, "telnet": true, "serial": true,
-		"tesira": true, "sony_bravia": true, "poly_videoos": true, "aurora_rxt": true,
-		"aurora_vpx": true,
-		"ping":       true,
-	}
-	allowedTypes = map[string]bool{
-		"display": true, "conferencing": true, "audio": true,
-		"camera": true, "control": true,
-	}
-)
+// allowedTypes stays local — the five device categories are a stable UI
+// contract, not an adapter concern. Protocol allowlisting reads from the
+// adapter catalogue (see internal/adapters/catalogue.go) so adding a new
+// adapter automatically permits it in device-create/update payloads.
+var allowedTypes = map[string]bool{
+	"display": true, "conferencing": true, "audio": true,
+	"camera": true, "control": true,
+}
 
 // Subscription mirrors the bridge's SubscriptionSpec (and bridgecfg's
 // Subscription). Duplicated so portalapi has no dependency on the
@@ -916,7 +913,7 @@ func (h *Handler) CreateDevice(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "collector_id and reported_id are required")
 		return
 	}
-	if req.Protocol != "" && !allowedProtocols[req.Protocol] {
+	if req.Protocol != "" && !adapters.IsSupportedProtocol(req.Protocol) {
 		writeErr(w, http.StatusBadRequest, "unsupported protocol")
 		return
 	}
@@ -1252,7 +1249,7 @@ func (h *Handler) UpdateDevice(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	if req.Protocol != nil && *req.Protocol != "" && !allowedProtocols[*req.Protocol] {
+	if req.Protocol != nil && *req.Protocol != "" && !adapters.IsSupportedProtocol(*req.Protocol) {
 		writeErr(w, http.StatusBadRequest, "unsupported protocol")
 		return
 	}

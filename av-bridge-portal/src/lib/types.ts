@@ -457,3 +457,33 @@ export interface HealthResponse {
   status: string;
   time: string;
 }
+
+// AdapterInfo mirrors av-bridge-cloud/internal/adapters/catalogue.go — the
+// single source of truth for which protocols exist and what each does.
+// Powered by GET /api/v1/adapters. device_count is populated per-request
+// from a COUNT(*) over the tenant's devices table (RLS enforces scope).
+export type AdapterKind = "vendor" | "transport" | "probe";
+
+export interface AdapterConfigField {
+  name: string;
+  required: boolean;
+  description: string;
+  example?: string;
+}
+
+export interface AdapterInfo {
+  id: string;
+  name: string;
+  vendor?: string;
+  kind: AdapterKind;
+  description: string;
+  device_types: string[];
+  power: { on: boolean; off: boolean };
+  commands?: string[];
+  metrics?: string[];
+  dynamic_commands?: boolean;
+  config_schema: AdapterConfigField[];
+  example_config: string;
+  docs_url?: string;
+  device_count: number;
+}

@@ -1,4 +1,5 @@
 import type {
+  AdapterInfo,
   AlertItem,
   AlertsSummary,
   AssetRow,
@@ -586,6 +587,9 @@ export const api = {
 
   listCollectors: (signal?: AbortSignal) =>
     request<CollectorSummary[]>("/api/v1/collectors", { signal }),
+
+  listAdapters: (signal?: AbortSignal) =>
+    request<AdapterInfo[]>("/api/v1/adapters", { signal }),
 
   listRegions: (signal?: AbortSignal) =>
     request<NamedRow[]>("/api/v1/regions", { signal }),

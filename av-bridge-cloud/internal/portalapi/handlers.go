@@ -426,6 +426,11 @@ func (h *Handler) GetDevice(w http.ResponseWriter, r *http.Request) {
 		Tags             map[string]string `json:"tags,omitempty"`
 		Commands         map[string]string `json:"commands,omitempty"`
 		Subscriptions    []subscription    `json:"subscriptions,omitempty"`
+		// Capabilities is the adapter-declared shape (power/commands/metrics)
+		// stored on the row by the ingest handler. Surfaced so the device
+		// detail page's Command panel can render the correct buttons for
+		// the adapter in use, rather than falling back to category defaults.
+		Capabilities json.RawMessage `json:"capabilities,omitempty"`
 	}
 	var (
 		o        out
@@ -433,10 +438,10 @@ func (h *Handler) GetDevice(w http.ResponseWriter, r *http.Request) {
 	)
 	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
 		var (
-			tags, cmds, subs []byte
-			roomID           *string
-			baudRate         *int
-			pollRate         *int
+			tags, cmds, subs, caps []byte
+			roomID                 *string
+			baudRate               *int
+			pollRate               *int
 		)
 		err := tx.QueryRow(ctx, `
 			SELECT d.id::text,
@@ -456,7 +461,7 @@ func (h *Handler) GetDevice(w http.ResponseWriter, r *http.Request) {
 			       d.baud_rate,
 			       d.poll_rate_seconds,
 			       COALESCE(d.latest_status, 'unknown'),
-			       d.tags, d.commands, d.subscriptions
+			       d.tags, d.commands, d.subscriptions, d.capabilities
 			  FROM devices d
 			  LEFT JOIN rooms r ON r.id = d.room_id
 			  LEFT JOIN buildings b ON b.id = r.building_id
@@ -464,7 +469,7 @@ func (h *Handler) GetDevice(w http.ResponseWriter, r *http.Request) {
 			Scan(&o.ID, &o.CollectorID, &roomID, &o.AssetID, &o.ReportedID,
 				&o.Name, &o.Type, &o.Protocol, &o.Location,
 				&o.Address, &o.IPAddress, &baudRate, &pollRate,
-				&o.Status, &tags, &cmds, &subs)
+				&o.Status, &tags, &cmds, &subs, &caps)
 		if errors.Is(err, pgx.ErrNoRows) {
 			notFound = true
 			return nil
@@ -478,6 +483,9 @@ func (h *Handler) GetDevice(w http.ResponseWriter, r *http.Request) {
 		}
 		if pollRate != nil {
 			o.PollRate = *pollRate
+		}
+		if len(caps) > 0 && string(caps) != "null" {
+			o.Capabilities = json.RawMessage(caps)
 		}
 		// If the device is linked to a CMDB asset, embed the standard
 		// fields so the edit form's Physical inventory section can

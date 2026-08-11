@@ -18,6 +18,13 @@ type Deps struct {
 // Base transport adapters (rest, websocket, telnet, serial) handle generic
 // devices. Vendor-specific adapters extend these for devices with non-standard
 // authentication or control models.
+//
+// When adding a new adapter here, also add its metadata to the cloud
+// catalogue at av-bridge-cloud/internal/adapters/catalogue.go — that file
+// is the single source of truth for what the portal shows on /adapters,
+// what protocol strings the /devices API accepts, and how operators are
+// told to configure it. An adapter that lives here but not in the cloud
+// catalogue cannot be selected in the portal.
 func New(cfg config.DeviceConfig, deps Deps) (device.Device, error) {
 	switch cfg.Protocol {
 	// ── Base transport adapters ──────────────────────────────────────────────

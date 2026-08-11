@@ -22,13 +22,6 @@ interface ResultState {
   at: number;
 }
 
-const TYPE_DEFAULTS: Record<string, string[]> = {
-  display: ["power_on", "power_off", "input_hdmi1", "input_hdmi2", "input_hdmi3"],
-  conferencing: ["mute", "unmute", "dial", "hangup"],
-  audio: ["mute", "unmute", "vol_up", "vol_dn"],
-  camera: ["home"],
-};
-
 function prettyName(name: string): string {
   return name
     .replace(/_/g, " ")
@@ -39,10 +32,27 @@ export function CommandPanel({ device, telemetry }: Props) {
   const [pending, setPending] = useState<string | null>(null);
   const [result, setResult] = useState<ResultState | null>(null);
 
+  // Commands come from two sources merged: the adapter's declared
+  // Capabilities().Commands (what the vendor integration supports out of
+  // the box) plus any per-device YAML `commands:` map (site-specific
+  // extensions — Tesira's whole model is that commands are user-defined
+  // TTP strings). Union, dedup, preserve adapter order first.
   const commands = useMemo(() => {
-    const fromDevice = device.commands ? Object.keys(device.commands) : [];
-    if (fromDevice.length > 0) return fromDevice;
-    return TYPE_DEFAULTS[device.type] ?? [];
+    const seen = new Set<string>();
+    const merged: string[] = [];
+    for (const c of device.capabilities?.commands ?? []) {
+      if (!seen.has(c)) {
+        seen.add(c);
+        merged.push(c);
+      }
+    }
+    for (const c of Object.keys(device.commands ?? {})) {
+      if (!seen.has(c)) {
+        seen.add(c);
+        merged.push(c);
+      }
+    }
+    return merged;
   }, [device]);
 
   const callActive = isCallActive(device.type, telemetry);
