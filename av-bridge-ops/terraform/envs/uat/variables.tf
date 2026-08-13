@@ -47,3 +47,10 @@ variable "github_access_token" {
   type        = string
   sensitive   = true
 }
+
+variable "vendor_admin_password" {
+  description = "First-boot seed password for the vendor (helpdesk) admin. Only used when no vendor user exists yet — the app skips otherwise. Rotate immediately after first login. Provide via terraform.tfvars (git-ignored)."
+  type        = string
+  sensitive   = true
+  default     = ""
+}

@@ -147,17 +147,27 @@ resource "aws_ecs_task_definition" "this" {
       protocol      = "tcp"
     }]
 
-    environment = [
-      { name = "CLOUD_LISTEN_ADDR", value = ":8090" },
-      { name = "DATABASE_ADMIN_URL", value = local.admin_url },
-      { name = "DATABASE_TENANT_URL", value = local.tenant_url },
-      { name = "BOOTSTRAP_POC", value = tostring(var.bootstrap_poc) },
-      { name = "POC_BRIDGE_COLLECTOR_ID", value = var.poc_collector_id },
-      { name = "POC_PORTAL_ROLE", value = var.poc_portal_role },
-      { name = "VENDOR_ADMIN_EMAIL", value = var.vendor_admin_email },
-      { name = "VENDOR_ADMIN_NAME", value = var.vendor_admin_name },
-      { name = "NIGHTLY_EXEC_ENABLED", value = tostring(var.nightly_exec_enabled) },
-    ]
+    environment = concat(
+      [
+        { name = "CLOUD_LISTEN_ADDR", value = ":8090" },
+        { name = "DATABASE_ADMIN_URL", value = local.admin_url },
+        { name = "DATABASE_TENANT_URL", value = local.tenant_url },
+        { name = "BOOTSTRAP_POC", value = tostring(var.bootstrap_poc) },
+        { name = "POC_BRIDGE_COLLECTOR_ID", value = var.poc_collector_id },
+        { name = "POC_PORTAL_ROLE", value = var.poc_portal_role },
+        { name = "VENDOR_ADMIN_EMAIL", value = var.vendor_admin_email },
+        { name = "VENDOR_ADMIN_NAME", value = var.vendor_admin_name },
+        { name = "NIGHTLY_EXEC_ENABLED", value = tostring(var.nightly_exec_enabled) },
+      ],
+      # Only emit VENDOR_ADMIN_PASSWORD when set — the seed step is a
+      # first-boot no-op if either the email or password is blank, and the
+      # value is only ever used on the first startup with an empty vendor
+      # user table (see summary: "rotating here after the first boot has
+      # no effect"). Rotating it post-seed is done via the API, not env.
+      var.vendor_admin_password == "" ? [] : [
+        { name = "VENDOR_ADMIN_PASSWORD", value = var.vendor_admin_password }
+      ],
+    )
 
     secrets = [
       { name = "DATABASE_MIGRATION_URL", valueFrom = "${var.db_master_secret_arn}:url::" },

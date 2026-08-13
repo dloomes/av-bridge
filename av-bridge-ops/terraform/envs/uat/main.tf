@@ -80,10 +80,13 @@ module "cloud_service" {
   portal_token_arn     = module.secrets.portal_token_arn
   hmac_secret_arn      = module.secrets.hmac_secret_arn
 
-  # UAT: seed the PoC tenant so we can test end-to-end immediately.
-  bootstrap_poc      = true
-  vendor_admin_email = "dloomes@involve.vc"
-  vendor_admin_name  = "Daniel Loomes"
+  # UAT: seed the PoC tenant so we can test end-to-end immediately. Password
+  # is set once via terraform.tfvars for the initial boot, then rotated by
+  # the admin from the portal — see variables.tf for the reasoning.
+  bootstrap_poc         = true
+  vendor_admin_email    = "dloomes@involve.vc"
+  vendor_admin_name     = "Daniel Loomes"
+  vendor_admin_password = var.vendor_admin_password
 }
 
 module "portal" {
@@ -96,10 +99,16 @@ module "portal" {
   stage               = "DEVELOPMENT"
 
   environment_variables = {
+    # Amplify's Next.js detector runs before amplify.yml is parsed and
+    # expects the app's package.json at repo root. This env var points it
+    # at the actual app subdirectory in our monorepo.
+    AMPLIFY_MONOREPO_APP_ROOT = "av-bridge-portal"
+
     # Next.js rewrites in next.config.mjs read this to forward /api/v1/*
     # to the cloud API. Using the ALB DNS today; swap to api.<domain>
     # once we attach a custom domain.
     AV_BRIDGE_UPSTREAM = "http://${module.alb.dns_name}"
+
     # Reduce noisy Next.js telemetry — env var recognised by Next itself.
     NEXT_TELEMETRY_DISABLED = "1"
   }
