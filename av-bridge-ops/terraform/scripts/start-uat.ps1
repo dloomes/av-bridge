@@ -24,7 +24,7 @@ $ErrorActionPreference = 'Stop'
 Write-Host "Starting RDS instance $DbInstance..." -ForegroundColor Cyan
 aws rds start-db-instance --db-instance-identifier $DbInstance --profile $Profile --region $Region --no-cli-pager --query "DBInstance.{id:DBInstanceIdentifier,status:DBInstanceStatus}" | Out-Host
 if ($LASTEXITCODE -ne 0) {
-    Write-Warning "rds start-db-instance failed (already running?) — checking status"
+    Write-Warning "rds start-db-instance failed (already running?) - checking status"
 }
 
 Write-Host "`nWaiting for RDS to become available (3-5 min)..." -ForegroundColor Cyan
