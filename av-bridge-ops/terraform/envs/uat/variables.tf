@@ -1,0 +1,32 @@
+variable "region" {
+  type    = string
+  default = "eu-west-2"
+}
+
+variable "aws_profile" {
+  type    = string
+  default = "avrmm-uat"
+}
+
+variable "name_prefix" {
+  description = "Prefix baked into every resource name so a second env in the same account (or shared VPCs) wouldn't collide."
+  type        = string
+  default     = "avrmm-uat"
+}
+
+variable "vpc_cidr" {
+  type    = string
+  default = "10.10.0.0/16"
+}
+
+variable "azs" {
+  description = "Availability zones to use. Two is enough for UAT; prod may want three."
+  type        = list(string)
+  default     = ["eu-west-2a", "eu-west-2b"]
+}
+
+variable "single_nat_gateway" {
+  description = "true = one NAT for the whole VPC (cheap, UAT). false = one NAT per AZ (HA, prod)."
+  type        = bool
+  default     = true
+}
