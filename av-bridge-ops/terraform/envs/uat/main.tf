@@ -85,3 +85,22 @@ module "cloud_service" {
   vendor_admin_email = "dloomes@involve.vc"
   vendor_admin_name  = "Daniel Loomes"
 }
+
+module "portal" {
+  source = "../../modules/portal-amplify"
+
+  name_prefix         = var.name_prefix
+  repository_url      = var.portal_repository_url
+  github_access_token = var.github_access_token
+  branch_name         = var.portal_branch
+  stage               = "DEVELOPMENT"
+
+  environment_variables = {
+    # Next.js rewrites in next.config.mjs read this to forward /api/v1/*
+    # to the cloud API. Using the ALB DNS today; swap to api.<domain>
+    # once we attach a custom domain.
+    AV_BRIDGE_UPSTREAM = "http://${module.alb.dns_name}"
+    # Reduce noisy Next.js telemetry — env var recognised by Next itself.
+    NEXT_TELEMETRY_DISABLED = "1"
+  }
+}

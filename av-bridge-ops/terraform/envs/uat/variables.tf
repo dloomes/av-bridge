@@ -30,3 +30,20 @@ variable "single_nat_gateway" {
   type        = bool
   default     = true
 }
+
+variable "portal_repository_url" {
+  type    = string
+  default = "https://github.com/dloomes/av-bridge"
+}
+
+variable "portal_branch" {
+  description = "Branch that this env auto-builds from. UAT tracks main by default."
+  type        = string
+  default     = "main"
+}
+
+variable "github_access_token" {
+  description = "GitHub PAT for Amplify. Provide via terraform.tfvars (git-ignored) — never commit."
+  type        = string
+  sensitive   = true
+}

@@ -42,3 +42,12 @@ output "cloud_cluster" {
 output "cloud_service" {
   value = module.cloud_service.service_name
 }
+
+output "portal_app_id" {
+  value = module.portal.app_id
+}
+
+output "portal_default_domain" {
+  description = "Amplify-issued portal URL. Custom domain lands later via Route 53 + ACM."
+  value       = module.portal.default_domain
+}
