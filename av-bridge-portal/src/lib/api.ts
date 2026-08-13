@@ -16,6 +16,7 @@ import type {
   CreateRoleBody,
   CreateUserBody,
   DeviceDetail,
+  DeviceEvent,
   DeviceSummary,
   DeviceUptimeRow,
   FirmwareRow,
@@ -532,6 +533,12 @@ export const api = {
   getTelemetry: (id: string, signal?: AbortSignal) =>
     request<Telemetry>(
       `/api/v1/devices/${encodeURIComponent(id)}/telemetry`,
+      { signal }
+    ),
+
+  getDeviceEvents: (id: string, limit = 50, signal?: AbortSignal) =>
+    request<DeviceEvent[]>(
+      `/api/v1/devices/${encodeURIComponent(id)}/events?limit=${limit}`,
       { signal }
     ),
 

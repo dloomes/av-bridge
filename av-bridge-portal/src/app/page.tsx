@@ -20,7 +20,7 @@ import { UserMenu } from "@/components/user-menu";
 import { StatusBadge } from "@/components/status-badge";
 import { DeviceCard } from "@/components/device-card";
 import { useBranding } from "@/components/branding-provider";
-import { EventFeed } from "@/components/event-feed";
+import { FleetHealth } from "@/components/fleet-health";
 import { Modal } from "@/components/modal";
 import { DeviceForm } from "@/components/device-form";
 import { BulkCommandForm } from "@/components/bulk-command";
@@ -389,7 +389,7 @@ export default function DashboardPage() {
           </div>
 
           <aside className="lg:sticky lg:top-6 lg:h-[calc(100vh-7rem)]">
-            <EventFeed />
+            <FleetHealth devices={devices.data} loading={devices.loading} />
           </aside>
         </div>
       </div>

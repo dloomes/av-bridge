@@ -23,6 +23,7 @@ import { DeviceIcon } from "@/components/device-icon";
 import { CommandPanel } from "@/components/command-panel";
 import { TelemetryGrid } from "@/components/telemetry-grid";
 import { EventFeed } from "@/components/event-feed";
+import { DeviceEventHistory } from "@/components/device-event-history";
 import { Modal } from "@/components/modal";
 import { DeviceForm } from "@/components/device-form";
 import { AuditFeed } from "@/components/audit-feed";
@@ -312,11 +313,12 @@ export default function DeviceDetailPage() {
             />
             {operator && <CommandPanel device={device} telemetry={telemetry.data} />}
           </div>
-          <aside className="lg:sticky lg:top-6 lg:h-[calc(100vh-7rem)]">
+          <aside className="space-y-6">
             <EventFeed
               deviceId={device.id}
               emptyHint="No events for this device yet."
             />
+            <DeviceEventHistory deviceId={device.id} />
           </aside>
         </div>
       </div>
