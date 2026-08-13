@@ -57,6 +57,7 @@ func (h *Handler) FirmwareSummary(w http.ResponseWriter, r *http.Request) {
 			LEFT JOIN firmware_targets ft
 			  ON ft.make  = COALESCE(d.make, '')
 			 AND ft.model = COALESCE(d.model, '')
+			WHERE d.deleted_at IS NULL
 			ORDER BY mk, md, dev_name`)
 		if err != nil {
 			return err

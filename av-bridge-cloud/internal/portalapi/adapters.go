@@ -27,6 +27,7 @@ func (h *Handler) ListAdapters(w http.ResponseWriter, r *http.Request) {
 			SELECT protocol, COUNT(*)::int
 			  FROM devices
 			 WHERE protocol IS NOT NULL AND protocol <> ''
+			   AND deleted_at IS NULL
 			 GROUP BY protocol`)
 		if err != nil {
 			return err

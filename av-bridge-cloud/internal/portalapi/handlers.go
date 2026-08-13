@@ -144,7 +144,8 @@ func (h *Handler) Status(w http.ResponseWriter, r *http.Request) {
 			  count(*) FILTER (WHERE latest_status = 'online'),
 			  count(*) FILTER (WHERE latest_status = 'offline'),
 			  count(*) FILTER (WHERE latest_status = 'degraded')
-			FROM devices`).Scan(&o.Total, &o.Online, &o.Offline, &o.Degraded)
+			FROM devices
+			WHERE deleted_at IS NULL`).Scan(&o.Total, &o.Online, &o.Offline, &o.Degraded)
 	})
 	if !ok {
 		return
@@ -190,7 +191,7 @@ func (h *Handler) ListCollectors(w http.ResponseWriter, r *http.Request) {
 			       c.name,
 			       COALESCE(b.name, ''),
 			       c.last_seen_at,
-			       (SELECT count(*) FROM devices d WHERE d.collector_id = c.id) AS device_count,
+			       (SELECT count(*) FROM devices d WHERE d.collector_id = c.id AND d.deleted_at IS NULL) AS device_count,
 			       COALESCE(c.bridge_version, ''),
 			       c.bridge_build_time,
 			       c.last_config_pull_at
@@ -336,11 +337,12 @@ func (h *Handler) ListDevices(w http.ResponseWriter, r *http.Request) {
 			  LEFT JOIN rooms r      ON r.id   = d.room_id
 			  LEFT JOIN buildings b  ON b.id   = r.building_id
 			  LEFT JOIN locations loc ON loc.id = b.location_id
-			  LEFT JOIN regions reg  ON reg.id = loc.region_id`
+			  LEFT JOIN regions reg  ON reg.id = loc.region_id
+			 WHERE d.deleted_at IS NULL`
 		args := []any{}
 		if collectorFilter != "" {
 			args = append(args, collectorFilter)
-			sql += " WHERE d.collector_id::text = $1"
+			sql += " AND d.collector_id::text = $1"
 		}
 		sql += " ORDER BY d.name NULLS LAST, d.reported_id"
 
@@ -465,7 +467,7 @@ func (h *Handler) GetDevice(w http.ResponseWriter, r *http.Request) {
 			  FROM devices d
 			  LEFT JOIN rooms r ON r.id = d.room_id
 			  LEFT JOIN buildings b ON b.id = r.building_id
-			 WHERE d.id = $1`, id).
+			 WHERE d.id = $1 AND d.deleted_at IS NULL`, id).
 			Scan(&o.ID, &o.CollectorID, &roomID, &o.AssetID, &o.ReportedID,
 				&o.Name, &o.Type, &o.Protocol, &o.Location,
 				&o.Address, &o.IPAddress, &baudRate, &pollRate,
@@ -595,7 +597,7 @@ func (h *Handler) GetTelemetry(w http.ResponseWriter, r *http.Request) {
 			  FROM devices d
 			  LEFT JOIN rooms r ON r.id = d.room_id
 			  LEFT JOIN buildings b ON b.id = r.building_id
-			 WHERE d.id = $1`, id).
+			 WHERE d.id = $1 AND d.deleted_at IS NULL`, id).
 			Scan(&o.DeviceID, &o.DeviceName, &o.DeviceType, &o.Protocol, &o.Location, &o.Status, &o.Timestamp, &o.Metrics, &o.Tags)
 		if errors.Is(err, pgx.ErrNoRows) {
 			notFound = true
@@ -647,6 +649,58 @@ func (h *Handler) TelemetryHistory(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+// DeviceEvents — GET /api/v1/devices/{id}/events?limit=N
+//
+// Returns the last N events emitted by a specific device, most recent
+// first. Powers the "Recent events" history panel on the device detail
+// page. Shape matches the top-level ListEvents response (same device_id/
+// device_name/device_type/event_type/payload/timestamp fields) so the
+// portal can render both feeds through the same row component.
+//
+// Historical view — unlike the WebSocket /ws/events feed which only
+// pushes events as they arrive, this endpoint hits the events table
+// directly. Runs under RLS so cross-tenant leakage is impossible.
+func (h *Handler) DeviceEvents(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	limit := queryInt(r, "limit", 50, 500)
+	type item struct {
+		DeviceID   string          `json:"device_id"`
+		DeviceName string          `json:"device_name"`
+		DeviceType string          `json:"device_type"`
+		EventType  string          `json:"event_type"`
+		Payload    json.RawMessage `json:"payload,omitempty"`
+		Timestamp  time.Time       `json:"timestamp"`
+	}
+	out := []item{}
+	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `
+			SELECT d.id::text,
+			       COALESCE(d.name, d.reported_id, ''),
+			       COALESCE(d.type, ''),
+			       COALESCE(e.event_type, ''),
+			       e.payload, e.ts
+			  FROM events e JOIN devices d ON d.id = e.device_id
+			 WHERE e.device_id = $1 AND d.deleted_at IS NULL
+			 ORDER BY e.ts DESC LIMIT $2`, id, limit)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var it item
+			if err := rows.Scan(&it.DeviceID, &it.DeviceName, &it.DeviceType, &it.EventType, &it.Payload, &it.Timestamp); err != nil {
+				return err
+			}
+			out = append(out, it)
+		}
+		return rows.Err()
+	})
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
 // ListEvents — GET /api/v1/events?limit=N
 func (h *Handler) ListEvents(w http.ResponseWriter, r *http.Request) {
 	limit := queryInt(r, "limit", 100, 1000)
@@ -667,6 +721,7 @@ func (h *Handler) ListEvents(w http.ResponseWriter, r *http.Request) {
 			       COALESCE(e.event_type, ''),
 			       e.payload, e.ts
 			  FROM events e JOIN devices d ON d.id = e.device_id
+			 WHERE d.deleted_at IS NULL
 			 ORDER BY e.ts DESC LIMIT $1`, limit)
 		if err != nil {
 			return err
@@ -1047,7 +1102,7 @@ func (h *Handler) HelpdeskOverview(w http.ResponseWriter, r *http.Request) {
 		    COUNT(*) FILTER (WHERE latest_status = 'online')::int AS online,
 		    COUNT(*) FILTER (WHERE latest_status = 'offline')::int AS offline,
 		    COUNT(*) FILTER (WHERE latest_status = 'degraded')::int AS degraded
-		  FROM devices GROUP BY customer_id
+		  FROM devices WHERE deleted_at IS NULL GROUP BY customer_id
 		) d ON d.customer_id = c.id
 		LEFT JOIN (
 		  SELECT customer_id,

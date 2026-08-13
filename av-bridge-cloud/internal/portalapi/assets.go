@@ -135,7 +135,7 @@ func (h *Handler) ListAssets(w http.ResponseWriter, r *http.Request) {
 		  LEFT JOIN buildings b   ON b.id   = rm.building_id
 		  LEFT JOIN locations loc ON loc.id = b.location_id
 		  LEFT JOIN regions reg   ON reg.id = loc.region_id
-		  LEFT JOIN devices d     ON d.asset_id = a.id
+		  LEFT JOIN devices d     ON d.asset_id = a.id AND d.deleted_at IS NULL
 	`
 	conds := []string{}
 	args := []any{}
@@ -245,7 +245,7 @@ func (h *Handler) GetAsset(w http.ResponseWriter, r *http.Request) {
 			  LEFT JOIN buildings b   ON b.id   = rm.building_id
 			  LEFT JOIN locations loc ON loc.id = b.location_id
 			  LEFT JOIN regions reg   ON reg.id = loc.region_id
-			  LEFT JOIN devices d     ON d.asset_id = a.id
+			  LEFT JOIN devices d     ON d.asset_id = a.id AND d.deleted_at IS NULL
 			 WHERE a.id = $1`, id).Scan(
 			&it.ID, &it.AssetTag, &it.Name, &it.Category,
 			&it.Manufacturer, &it.Model, &it.SerialNumber, &it.Status,

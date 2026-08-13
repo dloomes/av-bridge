@@ -707,7 +707,8 @@ func queryDevices(ctx context.Context, pool *pgxpool.Pool, roomID string, extra 
 		       COALESCE(type, ''),
 		       COALESCE(latest_status, 'unknown')
 		  FROM devices
-		 WHERE room_id = $1 ` + extra + `
+		 WHERE room_id = $1
+		   AND deleted_at IS NULL ` + extra + `
 		 ORDER BY name NULLS LAST, reported_id`
 	rows, err := pool.Query(ctx, sql, args...)
 	if err != nil {

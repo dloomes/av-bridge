@@ -575,6 +575,7 @@ func (s *Scheduler) dispatchPowerByRoom(ctx context.Context, customerID, roomID,
 		  FROM devices
 		 WHERE customer_id = $1
 		   AND room_id     = $3
+		   AND deleted_at IS NULL
 	`, customerID, action, roomID)
 	if err != nil {
 		s.log.Warn("nightly: dispatch device lookup failed",

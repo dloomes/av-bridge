@@ -91,6 +91,7 @@ func (h *Handler) DeviceUptimeReport(w http.ResponseWriter, r *http.Request) {
 			LEFT JOIN rooms r ON r.id = d.room_id
 			LEFT JOIN buildings b ON b.id = r.building_id
 			LEFT JOIN telemetry t ON t.device_id = d.id AND t.ts >= (SELECT since FROM win)
+			WHERE d.deleted_at IS NULL
 			GROUP BY d.id, d.name, d.reported_id, r.name, b.name, d.latest_status, d.last_seen_at
 			ORDER BY uptime_pct ASC NULLS LAST, dev_name`, days))
 		if err != nil {
@@ -175,7 +176,7 @@ func (h *Handler) RoomActivityReport(w http.ResponseWriter, r *http.Request) {
 			  MAX(e.ts) AS last_event_at
 			FROM rooms r
 			LEFT JOIN buildings b ON b.id = r.building_id
-			LEFT JOIN devices d ON d.room_id = r.id
+			LEFT JOIN devices d ON d.room_id = r.id AND d.deleted_at IS NULL
 			LEFT JOIN events e ON e.device_id = d.id AND e.ts >= (SELECT since FROM win)
 			GROUP BY r.id, r.name, b.name
 			ORDER BY event_count DESC, r.name`, days))

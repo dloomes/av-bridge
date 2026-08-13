@@ -53,7 +53,7 @@ func Submit(ctx context.Context, tx pgx.Tx, customerID, deviceID, name string, a
 		collectorID string
 	)
 	err := tx.QueryRow(ctx,
-		`SELECT collector_id::text FROM devices WHERE id = $1`, deviceID).Scan(&collectorID)
+		`SELECT collector_id::text FROM devices WHERE id = $1 AND deleted_at IS NULL`, deviceID).Scan(&collectorID)
 	if err != nil {
 		return "", err
 	}
@@ -80,7 +80,7 @@ func Get(ctx context.Context, tx pgx.Tx, id string) (Command, error) {
 		       c.name, c.args, c.status, c.result, COALESCE(c.error,''),
 		       c.submitted_at, c.claimed_at, c.completed_at
 		  FROM commands c
-		  JOIN devices d ON d.id = c.device_id
+		  JOIN devices d ON d.id = c.device_id AND d.deleted_at IS NULL
 		 WHERE c.id = $1`, id).
 		Scan(&c.ID, &c.DeviceID, &c.ReportedID, &c.Name, &c.Args, &c.Status, &c.Result,
 			&c.Error, &c.Submitted, &c.Claimed, &c.Completed)
@@ -142,7 +142,7 @@ func ClaimPending(ctx context.Context, tx pgx.Tx, collectorID string, max int) (
 		)
 		SELECT c.id::text, c.device_id::text, COALESCE(d.reported_id,''),
 		       c.name, c.args, c.claimed_at, c.submitted_at
-		  FROM claimed c JOIN devices d ON d.id = c.device_id
+		  FROM claimed c JOIN devices d ON d.id = c.device_id AND d.deleted_at IS NULL
 		 ORDER BY c.submitted_at`,
 		collectorID, max)
 	if err != nil {

@@ -712,7 +712,7 @@ func countRegionImpact(ctx context.Context, tx pgx.Tx, id string) (hierarchyImpa
 		  (SELECT COUNT(*) FROM loc)::int,
 		  (SELECT COUNT(*) FROM bld)::int,
 		  (SELECT COUNT(*) FROM rms)::int,
-		  (SELECT COUNT(*) FROM devices WHERE room_id IN (SELECT id FROM rms))::int`,
+		  (SELECT COUNT(*) FROM devices WHERE room_id IN (SELECT id FROM rms) AND deleted_at IS NULL)::int`,
 		id).Scan(&imp.Locations, &imp.Buildings, &imp.Rooms, &imp.DevicesOrphaned)
 	return imp, err
 }
@@ -725,7 +725,7 @@ func countLocationImpact(ctx context.Context, tx pgx.Tx, id string) (hierarchyIm
 		SELECT
 		  (SELECT COUNT(*) FROM bld)::int,
 		  (SELECT COUNT(*) FROM rms)::int,
-		  (SELECT COUNT(*) FROM devices WHERE room_id IN (SELECT id FROM rms))::int`,
+		  (SELECT COUNT(*) FROM devices WHERE room_id IN (SELECT id FROM rms) AND deleted_at IS NULL)::int`,
 		id).Scan(&imp.Buildings, &imp.Rooms, &imp.DevicesOrphaned)
 	return imp, err
 }
@@ -736,7 +736,7 @@ func countBuildingImpact(ctx context.Context, tx pgx.Tx, id string) (hierarchyIm
 		WITH rms AS (SELECT id FROM rooms WHERE building_id = $1)
 		SELECT
 		  (SELECT COUNT(*) FROM rms)::int,
-		  (SELECT COUNT(*) FROM devices WHERE room_id IN (SELECT id FROM rms))::int`,
+		  (SELECT COUNT(*) FROM devices WHERE room_id IN (SELECT id FROM rms) AND deleted_at IS NULL)::int`,
 		id).Scan(&imp.Rooms, &imp.DevicesOrphaned)
 	return imp, err
 }
@@ -744,7 +744,7 @@ func countBuildingImpact(ctx context.Context, tx pgx.Tx, id string) (hierarchyIm
 func countRoomImpact(ctx context.Context, tx pgx.Tx, id string) (hierarchyImpact, error) {
 	var imp hierarchyImpact
 	err := tx.QueryRow(ctx, `
-		SELECT COUNT(*)::int FROM devices WHERE room_id = $1`,
+		SELECT COUNT(*)::int FROM devices WHERE room_id = $1 AND deleted_at IS NULL`,
 		id).Scan(&imp.DevicesOrphaned)
 	return imp, err
 }
@@ -1358,7 +1358,8 @@ func (h *Handler) UpdateDevice(w http.ResponseWriter, r *http.Request) {
 
 	// Build WHERE: the device must belong to this customer (RLS), and any
 	// non-NULL room_id / asset_id must reference a tenant-visible row.
-	where := "id = " + idParam
+	// deleted_at guard prevents editing a soft-deleted device.
+	where := "id = " + idParam + " AND deleted_at IS NULL"
 	if roomTouch && roomVal != nil {
 		where += " AND EXISTS (SELECT 1 FROM rooms WHERE id = $" + strconv.Itoa(roomParamIdx) + "::uuid)"
 	}
@@ -1391,7 +1392,7 @@ func (h *Handler) UpdateDevice(w http.ResponseWriter, r *http.Request) {
 			// bogus id gets a 404 rather than a silent asset-only write.
 			var deviceExists bool
 			if err := tx.QueryRow(ctx,
-				`SELECT EXISTS (SELECT 1 FROM devices WHERE id = $1)`, id,
+				`SELECT EXISTS (SELECT 1 FROM devices WHERE id = $1 AND deleted_at IS NULL)`, id,
 			).Scan(&deviceExists); err != nil {
 				return err
 			}
@@ -1410,7 +1411,7 @@ func (h *Handler) UpdateDevice(w http.ResponseWriter, r *http.Request) {
 			if assetTouch && assetVal != nil {
 				effectiveAssetID, _ = assetVal.(string)
 			} else if err := tx.QueryRow(ctx,
-				`SELECT COALESCE(asset_id::text, '') FROM devices WHERE id = $1`, id,
+				`SELECT COALESCE(asset_id::text, '') FROM devices WHERE id = $1 AND deleted_at IS NULL`, id,
 			).Scan(&effectiveAssetID); err != nil {
 				return err
 			}
@@ -1424,7 +1425,7 @@ func (h *Handler) UpdateDevice(w http.ResponseWriter, r *http.Request) {
 				if effectiveAssetID == "" {
 					var currentType *string
 					if err := tx.QueryRow(ctx,
-						`SELECT type FROM devices WHERE id = $1`, id,
+						`SELECT type FROM devices WHERE id = $1 AND deleted_at IS NULL`, id,
 					).Scan(&currentType); err == nil && currentType != nil {
 						category = deviceTypeToAssetCategory(*currentType)
 					} else {
@@ -1470,7 +1471,7 @@ func (h *Handler) UpdateDevice(w http.ResponseWriter, r *http.Request) {
 				// so the CMDB entry reads naturally.
 				var deviceName, deviceRoom *string
 				if err := tx.QueryRow(ctx,
-					`SELECT name, room_id::text FROM devices WHERE id = $1`, id,
+					`SELECT name, room_id::text FROM devices WHERE id = $1 AND deleted_at IS NULL`, id,
 				).Scan(&deviceName, &deviceRoom); err != nil {
 					return err
 				}
@@ -1481,7 +1482,7 @@ func (h *Handler) UpdateDevice(w http.ResponseWriter, r *http.Request) {
 				if assetName == "" {
 					// Fall back to reported_id — every device has one.
 					if err := tx.QueryRow(ctx,
-						`SELECT reported_id FROM devices WHERE id = $1`, id,
+						`SELECT reported_id FROM devices WHERE id = $1 AND deleted_at IS NULL`, id,
 					).Scan(&assetName); err != nil {
 						return err
 					}
@@ -1513,7 +1514,7 @@ func (h *Handler) UpdateDevice(w http.ResponseWriter, r *http.Request) {
 					return err
 				}
 				if _, err := tx.Exec(ctx,
-					`UPDATE devices SET asset_id = $1 WHERE id = $2`,
+					`UPDATE devices SET asset_id = $1 WHERE id = $2 AND deleted_at IS NULL`,
 					newAssetID, id); err != nil {
 					return err
 				}
@@ -1593,9 +1594,17 @@ func (h *Handler) UpdateDevice(w http.ResponseWriter, r *http.Request) {
 
 // DeleteDevice — DELETE /api/v1/devices/{id}
 //
-// FK cascades drop the device's telemetry, events, and commands. The audit
-// row captures the device's full pre-delete state so it can be reconstructed
-// for forensic purposes even after the cascade has run.
+// Soft-delete: sets deleted_at rather than physically removing the row.
+// This prevents the bridge from resurrecting the device via /ingest —
+// the ingest UPSERT's DO UPDATE ... WHERE deleted_at IS NULL guard
+// skips the resurrection, and the bridge stops polling the device on
+// its next config-pull (~5 min). Telemetry, events, and commands
+// remain in place so forensic queries after the fact still work; a
+// future cleanup job hard-deletes rows that have been soft-deleted
+// beyond a retention window.
+//
+// Idempotency: a second DELETE against an already-soft-deleted device
+// returns 404 (no live row to remove).
 func (h *Handler) DeleteDevice(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	p, _ := portalauth.From(r.Context())
@@ -1606,13 +1615,25 @@ func (h *Handler) DeleteDevice(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
-		tag, err := tx.Exec(ctx, `DELETE FROM devices WHERE id = $1`, id)
+		tag, err := tx.Exec(ctx,
+			`UPDATE devices SET deleted_at = now()
+			   WHERE id = $1 AND deleted_at IS NULL`, id)
 		if err != nil {
 			return err
 		}
 		rowsAffected = tag.RowsAffected()
 		if rowsAffected == 0 {
 			return nil
+		}
+		// Auto-resolve any open alerts for the deleted device — otherwise
+		// they hang around in /alerts pointing at a device the user can't
+		// click through to. The old hard-delete used FK cascades to drop
+		// these; soft-delete has to do it explicitly.
+		if _, err := tx.Exec(ctx,
+			`UPDATE alerts
+			   SET status = 'resolved', resolved_at = now(), resolved_by = 'system:device-deleted'
+			 WHERE device_id = $1 AND status IN ('open', 'acknowledged')`, id); err != nil {
+			return err
 		}
 		return audit.Record(ctx, tx, p.CustomerID, stampActor(p, audit.Entry{
 			Action: "device.delete", TargetKind: "device", TargetID: id,

@@ -93,6 +93,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 			       commands, tags, subscriptions
 			  FROM devices
 			 WHERE collector_id = $1
+			   AND deleted_at IS NULL
 			 ORDER BY reported_id`,
 			col.ID)
 		if err != nil {

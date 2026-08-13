@@ -140,6 +140,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				return err
 			}
+			// Empty devID = device was soft-deleted in the cloud but the
+			// bridge hasn't caught up on its config-pull cycle. Drop the
+			// telemetry silently; the bridge will stop sending within ~5 min.
+			if devID == "" {
+				continue
+			}
 			deviceIDs[t.DeviceID] = devID
 			if err := insertTelemetry(ctx, tx, col.CustomerID, devID, t); err != nil {
 				return err
@@ -153,6 +159,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				devID, err = upsertDeviceMinimal(ctx, tx, col.CustomerID, col.ID, e.DeviceID, e.DeviceName, e.DeviceType)
 				if err != nil {
 					return err
+				}
+				if devID == "" {
+					// Same soft-delete case as telemetry above.
+					continue
 				}
 				deviceIDs[e.DeviceID] = devID
 			}
@@ -240,7 +250,20 @@ ON CONFLICT (collector_id, reported_id) DO UPDATE SET
   latest_metrics   = COALESCE(EXCLUDED.latest_metrics, devices.latest_metrics),
   last_seen_at     = COALESCE(EXCLUDED.last_seen_at, devices.last_seen_at),
   capabilities     = COALESCE(EXCLUDED.capabilities, devices.capabilities)
+WHERE devices.deleted_at IS NULL
 RETURNING id::text`
+
+// upsertDeviceSQL guards against soft-deleted resurrection via the
+// WHERE clause on DO UPDATE. Sequence when a deleted device's bridge
+// keeps pushing telemetry:
+//   1. INSERT ... ON CONFLICT finds the soft-deleted row (deleted_at
+//      IS NOT NULL) → conflict detected, no INSERT.
+//   2. DO UPDATE's WHERE evaluates to false → no UPDATE either.
+//   3. RETURNING has no rows → QueryRow returns pgx.ErrNoRows.
+// The callers translate ErrNoRows to an empty deviceID + no error,
+// and the telemetry/event path skips writes for that device. Bridge
+// stops sending on the next config-pull (~5 min); until then we
+// silently drop.
 
 func upsertDeviceFromTelemetry(ctx context.Context, tx pgx.Tx, customerID, collectorID string, t telemetryDTO) (string, error) {
 	var id string
@@ -270,6 +293,12 @@ func upsertDeviceFromTelemetry(ctx context.Context, tx pgx.Tx, customerID, colle
 		nilIfZeroTime(t.Timestamp),
 		nilIfEmptyRaw(t.Capabilities),
 	).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// Soft-deleted device — the WHERE deleted_at IS NULL guard on
+		// DO UPDATE skipped the update. Not an error; caller drops the
+		// telemetry silently.
+		return "", nil
+	}
 	return id, err
 }
 
@@ -281,6 +310,9 @@ func upsertDeviceMinimal(ctx context.Context, tx pgx.Tx, customerID, collectorID
 		nil, nil, nil, nil, nil, nil,
 		nil, nil, nil, nil, nil,
 	).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
 	return id, err
 }
 

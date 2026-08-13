@@ -105,6 +105,7 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 		mux.Handle("GET /api/v1/devices/{id}", wrapPerm(portalauth.PermViewDashboard, portal.Portal.GetDevice))
 		mux.Handle("GET /api/v1/devices/{id}/telemetry", wrapPerm(portalauth.PermViewDashboard, portal.Portal.GetTelemetry))
 		mux.Handle("GET /api/v1/devices/{id}/telemetry/history", wrapPerm(portalauth.PermViewDashboard, portal.Portal.TelemetryHistory))
+		mux.Handle("GET /api/v1/devices/{id}/events", wrapPerm(portalauth.PermViewDashboard, portal.Portal.DeviceEvents))
 		mux.Handle("GET /api/v1/events", wrapPerm(portalauth.PermViewDashboard, portal.Portal.ListEvents))
 		mux.Handle("GET /api/v1/alerts", wrapPerm(portalauth.PermViewDashboard, portal.Portal.ListAlerts))
 		mux.Handle("GET /api/v1/alerts/summary", wrapPerm(portalauth.PermViewDashboard, portal.Portal.AlertsSummary))
