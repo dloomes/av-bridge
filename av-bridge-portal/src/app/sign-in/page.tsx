@@ -26,7 +26,14 @@ async function fetchBranding(slug: string | null): Promise<{
   branding: Branding;
   diag: Record<string, unknown>;
 }> {
-  const upstream = process.env.AV_BRIDGE_UPSTREAM ?? "";
+  // NEXT_PUBLIC_ prefix guarantees the value is inlined into the SSR
+  // bundle at build time (see envs/uat/main.tf notes). Fall back to the
+  // non-prefixed variant for local `next dev` where process.env is
+  // populated straight from the shell.
+  const upstream =
+    process.env.NEXT_PUBLIC_AV_BRIDGE_UPSTREAM ??
+    process.env.AV_BRIDGE_UPSTREAM ??
+    "";
   const url = slug && upstream
     ? `${upstream}/public/branding?slug=${encodeURIComponent(slug)}`
     : null;

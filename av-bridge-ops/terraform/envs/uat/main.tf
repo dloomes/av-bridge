@@ -157,6 +157,14 @@ module "portal" {
     # there's no CORS to configure on the API side.
     AV_BRIDGE_UPSTREAM = local.api_url
 
+    # Same URL, NEXT_PUBLIC_-prefixed so Next.js inlines it into the
+    # server bundle at build time. Needed because Amplify's WEB_COMPUTE
+    # runtime doesn't forward plain environment_variables to the SSR
+    # Lambda's process.env — only build-time visibility is guaranteed.
+    # Server components read the inlined constant, so pre-login branding
+    # fetch works from acme.<zone>/sign-in.
+    NEXT_PUBLIC_AV_BRIDGE_UPSTREAM = local.api_url
+
     # NEXT_PUBLIC_AV_BRIDGE_HTTP deliberately UNSET: when unset, api.ts
     # falls back to "" (empty base URL) and every fetch goes same-origin
     # via the Next.js rewrite proxy. Setting it makes the client call
