@@ -45,3 +45,15 @@ variable "custom_rules" {
   }))
   default = []
 }
+
+variable "custom_domain" {
+  description = "Custom apex to serve the app at, e.g. 'uat.involvecloud.com'. Amplify prepends 'app' via sub_domain_settings to become app.<custom_domain>. Leave empty to serve on the Amplify default domain only."
+  type        = string
+  default     = ""
+}
+
+variable "custom_domain_prefix" {
+  description = "Subdomain prefix under custom_domain. Default 'app' means the portal lives at app.<custom_domain>."
+  type        = string
+  default     = "app"
+}

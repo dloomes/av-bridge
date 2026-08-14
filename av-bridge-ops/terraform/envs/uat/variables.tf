@@ -54,3 +54,9 @@ variable "vendor_admin_password" {
   sensitive   = true
   default     = ""
 }
+
+variable "dns_zone_name" {
+  description = "Subdomain to delegate to this account for env-scoped DNS, e.g. 'uat.involvecloud.com'. The apex domain stays at whatever registrar owns it."
+  type        = string
+  default     = "uat.involvecloud.com"
+}

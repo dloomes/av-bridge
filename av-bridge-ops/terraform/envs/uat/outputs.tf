@@ -51,3 +51,20 @@ output "portal_default_domain" {
   description = "Amplify-issued portal URL. Custom domain lands later via Route 53 + ACM."
   value       = module.portal.default_domain
 }
+
+output "dns_zone_name_servers" {
+  description = "Route 53 NS records for the env zone. Copy these into the parent domain's registrar to delegate the subdomain to this account."
+  value       = module.dns.name_servers
+}
+
+output "dns_zone_name" {
+  value = module.dns.zone_name
+}
+
+output "api_url" {
+  value = "https://api.${var.dns_zone_name}"
+}
+
+output "app_url" {
+  value = "https://app.${var.dns_zone_name}"
+}

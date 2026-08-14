@@ -73,3 +73,28 @@ resource "aws_amplify_branch" "this" {
 
   tags = { Name = "${var.name_prefix}-portal-${var.branch_name}" }
 }
+
+# Custom domain association. Amplify handles its own ACM cert (in us-east-1
+# for CloudFront) and returns two DNS records per subdomain:
+#   * a verification record proving ownership
+#   * a CNAME for actual traffic
+# The caller reads dns_record + verification_record and adds them to Route
+# 53. Terraform blocks on domain verification (~5-20 min).
+resource "aws_amplify_domain_association" "this" {
+  count = var.custom_domain == "" ? 0 : 1
+
+  app_id      = aws_amplify_app.this.id
+  domain_name = var.custom_domain
+
+  # Do NOT wait for verification: Amplify won't verify without the Route 53
+  # CNAME being in place, and the caller can't add the CNAME without our
+  # output. Terraform apply returns immediately with the record hint; the
+  # caller adds the record; Amplify verifies async (5-30 min typically).
+  # Check status in the Amplify console under Domain Management.
+  wait_for_verification = false
+
+  sub_domain {
+    branch_name = aws_amplify_branch.this.branch_name
+    prefix      = var.custom_domain_prefix
+  }
+}
