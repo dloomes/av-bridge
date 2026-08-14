@@ -12,76 +12,35 @@ import { SignInForm } from "./sign-in-form";
 import type { Branding } from "@/lib/api";
 import { extractSlugFromHost } from "@/lib/branding-slug";
 
-// Fetches /public/branding server-side. AV_BRIDGE_UPSTREAM is set by
-// Terraform (envs/uat/main.tf) to the cloud API base URL — that's the same
-// value the Next.js /api/v1/* rewrite uses, so both surfaces route through
-// the same endpoint. `next: { revalidate: 300 }` matches the endpoint's own
-// Cache-Control, so hot branding lookups hit the Next server cache and
-// cold ones hit CloudFront before the DB.
-// Result carries both the resolved branding and diagnostic breadcrumbs so
-// the sign-in server component can render the branding while separately
-// echoing why it decided what it decided. The diag half is temporary until
-// wildcard routing + fetch behaviour are confirmed.
-async function fetchBranding(slug: string | null): Promise<{
-  branding: Branding;
-  diag: Record<string, unknown>;
-}> {
-  // NEXT_PUBLIC_ prefix guarantees the value is inlined into the SSR
-  // bundle at build time (see envs/uat/main.tf notes). Fall back to the
-  // non-prefixed variant for local `next dev` where process.env is
-  // populated straight from the shell.
+// Fetches /public/branding server-side. The upstream URL is read from an
+// env var that Next.js inlines at build time so the value survives into
+// the Amplify WEB_COMPUTE Lambda's runtime bundle (plain environment_
+// variables aren't automatically forwarded to SSR runtime — Amplify quirk).
+// Falls back to the non-prefixed variant for local `next dev` where the
+// shell populates process.env directly.
+//
+// `next: { revalidate: 300 }` matches the endpoint's own Cache-Control so
+// hot branding lookups hit the Next server cache and cold ones hit
+// CloudFront before the DB.
+async function fetchBranding(slug: string | null): Promise<Branding> {
+  if (!slug) return {};
   const upstream =
     process.env.NEXT_PUBLIC_AV_BRIDGE_UPSTREAM ??
     process.env.AV_BRIDGE_UPSTREAM ??
     "";
-  const url = slug && upstream
-    ? `${upstream}/public/branding?slug=${encodeURIComponent(slug)}`
-    : null;
-  if (!url) {
-    return {
-      branding: {},
-      diag: { skip_reason: !slug ? "no_slug" : "no_upstream", upstream_set: Boolean(upstream) },
-    };
-  }
+  if (!upstream) return {};
   try {
-    const resp = await fetch(url, { next: { revalidate: 300 } });
-    const bodyText = await resp.text();
-    let parsed: Branding = {};
-    try {
-      parsed = bodyText ? (JSON.parse(bodyText) as Branding) : {};
-    } catch (e) {
-      return {
-        branding: {},
-        diag: {
-          upstream_set: true,
-          fetch_url: url,
-          fetch_status: resp.status,
-          parse_error: (e as Error).message,
-          body_len: bodyText.length,
-        },
-      };
-    }
-    return {
-      branding: resp.ok ? parsed : {},
-      diag: {
-        upstream_set: true,
-        fetch_url: url,
-        fetch_status: resp.status,
-        body_len: bodyText.length,
-        parsed_keys: Object.keys(parsed),
-      },
-    };
-  } catch (e) {
-    // Any failure — DNS, timeout, TLS — falls back to defaults. Branding is
-    // best-effort by design; a broken lookup must never block sign-in.
-    return {
-      branding: {},
-      diag: {
-        upstream_set: true,
-        fetch_url: url,
-        fetch_error: (e as Error).message,
-      },
-    };
+    const resp = await fetch(
+      `${upstream}/public/branding?slug=${encodeURIComponent(slug)}`,
+      { next: { revalidate: 300 } }
+    );
+    if (!resp.ok) return {};
+    return (await resp.json()) as Branding;
+  } catch {
+    // Any failure — DNS, timeout, malformed JSON — falls back to the default
+    // portal look. Branding is best-effort by design; a broken lookup must
+    // never block a customer from signing in.
+    return {};
   }
 }
 
@@ -94,28 +53,6 @@ export default async function SignInPage() {
   const h = headers();
   const hostHeader = h.get("x-forwarded-host") ?? h.get("host");
   const slug = extractSlugFromHost(hostHeader);
-  const { branding, diag: fetchDiag } = await fetchBranding(slug);
-
-  // TEMP diagnostic — captured host headers + fetch mechanics so we can
-  // pinpoint why acme.uat sign-in returns branding_keys: []. Remove once
-  // customer-subdomain hydration is confirmed.
-  const diag = JSON.stringify({
-    host: h.get("host") ?? null,
-    x_forwarded_host: h.get("x-forwarded-host") ?? null,
-    resolved_slug: slug,
-    branding_keys: Object.keys(branding),
-    fetch: fetchDiag,
-  });
-
-  return (
-    <>
-      <SignInForm branding={branding} />
-      <script
-        id="av-diag-headers"
-        type="application/json"
-        // eslint-disable-next-line react/no-danger
-        dangerouslySetInnerHTML={{ __html: diag }}
-      />
-    </>
-  );
+  const branding = await fetchBranding(slug);
+  return <SignInForm branding={branding} />;
 }
