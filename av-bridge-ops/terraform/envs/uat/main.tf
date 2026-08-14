@@ -2,6 +2,14 @@
 # Prod uses the same modules with prod-sized inputs — the ONLY differences
 # between envs should live in variables.tf / terraform.tfvars.
 
+locals {
+  # Single vendor-admin identity — used both as the initial helpdesk seed
+  # user AND as the SES sandbox verified recipient / DMARC report inbox.
+  # Change here and both usages update in step.
+  vendor_admin_email = "dloomes@involve.vc"
+  vendor_admin_name  = "Daniel Loomes"
+}
+
 module "network" {
   source = "../../modules/network"
 
@@ -47,6 +55,27 @@ module "dns" {
   source = "../../modules/dns-zone"
 
   zone_name = var.dns_zone_name
+}
+
+module "ses" {
+  source = "../../modules/ses"
+
+  name_prefix    = var.name_prefix
+  sending_domain = var.dns_zone_name
+  hosted_zone_id = module.dns.zone_id
+  # noreply@uat.involvecloud.com is the initial From. Display name is
+  # rendered in the visible sender column of mail clients.
+  from_local_part   = "noreply"
+  from_display_name = "AV Bridge"
+  # Start in monitoring-only DMARC — flip to quarantine/reject once we've
+  # observed a week or two of clean sends via the aggregate reports.
+  dmarc_policy = "none"
+  dmarc_rua    = local.vendor_admin_email
+
+  # Sandbox recipients: SES rejects sends to unverified addresses until
+  # production access is granted. Pre-verify the vendor admin so alert
+  # test-sends land during UAT. Add more addresses here as devs join.
+  verified_recipient_addresses = [local.vendor_admin_email]
 }
 
 module "cert" {
@@ -104,9 +133,18 @@ module "cloud_service" {
   # is set once via terraform.tfvars for the initial boot, then rotated by
   # the admin from the portal — see variables.tf for the reasoning.
   bootstrap_poc         = true
-  vendor_admin_email    = "dloomes@involve.vc"
-  vendor_admin_name     = "Daniel Loomes"
+  vendor_admin_email    = local.vendor_admin_email
+  vendor_admin_name     = local.vendor_admin_name
   vendor_admin_password = var.vendor_admin_password
+
+  # SES-backed outbound email. When these are wired, the notify package
+  # sends real mail via SES SMTP; existing alert channels + the nightly
+  # digest start delivering instead of dry-running. Kept flipable via
+  # smtp_host — set to "" to fall back to dry-run.
+  smtp_host                   = module.ses.smtp_host
+  smtp_port                   = module.ses.smtp_port
+  smtp_from                   = module.ses.smtp_from
+  smtp_credentials_secret_arn = module.ses.smtp_credentials_secret_arn
 }
 
 # A alias record so browsers + bridge collectors reach the API at

@@ -156,3 +156,35 @@ variable "log_retention_days" {
   type    = number
   default = 30
 }
+
+# -----------------------------------------------------------------------------
+# SMTP (outbound email via SES)
+# -----------------------------------------------------------------------------
+#
+# Leave smtp_host empty to keep the app in dry-run mode — email channels log
+# instead of sending. Set all four to route real mail. Credentials come from
+# Secrets Manager JSON with `username` + `password` keys.
+
+variable "smtp_host" {
+  description = "SMTP relay hostname. Empty = the app stays in dry-run (email logs, doesn't send). Set to the SES SMTP endpoint e.g. email-smtp.eu-west-2.amazonaws.com."
+  type        = string
+  default     = ""
+}
+
+variable "smtp_port" {
+  description = "SMTP submission port. 587 = STARTTLS (default), 465 = implicit TLS."
+  type        = string
+  default     = "587"
+}
+
+variable "smtp_from" {
+  description = "Full From header, e.g. \"AV Bridge <noreply@uat.involvecloud.com>\". Ignored when smtp_host is empty."
+  type        = string
+  default     = ""
+}
+
+variable "smtp_credentials_secret_arn" {
+  description = "Secrets Manager ARN of a JSON secret with `username` + `password` keys (SES SMTP creds derived from an IAM access key). Ignored when smtp_host is empty. Grant the execution role secretsmanager:GetSecretValue on this ARN."
+  type        = string
+  default     = ""
+}

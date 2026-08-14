@@ -94,15 +94,18 @@ resource "aws_iam_role_policy_attachment" "execution_managed" {
 
 data "aws_iam_policy_document" "execution_secrets" {
   statement {
-    sid       = "ReadAppSecrets"
-    actions   = ["secretsmanager:GetSecretValue"]
-    resources = [
+    sid     = "ReadAppSecrets"
+    actions = ["secretsmanager:GetSecretValue"]
+    # SMTP secret is optional — compact drops the empty string when the
+    # caller doesn't wire SES, keeping the policy tight.
+    resources = compact([
       var.db_master_secret_arn,
       var.cloud_secret_key_arn,
       var.admin_api_token_arn,
       var.portal_token_arn,
       var.hmac_secret_arn,
-    ]
+      var.smtp_credentials_secret_arn,
+    ])
   }
 }
 
@@ -167,19 +170,33 @@ resource "aws_ecs_task_definition" "this" {
       var.vendor_admin_password == "" ? [] : [
         { name = "VENDOR_ADMIN_PASSWORD", value = var.vendor_admin_password }
       ],
+      # SMTP: host empty = the app stays in dry-run (logs the email
+      # instead of sending). Emitting POC_SMTP_HOST flips it live and the
+      # accompanying port/from + secrets-block username/password take
+      # over. See av-bridge-cloud/internal/config/config.go.
+      var.smtp_host == "" ? [] : [
+        { name = "POC_SMTP_HOST", value = var.smtp_host },
+        { name = "POC_SMTP_PORT", value = var.smtp_port },
+        { name = "POC_SMTP_FROM", value = var.smtp_from },
+      ],
     )
 
-    secrets = [
-      { name = "DATABASE_MIGRATION_URL", valueFrom = "${var.db_master_secret_arn}:url::" },
-      { name = "CLOUD_SECRET_KEY", valueFrom = var.cloud_secret_key_arn },
-      { name = "ADMIN_API_TOKEN", valueFrom = var.admin_api_token_arn },
-      { name = "POC_PORTAL_TOKEN", valueFrom = var.portal_token_arn },
-      { name = "POC_HMAC_SECRET", valueFrom = var.hmac_secret_arn },
-      # Vendor admin password uses a Secrets Manager entry when non-empty; if
-      # left blank at deploy, the seed step in the app skips creating a user.
-      # We keep it configurable but never store the plaintext in task-def env.
-      # See vendor_admin_password variable — passed as plain env when set.
-    ]
+    secrets = concat(
+      [
+        { name = "DATABASE_MIGRATION_URL", valueFrom = "${var.db_master_secret_arn}:url::" },
+        { name = "CLOUD_SECRET_KEY", valueFrom = var.cloud_secret_key_arn },
+        { name = "ADMIN_API_TOKEN", valueFrom = var.admin_api_token_arn },
+        { name = "POC_PORTAL_TOKEN", valueFrom = var.portal_token_arn },
+        { name = "POC_HMAC_SECRET", valueFrom = var.hmac_secret_arn },
+      ],
+      # SMTP credentials — one Secrets Manager JSON with username +
+      # password keys. ECS' `:key::` syntax pulls each key out into its
+      # own env var without exposing the other in the task def.
+      var.smtp_credentials_secret_arn == "" ? [] : [
+        { name = "POC_SMTP_USERNAME", valueFrom = "${var.smtp_credentials_secret_arn}:username::" },
+        { name = "POC_SMTP_PASSWORD", valueFrom = "${var.smtp_credentials_secret_arn}:password::" },
+      ],
+    )
 
     logConfiguration = {
       logDriver = "awslogs"
