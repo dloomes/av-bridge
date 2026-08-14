@@ -104,12 +104,19 @@ module "portal" {
     # at the actual app subdirectory in our monorepo.
     AMPLIFY_MONOREPO_APP_ROOT = "av-bridge-portal"
 
-    # Next.js rewrites in next.config.mjs read this to forward /api/v1/*
-    # to the cloud API. Using the ALB DNS today; swap to api.<domain>
-    # once we attach a custom domain.
+    # Server-side: Next.js rewrites in next.config.mjs read this to forward
+    # /api/v1/* to the cloud API via the Amplify SSR runtime. Same-origin
+    # from the browser -> HTTPS OK even though the backend is HTTP.
     AV_BRIDGE_UPSTREAM = "http://${module.alb.dns_name}"
 
-    # Reduce noisy Next.js telemetry — env var recognised by Next itself.
+    # Client-side (NEXT_PUBLIC_*): baked into the JS bundle at build time.
+    # Used by ConnectionIndicator + WS clients that talk to the backend
+    # directly. WS will be blocked as mixed-content until the ALB gets
+    # HTTPS via ACM + Route 53; display is still correct.
+    NEXT_PUBLIC_AV_BRIDGE_HTTP = "http://${module.alb.dns_name}"
+    NEXT_PUBLIC_AV_BRIDGE_WS   = "ws://${module.alb.dns_name}"
+
+    # Reduce noisy Next.js telemetry - env var recognised by Next itself.
     NEXT_TELEMETRY_DISABLED = "1"
   }
 }
