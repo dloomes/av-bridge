@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/mail"
 	"net/smtp"
 	"strings"
 	"time"
@@ -71,12 +72,21 @@ func (s *Senders) sendEmail(ctx context.Context, ch Channel, evt AlertEvent) err
 		return nil
 	}
 
-	from := s.smtp.From
-	if from == "" {
-		from = "alerts@av-bridge.local"
+	fromHeader := s.smtp.From
+	if fromHeader == "" {
+		fromHeader = "alerts@av-bridge.local"
+	}
+	// The SMTP MAIL FROM envelope needs a bare address; a display-name form
+	// like "AV Bridge <noreply@…>" gets wrapped in angle brackets by net/smtp
+	// (SES then rejects with 553 Invalid email address). Parse once and hand
+	// the envelope the bare address; the RFC822 From: header keeps the full
+	// display-name form so the recipient's client shows the friendly name.
+	envelopeFrom := fromHeader
+	if parsed, err := mail.ParseAddress(fromHeader); err == nil {
+		envelopeFrom = parsed.Address
 	}
 	addr := s.smtp.Host + ":" + s.smtp.Port
-	msg := buildRFC822(from, ch.Target, subject, body)
+	msg := buildRFC822(fromHeader, ch.Target, subject, body)
 
 	var auth smtp.Auth
 	if s.smtp.Username != "" {
@@ -88,7 +98,7 @@ func (s *Senders) sendEmail(ctx context.Context, ch Channel, evt AlertEvent) err
 	// delivery but at least the dispatcher returns promptly.
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- smtp.SendMail(addr, auth, from, []string{ch.Target}, msg)
+		errCh <- smtp.SendMail(addr, auth, envelopeFrom, []string{ch.Target}, msg)
 	}()
 	select {
 	case err := <-errCh:
