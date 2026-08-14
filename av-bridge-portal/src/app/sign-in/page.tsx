@@ -47,5 +47,30 @@ export default async function SignInPage() {
   const hostHeader = h.get("x-forwarded-host") ?? h.get("host");
   const slug = extractSlugFromHost(hostHeader);
   const branding = await fetchBranding(slug);
-  return <SignInForm branding={branding} />;
+
+  // TEMP: emit observed host headers as a hidden JSON blob so we can curl
+  // the sign-in page and see what Amplify's SSR runtime is actually
+  // receiving. Remove once the customer-subdomain routing is verified —
+  // tracked by the header-diagnostic todo. Not sensitive: same values a
+  // browser's DevTools would show; brand assets are already public.
+  const diag = JSON.stringify({
+    host: h.get("host") ?? null,
+    x_forwarded_host: h.get("x-forwarded-host") ?? null,
+    x_forwarded_for: h.get("x-forwarded-for") ?? null,
+    x_forwarded_proto: h.get("x-forwarded-proto") ?? null,
+    resolved_slug: slug,
+    branding_keys: Object.keys(branding),
+  });
+
+  return (
+    <>
+      <SignInForm branding={branding} />
+      <script
+        id="av-diag-headers"
+        type="application/json"
+        // eslint-disable-next-line react/no-danger
+        dangerouslySetInnerHTML={{ __html: diag }}
+      />
+    </>
+  );
 }

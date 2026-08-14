@@ -38,7 +38,12 @@ export function extractSlugFromHost(
   host: string | null | undefined
 ): string | null {
   if (!host) return null;
-  const cleanHost = host.split(":")[0].toLowerCase();
+  // Proxied host headers can arrive comma-joined when multiple hops each
+  // add their own value (Headers.get concatenates duplicates with ", ").
+  // The leftmost entry is the customer-visible hostname; downstream entries
+  // are the proxy chain's internal hostnames. Take the leftmost.
+  const raw = host.split(",")[0].trim();
+  const cleanHost = raw.split(":")[0].toLowerCase();
   const parts = cleanHost.split(".");
   // Apex + 2-label hosts (involvecloud.com, example.co) can't carry a slug.
   if (parts.length < 3) return null;
