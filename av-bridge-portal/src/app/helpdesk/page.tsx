@@ -9,7 +9,9 @@ import {
   Building2,
   CircleSlash,
   Copy,
+  Link as LinkIcon,
   Loader2,
+  Pencil,
   Plus,
   ServerCrash,
   ShieldCheck,
@@ -25,7 +27,28 @@ import { useSession } from "@/hooks/useSession";
 import { setScope } from "@/lib/session";
 import { api, type HelpdeskOverviewItem } from "@/lib/api";
 import { formatRelative } from "@/lib/utils";
-import type { CreateCustomerBody } from "@/lib/types";
+import type { CreateCustomerBody, UpdateCustomerBody } from "@/lib/types";
+
+// Same rules as customers_slug_format (migration 0030) + the RESERVED_SLUGS
+// list in src/lib/branding-slug.ts. Runs client-side for immediate feedback;
+// the server enforces the same checks so a hand-crafted request can't slip
+// past.
+const SLUG_RE = /^[a-z0-9][a-z0-9-]{1,48}[a-z0-9]$/;
+const RESERVED_SLUGS = new Set([
+  "app", "www", "api", "admin", "helpdesk", "staging", "preview",
+  "localhost", "dev", "test", "demo", "support",
+]);
+function validateSlug(raw: string): string | null {
+  const s = raw.trim().toLowerCase();
+  if (s === "") return null; // empty is valid — represents "no slug set"
+  if (!SLUG_RE.test(s)) {
+    return "3-50 characters, lowercase letters/digits/hyphens only, start and end alphanumeric.";
+  }
+  if (RESERVED_SLUGS.has(s)) {
+    return `"${s}" is reserved for platform routing. Pick something else.`;
+  }
+  return null;
+}
 
 // HelpdeskPage — vendor-only landing view summarising every customer the
 // helpdesk operator can support. Non-vendor sessions get bounced; vendor
@@ -36,6 +59,7 @@ export default function HelpdeskPage() {
   const session = useSession();
   const router = useRouter();
   const [creating, setCreating] = useState(false);
+  const [editing, setEditing] = useState<HelpdeskOverviewItem | null>(null);
   const { data, loading, error, refresh } = usePolling<HelpdeskOverviewItem[]>(
     (signal) => api.helpdeskOverview(signal),
     30_000
@@ -109,6 +133,24 @@ export default function HelpdeskPage() {
         />
       </Modal>
 
+      <Modal
+        open={editing !== null}
+        onClose={() => setEditing(null)}
+        title="Edit customer"
+        wide={false}
+      >
+        {editing && (
+          <EditCustomerForm
+            customer={editing}
+            onCancel={() => setEditing(null)}
+            onSaved={async () => {
+              setEditing(null);
+              refresh();
+            }}
+          />
+        )}
+      </Modal>
+
       <div className="flex-1 min-h-0 overflow-y-auto p-6 space-y-4">
         {error && (
           <Card className="border-destructive/30 bg-destructive/5">
@@ -130,7 +172,12 @@ export default function HelpdeskPage() {
         ) : data && data.length > 0 ? (
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {data.map((c) => (
-              <CustomerCard key={c.id} c={c} onActAs={() => actAs(c.id)} />
+              <CustomerCard
+                key={c.id}
+                c={c}
+                onActAs={() => actAs(c.id)}
+                onEdit={() => setEditing(c)}
+              />
             ))}
           </div>
         ) : (
@@ -148,9 +195,11 @@ export default function HelpdeskPage() {
 function CustomerCard({
   c,
   onActAs,
+  onEdit,
 }: {
   c: HelpdeskOverviewItem;
   onActAs: () => void;
+  onEdit: () => void;
 }) {
   const hasCritical = c.alerts_critical > 0;
   const hasOffline = c.devices_offline > 0;
@@ -170,18 +219,34 @@ function CustomerCard({
     <Card className={`border ${tone}`}>
       <CardContent className="p-4 space-y-3">
         <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             <div className="text-base font-semibold truncate">{c.name}</div>
+            {c.slug && (
+              <div className="mt-0.5 flex items-center gap-1 text-[11px] text-muted-foreground truncate">
+                <LinkIcon className="h-3 w-3 shrink-0" />
+                <span className="truncate">{c.slug}.uat.involvecloud.com</span>
+              </div>
+            )}
             {c.entra_tenant_id && (
               <div className="text-[11px] text-muted-foreground truncate">
                 {c.entra_tenant_id}
               </div>
             )}
           </div>
-          <Button size="sm" onClick={onActAs}>
-            Act as
-            <ArrowRight className="h-3.5 w-3.5" />
-          </Button>
+          <div className="flex items-center gap-1 shrink-0">
+            <Button
+              size="icon"
+              variant="ghost"
+              aria-label="Edit customer"
+              onClick={onEdit}
+            >
+              <Pencil className="h-3.5 w-3.5" />
+            </Button>
+            <Button size="sm" onClick={onActAs}>
+              Act as
+              <ArrowRight className="h-3.5 w-3.5" />
+            </Button>
+          </div>
         </div>
 
         <div className="grid grid-cols-3 gap-2">
@@ -236,6 +301,7 @@ function NewCustomerForm({
   onCreated: () => Promise<void> | void;
 }) {
   const [name, setName] = useState("");
+  const [slug, setSlug] = useState("");
   const [entra, setEntra] = useState("");
   const [seedAdmin, setSeedAdmin] = useState(true);
   const [adminEmail, setAdminEmail] = useState("");
@@ -245,14 +311,21 @@ function NewCustomerForm({
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<{ email: string; password: string } | null>(null);
 
+  const slugError = validateSlug(slug);
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    if (slugError) {
+      setError(slugError);
+      return;
+    }
     setBusy(true);
     try {
       const body: CreateCustomerBody = {
         name: name.trim(),
         entra_tenant_id: entra.trim() || undefined,
+        slug: slug.trim() || undefined,
       };
       if (seedAdmin) {
         body.initial_admin = {
@@ -313,6 +386,35 @@ function NewCustomerForm({
           disabled={busy}
           className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
         />
+      </div>
+
+      <div className="space-y-1">
+        <label htmlFor="nc-slug" className="text-xs font-medium text-muted-foreground">
+          URL slug <span className="text-muted-foreground/70">(optional)</span>
+        </label>
+        <div className="flex items-center gap-1">
+          <input
+            id="nc-slug"
+            type="text"
+            placeholder="acme"
+            value={slug}
+            onChange={(e) => setSlug(e.target.value.toLowerCase())}
+            disabled={busy}
+            className={`h-9 flex-1 rounded-md border bg-background px-3 text-sm font-mono ${
+              slugError ? "border-destructive" : "border-input"
+            }`}
+          />
+          <span className="text-xs text-muted-foreground shrink-0">
+            .uat.involvecloud.com
+          </span>
+        </div>
+        {slugError ? (
+          <p className="text-[11px] [color:hsl(var(--destructive))]">{slugError}</p>
+        ) : (
+          <p className="text-[11px] text-muted-foreground">
+            Sets the customer&rsquo;s branded sign-in URL. 3-50 chars, lowercase letters/digits/hyphens. Leave blank to skip.
+          </p>
+        )}
       </div>
 
       <div className="space-y-1">
@@ -408,6 +510,124 @@ function NewCustomerForm({
         <Button type="submit" disabled={busy}>
           {busy && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
           Create customer
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+// EditCustomerForm — vendor-only. Edits mutable fields on an existing
+// customer row: name + URL slug. Sends PATCH with only the fields that
+// actually changed so the audit log stays clean. Clearing the slug field
+// and saving sends "" which the server interprets as "set to NULL".
+function EditCustomerForm({
+  customer,
+  onCancel,
+  onSaved,
+}: {
+  customer: HelpdeskOverviewItem;
+  onCancel: () => void;
+  onSaved: () => Promise<void> | void;
+}) {
+  const [name, setName] = useState(customer.name);
+  const [slug, setSlug] = useState(customer.slug ?? "");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const slugError = validateSlug(slug);
+  const nameChanged = name.trim() !== customer.name;
+  const slugChanged = slug.trim().toLowerCase() !== (customer.slug ?? "");
+  const canSave = !busy && !slugError && name.trim() !== "" && (nameChanged || slugChanged);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    if (!canSave) return;
+    setBusy(true);
+    try {
+      const body: UpdateCustomerBody = {};
+      if (nameChanged) body.name = name.trim();
+      // Slug uses pointer semantics — send it explicitly ("" clears) only
+      // when the user actually changed it, so audit log doesn't record a
+      // no-op assignment.
+      if (slugChanged) body.slug = slug.trim();
+      await api.updateCustomer(customer.id, body);
+      await onSaved();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <form onSubmit={submit} className="space-y-3">
+      {error && (
+        <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm [color:hsl(var(--destructive))]">
+          {error}
+        </div>
+      )}
+
+      <div className="space-y-1">
+        <label htmlFor="ec-name" className="text-xs font-medium text-muted-foreground">
+          Customer name
+        </label>
+        <input
+          id="ec-name"
+          type="text"
+          required
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          disabled={busy}
+          className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+        />
+      </div>
+
+      <div className="space-y-1">
+        <label htmlFor="ec-slug" className="text-xs font-medium text-muted-foreground">
+          URL slug{" "}
+          <span className="text-muted-foreground/70">
+            (empty = no branded URL)
+          </span>
+        </label>
+        <div className="flex items-center gap-1">
+          <input
+            id="ec-slug"
+            type="text"
+            placeholder="acme"
+            value={slug}
+            onChange={(e) => setSlug(e.target.value.toLowerCase())}
+            disabled={busy}
+            className={`h-9 flex-1 rounded-md border bg-background px-3 text-sm font-mono ${
+              slugError ? "border-destructive" : "border-input"
+            }`}
+          />
+          <span className="text-xs text-muted-foreground shrink-0">
+            .uat.involvecloud.com
+          </span>
+        </div>
+        {slugError ? (
+          <p className="text-[11px] [color:hsl(var(--destructive))]">
+            {slugError}
+          </p>
+        ) : slug && (
+          <p className="text-[11px] text-muted-foreground">
+            Sign-in page will render this customer&rsquo;s branding when reached via{" "}
+            <span className="font-mono">
+              {slug}.uat.involvecloud.com
+            </span>
+            .
+          </p>
+        )}
+      </div>
+
+      <div className="flex items-center justify-end gap-2 pt-2 border-t">
+        <Button type="button" variant="ghost" onClick={onCancel} disabled={busy}>
+          Cancel
+        </Button>
+        <Button type="submit" disabled={!canSave}>
+          {busy && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+          Save changes
         </Button>
       </div>
     </form>

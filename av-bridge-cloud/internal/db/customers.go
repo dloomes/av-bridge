@@ -16,6 +16,7 @@ import (
 type CreateCustomerOptions struct {
 	Name          string
 	EntraTenantID string // optional — set later when the customer federates
+	Slug          string // optional — URL slug for <slug>.<env>.involvecloud.com sign-in. Empty = no branded URL.
 	InitialAdmin  *InitialAdminOptions
 }
 
@@ -58,6 +59,11 @@ func (s *Store) CreateCustomer(ctx context.Context, opts CreateCustomerOptions) 
 		}
 	}
 
+	slug := NormalizeSlug(opts.Slug)
+	if err := ValidateSlug(slug); err != nil {
+		return CreateCustomerResult{}, err
+	}
+
 	tx, err := s.admin.Begin(ctx)
 	if err != nil {
 		return CreateCustomerResult{}, err
@@ -66,17 +72,28 @@ func (s *Store) CreateCustomer(ctx context.Context, opts CreateCustomerOptions) 
 
 	var res CreateCustomerResult
 
-	// Customer row. Entra tenant id is optional and unique when set — a
-	// duplicate returns a friendly error instead of a raw SQL constraint.
+	// Customer row. Entra tenant id + slug are both optional and both unique
+	// when set — duplicates yield a friendly error rather than raw SQLSTATE.
 	entraArg := any(nil)
 	if opts.EntraTenantID != "" {
 		entraArg = opts.EntraTenantID
 	}
+	slugArg := any(nil)
+	if slug != "" {
+		slugArg = slug
+	}
 	if err := tx.QueryRow(ctx,
-		`INSERT INTO customers (name, entra_tenant_id)
-		 VALUES ($1, $2) RETURNING id::text`,
-		name, entraArg).Scan(&res.CustomerID); err != nil {
+		`INSERT INTO customers (name, entra_tenant_id, slug)
+		 VALUES ($1, $2, $3) RETURNING id::text`,
+		name, entraArg, slugArg).Scan(&res.CustomerID); err != nil {
 		if isDuplicateKey(err) {
+			// Two possible collisions — differentiate so the operator knows
+			// which field to change. pg unique-violation errors include the
+			// constraint name; check that rather than the column value.
+			msg := err.Error()
+			if strings.Contains(msg, "customers_slug_key") {
+				return CreateCustomerResult{}, errors.New("a customer with that URL slug already exists")
+			}
 			return CreateCustomerResult{}, errors.New("a customer with that Entra tenant id already exists")
 		}
 		return CreateCustomerResult{}, fmt.Errorf("insert customer: %w", err)
@@ -146,6 +163,68 @@ func (s *Store) CreateCustomer(ctx context.Context, opts CreateCustomerOptions) 
 	}
 
 	return res, tx.Commit(ctx)
+}
+
+// UpdateCustomerOptions carries the fields the vendor helpdesk can edit
+// after a customer row exists. Every field is a pointer so absent = "leave
+// stored value alone" — the wire layer maps a missing JSON key to a nil
+// pointer and an explicit empty string ("") clears the field to NULL.
+//
+// Not extended to include EntraTenantID today because federated tenants
+// aren't editable from the helpdesk yet; that lands with the Entra work.
+type UpdateCustomerOptions struct {
+	Name *string
+	Slug *string
+}
+
+// UpdateCustomer applies the supplied changes to a customer row. Empty
+// pointer means "no change"; empty-string pointer means "clear to NULL"
+// (only meaningful for Slug — Name is NOT NULL and rejects blanks).
+// Runs against the admin pool because helpdesk edits are cross-tenant
+// by definition. Returns pgx.ErrNoRows for unknown customer ids so the
+// HTTP layer can map to 404.
+func (s *Store) UpdateCustomer(ctx context.Context, customerID string, opts UpdateCustomerOptions) error {
+	if opts.Name == nil && opts.Slug == nil {
+		return nil // no-op — accept blank PATCH so the UI can send a save without changes
+	}
+
+	setParts := []string{}
+	args := []any{customerID}
+
+	if opts.Name != nil {
+		trimmed := strings.TrimSpace(*opts.Name)
+		if trimmed == "" {
+			return errors.New("name cannot be blank")
+		}
+		args = append(args, trimmed)
+		setParts = append(setParts, fmt.Sprintf("name = $%d", len(args)))
+	}
+
+	if opts.Slug != nil {
+		slug := NormalizeSlug(*opts.Slug)
+		if err := ValidateSlug(slug); err != nil {
+			return err
+		}
+		if slug == "" {
+			args = append(args, nil)
+		} else {
+			args = append(args, slug)
+		}
+		setParts = append(setParts, fmt.Sprintf("slug = $%d", len(args)))
+	}
+
+	sql := "UPDATE customers SET " + strings.Join(setParts, ", ") + " WHERE id = $1"
+	tag, err := s.admin.Exec(ctx, sql, args...)
+	if err != nil {
+		if isDuplicateKey(err) && strings.Contains(err.Error(), "customers_slug_key") {
+			return errors.New("a customer with that URL slug already exists")
+		}
+		return fmt.Errorf("update customer: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	return nil
 }
 
 // seedSystemRoles inserts the three system-default roles and their

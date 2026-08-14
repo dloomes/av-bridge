@@ -1068,17 +1068,18 @@ func (h *Handler) Whoami(w http.ResponseWriter, r *http.Request) {
 // tenant view.
 func (h *Handler) HelpdeskOverview(w http.ResponseWriter, r *http.Request) {
 	type item struct {
-		ID               string     `json:"id"`
-		Name             string     `json:"name"`
-		EntraTenantID    string     `json:"entra_tenant_id,omitempty"`
-		DevicesTotal     int        `json:"devices_total"`
-		DevicesOnline    int        `json:"devices_online"`
-		DevicesOffline   int        `json:"devices_offline"`
-		DevicesDegraded  int        `json:"devices_degraded"`
-		AlertsOpen       int        `json:"alerts_open"`
-		AlertsCritical   int        `json:"alerts_critical"`
-		CollectorsTotal  int        `json:"collectors_total"`
-		LastBridgeSeen   *time.Time `json:"last_bridge_seen,omitempty"`
+		ID              string     `json:"id"`
+		Name            string     `json:"name"`
+		EntraTenantID   string     `json:"entra_tenant_id,omitempty"`
+		Slug            string     `json:"slug,omitempty"`
+		DevicesTotal    int        `json:"devices_total"`
+		DevicesOnline   int        `json:"devices_online"`
+		DevicesOffline  int        `json:"devices_offline"`
+		DevicesDegraded int        `json:"devices_degraded"`
+		AlertsOpen      int        `json:"alerts_open"`
+		AlertsCritical  int        `json:"alerts_critical"`
+		CollectorsTotal int        `json:"collectors_total"`
+		LastBridgeSeen  *time.Time `json:"last_bridge_seen,omitempty"`
 	}
 	out := []item{}
 
@@ -1087,6 +1088,7 @@ func (h *Handler) HelpdeskOverview(w http.ResponseWriter, r *http.Request) {
 		  c.id::text,
 		  c.name,
 		  COALESCE(c.entra_tenant_id,''),
+		  COALESCE(c.slug,''),
 		  COALESCE(d.total, 0),
 		  COALESCE(d.online, 0),
 		  COALESCE(d.offline, 0),
@@ -1125,7 +1127,7 @@ func (h *Handler) HelpdeskOverview(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 	for rows.Next() {
 		var it item
-		if err := rows.Scan(&it.ID, &it.Name, &it.EntraTenantID,
+		if err := rows.Scan(&it.ID, &it.Name, &it.EntraTenantID, &it.Slug,
 			&it.DevicesTotal, &it.DevicesOnline, &it.DevicesOffline, &it.DevicesDegraded,
 			&it.AlertsOpen, &it.AlertsCritical,
 			&it.CollectorsTotal, &it.LastBridgeSeen); err != nil {

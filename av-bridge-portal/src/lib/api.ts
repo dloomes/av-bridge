@@ -11,6 +11,7 @@ import type {
   CommandResponse,
   CreateAssetBody,
   CreateCustomerBody,
+  UpdateCustomerBody,
   CreateCustomerResponse,
   CreateDeviceBody,
   CreateRoleBody,
@@ -158,6 +159,7 @@ export interface HelpdeskOverviewItem {
   id: string;
   name: string;
   entra_tenant_id?: string;
+  slug?: string;
   devices_total: number;
   devices_online: number;
   devices_offline: number;
@@ -981,6 +983,19 @@ export const api = {
   createCustomer: (body: CreateCustomerBody, signal?: AbortSignal) =>
     request<CreateCustomerResponse>("/api/v1/helpdesk/customers", {
       method: "POST",
+      body: JSON.stringify(body),
+      signal,
+    }),
+
+  // Update an existing customer (helpdesk-only). Sends only the keys the
+  // caller cares about — the server treats absent keys as "no change".
+  updateCustomer: (
+    id: string,
+    body: UpdateCustomerBody,
+    signal?: AbortSignal
+  ) =>
+    request<void>(`/api/v1/helpdesk/customers/${encodeURIComponent(id)}`, {
+      method: "PATCH",
       body: JSON.stringify(body),
       signal,
     }),

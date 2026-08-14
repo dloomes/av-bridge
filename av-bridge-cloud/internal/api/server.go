@@ -109,6 +109,9 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 		mux.Handle("POST /api/v1/helpdesk/customers",
 			portalauth.Middleware(portal.Resolver,
 				portalauth.RequireVendor(http.HandlerFunc(portal.Portal.HelpdeskCreateCustomer))))
+		mux.Handle("PATCH /api/v1/helpdesk/customers/{id}",
+			portalauth.Middleware(portal.Resolver,
+				portalauth.RequireVendor(http.HandlerFunc(portal.Portal.HelpdeskUpdateCustomer))))
 
 		// Dashboard-level reads. view.dashboard covers the shape of the
 		// portal's main pages: fleet status, device list + detail + live

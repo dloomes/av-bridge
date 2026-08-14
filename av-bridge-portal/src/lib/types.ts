@@ -408,11 +408,23 @@ export interface UpdateUserBody {
 export interface CreateCustomerBody {
   name: string;
   entra_tenant_id?: string;
+  // URL slug for <slug>.<env>.involvecloud.com sign-in. Server enforces the
+  // same `[a-z0-9-]{3,50}` shape as customers_slug_format + rejects reserved
+  // names (app, api, helpdesk, ...).
+  slug?: string;
   initial_admin?: {
     email: string;
     password: string;
     full_name?: string;
   };
+}
+
+// PATCH /api/v1/helpdesk/customers/{id}. Pointer-style semantics on the
+// wire: absent field means "no change"; explicit empty string on slug
+// clears it to NULL. Name cannot be blank.
+export interface UpdateCustomerBody {
+  name?: string;
+  slug?: string;
 }
 
 export interface CreateCustomerResponse {
