@@ -132,17 +132,23 @@ type putReq struct {
 // Poller fetches the device set from the cloud on a tick and reconciles the
 // hub. Disabled (no-op Run) when portal_api or hmac_secret are unset — same
 // gating posture as the command poller.
+//
+// version and buildTime piggy-back on the config-pull request body so the
+// cloud can refresh the collector's reported version even for silent
+// collectors (no devices → no /ingest push). Empty strings are safe.
 type Poller struct {
 	cfg         config.CloudConfig
 	interval    time.Duration
 	collectorID string
+	version     string
+	buildTime   string
 	hub         *hub.Hub
 	http        *http.Client
 	baseURL     string
 	seeded      bool // first-run seed only runs once
 }
 
-func NewPoller(cloudCfg config.CloudConfig, interval time.Duration, collectorID string, h *hub.Hub) *Poller {
+func NewPoller(cloudCfg config.CloudConfig, interval time.Duration, collectorID, version, buildTime string, h *hub.Hub) *Poller {
 	base := strings.TrimRight(cloudCfg.PortalAPI, "/")
 	transport := &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: cloudCfg.TLSSkipVerify},
@@ -151,6 +157,8 @@ func NewPoller(cloudCfg config.CloudConfig, interval time.Duration, collectorID 
 		cfg:         cloudCfg,
 		interval:    interval,
 		collectorID: collectorID,
+		version:     version,
+		buildTime:   buildTime,
 		hub:         h,
 		baseURL:     base,
 		http:        &http.Client{Timeout: 30 * time.Second, Transport: transport},
@@ -223,7 +231,11 @@ func (p *Poller) syncOnce(ctx context.Context) {
 }
 
 func (p *Poller) fetch(ctx context.Context) ([]wireDevice, error) {
-	body, _ := json.Marshal(map[string]any{"collector_id": p.collectorID})
+	body, _ := json.Marshal(map[string]any{
+		"collector_id":      p.collectorID,
+		"bridge_version":    p.version,
+		"bridge_build_time": p.buildTime,
+	})
 	resp, err := p.signedRequest(ctx, http.MethodPost, "/bridge/config", body)
 	if err != nil {
 		return nil, err

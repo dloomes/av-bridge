@@ -137,9 +137,16 @@ func (s *Store) MarkCollectorSeen(ctx context.Context, id, version, buildTime st
 // TouchCollectorConfigPull stamps last_config_pull_at = now(). Called from
 // the /bridge/config GET handler so the /collectors page can distinguish
 // "bridge is pushing telemetry but hasn't refreshed its config in a while"
-// from "bridge is fully healthy".
-func (s *Store) TouchCollectorConfigPull(ctx context.Context, id string) error {
-	_, err := s.admin.Exec(ctx, `UPDATE collectors SET last_config_pull_at = now() WHERE id = $1`, id)
+// from "bridge is fully healthy". Also refreshes bridge_version /
+// bridge_build_time when supplied so silent collectors (no devices → no
+// /ingest push) still report their version in the portal.
+func (s *Store) TouchCollectorConfigPull(ctx context.Context, id, version, buildTime string) error {
+	_, err := s.admin.Exec(ctx, `
+		UPDATE collectors
+		   SET last_config_pull_at = now(),
+		       bridge_version      = COALESCE(NULLIF($2, ''), bridge_version),
+		       bridge_build_time   = COALESCE(NULLIF($3, '')::timestamptz, bridge_build_time)
+		 WHERE id = $1`, id, version, buildTime)
 	return err
 }
 

@@ -175,7 +175,7 @@ func main() {
 	// Slice 4: config puller. Fetches the cloud's device set on device_sync_interval
 	// and reconciles the hub. On first run with an empty cloud, seeds the local
 	// YAML up so the cloud has a starting point. Subsequent edits flow cloud → bridge.
-	cfgPuller := cloudpull.NewPoller(cfg.Cloud, cfg.Hub.DeviceSyncInterval, cfg.Hub.CollectorID, h)
+	cfgPuller := cloudpull.NewPoller(cfg.Cloud, cfg.Hub.DeviceSyncInterval, cfg.Hub.CollectorID, version, buildTime, h)
 	go cfgPuller.Run(ctx)
 
 	go func() {

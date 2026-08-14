@@ -66,7 +66,9 @@ func NewHandler(store *db.Store, cipher secrets.Cipher, log *slog.Logger) *Handl
 }
 
 type getReq struct {
-	CollectorID string `json:"collector_id"`
+	CollectorID     string `json:"collector_id"`
+	BridgeVersion   string `json:"bridge_version,omitempty"`
+	BridgeBuildTime string `json:"bridge_build_time,omitempty"`
 }
 
 type getResp struct {
@@ -77,10 +79,16 @@ type getResp struct {
 // credentials decrypted inline. POSTed (not GETed) because every bridge call
 // signs the request body; an empty body wouldn't authenticate.
 func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
-	_, col, ok := h.auth.Authenticate(w, r)
+	body, col, ok := h.auth.Authenticate(w, r)
 	if !ok {
 		return
 	}
+	// Extract optional bridge_version + bridge_build_time so silent
+	// collectors (no devices → no /ingest push) still get their version
+	// recorded on every config-pull tick. Best-effort parse: unknown fields
+	// or a pre-Tier-1 bridge that omits them are fine.
+	var req getReq
+	_ = json.Unmarshal(body, &req)
 
 	var devices []Device
 	err := h.store.WithTenant(r.Context(), col.CustomerID, func(tx pgx.Tx) error {
@@ -154,7 +162,9 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 	// Record the successful pull so the /collectors page can flag stale
 	// config sync — best-effort, don't block the response on failure.
-	if err := h.store.TouchCollectorConfigPull(r.Context(), col.ID); err != nil {
+	// Also refreshes bridge_version + bridge_build_time when the bridge
+	// supplied them.
+	if err := h.store.TouchCollectorConfigPull(r.Context(), col.ID, req.BridgeVersion, req.BridgeBuildTime); err != nil {
 		h.log.Warn("touch collector config pull failed", "collector", col.ID, "error", err)
 	}
 	bridgeauth.WriteJSON(w, http.StatusOK, getResp{Devices: devices})
