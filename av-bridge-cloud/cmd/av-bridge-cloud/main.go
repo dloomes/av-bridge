@@ -21,6 +21,7 @@ import (
 	"github.com/dloomes/av-bridge-cloud/internal/notify"
 	"github.com/dloomes/av-bridge-cloud/internal/portalapi"
 	"github.com/dloomes/av-bridge-cloud/internal/portalauth"
+	"github.com/dloomes/av-bridge-cloud/internal/publicapi"
 	"github.com/dloomes/av-bridge-cloud/internal/secrets"
 	"github.com/dloomes/av-bridge-cloud/internal/collectorhealth"
 	"github.com/dloomes/av-bridge-cloud/internal/sessioncleanup"
@@ -223,7 +224,13 @@ func main() {
 		PutConfig: bridgeCfg.Put,
 	}
 
-	srv := api.NewServer(cfg.ListenAddr, h, adminH, portalRoutes, bridgeRoutes, bridgeConfigRoutes, log)
+	// Pre-login public endpoints — served without auth so the sign-in page
+	// hosted at <slug>.<env>.involvecloud.com can render the customer's
+	// logo/colours before a token exists. See internal/publicapi.
+	publicH := publicapi.NewHandler(store, log)
+	publicRoutes := api.PublicRoutes{Branding: publicH.GetBranding}
+
+	srv := api.NewServer(cfg.ListenAddr, h, adminH, portalRoutes, bridgeRoutes, bridgeConfigRoutes, publicRoutes, log)
 
 	// Slice 3.1 — sweep stuck in_progress commands across all tenants.
 	// sweeperCtx / stopSweeper were declared earlier (before executor

@@ -97,4 +97,21 @@ resource "aws_amplify_domain_association" "this" {
     branch_name = aws_amplify_branch.this.branch_name
     prefix      = var.custom_domain_prefix
   }
+
+  # Wildcard subdomain — routes every *.<custom_domain> host to the same
+  # branch, so per-customer URLs (acme.<custom_domain>) resolve without
+  # needing a separate association per tenant. The Next.js sign-in server
+  # component reads the Host header and hits /public/branding?slug=<first
+  # label> to render the customer's logo/colours pre-login.
+  #
+  # Requires the ACM cert to cover *.<custom_domain>. Amplify prints its
+  # own CloudFront cert but validates against the wildcard we've already
+  # issued in the acm-cert module.
+  dynamic "sub_domain" {
+    for_each = var.enable_wildcard_subdomain ? [1] : []
+    content {
+      branch_name = aws_amplify_branch.this.branch_name
+      prefix      = "*"
+    }
+  }
 }

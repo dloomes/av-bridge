@@ -143,6 +143,12 @@ module "portal" {
   custom_domain        = var.dns_zone_name
   custom_domain_prefix = "app"
 
+  # Per-customer branded URLs — <slug>.<zone> routes to the same portal,
+  # sign-in server component picks the branding via the Host header. The
+  # wildcard ACM cert issued by module.cert covers *.<zone>, so Amplify
+  # can validate the wildcard association without extra DNS work.
+  enable_wildcard_subdomain = true
+
   environment_variables = {
     AMPLIFY_MONOREPO_APP_ROOT = "av-bridge-portal"
 

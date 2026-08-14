@@ -40,11 +40,19 @@ type BridgeConfigRoutes struct {
 	PutConfig http.HandlerFunc
 }
 
+// PublicRoutes bundles endpoints that need to serve without auth. Today only
+// /public/branding, used by the sign-in page hosted at
+// <slug>.<env>.involvecloud.com so the customer's logo/colours/name render
+// before any credentials exist. Nil fields skip registration.
+type PublicRoutes struct {
+	Branding http.HandlerFunc
+}
+
 // NewServer wires the routes. Go 1.22 method-aware patterns keep us dependency-free.
 // adminCollectors may be nil — registration endpoints are off when no ADMIN_API_TOKEN
 // is configured. portal may be nil — read API is off when no POC_PORTAL_TOKEN is set.
 // bridgeCommands wires POST /bridge/poll and POST /bridge/commands/{id}/result.
-func NewServer(addr string, ingest, adminCollectors http.Handler, portal *PortalRoutes, bridgeCommands BridgeCommandRoutes, bridgeConfig BridgeConfigRoutes, log *slog.Logger) *http.Server {
+func NewServer(addr string, ingest, adminCollectors http.Handler, portal *PortalRoutes, bridgeCommands BridgeCommandRoutes, bridgeConfig BridgeConfigRoutes, public PublicRoutes, log *slog.Logger) *http.Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -53,6 +61,13 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 	mux.Handle("POST /ingest", ingest)
 	if adminCollectors != nil {
 		mux.Handle("POST /admin/collectors", adminCollectors)
+	}
+
+	// Unauthenticated public endpoints. Kept as a separate group so a review
+	// of this file surfaces them in one place — everything under /public/*
+	// is intentionally readable without a token.
+	if public.Branding != nil {
+		mux.Handle("GET /public/branding", public.Branding)
 	}
 
 	if portal != nil {

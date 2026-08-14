@@ -57,3 +57,9 @@ variable "custom_domain_prefix" {
   type        = string
   default     = "app"
 }
+
+variable "enable_wildcard_subdomain" {
+  description = "When true, Amplify also serves the portal at *.<custom_domain>, so per-customer branded URLs like acme.<custom_domain> resolve to the same app. The sign-in page reads the Host header to pick which customer's branding to render. Requires a wildcard ACM cert covering *.<custom_domain>; the caller's cert must already be wildcard-eligible before this is enabled."
+  type        = bool
+  default     = false
+}
