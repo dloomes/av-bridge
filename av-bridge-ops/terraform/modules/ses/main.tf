@@ -145,13 +145,17 @@ resource "aws_iam_user" "smtp" {
 
 data "aws_iam_policy_document" "smtp_send" {
   statement {
-    sid       = "AllowSendRawEmail"
-    actions   = ["ses:SendRawEmail", "ses:SendEmail"]
-    resources = [aws_ses_domain_identity.this.arn]
+    sid     = "AllowSendRawEmail"
+    actions = ["ses:SendRawEmail", "ses:SendEmail"]
 
-    # Belt-and-braces: only allow sending as the identity we've verified
-    # (matches the resource ARN above, but this covers the ses:FromAddress
-    # condition receivers can key on).
+    # SES evaluates SendRawEmail against BOTH the sender AND the recipient
+    # identity ARNs (each verified email address is its own resource).
+    # Scoping Resource to just the domain identity locks out sandbox test
+    # sends with "not authorized on resource identity/<recipient>". Keep
+    # Resource wide open here; ses:FromAddress in the condition is the
+    # real gate — the user can only send AS <anything>@sending_domain.
+    resources = ["*"]
+
     condition {
       test     = "StringLike"
       variable = "ses:FromAddress"
