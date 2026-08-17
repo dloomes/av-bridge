@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/mail"
 	"net/smtp"
 	"strings"
 	"time"
@@ -38,9 +39,20 @@ func SendHTMLEmail(
 		return errors.New("no recipients")
 	}
 
-	from := cfg.From
-	if from == "" {
-		from = "alerts@av-bridge.local"
+	fromHeader := cfg.From
+	if fromHeader == "" {
+		fromHeader = "alerts@av-bridge.local"
+	}
+	// SMTP MAIL FROM envelope needs a bare address; a display-name form
+	// like "AV Bridge <noreply@…>" trips SES with 553 Invalid email
+	// address. Parse the configured value once, hand the envelope the
+	// bare address, keep the display-name form on the RFC822 From:
+	// header so the recipient's client shows the friendly name. Same
+	// fix as senders.go — must live here too because SendHTMLEmail
+	// bypasses that path.
+	envelopeFrom := fromHeader
+	if parsed, err := mail.ParseAddress(fromHeader); err == nil {
+		envelopeFrom = parsed.Address
 	}
 
 	if cfg.Host == "" {
@@ -53,7 +65,7 @@ func SendHTMLEmail(
 		return nil
 	}
 
-	msg := buildMultipartMessage(from, to, cc, subject, htmlBody, textBody)
+	msg := buildMultipartMessage(fromHeader, to, cc, subject, htmlBody, textBody)
 	addr := cfg.Host + ":" + cfg.Port
 
 	var auth smtp.Auth
@@ -63,7 +75,7 @@ func SendHTMLEmail(
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- smtp.SendMail(addr, auth, from, recipients, msg)
+		errCh <- smtp.SendMail(addr, auth, envelopeFrom, recipients, msg)
 	}()
 	select {
 	case err := <-errCh:

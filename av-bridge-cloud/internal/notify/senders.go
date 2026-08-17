@@ -8,8 +8,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"net/mail"
-	"net/smtp"
 	"strings"
 	"time"
 )
@@ -60,80 +58,18 @@ func (s *Senders) Send(ctx context.Context, ch Channel, evt AlertEvent) error {
 
 // ---- email -----------------------------------------------------------------
 
+// sendEmail delegates to the multipart HTML+text sender so alert notifications
+// use the same rendering path as the nightly digest — inline-styled HTML for
+// the visual client, plain-text fallback for anything that rejects HTML.
+// Templates live in alert_template.go.
 func (s *Senders) sendEmail(ctx context.Context, ch Channel, evt AlertEvent) error {
 	if ch.Target == "" {
 		return errors.New("email target is empty")
 	}
-	subject, body := renderEmail(evt)
-
-	if s.dryRun {
-		s.log.Info("notify: email dry-run (SMTP not configured)",
-			"to", ch.Target, "subject", subject)
-		return nil
-	}
-
-	fromHeader := s.smtp.From
-	if fromHeader == "" {
-		fromHeader = "alerts@av-bridge.local"
-	}
-	// The SMTP MAIL FROM envelope needs a bare address; a display-name form
-	// like "AV Bridge <noreply@…>" gets wrapped in angle brackets by net/smtp
-	// (SES then rejects with 553 Invalid email address). Parse once and hand
-	// the envelope the bare address; the RFC822 From: header keeps the full
-	// display-name form so the recipient's client shows the friendly name.
-	envelopeFrom := fromHeader
-	if parsed, err := mail.ParseAddress(fromHeader); err == nil {
-		envelopeFrom = parsed.Address
-	}
-	addr := s.smtp.Host + ":" + s.smtp.Port
-	msg := buildRFC822(fromHeader, ch.Target, subject, body)
-
-	var auth smtp.Auth
-	if s.smtp.Username != "" {
-		auth = smtp.PlainAuth("", s.smtp.Username, s.smtp.Password, s.smtp.Host)
-	}
-
-	// net/smtp doesn't honour context directly — run the blocking call in a
-	// goroutine and abandon on ctx timeout. The relay may continue to attempt
-	// delivery but at least the dispatcher returns promptly.
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- smtp.SendMail(addr, auth, envelopeFrom, []string{ch.Target}, msg)
-	}()
-	select {
-	case err := <-errCh:
-		return err
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
-
-func buildRFC822(from, to, subject, body string) []byte {
-	var b bytes.Buffer
-	fmt.Fprintf(&b, "From: %s\r\n", from)
-	fmt.Fprintf(&b, "To: %s\r\n", to)
-	fmt.Fprintf(&b, "Subject: %s\r\n", subject)
-	fmt.Fprintf(&b, "MIME-Version: 1.0\r\n")
-	fmt.Fprintf(&b, "Content-Type: text/plain; charset=utf-8\r\n")
-	fmt.Fprintf(&b, "\r\n")
-	b.WriteString(body)
-	return b.Bytes()
-}
-
-func renderEmail(evt AlertEvent) (subject, body string) {
-	severity := strings.ToUpper(evt.Severity)
-	subject = fmt.Sprintf("[%s] %s — %s", severity, evt.SubjectName(), evt.AlertKey)
-
-	var b strings.Builder
-	fmt.Fprintf(&b, "Severity:  %s\n", severity)
-	fmt.Fprintf(&b, "%-9s %s\n", evt.SubjectLabel()+":", evt.SubjectName())
-	fmt.Fprintf(&b, "Alert:     %s\n", evt.AlertKey)
-	fmt.Fprintf(&b, "Opened:    %s\n", evt.OpenedAt.UTC().Format(time.RFC3339))
-	if evt.Message != "" {
-		fmt.Fprintf(&b, "\n%s\n", evt.Message)
-	}
-	body = b.String()
-	return
+	subject := renderAlertSubject(evt)
+	textBody := renderAlertText(evt)
+	htmlBody := renderAlertHTML(evt)
+	return SendHTMLEmail(ctx, s.smtp, []string{ch.Target}, nil, subject, htmlBody, textBody, s.log)
 }
 
 // ---- Teams (incoming webhook) ----------------------------------------------
