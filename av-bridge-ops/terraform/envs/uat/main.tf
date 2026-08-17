@@ -212,6 +212,11 @@ module "portal" {
     # Amplify SSR runtime. WSS from HTTPS origin is allowed by the browser.
     NEXT_PUBLIC_AV_BRIDGE_WS = local.ws_url
 
+    # Env label baked into the client bundle so the sidebar footer can
+    # show "UAT" / "PROD". Must be NEXT_PUBLIC_-prefixed to be inlined
+    # for the client component that reads it.
+    NEXT_PUBLIC_AV_BRIDGE_ENV = "uat"
+
     NEXT_TELEMETRY_DISABLED = "1"
   }
 }
