@@ -1,0 +1,1025 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>MEDIO Assist — homepage mockup</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Wix+Madefor+Display:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  /* ── Tokens — mapped to the MEDIO brand guide v1.2 (Jan 2026).
+     Digital Cyan is the accent; Deep Green is dominant. Off-white is the
+     light-mode canvas. All values here should match the brand guide's
+     primary colour spec (§Colours). ─────────────────────────────────── */
+  :root {
+    color-scheme: light;
+    /* Brand primaries */
+    --deep-green:    #003330;
+    --digital-cyan:  #6affff;
+    --off-white:     #f3f1f3;
+    /* Light-mode canvas (default; matches the MEDIO brand guide's own
+       page layouts and the customer experience on medio.co.uk) */
+    --bg:            #ffffff;
+    --bg-elevated:   var(--off-white);
+    --bg-hover:      #ece9e5;
+    --border:        #e2dfd8;
+    --border-strong: #cdc9bf;
+    --text:          var(--deep-green);
+    --text-muted:    #4a5a58;
+    --text-dim:      #8a938e;
+    --accent:        var(--digital-cyan);
+    --accent-soft:   rgba(106, 255, 255, 0.18);
+    --accent-strong: #33d5e0;
+    --danger:        #b8493a;
+    --success:       #007753;
+    --radius-sm:     8px;
+    --radius:        14px;
+    --radius-lg:     28px;
+    --ff-sans:       'Wix Madefor Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --ff-mono:       'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg:            var(--deep-green);
+    --bg-elevated:   #002523;
+    --bg-hover:      #013a37;
+    --border:        #0f4d47;
+    --border-strong: #1c6b63;
+    --text:          #e6f4f2;
+    --text-muted:    #9ec1bc;
+    --text-dim:      #6b8a86;
+    --accent-soft:   rgba(106, 255, 255, 0.14);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--ff-sans);
+    font-size: 17px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    letter-spacing: -0.005em;
+  }
+  a { color: var(--text); text-decoration: none; }
+  a:hover { color: var(--accent-strong); }
+  button { font-family: inherit; font-size: inherit; color: inherit; border: none; background: transparent; cursor: pointer; }
+
+  .wrap { max-width: 1200px; margin: 0 auto; padding: 0 32px; }
+  @media (max-width: 640px) { .wrap { padding: 0 20px; } }
+
+  /* ── Logo mark — approximation of the MEDIO stack-M from the brand
+     guide. Three rounded shapes forming an M silhouette; the middle
+     shape is shorter (creates the valley); everything is skewed forward
+     to match the italic-ish stance of the master logo. currentColor so
+     we can invert on dark backgrounds. Placeholder — final page uses the
+     supplied SVG asset. ─────────────────────────────────────────────── */
+  .medio-mark {
+    width: 34px; height: 34px;
+    color: var(--deep-green);
+    flex-shrink: 0;
+  }
+  :root[data-theme="dark"] .medio-mark { color: var(--digital-cyan); }
+
+  /* ── Nav ─────────────────────────────────────────────────────────── */
+  nav.top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 22px 0;
+    position: sticky;
+    top: 0;
+    background: color-mix(in oklab, var(--bg), transparent 6%);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    z-index: 10;
+    border-bottom: 1px solid transparent;
+    transition: border-color 220ms ease;
+  }
+  nav.top.scrolled { border-bottom-color: var(--border); }
+  nav .wrap-inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 0 32px;
+    gap: 32px;
+  }
+  nav .brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-weight: 700;
+    letter-spacing: -0.015em;
+    font-size: 20px;
+  }
+  nav .brand .assist-tag {
+    font-family: var(--ff-sans);
+    font-weight: 600;
+    font-size: 20px;
+    color: var(--accent-strong);
+    letter-spacing: -0.01em;
+  }
+  :root[data-theme="dark"] nav .brand .assist-tag { color: var(--accent); }
+  nav .links {
+    display: flex;
+    gap: 28px;
+    font-size: 15px;
+    color: var(--text-muted);
+  }
+  nav .links a:hover { color: var(--text); }
+  nav .cta {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--deep-green);
+    color: var(--off-white);
+    padding: 11px 20px;
+    border-radius: 999px;
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: -0.005em;
+    transition: filter 120ms ease, transform 120ms ease;
+  }
+  nav .cta:hover { filter: brightness(0.9); color: var(--off-white); }
+  :root[data-theme="dark"] nav .cta { background: var(--digital-cyan); color: var(--deep-green); }
+  .theme-toggle {
+    color: var(--text-muted);
+    padding: 8px 12px;
+    border-radius: 999px;
+    font-size: 14px;
+    border: 1px solid var(--border);
+  }
+  .theme-toggle:hover { color: var(--text); background: var(--bg-hover); }
+  @media (max-width: 780px) { nav .links { display: none; } }
+
+  /* ── Hero ────────────────────────────────────────────────────────── */
+  section.hero {
+    padding: 120px 0 100px;
+    position: relative;
+    overflow: hidden;
+  }
+  /* MEDIO Stack — signature shape from the brand guide, used here as a
+     background frame behind the hero. A large rounded parallelogram-ish
+     wedge in Digital Cyan tint, echoing the stack graphic on p.24. */
+  section.hero .stack-bg {
+    position: absolute;
+    top: -60px;
+    right: -180px;
+    width: 780px;
+    height: 620px;
+    background: var(--accent-soft);
+    border-radius: 40px 260px 40px 200px;
+    transform: rotate(-8deg);
+    pointer-events: none;
+    z-index: 0;
+  }
+  section.hero .stack-bg-2 {
+    position: absolute;
+    bottom: -140px;
+    left: -160px;
+    width: 500px;
+    height: 380px;
+    background: color-mix(in oklab, var(--digital-cyan), transparent 88%);
+    border-radius: 200px 40px 180px 40px;
+    transform: rotate(6deg);
+    pointer-events: none;
+    z-index: 0;
+  }
+  section.hero .wrap { position: relative; z-index: 1; }
+  .eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    font-family: var(--ff-mono);
+    font-size: 12px;
+    color: var(--text-muted);
+    padding: 6px 14px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    margin-bottom: 26px;
+    background: var(--bg);
+    font-weight: 500;
+    letter-spacing: 0.02em;
+  }
+  .eyebrow .pulse {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--success);
+    box-shadow: 0 0 0 3px rgba(0, 119, 83, 0.15);
+    animation: pulse 2.2s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { box-shadow: 0 0 0 3px rgba(0, 119, 83, 0.15); }
+    50%      { box-shadow: 0 0 0 5px rgba(0, 119, 83, 0.06); }
+  }
+  h1.headline {
+    font-family: var(--ff-sans);
+    font-weight: 700;
+    font-size: clamp(40px, 6.4vw, 78px);
+    line-height: 1.02;
+    letter-spacing: -0.03em;
+    margin: 0 0 30px;
+    max-width: 16ch;
+  }
+  h1.headline .cyan {
+    background: linear-gradient(180deg, transparent 60%, var(--digital-cyan) 60%, var(--digital-cyan) 88%, transparent 88%);
+    padding: 0 4px;
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
+  }
+  .hero .lede {
+    font-size: clamp(18px, 1.7vw, 21px);
+    line-height: 1.55;
+    color: var(--text-muted);
+    max-width: 60ch;
+    margin: 0 0 36px;
+    font-weight: 400;
+  }
+  .hero .lede strong { color: var(--text); font-weight: 600; }
+  .cta-row {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    flex-wrap: wrap;
+  }
+  .btn-primary {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--deep-green);
+    color: var(--off-white);
+    padding: 15px 26px;
+    border-radius: 999px;
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: -0.005em;
+    transition: filter 120ms ease, transform 120ms ease;
+  }
+  .btn-primary:hover { filter: brightness(0.9); color: var(--off-white); transform: translateY(-1px); }
+  :root[data-theme="dark"] .btn-primary { background: var(--digital-cyan); color: var(--deep-green); }
+  :root[data-theme="dark"] .btn-primary:hover { color: var(--deep-green); }
+  .btn-secondary {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--text-muted);
+    font-size: 16px;
+    padding: 15px 4px;
+    font-weight: 600;
+    transition: color 120ms ease;
+  }
+  .btn-secondary:hover { color: var(--text); }
+  .btn-secondary .arrow { transition: transform 220ms ease; }
+  .btn-secondary:hover .arrow { transform: translateX(3px); }
+  .hero-meta {
+    margin-top: 60px;
+    display: flex;
+    gap: 32px;
+    color: var(--text-muted);
+    font-family: var(--ff-mono);
+    font-size: 12px;
+    flex-wrap: wrap;
+    font-weight: 500;
+  }
+  .hero-meta .item::before { content: "· "; color: var(--accent-strong); margin-right: 4px; font-weight: 700; }
+
+  /* ── Section shared ──────────────────────────────────────────────── */
+  section { padding: 90px 0; position: relative; }
+  section .section-eyebrow {
+    font-family: var(--ff-mono);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    color: var(--text-muted);
+    margin-bottom: 16px;
+    font-weight: 500;
+  }
+  section h2 {
+    font-family: var(--ff-sans);
+    font-weight: 700;
+    font-size: clamp(30px, 3.6vw, 44px);
+    line-height: 1.1;
+    letter-spacing: -0.025em;
+    margin: 0 0 24px;
+    max-width: 24ch;
+  }
+  section h2 .cyan {
+    background: linear-gradient(180deg, transparent 60%, var(--digital-cyan) 60%, var(--digital-cyan) 88%, transparent 88%);
+    padding: 0 3px;
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
+  }
+  section .lead {
+    font-size: 19px;
+    line-height: 1.6;
+    color: var(--text-muted);
+    max-width: 60ch;
+  }
+
+  /* ── Feature tiles ───────────────────────────────────────────────── */
+  section.features {
+    padding-top: 64px;
+    padding-bottom: 64px;
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-elevated);
+  }
+  .features-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 32px;
+  }
+  @media (max-width: 900px) { .features-grid { grid-template-columns: repeat(2, 1fr); gap: 40px 32px; } }
+  @media (max-width: 520px) { .features-grid { grid-template-columns: 1fr; } }
+  .feature-tile .tile-num {
+    font-family: var(--ff-mono);
+    font-size: 11px;
+    color: var(--accent-strong);
+    letter-spacing: 0.1em;
+    margin-bottom: 14px;
+    font-weight: 600;
+  }
+  .feature-tile h3 {
+    font-size: 19px;
+    font-weight: 700;
+    letter-spacing: -0.015em;
+    margin: 0 0 10px;
+    color: var(--text);
+  }
+  .feature-tile p {
+    color: var(--text-muted);
+    font-size: 15px;
+    line-height: 1.55;
+    margin: 0;
+  }
+
+  /* ── Story (3 blurbs) ────────────────────────────────────────────── */
+  section.story { padding: 130px 0; }
+  .story-block {
+    display: grid;
+    grid-template-columns: 1fr 1.4fr;
+    gap: 80px;
+    margin-bottom: 100px;
+    align-items: start;
+  }
+  .story-block:last-child { margin-bottom: 0; }
+  @media (max-width: 800px) { .story-block { grid-template-columns: 1fr; gap: 20px; margin-bottom: 70px; } }
+  .story-block .story-num {
+    font-family: var(--ff-mono);
+    font-size: 12px;
+    color: var(--accent-strong);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    font-weight: 600;
+  }
+  .story-block h3 {
+    font-family: var(--ff-sans);
+    font-weight: 700;
+    font-size: clamp(26px, 2.7vw, 34px);
+    line-height: 1.15;
+    letter-spacing: -0.02em;
+    margin: 10px 0 0;
+    color: var(--text);
+  }
+  .story-block h3 .cyan {
+    background: linear-gradient(180deg, transparent 62%, var(--digital-cyan) 62%, var(--digital-cyan) 88%, transparent 88%);
+    padding: 0 3px;
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
+  }
+  .story-block .body p {
+    font-size: 18px;
+    line-height: 1.65;
+    color: var(--text-muted);
+    margin: 0 0 18px;
+  }
+  .story-block .body p:last-child { margin-bottom: 0; }
+  .story-block .body strong { color: var(--text); font-weight: 600; }
+
+  /* ── Room Readiness spotlight ────────────────────────────────────── */
+  section.readiness {
+    background: var(--deep-green);
+    color: var(--off-white);
+    padding: 110px 0;
+    position: relative;
+    overflow: hidden;
+  }
+  section.readiness::before {
+    content: "";
+    position: absolute;
+    top: -80px;
+    left: -180px;
+    width: 620px;
+    height: 480px;
+    background: rgba(106, 255, 255, 0.06);
+    border-radius: 40px 240px 40px 200px;
+    transform: rotate(8deg);
+    pointer-events: none;
+  }
+  section.readiness .wrap { position: relative; z-index: 1; }
+  .readiness .section-eyebrow { color: var(--digital-cyan); }
+  .readiness h2 { color: var(--off-white); }
+  .readiness h2 .cyan {
+    background: linear-gradient(180deg, transparent 62%, var(--digital-cyan) 62%, var(--digital-cyan) 88%, transparent 88%);
+    color: var(--deep-green);
+    padding: 0 3px;
+  }
+  .readiness-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 64px;
+    align-items: center;
+  }
+  @media (max-width: 900px) { .readiness-grid { grid-template-columns: 1fr; gap: 44px; } }
+  .readiness .copy p {
+    font-size: 17px;
+    line-height: 1.65;
+    color: rgba(230, 244, 242, 0.82);
+    margin: 0 0 18px;
+  }
+  .readiness .copy .stat-row {
+    display: flex;
+    gap: 40px;
+    margin-top: 36px;
+    flex-wrap: wrap;
+  }
+  .readiness .stat-row .stat .num {
+    font-family: var(--ff-sans);
+    font-size: 34px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--digital-cyan);
+    display: block;
+    line-height: 1.1;
+  }
+  .readiness .stat-row .stat .label {
+    font-size: 13px;
+    color: rgba(230, 244, 242, 0.7);
+    margin-top: 6px;
+    display: block;
+    line-height: 1.4;
+  }
+
+  /* Mini digest preview panel — the actual morning email we ship today,
+     but scaled + healthcare-flavoured for the mockup. */
+  .digest-mock {
+    background: var(--off-white);
+    color: var(--deep-green);
+    border-radius: var(--radius);
+    overflow: hidden;
+    box-shadow: 0 24px 48px -20px rgba(0,0,0,0.5);
+  }
+  .digest-mock .dg-head {
+    background: var(--digital-cyan);
+    color: var(--deep-green);
+    padding: 20px 24px;
+  }
+  .digest-mock .dg-head .lab {
+    font-family: var(--ff-mono);
+    font-size: 10.5px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    opacity: 0.85;
+    font-weight: 600;
+  }
+  .digest-mock .dg-head .title {
+    font-size: 20px;
+    font-weight: 700;
+    margin-top: 4px;
+    letter-spacing: -0.01em;
+  }
+  .digest-mock .dg-head .date {
+    font-family: var(--ff-mono);
+    font-size: 12px;
+    margin-top: 4px;
+    opacity: 0.85;
+    font-weight: 500;
+  }
+  .digest-mock .dg-stats {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    padding: 16px 24px;
+    border-bottom: 1px solid #dbd8d1;
+    background: #ffffff;
+  }
+  .digest-mock .dg-stat { text-align: center; }
+  .digest-mock .dg-stat .n {
+    font-size: 24px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+  }
+  .digest-mock .dg-stat.ok .n   { color: var(--success); }
+  .digest-mock .dg-stat.fail .n { color: var(--danger); }
+  .digest-mock .dg-stat.excl .n { color: #4a5a58; }
+  .digest-mock .dg-stat .l {
+    font-family: var(--ff-mono);
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: #4a5a58;
+    margin-top: 3px;
+    font-weight: 600;
+  }
+  .digest-mock .dg-body { padding: 20px 24px 24px; background: #ffffff; }
+  .digest-mock .dg-body .fail-heading {
+    font-family: var(--ff-mono);
+    font-size: 10.5px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--danger);
+    margin-bottom: 12px;
+    font-weight: 600;
+  }
+  .digest-mock .fail-item {
+    border-left: 3px solid var(--danger);
+    padding: 10px 14px;
+    background: rgba(184, 73, 58, 0.06);
+    border-radius: 0 8px 8px 0;
+    margin-bottom: 10px;
+  }
+  .digest-mock .fail-item .rn { font-size: 15px; font-weight: 600; }
+  .digest-mock .fail-item .rs {
+    font-family: var(--ff-mono);
+    font-size: 12px;
+    color: #4a5a58;
+    margin-top: 4px;
+  }
+  .digest-mock .ready-line {
+    margin-top: 16px;
+    padding-top: 14px;
+    border-top: 1px dashed #dbd8d1;
+    font-size: 14px;
+    color: #4a5a58;
+  }
+  .digest-mock .ready-line strong { color: var(--success); font-weight: 600; }
+
+  /* ── Adapters strip ──────────────────────────────────────────────── */
+  section.adapters { padding: 90px 0 100px; }
+  .adapters-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 24px;
+    flex-wrap: wrap;
+    margin-bottom: 40px;
+  }
+  .adapters-head .aside {
+    color: var(--text-muted);
+    font-size: 15px;
+    max-width: 44ch;
+    line-height: 1.55;
+  }
+  .adapter-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 14px;
+  }
+  @media (max-width: 700px) { .adapter-grid { grid-template-columns: repeat(2, 1fr); } }
+  .adapter-card {
+    padding: 22px 24px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    transition: border-color 160ms ease, transform 160ms ease;
+  }
+  .adapter-card:hover { border-color: var(--border-strong); transform: translateY(-2px); }
+  .adapter-card .a-name {
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: -0.005em;
+  }
+  .adapter-card .a-kind {
+    font-family: var(--ff-mono);
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 6px;
+  }
+  .adapter-card .a-tag {
+    display: inline-block;
+    margin-top: 14px;
+    font-family: var(--ff-mono);
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: rgba(0, 119, 83, 0.1);
+    color: var(--success);
+    text-transform: uppercase;
+    font-weight: 600;
+  }
+  .adapter-card .a-tag.soon { background: var(--accent-soft); color: var(--accent-strong); }
+
+  /* ── Credentials strip ───────────────────────────────────────────── */
+  section.credentials {
+    background: var(--bg-elevated);
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    padding: 40px 0;
+  }
+  .cred-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 40px;
+    flex-wrap: wrap;
+  }
+  .cred-row .cred {
+    font-family: var(--ff-mono);
+    font-size: 12px;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .cred-row .cred::before {
+    content: "";
+    width: 6px; height: 6px;
+    background: var(--success);
+    border-radius: 50%;
+    display: inline-block;
+  }
+
+  /* ── Final CTA ───────────────────────────────────────────────────── */
+  section.final-cta {
+    padding: 130px 0;
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+  }
+  section.final-cta::before {
+    content: "";
+    position: absolute;
+    top: 20%;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 720px;
+    height: 400px;
+    background: var(--accent-soft);
+    border-radius: 40px 240px 40px 200px;
+    pointer-events: none;
+    z-index: 0;
+  }
+  section.final-cta .wrap { position: relative; z-index: 1; }
+  section.final-cta h2 {
+    margin: 0 auto 22px;
+    max-width: 18ch;
+    text-align: center;
+  }
+  section.final-cta .lead {
+    margin: 0 auto 40px;
+    text-align: center;
+    max-width: 56ch;
+  }
+  section.final-cta .cta-row { justify-content: center; }
+
+  /* ── Footer ──────────────────────────────────────────────────────── */
+  footer {
+    border-top: 1px solid var(--border);
+    padding: 44px 0;
+    color: var(--text-dim);
+    font-size: 14px;
+    background: var(--deep-green);
+    color: rgba(230, 244, 242, 0.7);
+  }
+  footer a { color: rgba(230, 244, 242, 0.85); }
+  footer .foot-wrap {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 0 32px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 20px;
+  }
+  footer .foot-brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-weight: 700;
+    color: rgba(230, 244, 242, 0.95);
+    font-size: 15px;
+  }
+  footer .foot-brand .medio-mark { color: var(--digital-cyan); }
+  footer .foot-links { display: flex; gap: 26px; }
+
+  /* ── Utility: reveal on scroll ───────────────────────────────────── */
+  .reveal { opacity: 0; transform: translateY(14px); transition: opacity 700ms ease, transform 700ms ease; }
+  .reveal.in { opacity: 1; transform: none; }
+</style>
+</head>
+<body>
+
+<!-- Reusable MEDIO mark. Approximation of the master logomark from the
+     brand guide — three rounded shapes stacked to form an M. Colour comes
+     from currentColor so we can flip between deep-green and cyan. -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="medio-mark" viewBox="0 -4 96 84">
+      <g fill="currentColor" transform="skewX(-14)">
+        <rect x="18"  y="0"  width="18" height="72" rx="4"/>
+        <rect x="44"  y="20" width="18" height="36" rx="4"/>
+        <rect x="70"  y="0"  width="18" height="72" rx="4"/>
+      </g>
+    </symbol>
+  </defs>
+</svg>
+
+<nav class="top" id="topnav">
+  <div class="wrap-inner">
+    <a class="brand" href="#">
+      <svg class="medio-mark" aria-hidden="true"><use href="#medio-mark"/></svg>
+      <span>MEDIO <span class="assist-tag">Assist</span></span>
+    </a>
+    <div class="links">
+      <a href="#story">Product</a>
+      <a href="#readiness">Room Readiness</a>
+      <a href="#adapters">Vendors</a>
+      <a href="#">Case studies</a>
+      <a href="#">Pricing</a>
+    </div>
+    <div style="display:flex; align-items:center; gap:10px;">
+      <button class="theme-toggle" onclick="toggleTheme()" title="Toggle theme"><span id="theme-icon">☾</span></button>
+      <a class="cta" href="#">Book a demo</a>
+    </div>
+  </div>
+</nav>
+
+<section class="hero">
+  <div class="stack-bg" aria-hidden="true"></div>
+  <div class="stack-bg-2" aria-hidden="true"></div>
+  <div class="wrap">
+    <div class="eyebrow">
+      <span class="pulse" aria-hidden="true"></span>
+      24/7 UK NOC · Room Readiness · now shipping
+    </div>
+
+    <h1 class="headline">Every clinic ready before the <span class="cyan">first appointment</span>.</h1>
+
+    <p class="lede">
+      <strong>MEDIO Assist</strong> watches over every AV device in every consultation room, MDT, and telehealth suite you run — testing them overnight and putting our 24/7 UK operations team on the incident before your service desk hears about it.
+    </p>
+
+    <div class="cta-row">
+      <a class="btn-primary" href="#">Book a demo</a>
+      <a class="btn-secondary" href="#">See how it works <span class="arrow">→</span></a>
+    </div>
+
+    <div class="hero-meta">
+      <div class="item">UK-hosted platform</div>
+      <div class="item">NHS Digital Toolkit accredited</div>
+      <div class="item">Cyber Essentials Plus</div>
+      <div class="item">ISO 27001</div>
+    </div>
+  </div>
+</section>
+
+<section class="features">
+  <div class="wrap">
+    <div class="features-grid">
+      <div class="feature-tile reveal">
+        <div class="tile-num">01</div>
+        <h3>Vendor-agnostic</h3>
+        <p>Poly, Sony, Biamp, Aurora — with new adapters landing monthly. One dashboard replaces five vendor tools.</p>
+      </div>
+      <div class="feature-tile reveal">
+        <div class="tile-num">02</div>
+        <h3>Room Readiness</h3>
+        <p>Nightly power cycles, functional test routines, morning digest email — room by room, before AM clinics.</p>
+      </div>
+      <div class="feature-tile reveal">
+        <div class="tile-num">03</div>
+        <h3>24/7 UK NOC</h3>
+        <p>Our operations team monitor the estate around the clock. Failures are being worked before you know they happened.</p>
+      </div>
+      <div class="feature-tile reveal">
+        <div class="tile-num">04</div>
+        <h3>Healthcare-native</h3>
+        <p>UK-hosted, NHS-accredited, tenant-isolated. Passes procurement without a security-review fight.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="story" id="story">
+  <div class="wrap">
+
+    <div class="story-block reveal">
+      <div class="lead-side">
+        <div class="story-num">01 / The estate</div>
+        <h3>Every vendor in your fleet, on one <span class="cyan">calm dashboard</span>.</h3>
+      </div>
+      <div class="body">
+        <p>Every hospital has a mixed estate. A Poly codec in the boardroom, a Biamp DSP in the MDT suite someone spec'd three years ago, Sony displays in the imaging waiting rooms.</p>
+        <p><strong>MEDIO Assist speaks to all of them</strong> through a growing library of first-class adapters, so your digital team sees one clean view of the whole estate instead of five vendor portals and a spreadsheet.</p>
+      </div>
+    </div>
+
+    <div class="story-block reveal">
+      <div class="lead-side">
+        <div class="story-num">02 / The night before</div>
+        <h3>Rooms tested overnight. Ready before the <span class="cyan">first clinic</span>.</h3>
+      </div>
+      <div class="body">
+        <p>Every night we power rooms down, wake them up before your teams arrive, and run the readiness routine your clinical IT lead has defined — dial a test bridge, listen for audio, hang up cleanly.</p>
+        <p><strong>Rooms that failed are already on our NOC's list</strong> by 07:30, cc'd to your service desk, and (on managed-service tiers) an engineer is en route before the AM list starts.</p>
+      </div>
+    </div>
+
+    <div class="story-block reveal">
+      <div class="lead-side">
+        <div class="story-num">03 / Behind the platform</div>
+        <h3>A 24/7 UK operations team on your side — <span class="cyan">quietly capable</span>.</h3>
+      </div>
+      <div class="body">
+        <p>Software is only half of Assist. The other half is our people — a UK-based network operations centre monitoring your estate around the clock, spotting the drift before it becomes an outage.</p>
+        <p><strong>Preventative, not reactive.</strong> The point isn't to close tickets faster; it's to raise fewer of them.</p>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<section class="credentials">
+  <div class="wrap">
+    <div class="cred-row">
+      <span class="cred">NHS Digital Toolkit</span>
+      <span class="cred">ISO 27001</span>
+      <span class="cred">ISO 9001</span>
+      <span class="cred">ISO/IEC 20000-1</span>
+      <span class="cred">Cyber Essentials Plus</span>
+      <span class="cred">GDPR</span>
+      <span class="cred">UK-hosted</span>
+    </div>
+  </div>
+</section>
+
+<section class="readiness" id="readiness">
+  <div class="wrap">
+    <div class="readiness-grid">
+      <div class="copy reveal">
+        <div class="section-eyebrow">Room Readiness</div>
+        <h2>The <span class="cyan">morning digest</span> your clinical IT lead will actually open.</h2>
+        <p>By 07:30 local, every operator on your notification list receives an HTML summary of last night's runs. Rooms that failed sit at the top, with the exact step that broke and a link into the run detail.</p>
+        <p>The successful ones sit below in a single collapsed line. Nobody scrolls past what matters.</p>
+        <div class="stat-row">
+          <div class="stat"><span class="num">07:30</span><span class="label">Digest lands<br>before AM clinic prep</span></div>
+          <div class="stat"><span class="num">14h</span><span class="label">Off-cycle overnight<br>vs 24/7 always-on</span></div>
+          <div class="stat"><span class="num">24/7</span><span class="label">UK NOC coverage<br>on managed-service tiers</span></div>
+        </div>
+      </div>
+      <div class="digest-mock reveal">
+        <div class="dg-head">
+          <div class="lab">Room Readiness · MEDIO Assist</div>
+          <div class="title">Northlake NHS Foundation Trust</div>
+          <div class="date">Friday, 31 July 2026</div>
+        </div>
+        <div class="dg-stats">
+          <div class="dg-stat ok"><div class="n">47</div><div class="l">Ready</div></div>
+          <div class="dg-stat fail"><div class="n">3</div><div class="l">Failed</div></div>
+          <div class="dg-stat excl"><div class="n">0</div><div class="l">Excluded</div></div>
+        </div>
+        <div class="dg-body">
+          <div class="fail-heading">Failed rooms</div>
+          <div class="fail-item">
+            <div class="rn">Consultation Room 4 · Outpatients East</div>
+            <div class="rs">Codec did not confirm power-on within 120s</div>
+          </div>
+          <div class="fail-item">
+            <div class="rn">MDT Room A · Oncology</div>
+            <div class="rs">Microphone input level below threshold (−52 dBFS)</div>
+          </div>
+          <div class="fail-item">
+            <div class="rn">Telehealth Suite 2 · Community</div>
+            <div class="rs">Display 1 stuck on HDMI-2 after preset recall</div>
+          </div>
+          <div class="ready-line"><strong>47 rooms passed</strong> their overnight checks. Full breakdown in the portal.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="adapters" id="adapters">
+  <div class="wrap">
+    <div class="adapters-head">
+      <div>
+        <div class="section-eyebrow">Supported vendors</div>
+        <h2>Real adapters. <span class="cyan">Not screen-scraping</span>.</h2>
+      </div>
+      <p class="aside">Every adapter speaks its device's native protocol and declares its capabilities to the platform — so the routine editor only offers actions your kit can actually perform. New adapters ship monthly.</p>
+    </div>
+    <div class="adapter-grid">
+      <div class="adapter-card reveal">
+        <div class="a-name">Poly VideoOS</div>
+        <div class="a-kind">Video codecs · Studio X series</div>
+        <div class="a-tag">Available</div>
+      </div>
+      <div class="adapter-card reveal">
+        <div class="a-name">Sony BRAVIA</div>
+        <div class="a-kind">Displays · commercial + pro range</div>
+        <div class="a-tag">Available</div>
+      </div>
+      <div class="adapter-card reveal">
+        <div class="a-name">Biamp Tesira</div>
+        <div class="a-kind">Audio DSP · Forté, TesiraFORTÉ X</div>
+        <div class="a-tag">Available</div>
+      </div>
+      <div class="adapter-card reveal">
+        <div class="a-name">Aurora RXT</div>
+        <div class="a-kind">Room control · touch panel range</div>
+        <div class="a-tag">Available</div>
+      </div>
+      <div class="adapter-card reveal">
+        <div class="a-name">Cisco Webex</div>
+        <div class="a-kind">Video codecs · Room Kit range</div>
+        <div class="a-tag soon">On the roadmap</div>
+      </div>
+      <div class="adapter-card reveal">
+        <div class="a-name">QSC Q-SYS</div>
+        <div class="a-kind">Audio DSP · Core range</div>
+        <div class="a-tag soon">On the roadmap</div>
+      </div>
+      <div class="adapter-card reveal">
+        <div class="a-name">Crestron</div>
+        <div class="a-kind">Touch panels + processors</div>
+        <div class="a-tag soon">On the roadmap</div>
+      </div>
+      <div class="adapter-card reveal">
+        <div class="a-name">Extron</div>
+        <div class="a-kind">Matrix switching + control</div>
+        <div class="a-tag soon">On the roadmap</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="final-cta">
+  <div class="wrap">
+    <div class="section-eyebrow" style="text-align:center;">Get started</div>
+    <h2>See a room ready itself.</h2>
+    <p class="lead">Twenty minutes with our team is enough to see the whole thing end-to-end — schedule, routine builder, morning digest, NOC handover. Bring one of your rooms if you'd like a live demo against real kit.</p>
+    <div class="cta-row">
+      <a class="btn-primary" href="#">Book a demo</a>
+      <a class="btn-secondary" href="#">Speak to sales <span class="arrow">→</span></a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="foot-wrap">
+    <div class="foot-brand">
+      <svg class="medio-mark" width="24" height="24" aria-hidden="true"><use href="#medio-mark"/></svg>
+      <span>MEDIO Assist · a MEDIO product, powered by Involve</span>
+    </div>
+    <div class="foot-links">
+      <a href="https://medio.co.uk">medio.co.uk</a>
+      <a href="#">Privacy</a>
+      <a href="#">Security</a>
+      <a href="#">Status</a>
+      <a href="mailto:hello@medio.co.uk">hello@medio.co.uk</a>
+    </div>
+  </div>
+</footer>
+
+<script>
+  /* Theme toggle — mockup only, persists nothing. Default is light
+     (matches the MEDIO brand guide's own page layouts and medio.co.uk). */
+  function toggleTheme() {
+    const cur = document.documentElement.getAttribute('data-theme');
+    const next = cur === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+    document.getElementById('theme-icon').textContent = next === 'dark' ? '☀' : '☾';
+  }
+
+  /* Reveal-on-scroll for the tiles + story blocks. Respects
+     prefers-reduced-motion — elements arrive without the transform when
+     the OS user preference is set. */
+  const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (reduce) {
+    document.querySelectorAll('.reveal').forEach(el => el.classList.add('in'));
+  } else {
+    const io = new IntersectionObserver((entries) => {
+      entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } });
+    }, { rootMargin: '0px 0px -80px 0px', threshold: 0.05 });
+    document.querySelectorAll('.reveal').forEach(el => io.observe(el));
+  }
+
+  /* Nav border on scroll — subtle "attached" signal once you've moved
+     past the top of the page. */
+  const nav = document.getElementById('topnav');
+  window.addEventListener('scroll', () => {
+    nav.classList.toggle('scrolled', window.scrollY > 20);
+  }, { passive: true });
+</script>
+
+</body>
+</html>

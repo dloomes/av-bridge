@@ -105,6 +105,7 @@ data "aws_iam_policy_document" "execution_secrets" {
       var.portal_token_arn,
       var.hmac_secret_arn,
       var.smtp_credentials_secret_arn,
+      var.entra_vendor_client_secret_arn,
     ])
   }
 }
@@ -179,6 +180,15 @@ resource "aws_ecs_task_definition" "this" {
         { name = "POC_SMTP_PORT", value = var.smtp_port },
         { name = "POC_SMTP_FROM", value = var.smtp_from },
       ],
+      # Entra vendor SSO — the tenant + client ids are non-sensitive so
+      # they ride here as plain env; the client secret is fetched via
+      # Secrets Manager in the `secrets` block below.
+      var.entra_vendor_client_secret_arn == "" ? [] : [
+        { name = "ENTRA_VENDOR_TENANT_ID", value = var.entra_vendor_tenant_id },
+        { name = "ENTRA_VENDOR_CLIENT_ID", value = var.entra_vendor_client_id },
+        { name = "ENTRA_VENDOR_REDIRECT_URI", value = var.entra_vendor_redirect_uri },
+        { name = "ENTRA_PORTAL_BASE_URL", value = var.entra_portal_base_url },
+      ],
     )
 
     secrets = concat(
@@ -195,6 +205,11 @@ resource "aws_ecs_task_definition" "this" {
       var.smtp_credentials_secret_arn == "" ? [] : [
         { name = "POC_SMTP_USERNAME", valueFrom = "${var.smtp_credentials_secret_arn}:username::" },
         { name = "POC_SMTP_PASSWORD", valueFrom = "${var.smtp_credentials_secret_arn}:password::" },
+      ],
+      # Entra client secret — the whole value is the secret string (not
+      # a JSON with keys), so no :key:: suffix.
+      var.entra_vendor_client_secret_arn == "" ? [] : [
+        { name = "ENTRA_VENDOR_CLIENT_SECRET", valueFrom = var.entra_vendor_client_secret_arn },
       ],
     )
 

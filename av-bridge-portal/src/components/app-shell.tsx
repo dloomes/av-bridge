@@ -16,7 +16,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const session = useSession();
   const router = useRouter();
   const pathname = usePathname();
-  const onSignIn = pathname === "/sign-in";
+  // Also treat /sign-in/callback (the Entra landing page) as an unauthed
+  // route — the callback is where the token gets written, so requiring a
+  // token to see it would deadlock the flow. Any future /sign-in/* pages
+  // (forgot-password, etc.) fall under the same rule.
+  const onSignIn = pathname === "/sign-in" || pathname.startsWith("/sign-in/");
 
   useEffect(() => {
     if (!session.hydrated) return;

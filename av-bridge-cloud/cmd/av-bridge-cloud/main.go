@@ -200,14 +200,35 @@ func main() {
 		mock := portalauth.NewMockJWTResolver(lookup, true)
 		static := portalauth.NewStaticResolver(cfg.PoCPortalToken, cfg.PoCPortalCustomerID, cfg.PoCPortalRole)
 		resolver := portalauth.NewChainResolver(local, mock, static)
+
+		// Entra vendor SSO — constructed only when ALL four required
+		// values are configured. NewEntraVendorHandler returns nil (with
+		// a warn log) if any is missing, so downstream registration is a
+		// clean nil-check.
+		entraVendor := portalapi.NewEntraVendorHandler(
+			store,
+			cfg.EntraVendorTenantID,
+			cfg.EntraVendorClientID,
+			cfg.EntraVendorClientSecret,
+			cfg.EntraVendorRedirectURI,
+			cfg.EntraPortalBaseURL,
+			log,
+		)
+
 		portalRoutes = &api.PortalRoutes{
-			Resolver: resolver,
-			Portal:   portalapi.New(store, cipher, dispatcher, nightlyDigest, nightlyExecutor, log),
-			WSHub:    hub,
+			Resolver:    resolver,
+			Portal:      portalapi.New(store, cipher, dispatcher, nightlyDigest, nightlyExecutor, log),
+			WSHub:       hub,
+			EntraVendor: entraVendor,
+		}
+		entraStatus := "disabled"
+		if entraVendor != nil {
+			entraStatus = "enabled"
 		}
 		log.Info("portal API enabled",
 			"customer_id", cfg.PoCPortalCustomerID, "role", cfg.PoCPortalRole,
-			"local_auth", "enabled", "mock_jwt", "enabled")
+			"local_auth", "enabled", "mock_jwt", "enabled",
+			"entra_vendor_sso", entraStatus)
 	} else {
 		log.Warn("POC_PORTAL_TOKEN not set — portal read API disabled")
 	}

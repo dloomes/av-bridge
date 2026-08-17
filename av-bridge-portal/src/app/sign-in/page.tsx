@@ -54,5 +54,9 @@ export default async function SignInPage() {
   const hostHeader = h.get("x-forwarded-host") ?? h.get("host");
   const slug = extractSlugFromHost(hostHeader);
   const branding = await fetchBranding(slug);
-  return <SignInForm branding={branding} />;
+  // Vendor Entra SSO surfaces only on the unbranded portal origin
+  // (app.<env>.involvecloud.com). Branded customer subdomains stay on
+  // the local-password flow until M2 wires customer-tenant Entra.
+  const showVendorSSO = slug === null;
+  return <SignInForm branding={branding} showVendorSSO={showVendorSSO} />;
 }

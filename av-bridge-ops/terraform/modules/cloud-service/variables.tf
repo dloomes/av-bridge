@@ -188,3 +188,46 @@ variable "smtp_credentials_secret_arn" {
   type        = string
   default     = ""
 }
+
+# -----------------------------------------------------------------------------
+# Entra ID vendor SSO
+# -----------------------------------------------------------------------------
+#
+# Leave entra_vendor_client_secret_arn empty to keep the vendor SSO path
+# disabled — the sign-in tile stays inert and the callback routes return
+# 404. Setting all four (tenant_id, client_id, client_secret_arn, redirect_uri)
+# turns it on: the cloud process reads the secret at startup and registers
+# the /api/v1/auth/entra/vendor/{authorize,callback} routes.
+#
+# The redirect_uri must exactly match the redirect registered against the
+# Entra app registration — Microsoft rejects a mismatch with AADSTS500113.
+
+variable "entra_vendor_tenant_id" {
+  description = "Entra tenant GUID for the vendor SSO app registration. Ignored when entra_vendor_client_secret_arn is empty."
+  type        = string
+  default     = ""
+}
+
+variable "entra_vendor_client_id" {
+  description = "Entra app registration Application ID. Ignored when entra_vendor_client_secret_arn is empty."
+  type        = string
+  default     = ""
+}
+
+variable "entra_vendor_redirect_uri" {
+  description = "Absolute URL of the callback endpoint as registered in the Entra app. e.g. https://api.uat.involvecloud.com/api/v1/auth/entra/vendor/callback"
+  type        = string
+  default     = ""
+}
+
+variable "entra_vendor_client_secret_arn" {
+  description = "Secrets Manager ARN of the Entra client secret (plain string value). Empty = vendor SSO disabled. Grants the execution role secretsmanager:GetSecretValue on this ARN when set."
+  type        = string
+  default     = ""
+}
+
+variable "entra_portal_base_url" {
+  description = "Origin the callback redirects the browser back to after minting the session, e.g. https://app.uat.involvecloud.com. Empty falls back to the callback request's own scheme+host (fine when portal and API share an origin)."
+  type        = string
+  default     = ""
+}

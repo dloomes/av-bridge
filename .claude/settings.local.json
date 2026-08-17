@@ -12,7 +12,31 @@
       "Bash(pdftotext -layout \"C:/Users/DLoomes/.claude/projects/c--Users-DLoomes-OneDrive---Involve-Visual-Collaboration-Ltd-Desktop-av-bridge/18560822-6409-4e7a-8a3b-2b787702a2a8/tool-results/webfetch-1777368825455-7j2d2j.pdf\" \"/tmp/poly-videos.txt\")",
       "Read(//tmp/**)",
       "Bash(go test *)",
-      "Bash(docker exec *)"
+      "Bash(docker exec *)",
+      "Bash(npx tsc *)",
+      "Bash(docker compose *)",
+      "Read(//c/Users/DLoomes/AppData/Local/Temp/claude/c--Code-av-bridge/a0566df0-d617-47be-b2f7-88ef25bdad43/tasks/**)",
+      "Bash(netstat -ano)",
+      "Bash(git commit -m ' *)",
+      "Bash(git add *)",
+      "Bash(git push *)",
+      "Bash(git tag *)",
+      "Bash(git -C c:/Code/av-bridge log --oneline -5)",
+      "Bash(git -C c:/Code/av-bridge add av-bridge-ops/terraform/)",
+      "Bash(git -C c:/Code/av-bridge commit -m ' *)",
+      "Bash(git -C c:/Code/av-bridge log --oneline -3)",
+      "Bash(git -C c:/Code/av-bridge remote -v)",
+      "Bash(git -C c:/Code/av-bridge status --short)",
+      "Bash(git -C c:/Code/av-bridge add av-bridge-cloud/internal/bridgecfg/ av-bridge-cloud/internal/db/ av-bridge/cmd/ av-bridge/internal/cloudpull/)",
+      "Bash(git -C c:/Code/av-bridge push)",
+      "PowerShell(aws ecs wait services-stable --cluster avrmm-uat-cluster --services avrmm-uat-cloud --profile avrmm-uat --region eu-west-2)",
+      "Bash(echo \"exit=$?\")",
+      "Bash(git -C /c/Code/av-bridge status --short)",
+      "Bash(git -C /c/Code/av-bridge add av-bridge-cloud/internal/notify/html_email.go av-bridge-cloud/internal/notify/senders.go av-bridge-cloud/internal/notify/alert_template.go)",
+      "Bash(git -C /c/Code/av-bridge commit -m ' *)",
+      "Bash(git -C /c/Code/av-bridge push origin main)",
+      "Bash(git -C /c/Code/av-bridge status)",
+      "Bash(git -C /c/Code/av-bridge diff --stat)"
     ]
   }
 }

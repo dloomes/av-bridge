@@ -55,6 +55,28 @@ variable "vendor_admin_password" {
   default     = ""
 }
 
+# Entra ID vendor SSO — set all three to enable. tenant + client id come
+# from the Azure Portal app registration; secret is a client-secret value
+# generated against that app. All three empty = SSO disabled (default).
+variable "entra_vendor_tenant_id" {
+  description = "Entra tenant GUID for the vendor SSO app registration."
+  type        = string
+  default     = ""
+}
+
+variable "entra_vendor_client_id" {
+  description = "Entra app registration Application ID (client_id)."
+  type        = string
+  default     = ""
+}
+
+variable "entra_vendor_client_secret" {
+  description = "Entra app-registration client secret VALUE. Provide via terraform.tfvars (git-ignored)."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
 variable "dns_zone_name" {
   description = "Subdomain to delegate to this account for env-scoped DNS, e.g. 'uat.involvecloud.com'. The apex domain stays at whatever registrar owns it."
   type        = string

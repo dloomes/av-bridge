@@ -121,6 +121,21 @@ type Config struct {
 	VendorAdminEmail    string
 	VendorAdminPassword string
 	VendorAdminName     string
+
+	// Entra ID (Microsoft) vendor sign-in — M1: vendor-only. Single-tenant
+	// Entra app registration in Involve's tenant, used exclusively by
+	// helpdesk staff. When any of TenantID / ClientID / ClientSecret is
+	// unset, the vendor Entra path is disabled and the portal SSO tile
+	// stays visually inert. PortalBaseURL is the origin the callback
+	// redirects the browser back to (e.g. "https://app.uat.involvecloud.com")
+	// so `/sign-in/callback?token=...` lands on the right frontend. Empty
+	// PortalBaseURL falls back to the callback request's own scheme+host
+	// (works when portal and API share an origin).
+	EntraVendorTenantID     string
+	EntraVendorClientID     string
+	EntraVendorClientSecret string
+	EntraVendorRedirectURI  string
+	EntraPortalBaseURL      string
 }
 
 func FromEnv() (Config, error) {
@@ -228,6 +243,12 @@ func FromEnv() (Config, error) {
 		VendorAdminEmail:     os.Getenv("VENDOR_ADMIN_EMAIL"),
 		VendorAdminPassword:  os.Getenv("VENDOR_ADMIN_PASSWORD"),
 		VendorAdminName:      getenv("VENDOR_ADMIN_NAME", "Vendor Administrator"),
+
+		EntraVendorTenantID:     os.Getenv("ENTRA_VENDOR_TENANT_ID"),
+		EntraVendorClientID:     os.Getenv("ENTRA_VENDOR_CLIENT_ID"),
+		EntraVendorClientSecret: os.Getenv("ENTRA_VENDOR_CLIENT_SECRET"),
+		EntraVendorRedirectURI:  os.Getenv("ENTRA_VENDOR_REDIRECT_URI"),
+		EntraPortalBaseURL:      os.Getenv("ENTRA_PORTAL_BASE_URL"),
 	}
 	if c.MigrationDSN == "" {
 		return c, fmt.Errorf("DATABASE_MIGRATION_URL is required")

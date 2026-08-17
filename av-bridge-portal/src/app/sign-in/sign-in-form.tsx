@@ -1,12 +1,31 @@
 "use client";
 
-import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useState } from "react";
 import { Shield, ShieldCheck, ShieldOff, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { api, type Branding } from "@/lib/api";
 import { hexToHslTriple } from "@/lib/hex-to-hsl";
 import { buildMockToken, signIn, type SessionUser } from "@/lib/session";
+
+// Human-readable labels for the ?entra_error= codes the callback sets on
+// its bounce-back. The codes are ours (not Microsoft's — we normalise
+// their AADSTS-* into these buckets) so a UI copy change never breaks the
+// callback contract.
+const ENTRA_ERROR_LABELS: Record<string, string> = {
+  state_mismatch: "The sign-in link expired. Please try signing in again.",
+  missing_verifier: "The sign-in link expired. Please try signing in again.",
+  missing_code_or_state:
+    "Microsoft didn't return the expected sign-in details. Please try again.",
+  code_exchange_failed:
+    "Microsoft rejected the sign-in exchange. Check the app registration or try again.",
+  token_verify_failed:
+    "The Microsoft token failed verification. Contact ops if this persists.",
+  user_provision_failed:
+    "We couldn't set up your account. Contact ops.",
+  session_mint_failed:
+    "Sign-in succeeded but we couldn't start your session. Try again.",
+};
 
 // Two sign-in paths on this page:
 //
@@ -142,15 +161,38 @@ function initialsFor(name: string): string {
 
 interface SignInFormProps {
   branding: Branding;
+  // True on the unbranded portal origin (app.<env>.involvecloud.com) —
+  // shows the vendor SSO tile. False on branded customer subdomains,
+  // where SSO comes in with M2's multi-tenant customer app.
+  showVendorSSO?: boolean;
 }
 
-export function SignInForm({ branding }: SignInFormProps) {
+export function SignInForm({ branding, showVendorSSO = false }: SignInFormProps) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [presetBusy, setPresetBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Surface Entra callback errors as an inline banner on first mount. The
+  // Entra callback route bounces here with `?entra_error=<code>` when the
+  // OAuth handshake fails (bad state, verify failure, etc.), then the URL
+  // param stays around — we translate it once, then wipe it so a browser
+  // reload doesn't re-surface the banner without reason.
+  useEffect(() => {
+    const code = searchParams.get("entra_error");
+    if (!code) return;
+    setError(
+      ENTRA_ERROR_LABELS[code] ??
+        `Sign-in via Microsoft failed (${code}). Please try again.`
+    );
+    // Strip the param without triggering navigation.
+    const url = new URL(window.location.href);
+    url.searchParams.delete("entra_error");
+    window.history.replaceState({}, "", url.toString());
+  }, [searchParams]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -450,39 +492,70 @@ export function SignInForm({ branding }: SignInFormProps) {
               <span className="h-px flex-1 bg-border" />
             </div>
 
-            {/* SSO placeholder — reserves the space for Entra */}
-            <div
-              role="button"
-              aria-disabled="true"
-              className="flex items-center gap-3 rounded-md border border-dashed border-input bg-transparent px-4 py-3.5 text-sm text-foreground/70 cursor-not-allowed"
-            >
-              <div className="grid h-7 w-7 place-items-center rounded-md bg-muted text-muted-foreground shrink-0">
-                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-                  <rect
-                    x="2.5"
-                    y="6"
-                    width="9"
-                    height="6.5"
-                    rx="1.2"
-                    stroke="currentColor"
-                    strokeWidth="1.3"
-                  />
-                  <path
-                    d="M4.5 6V4.5a2.5 2.5 0 0 1 5 0V6"
-                    stroke="currentColor"
-                    strokeWidth="1.3"
-                  />
-                </svg>
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="text-[13.5px] font-medium text-foreground">
-                  Single sign-on via Entra ID
+            {showVendorSSO ? (
+              // Vendor SSO — live tile. Routes through the portal's own
+              // /api/v1 proxy so the browser origin stays app.<env>,
+              // which keeps the state/PKCE cookies readable on callback
+              // (they'd be lost across a cross-origin bounce).
+              <a
+                href="/api/v1/auth/entra/vendor/authorize"
+                className="flex items-center gap-3 rounded-md border border-border bg-background px-4 py-3.5 text-sm text-foreground no-underline transition-colors hover:border-input hover:bg-muted"
+              >
+                <div className="grid h-7 w-7 place-items-center rounded-md bg-muted text-muted-foreground shrink-0">
+                  {/* Microsoft four-square mark, mono-tone so it inherits the tile colour */}
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor" aria-hidden="true">
+                    <rect x="1" y="1" width="5.5" height="5.5" />
+                    <rect x="7.5" y="1" width="5.5" height="5.5" opacity="0.72" />
+                    <rect x="1" y="7.5" width="5.5" height="5.5" opacity="0.72" />
+                    <rect x="7.5" y="7.5" width="5.5" height="5.5" opacity="0.5" />
+                  </svg>
                 </div>
-                <div className="mt-0.5 font-mono text-[10.5px] uppercase tracking-wider text-muted-foreground">
-                  Coming soon · contact ops to enrol
+                <div className="flex-1 min-w-0">
+                  <div className="text-[13.5px] font-medium text-foreground">
+                    Sign in with Microsoft
+                  </div>
+                  <div className="mt-0.5 font-mono text-[10.5px] uppercase tracking-wider text-muted-foreground">
+                    Vendor · Entra ID
+                  </div>
+                </div>
+                <span className="text-foreground/50">→</span>
+              </a>
+            ) : (
+              // Customer-branded pages fall through to a disabled tile
+              // until M2 wires the customer-tenant multi-tenant app.
+              <div
+                role="button"
+                aria-disabled="true"
+                className="flex items-center gap-3 rounded-md border border-dashed border-input bg-transparent px-4 py-3.5 text-sm text-foreground/70 cursor-not-allowed"
+              >
+                <div className="grid h-7 w-7 place-items-center rounded-md bg-muted text-muted-foreground shrink-0">
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+                    <rect
+                      x="2.5"
+                      y="6"
+                      width="9"
+                      height="6.5"
+                      rx="1.2"
+                      stroke="currentColor"
+                      strokeWidth="1.3"
+                    />
+                    <path
+                      d="M4.5 6V4.5a2.5 2.5 0 0 1 5 0V6"
+                      stroke="currentColor"
+                      strokeWidth="1.3"
+                    />
+                  </svg>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-[13.5px] font-medium text-foreground">
+                    Single sign-on via Entra ID
+                  </div>
+                  <div className="mt-0.5 font-mono text-[10.5px] uppercase tracking-wider text-muted-foreground">
+                    Coming soon · contact ops to enrol
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
 
             {DEV_SHORTCUTS_ENABLED && (
               <details className="mt-6 rounded-md border border-border bg-card">

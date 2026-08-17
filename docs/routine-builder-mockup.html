@@ -1,0 +1,2158 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>MEDIO Assist — Routine builder · design mockup</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Wix+Madefor+Display:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  /* ── Tokens — mapped to the MEDIO brand guide v1.2 (Jan 2026).
+     Digital Cyan is the accent; Deep Green is dominant. Off-white is
+     the light-mode canvas. Change these values to restyle the whole
+     mockup in one place — the rest of the CSS just consumes them. ── */
+  :root {
+    color-scheme: dark;
+    /* Brand primaries — canonical values from the brand guide */
+    --deep-green:    #003330;
+    --digital-cyan:  #6affff;
+    --off-white:     #f3f1f3;
+    /* Dark-mode canvas (default for the tooling — matches the ops-tool
+       feel; light theme is available via toggle) */
+    --bg:            var(--deep-green);
+    --bg-elevated:   #002523;
+    --bg-hover:      #013a37;
+    --border:        #0f4d47;
+    --border-strong: #1c6b63;
+    --text:          #e6f4f2;
+    --text-muted:    #9ec1bc;
+    --text-dim:      #6b8a86;
+    --accent:        var(--digital-cyan);
+    --accent-soft:   rgba(106, 255, 255, 0.14);
+    --accent-border: rgba(106, 255, 255, 0.35);
+    --danger:        #f87171;
+    --danger-soft:   rgba(248, 113, 113, 0.10);
+    --success:       #6cdba0;
+    --warning:       #ff8970;   /* MEDIO Coral — brand secondary, replaces amber */
+    --radius-sm:     6px;
+    --radius:        10px;
+    --radius-lg:     14px;
+    --ff-sans:       'Wix Madefor Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --ff-mono:       'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+    --shadow-drop:   0 12px 32px -12px rgba(0,0,0,0.6), 0 2px 6px -2px rgba(0,0,0,0.4);
+  }
+  :root[data-theme="light"] {
+    color-scheme: light;
+    --bg:            #ffffff;
+    --bg-elevated:   var(--off-white);
+    --bg-hover:      #ece9e5;
+    --border:        #e2dfd8;
+    --border-strong: #cdc9bf;
+    --text:          var(--deep-green);
+    --text-muted:    #4a5a58;
+    --text-dim:      #8a938e;
+    --accent:        var(--digital-cyan);
+    --accent-soft:   rgba(106, 255, 255, 0.20);
+    --accent-border: rgba(106, 255, 255, 0.50);
+    --danger:        #b8493a;
+    --danger-soft:   rgba(184, 73, 58, 0.08);
+    --success:       #007753;
+    --warning:       #d55a3d;   /* MEDIO Coral, darker for light-mode contrast */
+    --shadow-drop:   0 12px 32px -12px rgba(0,0,0,0.15), 0 2px 6px -2px rgba(0,0,0,0.08);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--ff-sans);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    letter-spacing: -0.005em;
+  }
+  button { font-family: inherit; font-size: inherit; color: inherit; }
+  input, select, textarea { font-family: inherit; font-size: inherit; color: inherit; }
+
+  /* ── Top shell ──────────────────────────────────────────────────────── */
+  .app {
+    display: grid;
+    grid-template-rows: auto 1fr;
+    min-height: 100vh;
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 0 24px;
+  }
+  header.top {
+    display: flex;
+    align-items: center;
+    gap: 24px;
+    padding: 20px 4px;
+    border-bottom: 1px solid var(--border);
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+  /* MEDIO M-mark — an SVG approximation of the master logomark
+     (three rounded shapes forming an M). currentColor so it flips
+     with the theme. Placeholder — final page uses the supplied asset. */
+  .medio-mark {
+    width: 26px; height: 26px;
+    color: var(--digital-cyan);
+    flex-shrink: 0;
+  }
+  :root[data-theme="light"] .medio-mark { color: var(--deep-green); }
+  .brand .assist-tag {
+    color: var(--digital-cyan);
+    font-weight: 600;
+  }
+  :root[data-theme="light"] .brand .assist-tag { color: var(--deep-green); }
+  .brand small {
+    font-family: var(--ff-mono);
+    font-size: 11px;
+    color: var(--text-muted);
+    font-weight: 400;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    padding: 3px 8px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+  }
+  .top-actions {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .theme-toggle, .btn {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 8px 14px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    transition: background 120ms ease, border-color 120ms ease;
+  }
+  .theme-toggle:hover, .btn:hover { background: var(--bg-hover); border-color: var(--border-strong); }
+  .btn.primary {
+    background: var(--accent);
+    color: #0a0b0f;
+    border-color: transparent;
+    font-weight: 500;
+  }
+  .btn.primary:hover { filter: brightness(1.08); }
+  .btn.subtle {
+    padding: 6px 10px;
+    font-size: 13px;
+    color: var(--text-muted);
+    border-color: transparent;
+  }
+  .btn.subtle:hover { color: var(--text); background: var(--bg-hover); }
+
+  /* ── Body layout ────────────────────────────────────────────────────── */
+  .body {
+    display: grid;
+    grid-template-columns: 1fr 340px;
+    gap: 32px;
+    padding: 28px 4px 80px;
+    align-items: start;
+  }
+  @media (max-width: 960px) {
+    .body { grid-template-columns: 1fr; }
+    .palette { position: static; }
+  }
+
+  /* ── Meta card (name / description / room) ──────────────────────────── */
+  .meta {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px 22px;
+    margin-bottom: 20px;
+  }
+  .meta h1 {
+    margin: 0 0 4px;
+    font-size: 22px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+  .meta .sub {
+    color: var(--text-muted);
+    font-size: 13px;
+    margin-bottom: 18px;
+  }
+  .meta-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px 20px;
+  }
+  .meta-grid .full { grid-column: 1 / -1; }
+  .field label {
+    display: block;
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-bottom: 6px;
+    font-weight: 500;
+  }
+  .field input, .field select, .field textarea {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 10px 12px;
+    border-radius: var(--radius-sm);
+    outline: none;
+    transition: border-color 120ms ease, background 120ms ease;
+    font-size: 14px;
+  }
+  .field input:focus, .field select:focus, .field textarea:focus {
+    border-color: var(--accent-border);
+    background: var(--bg-elevated);
+  }
+
+  /* ── Timeline ───────────────────────────────────────────────────────── */
+  .timeline-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 4px 10px;
+  }
+  .timeline-title {
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: -0.005em;
+    color: var(--text);
+  }
+  .timeline-title .count {
+    font-family: var(--ff-mono);
+    color: var(--text-muted);
+    font-weight: 400;
+    margin-left: 6px;
+    font-size: 12px;
+  }
+  .step-list {
+    display: flex;
+    flex-direction: column;
+  }
+  .insert-slot {
+    height: 20px;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: height 160ms ease;
+  }
+  .insert-slot:hover { height: 32px; }
+  .insert-slot::before {
+    content: "";
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    top: 50%;
+    width: 2px;
+    height: 100%;
+    background: var(--border);
+  }
+  .insert-slot .add-inline {
+    position: relative;
+    z-index: 1;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    font-size: 14px;
+    line-height: 1;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 160ms ease, border-color 120ms ease, background 120ms ease;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .insert-slot:hover .add-inline { opacity: 1; }
+  .insert-slot .add-inline:hover {
+    background: var(--accent);
+    color: #0a0b0f;
+    border-color: var(--accent);
+  }
+  .insert-slot.drop-over {
+    height: 44px;
+  }
+  .insert-slot.drop-over::before {
+    background: var(--accent);
+    width: 3px;
+  }
+
+  /* Step card. The visual anchor of the whole builder. */
+  .step {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    transition: border-color 140ms ease, box-shadow 140ms ease;
+    position: relative;
+  }
+  .step:hover { border-color: var(--border-strong); }
+  .step.dragging { opacity: 0.35; }
+  .step.expanded { box-shadow: var(--shadow-drop); border-color: var(--border-strong); }
+
+  .step-head {
+    display: grid;
+    grid-template-columns: auto auto 1fr auto auto auto;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 14px;
+    cursor: pointer;
+    user-select: none;
+  }
+  .step-head:hover .grip { color: var(--text); }
+  .grip {
+    color: var(--text-dim);
+    font-size: 14px;
+    padding: 4px;
+    cursor: grab;
+    line-height: 1;
+    transition: color 120ms ease;
+  }
+  .grip:active { cursor: grabbing; }
+  .step-index {
+    font-family: var(--ff-mono);
+    font-size: 11px;
+    color: var(--text-muted);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 2px 6px;
+    min-width: 24px;
+    text-align: center;
+  }
+  .step-icon {
+    width: 30px; height: 30px;
+    border-radius: 8px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 15px;
+    flex-shrink: 0;
+  }
+  .step-icon.generic { background: var(--bg); color: var(--text-muted); }
+  .step-name {
+    font-weight: 500;
+    letter-spacing: -0.005em;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .step-name .type-tag {
+    font-family: var(--ff-mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-dim);
+    padding: 2px 6px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-weight: 400;
+  }
+  .step-summary {
+    color: var(--text-muted);
+    font-size: 12px;
+    text-align: right;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    padding-right: 4px;
+  }
+  .on-fail-pill {
+    font-family: var(--ff-mono);
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    background: var(--bg);
+    cursor: pointer;
+  }
+  .on-fail-pill.abort   { color: var(--danger);  border-color: rgba(248,113,113,0.35); background: var(--danger-soft); }
+  .on-fail-pill.continue { color: var(--success); border-color: rgba(74,222,128,0.35); background: rgba(74,222,128,0.08); }
+  .on-fail-pill.retry   { color: var(--warning); border-color: rgba(255,137,112,0.35); background: rgba(255,137,112,0.08); }
+
+  .chevron {
+    color: var(--text-dim);
+    padding: 4px;
+    transition: transform 200ms ease, color 120ms ease;
+    line-height: 1;
+    display: inline-flex;
+  }
+  .step.expanded .chevron { transform: rotate(90deg); color: var(--text); }
+
+  .step-body {
+    display: none;
+    padding: 4px 18px 18px 18px;
+    border-top: 1px solid var(--border);
+    margin-top: 2px;
+  }
+  .step.expanded .step-body { display: block; }
+  .step-body .cfg-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px 18px;
+    padding-top: 14px;
+  }
+  .step-body .cfg-grid .full { grid-column: 1 / -1; }
+  .step-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 16px;
+    padding-top: 14px;
+    border-top: 1px dashed var(--border);
+  }
+  .step-actions .spacer { flex: 1; }
+  .icon-btn {
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--text-muted);
+    padding: 6px 10px;
+    border-radius: var(--radius-sm);
+    font-size: 12px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .icon-btn:hover { background: var(--bg-hover); color: var(--text); }
+  .icon-btn.danger:hover { color: var(--danger); background: var(--danger-soft); }
+
+  .end-add {
+    margin-top: 18px;
+    background: transparent;
+    border: 1px dashed var(--border);
+    color: var(--text-muted);
+    padding: 14px;
+    width: 100%;
+    border-radius: var(--radius);
+    cursor: pointer;
+    font-size: 13px;
+    transition: border-color 120ms ease, color 120ms ease, background 120ms ease;
+  }
+  .end-add:hover, .end-add.drop-over {
+    border-color: var(--accent-border);
+    color: var(--text);
+    background: var(--accent-soft);
+  }
+
+  /* ── Palette (right sidebar) ────────────────────────────────────────── */
+  .palette {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 6px;
+    position: sticky;
+    top: 20px;
+    max-height: calc(100vh - 100px);
+    overflow-y: auto;
+  }
+  .palette-inner { padding: 12px 12px 14px; }
+  .palette h3 {
+    margin: 0 0 4px;
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: -0.005em;
+  }
+  .palette .sub {
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1.5;
+    margin-bottom: 12px;
+  }
+  .room-picker {
+    margin-bottom: 16px;
+    padding: 10px 12px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+  }
+  .room-picker label {
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    display: block;
+    margin-bottom: 6px;
+    font-weight: 500;
+  }
+  .room-picker select {
+    background: transparent;
+    border: none;
+    color: var(--text);
+    padding: 2px 0;
+    width: 100%;
+    font-size: 13px;
+    font-weight: 500;
+    outline: none;
+    cursor: pointer;
+  }
+  .room-meta {
+    display: flex;
+    gap: 12px;
+    margin-top: 8px;
+    font-size: 11px;
+    color: var(--text-muted);
+    font-family: var(--ff-mono);
+  }
+  .room-meta span::before { content: "· "; opacity: 0.5; margin-right: 2px; }
+  .room-meta span:first-child::before { display: none; margin: 0; }
+
+  /* ── Device chooser ──────────────────────────────────────────────── */
+  .device-chooser {
+    margin-bottom: 14px;
+  }
+  .device-chooser-head {
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    padding: 8px 4px 8px;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .device-chooser-head .line { flex: 1; height: 1px; background: var(--border); }
+  .device-chooser-head .cnt {
+    font-family: var(--ff-mono);
+    letter-spacing: 0;
+    text-transform: none;
+    color: var(--text-dim);
+    font-weight: 400;
+  }
+  .device-chips {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .device-chip {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    transition: border-color 120ms ease;
+  }
+  .device-chip:hover { border-color: var(--border-strong); }
+  .device-chip .chip-body { min-width: 0; }
+  .device-chip .chip-name {
+    font-size: 12.5px;
+    line-height: 1.3;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .device-chip .chip-meta {
+    font-family: var(--ff-mono);
+    font-size: 10.5px;
+    color: var(--text-dim);
+    margin-top: 2px;
+  }
+  .chip-remove {
+    background: transparent;
+    border: none;
+    color: var(--text-dim);
+    cursor: pointer;
+    padding: 4px 6px;
+    border-radius: 4px;
+    font-size: 13px;
+    line-height: 1;
+  }
+  .chip-remove:hover { background: var(--danger-soft); color: var(--danger); }
+  .add-device-btn {
+    background: transparent;
+    border: 1px dashed var(--border);
+    color: var(--text-muted);
+    padding: 8px 10px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    font-size: 12.5px;
+    width: 100%;
+    text-align: left;
+    transition: border-color 120ms ease, color 120ms ease, background 120ms ease;
+    margin-top: 4px;
+  }
+  .add-device-btn:hover {
+    border-color: var(--accent-border);
+    color: var(--text);
+    background: var(--accent-soft);
+  }
+  .add-device-popover {
+    display: none;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 8px;
+    margin-top: 4px;
+  }
+  .add-device-popover.open { display: block; }
+  .add-device-popover .search {
+    width: 100%;
+    padding: 7px 10px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-size: 12.5px;
+    color: var(--text);
+    outline: none;
+    margin-bottom: 8px;
+  }
+  .add-device-popover .search:focus { border-color: var(--accent-border); }
+  .catalog-group-title {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-dim);
+    padding: 6px 4px 3px;
+    font-weight: 500;
+  }
+  .catalog-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12.5px;
+    line-height: 1.3;
+    transition: background 100ms ease;
+  }
+  .catalog-item:hover { background: var(--bg-hover); }
+  .catalog-item .cat-vendor {
+    font-family: var(--ff-mono);
+    font-size: 10.5px;
+    color: var(--text-dim);
+    margin-left: auto;
+  }
+  .catalog-empty {
+    padding: 16px 8px;
+    color: var(--text-dim);
+    font-size: 12px;
+    font-style: italic;
+    text-align: center;
+  }
+
+  .palette-group {
+    margin-bottom: 14px;
+  }
+  .palette-group-header {
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    padding: 8px 4px 6px;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .palette-group-header .line {
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+  .palette-item {
+    display: grid;
+    grid-template-columns: 24px 1fr auto;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 8px;
+    border-radius: var(--radius-sm);
+    cursor: grab;
+    border: 1px solid transparent;
+    margin-bottom: 2px;
+    transition: background 120ms ease, border-color 120ms ease;
+  }
+  .palette-item:hover {
+    background: var(--bg-hover);
+    border-color: var(--border);
+  }
+  .palette-item:active { cursor: grabbing; }
+  .palette-item .p-icon {
+    width: 22px; height: 22px;
+    border-radius: 6px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    flex-shrink: 0;
+  }
+  .palette-item .p-icon.generic { background: var(--bg); color: var(--text-muted); }
+  .palette-item .p-name {
+    font-size: 13px;
+    line-height: 1.3;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .palette-item .p-add {
+    color: var(--text-dim);
+    font-size: 16px;
+    line-height: 1;
+    opacity: 0;
+    transition: opacity 120ms ease;
+  }
+  .palette-item:hover .p-add { opacity: 1; }
+  .palette-item.dragging { opacity: 0.4; }
+  /* Per-device escape-hatch groups: visually recessive so they read as
+     "advanced, use only if you need it" rather than a peer of the
+     type-level items above. */
+  .palette-group.escape-hatch { opacity: 0.85; }
+  .palette-group.escape-hatch .palette-group-header {
+    color: var(--text-dim);
+    font-weight: 400;
+    text-transform: none;
+    letter-spacing: 0;
+    font-size: 11px;
+  }
+  .palette-item.escape-hatch-item .p-icon {
+    background: var(--bg);
+    color: var(--text-dim);
+  }
+  .palette-item.escape-hatch-item:hover .p-icon {
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+  .palette-empty {
+    text-align: center;
+    padding: 24px 12px;
+    color: var(--text-dim);
+    font-size: 12px;
+    font-style: italic;
+  }
+
+  /* ── JSON preview ───────────────────────────────────────────────────── */
+  .json-panel {
+    margin-top: 32px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg-elevated);
+    overflow: hidden;
+  }
+  .json-head {
+    display: flex;
+    align-items: center;
+    padding: 10px 14px;
+    cursor: pointer;
+    user-select: none;
+    border-bottom: 1px solid transparent;
+  }
+  .json-head .chev { color: var(--text-dim); transition: transform 200ms ease; margin-right: 8px; }
+  .json-panel.open .json-head { border-bottom-color: var(--border); }
+  .json-panel.open .json-head .chev { transform: rotate(90deg); }
+  .json-title { font-size: 12px; font-weight: 500; letter-spacing: -0.005em; }
+  .json-title small {
+    font-family: var(--ff-mono);
+    color: var(--text-muted);
+    font-weight: 400;
+    margin-left: 10px;
+    font-size: 11px;
+  }
+  .json-body {
+    display: none;
+    padding: 14px 16px;
+    font-family: var(--ff-mono);
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--text-muted);
+    max-height: 480px;
+    overflow-y: auto;
+  }
+  .json-panel.open .json-body { display: block; }
+  .json-body .k { color: var(--accent); }
+  .json-body .s { color: var(--success); }
+  .json-body .n { color: var(--warning); }
+
+  /* ── Empty state ────────────────────────────────────────────────────── */
+  .empty {
+    padding: 60px 20px;
+    text-align: center;
+    border: 1px dashed var(--border);
+    border-radius: var(--radius);
+    color: var(--text-muted);
+    background: var(--bg-elevated);
+  }
+  .empty h3 { margin: 0 0 6px; color: var(--text); font-size: 15px; font-weight: 500; }
+  .empty p { margin: 0 auto; max-width: 400px; font-size: 13px; }
+
+  /* ── Toast ──────────────────────────────────────────────────────────── */
+  .toast-region {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    z-index: 50;
+    pointer-events: none;
+  }
+  .toast {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 10px 16px;
+    font-size: 13px;
+    box-shadow: var(--shadow-drop);
+    animation: toast-in 200ms ease;
+    pointer-events: auto;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  @keyframes toast-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  .toast .dot-small { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+
+  /* ── Scrollbar ──────────────────────────────────────────────────────── */
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 5px; border: 2px solid var(--bg); }
+  ::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
+</style>
+</head>
+<body>
+
+<!-- Reusable MEDIO mark. Approximation of the master logomark from the
+     brand guide — three rounded shapes stacked to form an M. Colour
+     comes from currentColor so we can flip between deep-green and
+     cyan. Placeholder — real page uses the supplied SVG asset. -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="medio-mark" viewBox="0 -4 96 84">
+      <g fill="currentColor" transform="skewX(-14)">
+        <rect x="18"  y="0"  width="18" height="72" rx="4"/>
+        <rect x="44"  y="20" width="18" height="36" rx="4"/>
+        <rect x="70"  y="0"  width="18" height="72" rx="4"/>
+      </g>
+    </symbol>
+  </defs>
+</svg>
+
+<div class="app">
+
+  <header class="top">
+    <div class="brand">
+      <svg class="medio-mark" aria-hidden="true"><use href="#medio-mark"/></svg>
+      <span>MEDIO <span class="assist-tag">Assist</span></span>
+      <small>Routine builder · mockup</small>
+    </div>
+    <div class="top-actions">
+      <button class="theme-toggle" onclick="toggleTheme()" title="Toggle theme">
+        <span id="theme-icon">☾</span>
+        <span id="theme-label">Dark</span>
+      </button>
+      <button class="btn subtle" onclick="loadTemplate()">Load template</button>
+      <button class="btn subtle" onclick="clearAll()">Clear</button>
+      <button class="btn primary" onclick="saveMock()">Save routine</button>
+    </div>
+  </header>
+
+  <div class="body">
+    <main>
+      <section class="meta">
+        <h1>Standard room readiness</h1>
+        <div class="sub">The routine that runs after power-on to prove the room is ready to use.</div>
+        <div class="meta-grid">
+          <div class="field">
+            <label for="routine-name">Name</label>
+            <input id="routine-name" type="text" value="Standard room readiness" />
+          </div>
+          <div class="field">
+            <label for="routine-desc">Description</label>
+            <input id="routine-desc" type="text" value="VC + audio loopback verification" />
+          </div>
+          <div class="field full">
+            <label for="target-room-inline">Assigned to</label>
+            <input id="target-room-inline" type="text" value="Applied via schedule — this routine can be assigned to any room with matching adapter capabilities" disabled />
+          </div>
+        </div>
+      </section>
+
+      <div class="timeline-header">
+        <div class="timeline-title">Steps<span class="count" id="step-count">0</span></div>
+        <div style="color: var(--text-dim); font-size: 12px;">Drag to reorder · Click to expand</div>
+      </div>
+
+      <div id="step-list" class="step-list"></div>
+
+      <button class="end-add" id="end-add" data-slot="-1">+ Drop a block here or drag from the palette</button>
+
+      <div class="json-panel" id="json-panel">
+        <div class="json-head" onclick="toggleJson()">
+          <span class="chev">▸</span>
+          <span class="json-title">Preview generated JSON <small id="json-bytes">0 bytes</small></span>
+        </div>
+        <pre class="json-body" id="json-body"></pre>
+      </div>
+    </main>
+
+    <aside class="palette">
+      <div class="palette-inner">
+        <h3>Palette</h3>
+        <p class="sub">Options are gated by the target room's declared adapter capabilities. Switch rooms to see how the available blocks change.</p>
+
+        <div class="room-picker">
+          <label>Target room</label>
+          <select id="room-select" onchange="switchRoom(this.value)"></select>
+          <div class="room-meta" id="room-meta"></div>
+        </div>
+
+        <div class="device-chooser">
+          <div class="device-chooser-head">
+            Devices in this room
+            <span class="cnt" id="device-count"></span>
+            <div class="line"></div>
+          </div>
+          <div class="device-chips" id="device-chips"></div>
+          <button class="add-device-btn" id="add-device-btn" onclick="toggleAddDevice()">+ Add device from catalogue…</button>
+          <div class="add-device-popover" id="add-device-popover">
+            <input class="search" id="catalog-search" placeholder="Filter devices…" oninput="renderCatalogList()" />
+            <div id="catalog-list"></div>
+          </div>
+        </div>
+
+        <div id="palette-groups"></div>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<div class="toast-region" id="toast-region"></div>
+
+<script>
+  /* ── Mock data ────────────────────────────────────────────────────────
+     A realistic sample: three rooms with different device inventories, so
+     switching rooms in the palette visibly narrows or widens the option
+     set. Adapter capabilities mirror the shape from spec §8. */
+
+  /* Named UUID constants so the DEVICES object below reads clearly while
+     keys are the real UUIDs the DB stores. Format is UUIDv4 with a
+     category-encoded suffix for at-a-glance readability in the JSON
+     preview — real production would use gen_random_uuid() so the last
+     dozen digits are entropy, not category codes. */
+  const ID = {
+    POLY:    '7a8b9c10-1111-4001-8001-000000000101',
+    CISCO:   'a2b3c4d5-1111-4001-8001-000000000102',
+    NEAT:    'e5f6a7b8-1111-4001-8001-000000000103',
+    BIAMP:   'c9d0e1f2-2222-4002-8002-000000000201',
+    QSC:     '3a4b5c6d-2222-4002-8002-000000000202',
+    SHURE:   '7e8f9a0b-2222-4002-8002-000000000203',
+    SONY:    'b1c2d3e4-3333-4003-8003-000000000301',
+    LG:      'f5a6b7c8-3333-4003-8003-000000000302',
+    SAMSUNG: '9d0e1f2a-3333-4003-8003-000000000303',
+    CRESTRON:'3b4c5d6e-4444-4004-8004-000000000401',
+    EXTRON:  '7f8a9b0c-4444-4004-8004-000000000402',
+    KRAMER:  'd1e2f3a4-5555-4005-8005-000000000501',
+    VADDIO:  '5b6c7d8e-6666-4006-8006-000000000601',
+  };
+
+  const DEVICES = {
+    /* ── Video codecs ─────────────────────────────────────────────── */
+    [ID.POLY]: {
+      id: ID.POLY, name: 'Poly Studio X50', type: 'vc', kind: 'Video codec', vendor: 'Poly',
+      capabilities: {
+        power: { on: true, off: true },
+        commands: [
+          { key: 'dial', label: 'Dial URI', args: [{ name: 'uri', label: 'URI', placeholder: 'sip:loopback@example.com' }] },
+          { key: 'disconnect', label: 'Disconnect', args: [] },
+          { key: 'set_mute', label: 'Set mute', args: [{ name: 'muted', label: 'Muted', type: 'bool' }] }
+        ],
+        metrics: [
+          { key: 'call_state', label: 'Call state', unit: '' },
+          { key: 'in_call', label: 'In call', unit: 'bool' }
+        ],
+      }
+    },
+    [ID.CISCO]: {
+      id: ID.CISCO, name: 'Cisco Webex Room Kit Pro', type: 'vc', kind: 'Video codec', vendor: 'Cisco',
+      capabilities: {
+        power: { on: true, off: true },
+        commands: [
+          { key: 'dial', label: 'Dial URI', args: [{ name: 'uri', label: 'URI' }] },
+          { key: 'disconnect', label: 'Disconnect', args: [] },
+          { key: 'standby', label: 'Standby', args: [{ name: 'active', label: 'Active', type: 'bool' }] },
+          { key: 'preset_recall', label: 'Recall camera preset', args: [{ name: 'preset', label: 'Preset ID' }] }
+        ],
+        metrics: [
+          { key: 'call_state', label: 'Call state', unit: '' },
+          { key: 'people_count', label: 'People count', unit: '' },
+          { key: 'temperature_c', label: 'Temperature', unit: '°C' }
+        ],
+      }
+    },
+    [ID.NEAT]: {
+      id: ID.NEAT, name: 'Neat Bar Pro', type: 'vc', kind: 'Video codec', vendor: 'Neat',
+      capabilities: {
+        power: { on: true, off: true },
+        commands: [
+          { key: 'join_meeting', label: 'Join meeting', args: [{ name: 'meeting_id', label: 'Meeting ID' }] },
+          { key: 'end_meeting', label: 'End meeting', args: [] }
+        ],
+        metrics: [
+          { key: 'in_meeting', label: 'In meeting', unit: 'bool' },
+          { key: 'audio_level', label: 'Audio level', unit: 'dBFS' }
+        ],
+      }
+    },
+    /* ── Audio DSPs ──────────────────────────────────────────────── */
+    [ID.BIAMP]: {
+      id: ID.BIAMP, name: 'Biamp Tesira Forté', type: 'dsp', kind: 'Audio DSP', vendor: 'Biamp',
+      capabilities: {
+        power: { on: false, off: false },
+        commands: [
+          { key: 'recall_preset', label: 'Recall preset', args: [{ name: 'preset', label: 'Preset name' }] },
+          { key: 'set_gain', label: 'Set gain', args: [{ name: 'channel', label: 'Channel' }, { name: 'db', label: 'Gain (dB)' }] },
+          { key: 'set_mute', label: 'Set mute', args: [{ name: 'muted', label: 'Muted', type: 'bool' }] }
+        ],
+        metrics: [
+          { key: 'input_level_dbfs', label: 'Input level', unit: 'dBFS' },
+          { key: 'cpu_pct', label: 'CPU', unit: '%' },
+          { key: 'temperature_c', label: 'Temperature', unit: '°C' }
+        ],
+      }
+    },
+    [ID.QSC]: {
+      id: ID.QSC, name: 'QSC Q-SYS Core NANO', type: 'dsp', kind: 'Audio DSP', vendor: 'QSC',
+      capabilities: {
+        power: { on: false, off: false },
+        commands: [
+          { key: 'load_snapshot', label: 'Load snapshot', args: [{ name: 'bank', label: 'Bank' }, { name: 'index', label: 'Index' }] },
+          { key: 'set_control', label: 'Set control value', args: [{ name: 'control', label: 'Control name' }, { name: 'value', label: 'Value' }] }
+        ],
+        metrics: [
+          { key: 'input_level_dbfs', label: 'Input level', unit: 'dBFS' },
+          { key: 'cpu_pct', label: 'CPU', unit: '%' },
+          { key: 'network_status', label: 'Network status', unit: '' }
+        ],
+      }
+    },
+    [ID.SHURE]: {
+      id: ID.SHURE, name: 'Shure IntelliMix P300', type: 'dsp', kind: 'Audio DSP', vendor: 'Shure',
+      capabilities: {
+        power: { on: false, off: false },
+        commands: [
+          { key: 'set_mute', label: 'Set mute', args: [{ name: 'channel', label: 'Channel' }, { name: 'muted', label: 'Muted', type: 'bool' }] },
+          { key: 'recall_preset', label: 'Recall preset', args: [{ name: 'preset', label: 'Preset' }] }
+        ],
+        metrics: [
+          { key: 'input_level_dbfs', label: 'Input level', unit: 'dBFS' },
+          { key: 'aec_enabled', label: 'AEC enabled', unit: 'bool' }
+        ],
+      }
+    },
+    /* ── Displays ────────────────────────────────────────────────── */
+    [ID.SONY]: {
+      id: ID.SONY, name: 'Sony BRAVIA FW-65BZ40H', type: 'display', kind: 'Display', vendor: 'Sony',
+      capabilities: {
+        power: { on: true, off: true },
+        commands: [
+          { key: 'set_input', label: 'Set input', args: [{ name: 'input', label: 'Input (HDMI1/2/3)' }] }
+        ],
+        metrics: [
+          { key: 'power_state', label: 'Power state', unit: '' },
+          { key: 'active_input', label: 'Active input', unit: '' }
+        ],
+      }
+    },
+    [ID.LG]: {
+      id: ID.LG, name: 'LG WebOS 65UM3E', type: 'display', kind: 'Display', vendor: 'LG',
+      capabilities: {
+        power: { on: true, off: true },
+        commands: [
+          { key: 'set_input', label: 'Set input', args: [{ name: 'input', label: 'Input' }] },
+          { key: 'set_volume', label: 'Set volume', args: [{ name: 'level', label: 'Volume (0-100)' }] }
+        ],
+        metrics: [
+          { key: 'power_state', label: 'Power state', unit: '' },
+          { key: 'active_input', label: 'Active input', unit: '' }
+        ],
+      }
+    },
+    [ID.SAMSUNG]: {
+      id: ID.SAMSUNG, name: 'Samsung QMR-B 55"', type: 'display', kind: 'Display', vendor: 'Samsung',
+      capabilities: {
+        power: { on: true, off: true },
+        commands: [
+          { key: 'set_input', label: 'Set input', args: [{ name: 'input', label: 'Input' }] }
+        ],
+        metrics: [
+          { key: 'power_state', label: 'Power state', unit: '' }
+        ],
+      }
+    },
+    /* ── Touch panels ────────────────────────────────────────────── */
+    [ID.CRESTRON]: {
+      id: ID.CRESTRON, name: 'Crestron TSW-770', type: 'touch_panel', kind: 'Touch panel', vendor: 'Crestron',
+      capabilities: {
+        power: { on: false, off: false },
+        commands: [],
+        metrics: [{ key: 'online', label: 'Online', unit: 'bool' }],
+      }
+    },
+    [ID.EXTRON]: {
+      id: ID.EXTRON, name: 'Extron TouchLink Pro 1025', type: 'touch_panel', kind: 'Touch panel', vendor: 'Extron',
+      capabilities: {
+        power: { on: false, off: false },
+        commands: [],
+        metrics: [{ key: 'online', label: 'Online', unit: 'bool' }],
+      }
+    },
+    /* ── Switchers / matrix ──────────────────────────────────────── */
+    [ID.KRAMER]: {
+      id: ID.KRAMER, name: 'Kramer VS-88UT', type: 'switcher', kind: 'Matrix switcher', vendor: 'Kramer',
+      capabilities: {
+        power: { on: true, off: true },
+        commands: [
+          { key: 'route', label: 'Route input to output', args: [{ name: 'input', label: 'Input (1-8)' }, { name: 'output', label: 'Output (1-8)' }] }
+        ],
+        metrics: [
+          { key: 'active_routes', label: 'Active routes', unit: '' }
+        ],
+      }
+    },
+    /* ── Cameras ─────────────────────────────────────────────────── */
+    [ID.VADDIO]: {
+      id: ID.VADDIO, name: 'Vaddio ConferenceSHOT AV', type: 'camera', kind: 'Camera', vendor: 'Vaddio',
+      capabilities: {
+        power: { on: true, off: true },
+        commands: [
+          { key: 'recall_preset', label: 'Recall preset', args: [{ name: 'preset', label: 'Preset (1-16)' }] },
+          { key: 'set_ptz', label: 'Set pan/tilt/zoom', args: [{ name: 'pan', label: 'Pan' }, { name: 'tilt', label: 'Tilt' }, { name: 'zoom', label: 'Zoom' }] }
+        ],
+        metrics: [
+          { key: 'power_state', label: 'Power state', unit: '' }
+        ],
+      }
+    },
+  };
+
+  /* Rooms are just initial device selections — the user can freely edit
+     the device list per room via the chooser in the palette. Modifications
+     are in-memory only (mockup). */
+  const ROOMS = [
+    /* Sample rooms use realistic NHS/healthcare settings so the demo
+       lands on the actual buyer's mental model. Consultation, MDT,
+       telehealth and education spaces cover the mix of AV use-cases a
+       typical trust runs. */
+    { id: 'mdt-oncology', name: 'MDT Room A · Oncology',
+      devices: [ID.POLY, ID.BIAMP, ID.SONY, ID.CRESTRON, ID.VADDIO] },
+    { id: 'telehealth-2', name: 'Telehealth Suite 2 · Community',
+      devices: [ID.CISCO, ID.QSC, ID.LG, ID.CRESTRON, ID.KRAMER] },
+    { id: 'consult-4', name: 'Consultation Room 4 · Outpatients East',
+      devices: [ID.NEAT, ID.EXTRON] },
+    { id: 'lecture-theatre', name: 'Postgrad Lecture Theatre · Education Centre',
+      devices: [ID.BIAMP, ID.SONY, ID.SAMSUNG, ID.KRAMER, ID.CRESTRON] },
+    { id: 'imaging-mdt', name: 'Imaging MDT · Radiology',
+      devices: [ID.POLY, ID.SHURE, ID.LG, ID.EXTRON] },
+  ];
+
+  /* Icon set — glyphs kept minimal + monochrome so they don't compete
+     with the accent tone. */
+  const ICONS = {
+    power_on:    '⏻',
+    power_off:   '⏻',
+    pause:       '⏱',
+    section:     '§',
+    device_command: '❯',
+    check_metric:'∿',
+    expect_status:'✓',
+  };
+
+  const ON_FAIL_LABELS = { abort: 'abort', continue: 'continue', 'retry:1': 'retry×1', 'retry:2': 'retry×2', 'retry:3': 'retry×3' };
+  const ON_FAIL_CYCLE  = ['abort', 'continue', 'retry:1', 'retry:2', 'retry:3'];
+
+  /* ── State ─────────────────────────────────────────────────────────── */
+
+  const state = {
+    roomId: 'mdt-oncology',
+    steps: [],
+    expanded: new Set(),
+    drag: null,
+    seq: 0,
+  };
+
+  function uid() { return 's' + (++state.seq); }
+
+  /* ── Palette generation ─────────────────────────────────────────────
+     The whole point of a capability-driven palette: filter options by
+     what the target room's devices actually support. A codec-less room
+     doesn't offer "Dial URI"; a display-less room doesn't offer "Power
+     the displays". */
+  function currentRoom() { return ROOMS.find(r => r.id === state.roomId); }
+  function currentDevices() {
+    const room = currentRoom();
+    return room.devices.map(id => DEVICES[id]);
+  }
+
+  /* Compute the intersection of a capability list across devices — the
+     set of commands or metrics that every device in the group supports.
+     Type-level palette items target `{device_type: X}`, which the runner
+     applies to all devices of that type — so we can only offer commands
+     that ALL of them will accept. Union-style targeting would fail
+     mid-routine when the runner hit a device that doesn't support the
+     command. Intersection is the safe subset. */
+  function intersectCaps(devices, key) {
+    if (!devices.length) return [];
+    const first = devices[0].capabilities[key];
+    return first.filter(item =>
+      devices.every(d => d.capabilities[key].some(x => x.key === item.key))
+    );
+  }
+
+  function buildPaletteGroups() {
+    const devices = currentDevices();
+    const groups = [];
+
+    /* 1. Generic — the routine primitives (delay, structure) plus the
+       free-form status check that doesn't need adapter capability. */
+    groups.push({
+      title: 'Generic',
+      items: [
+        { key: 'pause',         name: 'Pause',            desc: 'Wait a fixed duration', generic: true, icon: ICONS.pause },
+        { key: 'section',       name: 'Section header',   desc: 'Group the next few steps under a heading in the digest', generic: true, icon: ICONS.section },
+        { key: 'expect_status', name: 'Expect status',    desc: 'Assert a device reaches a status (e.g. online)', generic: true, icon: ICONS.expect_status },
+      ]
+    });
+
+    /* 2. Room-wide power. Targets `{scope: "room"}` and hits every
+       power-capable device across all types. Shortcut for the standard
+       "close down the room" / "wake up the room" cases. */
+    const anyPower = devices.some(d => d.capabilities.power.on || d.capabilities.power.off);
+    if (anyPower) {
+      groups.push({
+        title: 'Room-wide power',
+        items: [
+          { key: 'power_on',  name: 'Power on all room devices',  desc: 'target: {scope:"room"}', icon: ICONS.power_on },
+          { key: 'power_off', name: 'Power off all room devices', desc: 'target: {scope:"room"}', icon: ICONS.power_off },
+        ]
+      });
+    }
+
+    /* 3. Per-type groups. This is the primary authoring surface — pick
+       "Video codec · Dial URI" and the runner dispatches to whichever
+       codec is actually in the room (Poly today, Cisco next year).
+       Portable across rooms; survives hardware refresh. */
+    const byType = new Map();
+    for (const d of devices) {
+      if (!byType.has(d.type)) byType.set(d.type, []);
+      byType.get(d.type).push(d);
+    }
+
+    for (const [type, devs] of byType) {
+      const kind = devs[0].kind;
+      const items = [];
+
+      /* Type-wide power. Same logic as room-wide but scoped. */
+      if (devs.some(d => d.capabilities.power.on)) {
+        items.push({ key: `power_on_type:${type}`,  name: `Power on all ${kind.toLowerCase()}s`,  desc: `target: {device_type:"${type}"}`, icon: ICONS.power_on });
+      }
+      if (devs.some(d => d.capabilities.power.off)) {
+        items.push({ key: `power_off_type:${type}`, name: `Power off all ${kind.toLowerCase()}s`, desc: `target: {device_type:"${type}"}`, icon: ICONS.power_off });
+      }
+
+      /* Commands: the intersection across every device of this type in
+         the room. Multi-vendor rooms narrow the set to what's truly
+         portable. */
+      const cmdInter = intersectCaps(devs, 'commands');
+      for (const c of cmdInter) {
+        items.push({
+          key: `command_type:${type}:${c.key}`,
+          name: c.label,
+          desc: `target: {device_type:"${type}"} · command: ${c.key}`,
+          icon: ICONS.device_command,
+          _typeCommand: { type, cmdKey: c.key, args: c.args, kind },
+        });
+      }
+
+      /* Metrics: same intersection rule. */
+      const metricInter = intersectCaps(devs, 'metrics');
+      for (const m of metricInter) {
+        items.push({
+          key: `metric_type:${type}:${m.key}`,
+          name: 'Check ' + m.label,
+          desc: `target: {device_type:"${type}"} · metric: ${m.key}`,
+          icon: ICONS.check_metric,
+          _typeMetric: { type, metricKey: m.key, label: m.label, unit: m.unit, kind },
+        });
+      }
+
+      if (!items.length) continue;
+      const suffix = devs.length > 1 ? ` (${devs.length})` : '';
+      groups.push({ title: kind + suffix, items });
+    }
+
+    /* 4. Per-device escape hatch — only shown when there are 2+ devices
+       of a given type in this room (i.e. the type-level targeting is
+       ambiguous). For rooms with one device per type, the type-level
+       palette already covers every case and per-device would be
+       redundant noise. */
+    for (const [type, devs] of byType) {
+      if (devs.length < 2) continue;
+      for (const d of devs) {
+        const items = [];
+        if (d.capabilities.power.on) {
+          items.push({ key: 'power_on:'  + d.id, name: 'Power on this device',  desc: `target: {device_id:"${d.id}"}`, icon: ICONS.power_on });
+        }
+        if (d.capabilities.power.off) {
+          items.push({ key: 'power_off:' + d.id, name: 'Power off this device', desc: `target: {device_id:"${d.id}"}`, icon: ICONS.power_off });
+        }
+        for (const c of d.capabilities.commands) {
+          items.push({
+            key: 'device_command:' + d.id + ':' + c.key,
+            name: c.label,
+            desc: `target: {device_id:"${d.id}"} · command: ${c.key}`,
+            icon: ICONS.device_command,
+          });
+        }
+        for (const m of d.capabilities.metrics) {
+          items.push({
+            key: 'check_metric:' + d.id + ':' + m.key,
+            name: 'Check ' + m.label,
+            desc: `target: {device_id:"${d.id}"} · metric: ${m.key}`,
+            icon: ICONS.check_metric,
+          });
+        }
+        if (items.length) groups.push({ title: `Only ${d.name}`, subtitle: 'Target this specific device', items });
+      }
+    }
+
+    return groups;
+  }
+
+  function renderPalette() {
+    const el = document.getElementById('palette-groups');
+    const groups = buildPaletteGroups();
+
+    /* Insert a visible divider before the first per-device escape hatch
+       group so the palette signals "you're crossing into device-specific
+       territory now — most routines don't need this". */
+    const firstEscape = groups.findIndex(g => g.title.startsWith('Only '));
+    let html = '';
+    groups.forEach((g, i) => {
+      if (i === firstEscape) {
+        html += `
+          <div class="palette-group escape-hatch-header">
+            <div class="palette-group-header" style="color: var(--text-dim);">
+              Target a specific device
+              <span style="font-family: var(--ff-mono); font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--text-dim);">· advanced</span>
+              <div class="line"></div>
+            </div>
+            <div style="font-size: 11.5px; color: var(--text-dim); padding: 0 4px 4px; line-height: 1.5;">
+              Only appears when a room has multiple devices of the same type. Prefer the type-level items above — they keep routines portable across rooms.
+            </div>
+          </div>`;
+      }
+      const isEscape = g.title.startsWith('Only ');
+      html += `
+        <div class="palette-group ${isEscape ? 'escape-hatch' : ''}">
+          <div class="palette-group-header">${g.title}<div class="line"></div></div>
+          ${g.items.map(it => `
+            <div class="palette-item ${isEscape ? 'escape-hatch-item' : ''}"
+                 draggable="true"
+                 data-palette-key="${it.key}"
+                 ondragstart="onPaletteDragStart(event, '${it.key}')"
+                 ondragend="onDragEnd(event)"
+                 onclick="appendFromPalette('${it.key}')"
+                 title="${it.desc}">
+              <span class="p-icon ${it.generic ? 'generic' : ''}">${it.icon || '·'}</span>
+              <span class="p-name">${it.name}</span>
+              <span class="p-add">+</span>
+            </div>
+          `).join('')}
+        </div>`;
+    });
+    el.innerHTML = html;
+
+    /* Room meta line: device count + type summary */
+    const room = currentRoom();
+    const devs = currentDevices();
+    const kinds = {};
+    for (const d of devs) kinds[d.kind] = (kinds[d.kind] || 0) + 1;
+    const kindsText = Object.entries(kinds).map(([k, n]) => n + ' ' + k.toLowerCase()).join(' · ');
+    document.getElementById('room-meta').innerHTML = '<span>' + devs.length + ' devices</span><span>' + kindsText + '</span>';
+  }
+
+  function renderRoomSelect() {
+    const sel = document.getElementById('room-select');
+    sel.innerHTML = ROOMS.map(r =>
+      `<option value="${r.id}" ${r.id === state.roomId ? 'selected' : ''}>${r.name}</option>`
+    ).join('');
+  }
+
+  function switchRoom(id) {
+    state.roomId = id;
+    closeAddDevice();
+    renderPalette();
+    renderDeviceChooser();
+    toast('Switched to ' + currentRoom().name);
+  }
+
+  /* ── Device chooser ─────────────────────────────────────────────────
+     Lets the routine author compose an ad-hoc device inventory for the
+     current room. Modifications mutate ROOMS in place (mockup only —
+     the real portal would PATCH the room's device set). Adding /
+     removing a device immediately re-renders the palette so the set of
+     available blocks tracks the fleet. */
+
+  function renderDeviceChooser() {
+    const room = currentRoom();
+    const chipsEl = document.getElementById('device-chips');
+    const countEl = document.getElementById('device-count');
+    countEl.textContent = room.devices.length + ' selected';
+
+    if (!room.devices.length) {
+      chipsEl.innerHTML = '<div class="catalog-empty">No devices in this room yet — add one below.</div>';
+    } else {
+      chipsEl.innerHTML = room.devices.map(id => {
+        const d = DEVICES[id];
+        return `
+          <div class="device-chip">
+            <div class="chip-body">
+              <div class="chip-name">${escapeHtml(d.name)}</div>
+              <div class="chip-meta">${escapeHtml(d.vendor)} · ${escapeHtml(d.kind)}</div>
+            </div>
+            <button class="chip-remove" title="Remove from room" onclick="removeDevice('${id}')">✕</button>
+          </div>`;
+      }).join('');
+    }
+    renderCatalogList();
+  }
+
+  function renderCatalogList() {
+    const room = currentRoom();
+    const filter = (document.getElementById('catalog-search')?.value || '').toLowerCase().trim();
+    const available = Object.values(DEVICES)
+      .filter(d => !room.devices.includes(d.id))
+      .filter(d => !filter || d.name.toLowerCase().includes(filter) || d.vendor.toLowerCase().includes(filter) || d.kind.toLowerCase().includes(filter));
+
+    /* Group by kind so the popover reads by category, matching how a
+       spec-writer or ops person actually thinks about kit. */
+    const byKind = {};
+    for (const d of available) (byKind[d.kind] = byKind[d.kind] || []).push(d);
+
+    const listEl = document.getElementById('catalog-list');
+    if (!available.length) {
+      listEl.innerHTML = '<div class="catalog-empty">No matching devices left to add.</div>';
+      return;
+    }
+    listEl.innerHTML = Object.entries(byKind).map(([kind, items]) => `
+      <div class="catalog-group-title">${escapeHtml(kind)}</div>
+      ${items.map(d => `
+        <div class="catalog-item" onclick="addDevice('${d.id}')">
+          <span>${escapeHtml(d.name)}</span>
+          <span class="cat-vendor">${escapeHtml(d.vendor)}</span>
+        </div>
+      `).join('')}
+    `).join('');
+  }
+
+  function addDevice(id) {
+    const room = currentRoom();
+    if (room.devices.includes(id)) return;
+    room.devices.push(id);
+    renderDeviceChooser();
+    renderPalette();
+    toast('Added ' + DEVICES[id].name);
+    /* Clear the search so the next add starts from a clean list, but
+       keep the popover open — most users add several devices in a row. */
+    const s = document.getElementById('catalog-search');
+    if (s) { s.value = ''; s.focus(); }
+  }
+
+  function removeDevice(id) {
+    const room = currentRoom();
+    room.devices = room.devices.filter(x => x !== id);
+    renderDeviceChooser();
+    renderPalette();
+    toast('Removed ' + DEVICES[id].name);
+  }
+
+  function toggleAddDevice() {
+    const pop = document.getElementById('add-device-popover');
+    const isOpen = pop.classList.toggle('open');
+    if (isOpen) {
+      renderCatalogList();
+      setTimeout(() => document.getElementById('catalog-search')?.focus(), 20);
+    }
+  }
+  function closeAddDevice() {
+    const pop = document.getElementById('add-device-popover');
+    if (pop) pop.classList.remove('open');
+    const s = document.getElementById('catalog-search');
+    if (s) s.value = '';
+  }
+
+  /* ── Step factory ──────────────────────────────────────────────────
+     Each palette key maps to a canonical step object shape. The shape is
+     what will ultimately serialise into the DB `steps` jsonb column. */
+
+  /* Helper: sample capability lookup from the first device of a type,
+     used for type-level palette items where we need the command/metric
+     shape (args schema, label, unit) — safe because the palette only
+     offers intersection items, so every device of that type has it. */
+  function typeSample(type) {
+    const dev = currentDevices().find(d => d.type === type);
+    return dev;
+  }
+  function kindOf(type) {
+    const d = typeSample(type);
+    return d ? d.kind : type;
+  }
+
+  function stepFromPaletteKey(key) {
+    const step = { id: uid(), on_failure: 'abort' };
+
+    /* Generic primitives. */
+    if (key === 'pause') {
+      Object.assign(step, { type: 'wait', name: 'Pause', duration_seconds: 30 });
+
+    } else if (key === 'section') {
+      Object.assign(step, { type: 'section', name: 'Section', label: 'Warm-up checks' });
+      delete step.on_failure;
+
+    } else if (key === 'expect_status') {
+      Object.assign(step, { type: 'expect_status', name: 'Expect device online', target: { scope: 'room' }, status: 'online', timeout_seconds: 30 });
+
+    /* Room-wide power. */
+    } else if (key === 'power_on') {
+      Object.assign(step, { type: 'power_on',  name: 'Power on all room devices',  target: { scope: 'room' }, timeout_seconds: 120 });
+
+    } else if (key === 'power_off') {
+      Object.assign(step, { type: 'power_off', name: 'Power off all room devices', target: { scope: 'room' }, timeout_seconds: 60 });
+
+    /* Type-wide power. */
+    } else if (key.startsWith('power_on_type:') || key.startsWith('power_off_type:')) {
+      const [rawType, deviceType] = key.split(':');
+      const stepType = rawType === 'power_on_type' ? 'power_on' : 'power_off';
+      const kind = kindOf(deviceType);
+      Object.assign(step, {
+        type: stepType,
+        name: (stepType === 'power_on' ? 'Power on all ' : 'Power off all ') + kind.toLowerCase() + 's',
+        target: { device_type: deviceType },
+        timeout_seconds: stepType === 'power_on' ? 120 : 60,
+      });
+      step._kind = kind;
+
+    /* Type-wide device command. */
+    } else if (key.startsWith('command_type:')) {
+      const [, deviceType, cmdKey] = key.split(':');
+      const sample = typeSample(deviceType);
+      const cmd = sample.capabilities.commands.find(c => c.key === cmdKey);
+      const params = {};
+      for (const a of cmd.args || []) params[a.name] = '';
+      Object.assign(step, {
+        type: 'device_command',
+        name: cmd.label + ' (any ' + sample.kind.toLowerCase() + ')',
+        target: { device_type: deviceType },
+        command: cmd.key,
+        parameters: params,
+        timeout_seconds: 30,
+      });
+      step._argsSchema = cmd.args || [];
+      step._kind = sample.kind;
+
+    /* Type-wide metric check. */
+    } else if (key.startsWith('metric_type:')) {
+      const [, deviceType, metricKey] = key.split(':');
+      const sample = typeSample(deviceType);
+      const metric = sample.capabilities.metrics.find(m => m.key === metricKey);
+      Object.assign(step, {
+        type: 'check_metric',
+        name: 'Check ' + metric.label + ' (any ' + sample.kind.toLowerCase() + ')',
+        target: { device_type: deviceType },
+        metric: metric.key,
+        operator: 'gt',
+        threshold: 0,
+        sample_window_seconds: 5,
+      });
+      step._metricLabel = metric.label;
+      step._metricUnit = metric.unit;
+      step._kind = sample.kind;
+
+    /* Per-device power (escape hatch — only offered when there are 2+
+       devices of the same type in the room). */
+    } else if (key.startsWith('power_on:') || key.startsWith('power_off:')) {
+      const [type, deviceId] = key.split(':');
+      const dev = DEVICES[deviceId];
+      Object.assign(step, {
+        type,
+        name: (type === 'power_on' ? 'Power on ' : 'Power off ') + dev.name,
+        target: { device_id: deviceId },
+        timeout_seconds: type === 'power_on' ? 120 : 60,
+      });
+      step._deviceName = dev.name;
+
+    /* Per-device command (escape hatch). */
+    } else if (key.startsWith('device_command:')) {
+      const [, deviceId, cmdKey] = key.split(':');
+      const dev = DEVICES[deviceId];
+      const cmd = dev.capabilities.commands.find(c => c.key === cmdKey);
+      const params = {};
+      for (const a of cmd.args || []) params[a.name] = '';
+      Object.assign(step, {
+        type: 'device_command',
+        name: cmd.label + ' (' + dev.name + ')',
+        target: { device_id: deviceId },
+        command: cmd.key,
+        parameters: params,
+        timeout_seconds: 30,
+      });
+      step._argsSchema = cmd.args || [];
+      step._deviceName = dev.name;
+
+    /* Per-device metric check (escape hatch). */
+    } else if (key.startsWith('check_metric:')) {
+      const [, deviceId, metricKey] = key.split(':');
+      const dev = DEVICES[deviceId];
+      const metric = dev.capabilities.metrics.find(m => m.key === metricKey);
+      Object.assign(step, {
+        type: 'check_metric',
+        name: 'Check ' + metric.label + ' (' + dev.name + ')',
+        target: { device_id: deviceId },
+        metric: metric.key,
+        operator: 'gt',
+        threshold: 0,
+        sample_window_seconds: 5,
+      });
+      step._metricLabel = metric.label;
+      step._metricUnit = metric.unit;
+      step._deviceName = dev.name;
+
+    } else {
+      Object.assign(step, { type: 'unknown', name: 'Unknown block' });
+    }
+    return step;
+  }
+
+  function appendFromPalette(key) {
+    const step = stepFromPaletteKey(key);
+    state.steps.push(step);
+    state.expanded.add(step.id);
+    renderSteps();
+    toast('Added: ' + step.name);
+  }
+
+  function insertAt(index, key) {
+    const step = stepFromPaletteKey(key);
+    if (index < 0 || index >= state.steps.length) state.steps.push(step);
+    else state.steps.splice(index, 0, step);
+    state.expanded.add(step.id);
+    renderSteps();
+  }
+
+  /* A read-only field pair that describes the step's target — the shape
+     is picked in the palette and locked in the config panel. Rendered
+     the same across power / device_command / check_metric so the reader
+     always sees "what does this target and how". */
+  function targetSummaryField(step) {
+    const t = step.target || {};
+    let value, note;
+    if (t.scope === 'room') {
+      value = 'Whole room';
+      note  = 'target: {scope:"room"} — every device with the capability';
+    } else if (t.device_type) {
+      const kindLabel = step._kind || t.device_type;
+      value = 'Any ' + kindLabel + ' in this room';
+      note  = 'target: {device_type:"' + t.device_type + '"} — portable across rooms';
+    } else if (t.device_id) {
+      value = step._deviceName || t.device_id;
+      note  = 'target: {device_id:"' + t.device_id + '"} — pinned to this specific device';
+    } else {
+      value = '—'; note = '';
+    }
+    return `
+      <div class="field full">
+        <label>Target</label>
+        <input type="text" value="${escapeAttr(value)}" disabled />
+        <div style="font-family: var(--ff-mono); font-size: 10.5px; color: var(--text-dim); margin-top: 4px;">${escapeHtml(note)}</div>
+      </div>`;
+  }
+
+  /* Turn a step's target into a human phrase for the collapsed header. */
+  function targetPhrase(step) {
+    const t = step.target || {};
+    if (t.scope === 'room') return 'whole room';
+    if (t.device_type)      return 'any ' + (step._kind || t.device_type).toLowerCase();
+    if (t.device_id)        return step._deviceName || t.device_id.slice(0, 8) + '…';
+    return '—';
+  }
+
+  /* ── Step summary line (right side of collapsed header) ──────────── */
+  function summariseStep(step) {
+    switch (step.type) {
+      case 'wait':
+        return `Duration ${step.duration_seconds}s`;
+      case 'section':
+        return `Label: ${step.label || '(none)'}`;
+      case 'power_on':
+      case 'power_off':
+        return `${targetPhrase(step)} · timeout ${step.timeout_seconds}s`;
+      case 'expect_status':
+        return `${step.status} · timeout ${step.timeout_seconds}s`;
+      case 'device_command':
+        const pv = Object.entries(step.parameters || {}).filter(([,v]) => v !== '').map(([k,v]) => k+'='+v).join(', ');
+        return `${targetPhrase(step)} · ${step.command}${pv ? ' · ' + pv : ''}`;
+      case 'check_metric':
+        return `${targetPhrase(step)} · ${step.metric} ${step.operator} ${step.threshold}${step._metricUnit ? ' ' + step._metricUnit : ''}`;
+      default:
+        return step.type;
+    }
+  }
+
+  function cycleOnFail(stepId, ev) {
+    ev.stopPropagation();
+    const step = state.steps.find(s => s.id === stepId);
+    if (!step || step.type === 'section') return;
+    const cur = step.on_failure || 'abort';
+    const idx = ON_FAIL_CYCLE.indexOf(cur);
+    step.on_failure = ON_FAIL_CYCLE[(idx + 1) % ON_FAIL_CYCLE.length];
+    renderSteps();
+  }
+
+  /* ── Rendering the timeline ────────────────────────────────────────
+     One big render function keeps the state → DOM mapping obvious and
+     avoids diff-tracking pain for a mockup this size. In the real portal
+     this becomes a React component tree. */
+  function renderSteps() {
+    const list = document.getElementById('step-list');
+    document.getElementById('step-count').textContent = ' · ' + state.steps.length;
+
+    if (!state.steps.length) {
+      list.innerHTML = `
+        <div class="empty">
+          <h3>No steps yet</h3>
+          <p>Drag a block from the palette on the right, or click one to add it. Or hit <strong>Load template</strong> above for the canonical VC + audio loopback routine.</p>
+        </div>`;
+    } else {
+      let html = '';
+      state.steps.forEach((step, i) => {
+        html += renderInsertSlot(i);
+        html += renderStep(step, i);
+      });
+      list.innerHTML = html;
+    }
+    renderJson();
+  }
+
+  function renderInsertSlot(i) {
+    return `
+      <div class="insert-slot"
+           data-slot="${i}"
+           ondragenter="onSlotDragEnter(event, ${i})"
+           ondragover="onSlotDragOver(event)"
+           ondragleave="onSlotDragLeave(event)"
+           ondrop="onSlotDrop(event, ${i})">
+        <button class="add-inline" title="Insert step here" onclick="insertAt(${i}, prompt('Type a block key (e.g. pause, section) — real portal opens palette') || 'pause')">+</button>
+      </div>`;
+  }
+
+  function renderStep(step, i) {
+    const expanded = state.expanded.has(step.id);
+    const iconKey = step.type === 'wait' ? 'pause' : step.type;
+    const icon = ICONS[iconKey] || '·';
+    const isSection = step.type === 'section';
+    const onFail = step.on_failure || 'abort';
+    const onFailClass = onFail === 'abort' ? 'abort' : onFail === 'continue' ? 'continue' : 'retry';
+
+    return `
+      <div class="step ${expanded ? 'expanded' : ''}"
+           data-step-id="${step.id}"
+           draggable="true"
+           ondragstart="onStepDragStart(event, '${step.id}')"
+           ondragend="onDragEnd(event)">
+        <div class="step-head" onclick="toggleExpand('${step.id}')">
+          <span class="grip" title="Drag to reorder">⋮⋮</span>
+          <span class="step-index">${String(i + 1).padStart(2, '0')}</span>
+          <span class="step-icon ${isSection ? 'generic' : ''}">${icon}</span>
+          <span class="step-name">
+            ${escapeHtml(step.name)}
+            <span class="type-tag">${step.type}</span>
+          </span>
+          <span class="step-summary">${escapeHtml(summariseStep(step))}</span>
+          ${isSection ? '' : `<span class="on-fail-pill ${onFailClass}" onclick="cycleOnFail('${step.id}', event)" title="Click to cycle on-failure policy">${ON_FAIL_LABELS[onFail]}</span>`}
+          <span class="chevron">›</span>
+        </div>
+        <div class="step-body">${renderStepBody(step)}</div>
+      </div>`;
+  }
+
+  /* ── Step body config ─────────────────────────────────────────────
+     Each block type gets its own inline config panel. Kept intentionally
+     literal (one big switch) — the real portal will factor this into
+     per-type components. */
+  function renderStepBody(step) {
+    const nameField = `
+      <div class="field full">
+        <label>Step name (shown in the digest)</label>
+        <input type="text" value="${escapeAttr(step.name)}" oninput="setField('${step.id}', 'name', this.value)" />
+      </div>`;
+
+    let cfg = '';
+    switch (step.type) {
+      case 'wait':
+        cfg = `
+          ${nameField}
+          <div class="field">
+            <label>Duration (seconds)</label>
+            <input type="number" min="1" value="${step.duration_seconds}" oninput="setField('${step.id}', 'duration_seconds', +this.value)" />
+          </div>`;
+        break;
+      case 'section':
+        cfg = `
+          ${nameField}
+          <div class="field full">
+            <label>Label in the morning digest</label>
+            <input type="text" value="${escapeAttr(step.label)}" oninput="setField('${step.id}', 'label', this.value)" />
+          </div>`;
+        break;
+      case 'power_on':
+      case 'power_off':
+        /* Three target shapes, each read-only in the config panel — the
+           choice was made in the palette, and changing it after the fact
+           would let a routine reference commands the target can't
+           execute. Delete + re-pick from the palette to change target. */
+        cfg = `
+          ${nameField}
+          ${targetSummaryField(step)}
+          <div class="field">
+            <label>Timeout (seconds)</label>
+            <input type="number" min="1" value="${step.timeout_seconds}" oninput="setField('${step.id}', 'timeout_seconds', +this.value)" />
+          </div>`;
+        break;
+      case 'expect_status':
+        cfg = `
+          ${nameField}
+          <div class="field">
+            <label>Expected status</label>
+            <select onchange="setField('${step.id}', 'status', this.value)">
+              <option value="online"  ${step.status==='online'?'selected':''}>online</option>
+              <option value="ready"   ${step.status==='ready'?'selected':''}>ready</option>
+              <option value="in_call" ${step.status==='in_call'?'selected':''}>in_call</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Timeout (seconds)</label>
+            <input type="number" min="1" value="${step.timeout_seconds}" oninput="setField('${step.id}', 'timeout_seconds', +this.value)" />
+          </div>`;
+        break;
+      case 'device_command':
+        const argFields = (step._argsSchema || []).map(a => `
+          <div class="field ${a.type === 'bool' ? '' : 'full'}">
+            <label>${escapeHtml(a.label)}</label>
+            ${a.type === 'bool'
+              ? `<select onchange="setParam('${step.id}', '${a.name}', this.value === 'true')">
+                   <option value="false" ${!step.parameters[a.name]?'selected':''}>false</option>
+                   <option value="true"  ${step.parameters[a.name]?'selected':''}>true</option>
+                 </select>`
+              : `<input type="text" value="${escapeAttr(step.parameters[a.name] ?? '')}" placeholder="${escapeAttr(a.placeholder || '')}" oninput="setParam('${step.id}', '${a.name}', this.value)" />`}
+          </div>`).join('');
+        cfg = `
+          ${nameField}
+          ${targetSummaryField(step)}
+          <div class="field full">
+            <label>Command</label>
+            <input type="text" value="${escapeAttr(step.command)}" disabled />
+          </div>
+          ${argFields}
+          <div class="field">
+            <label>Timeout (seconds)</label>
+            <input type="number" min="1" value="${step.timeout_seconds}" oninput="setField('${step.id}', 'timeout_seconds', +this.value)" />
+          </div>`;
+        break;
+      case 'check_metric':
+        cfg = `
+          ${nameField}
+          ${targetSummaryField(step)}
+          <div class="field full">
+            <label>Metric</label>
+            <input type="text" value="${escapeAttr((step._metricLabel || step.metric) + (step._metricUnit ? ' (' + step._metricUnit + ')' : ''))}" disabled />
+          </div>
+          <div class="field">
+            <label>Operator</label>
+            <select onchange="setField('${step.id}', 'operator', this.value)">
+              <option value="gt"  ${step.operator==='gt'?'selected':''}>&gt;  greater than</option>
+              <option value="gte" ${step.operator==='gte'?'selected':''}>≥  at least</option>
+              <option value="lt"  ${step.operator==='lt'?'selected':''}>&lt;  less than</option>
+              <option value="lte" ${step.operator==='lte'?'selected':''}>≤  at most</option>
+              <option value="eq"  ${step.operator==='eq'?'selected':''}>=  equal to</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Threshold ${step._metricUnit ? '(' + escapeHtml(step._metricUnit) + ')' : ''}</label>
+            <input type="number" value="${step.threshold}" oninput="setField('${step.id}', 'threshold', +this.value)" />
+          </div>
+          <div class="field">
+            <label>Sample window (seconds)</label>
+            <input type="number" min="1" value="${step.sample_window_seconds}" oninput="setField('${step.id}', 'sample_window_seconds', +this.value)" />
+          </div>`;
+        break;
+    }
+
+    return `
+      <div class="cfg-grid">${cfg}</div>
+      <div class="step-actions">
+        <span class="spacer"></span>
+        <button class="icon-btn" onclick="duplicateStep('${step.id}')">Duplicate</button>
+        <button class="icon-btn danger" onclick="deleteStep('${step.id}')">Delete</button>
+      </div>`;
+  }
+
+  /* ── Field setters ─────────────────────────────────────────────── */
+
+  function setField(id, key, val)   { const s = find(id); if (s) { s[key] = val; renderJson(); syncSummary(id); } }
+  function setTarget(id, key, val)  { const s = find(id); if (s) { s.target = { ...(s.target||{}), [key]: val }; renderJson(); syncSummary(id); } }
+  function setParam(id, key, val)   { const s = find(id); if (s) { s.parameters = { ...(s.parameters||{}), [key]: val }; renderJson(); syncSummary(id); } }
+  function find(id) { return state.steps.find(s => s.id === id); }
+  function toggleExpand(id) {
+    if (state.expanded.has(id)) state.expanded.delete(id); else state.expanded.add(id);
+    renderSteps();
+  }
+  function deleteStep(id) {
+    state.steps = state.steps.filter(s => s.id !== id);
+    state.expanded.delete(id);
+    renderSteps();
+    toast('Step deleted');
+  }
+  function duplicateStep(id) {
+    const src = find(id);
+    if (!src) return;
+    const copy = JSON.parse(JSON.stringify(src));
+    copy.id = uid();
+    const idx = state.steps.indexOf(src);
+    state.steps.splice(idx + 1, 0, copy);
+    state.expanded.add(copy.id);
+    renderSteps();
+    toast('Duplicated');
+  }
+  function syncSummary(id) {
+    /* Cheap partial update: rewrite only the summary chip so typing in a
+       config field doesn't wipe focus by re-rendering the whole tree.   */
+    const step = find(id);
+    if (!step) return;
+    const el = document.querySelector(`.step[data-step-id="${id}"] .step-summary`);
+    if (el) el.textContent = summariseStep(step);
+  }
+
+  /* ── Drag and drop ─────────────────────────────────────────────────
+     Two flavours: dragging a step within the timeline (reorder), and
+     dragging a palette item into the timeline (insert). Both use the
+     same drop targets — the insert-slots between cards, plus the empty
+     end-add zone. We stash the drag origin in state.drag so drop can
+     tell which path to take. */
+
+  function onStepDragStart(ev, id) {
+    state.drag = { kind: 'step', id };
+    ev.dataTransfer.effectAllowed = 'move';
+    ev.dataTransfer.setData('text/plain', id);
+    setTimeout(() => ev.target.classList.add('dragging'), 0);
+  }
+  function onPaletteDragStart(ev, key) {
+    state.drag = { kind: 'palette', key };
+    ev.dataTransfer.effectAllowed = 'copy';
+    ev.dataTransfer.setData('text/plain', 'palette:' + key);
+    setTimeout(() => ev.target.classList.add('dragging'), 0);
+  }
+  function onDragEnd(ev) {
+    ev.target.classList?.remove('dragging');
+    document.querySelectorAll('.insert-slot.drop-over, .end-add.drop-over')
+      .forEach(el => el.classList.remove('drop-over'));
+    state.drag = null;
+  }
+  function onSlotDragEnter(ev, i) { ev.preventDefault(); ev.currentTarget.classList.add('drop-over'); }
+  function onSlotDragOver(ev)     { ev.preventDefault(); }
+  function onSlotDragLeave(ev)    { ev.currentTarget.classList.remove('drop-over'); }
+  function onSlotDrop(ev, i)      { ev.preventDefault(); ev.currentTarget.classList.remove('drop-over'); handleDrop(i); }
+
+  document.addEventListener('DOMContentLoaded', () => {
+    const endAdd = document.getElementById('end-add');
+    endAdd.addEventListener('dragenter', e => { e.preventDefault(); endAdd.classList.add('drop-over'); });
+    endAdd.addEventListener('dragover',  e => e.preventDefault());
+    endAdd.addEventListener('dragleave', () => endAdd.classList.remove('drop-over'));
+    endAdd.addEventListener('drop', e => { e.preventDefault(); endAdd.classList.remove('drop-over'); handleDrop(state.steps.length); });
+    endAdd.addEventListener('click', () => toast('Drag a palette item here — or click one on the right'));
+  });
+
+  function handleDrop(targetIndex) {
+    const d = state.drag;
+    if (!d) return;
+    if (d.kind === 'palette') {
+      insertAt(targetIndex, d.key);
+      toast('Inserted from palette');
+    } else if (d.kind === 'step') {
+      const from = state.steps.findIndex(s => s.id === d.id);
+      if (from === -1) return;
+      const step = state.steps.splice(from, 1)[0];
+      /* When we removed the step, indices below it shifted by one. */
+      const insertAt = targetIndex > from ? targetIndex - 1 : targetIndex;
+      state.steps.splice(insertAt, 0, step);
+      renderSteps();
+    }
+    state.drag = null;
+  }
+
+  /* ── JSON preview ──────────────────────────────────────────────── */
+
+  function toggleJson() {
+    document.getElementById('json-panel').classList.toggle('open');
+  }
+
+  function serialiseStep(s) {
+    /* Strip the underscore-prefixed helper fields — they're UI-only
+       (label caches, argument schema) and never belong in the persisted
+       document. */
+    const out = {};
+    for (const [k, v] of Object.entries(s)) {
+      if (k.startsWith('_') || k === 'id') continue;
+      out[k] = v;
+    }
+    return out;
+  }
+
+  function renderJson() {
+    const doc = state.steps.map(serialiseStep);
+    const raw = JSON.stringify(doc, null, 2);
+    document.getElementById('json-body').innerHTML = highlightJson(raw);
+    document.getElementById('json-bytes').textContent = new Blob([raw]).size + ' bytes';
+  }
+
+  function highlightJson(txt) {
+    /* Tiny two-pass highlighter. Escape first, then wrap keys/strings/
+       numbers. Enough to make the panel look like a code snippet without
+       importing a real highlighter. */
+    txt = txt.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+    txt = txt.replace(/("(?:\\.|[^"\\])*")\s*:/g, '<span class="k">$1</span>:');
+    txt = txt.replace(/:\s*("(?:\\.|[^"\\])*")/g, ': <span class="s">$1</span>');
+    txt = txt.replace(/:\s*(-?\d+(?:\.\d+)?)/g, ': <span class="n">$1</span>');
+    return txt;
+  }
+
+  /* ── Header actions ────────────────────────────────────────────── */
+
+  function toggleTheme() {
+    const cur = document.documentElement.getAttribute('data-theme');
+    const next = cur === 'light' ? 'dark' : 'light';
+    document.documentElement.setAttribute('data-theme', next);
+    document.getElementById('theme-icon').textContent  = next === 'light' ? '☀' : '☾';
+    document.getElementById('theme-label').textContent = next === 'light' ? 'Light' : 'Dark';
+  }
+
+  function clearAll() {
+    if (state.steps.length && !confirm('Remove all steps from the routine?')) return;
+    state.steps = [];
+    state.expanded.clear();
+    renderSteps();
+    toast('Cleared');
+  }
+
+  function loadTemplate() {
+    /* The canonical routine from the spec, translated into the block
+       shapes the palette produces. Handy for demoing what a complete
+       routine looks like end-to-end. */
+    state.roomId = 'mdt-oncology';
+    renderRoomSelect();
+    renderPalette();
+
+    state.steps = [];
+    state.expanded.clear();
+    const add = (key, overrides = {}) => {
+      const step = stepFromPaletteKey(key);
+      Object.assign(step, overrides);
+      state.steps.push(step);
+    };
+
+    /* Uses type-based targeting so the routine remains portable — swap
+       the Poly for a Cisco and the same routine still runs. */
+    add('power_on');
+    add('pause', { name: 'Warm-up gap', duration_seconds: 60 });
+    add('command_type:vc:dial', {
+      parameters: { uri: 'sip:loopback@customer-provided.example' },
+      on_failure: 'abort',
+    });
+    add('pause', { name: 'Let audio play', duration_seconds: 10 });
+    add('metric_type:dsp:input_level_dbfs', {
+      operator: 'gt',
+      threshold: -40,
+      sample_window_seconds: 5,
+      on_failure: 'continue',
+    });
+    add('command_type:vc:disconnect', { on_failure: 'continue' });
+    add('command_type:dsp:recall_preset', {
+      parameters: { preset: 'default' },
+      on_failure: 'continue',
+    });
+
+    renderSteps();
+    toast('Loaded canonical readiness routine');
+  }
+
+  function saveMock() {
+    toast('Save clicked — real portal would POST the JSON preview to /api/v1/nightly/routines');
+  }
+
+  /* ── Toast ─────────────────────────────────────────────────────── */
+
+  function toast(msg) {
+    const region = document.getElementById('toast-region');
+    const el = document.createElement('div');
+    el.className = 'toast';
+    el.innerHTML = '<span class="dot-small"></span>' + escapeHtml(msg);
+    region.appendChild(el);
+    setTimeout(() => {
+      el.style.transition = 'opacity 300ms ease';
+      el.style.opacity = '0';
+      setTimeout(() => el.remove(), 320);
+    }, 2400);
+  }
+
+  /* ── Small string helpers ─────────────────────────────────────── */
+
+  function escapeHtml(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
+  }
+  function escapeAttr(s) { return escapeHtml(s); }
+
+  /* ── Boot ─────────────────────────────────────────────────────── */
+
+  renderRoomSelect();
+  renderDeviceChooser();
+  renderPalette();
+  loadTemplate();
+</script>
+</body>
+</html>

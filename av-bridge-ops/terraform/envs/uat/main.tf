@@ -78,6 +78,23 @@ module "ses" {
   verified_recipient_addresses = [local.vendor_admin_email]
 }
 
+module "entra" {
+  source = "../../modules/entra"
+
+  name_prefix = var.name_prefix
+
+  tenant_id     = var.entra_vendor_tenant_id
+  client_id     = var.entra_vendor_client_id
+  client_secret = var.entra_vendor_client_secret
+  # Callback lives at app.<zone> (the portal), which Next.js rewrites
+  # server-side to the cloud API. Routing through the portal keeps the
+  # authorize AND callback on the same browser origin so the state /
+  # PKCE cookies set on authorize are readable on callback — same-origin
+  # is the OAuth trap that stings 4/5 first Entra integrations.
+  redirect_uri         = "https://app.${var.dns_zone_name}/api/v1/auth/entra/vendor/callback"
+  recovery_window_days = 0
+}
+
 module "cert" {
   source = "../../modules/acm-cert"
 
@@ -145,6 +162,16 @@ module "cloud_service" {
   smtp_port                   = module.ses.smtp_port
   smtp_from                   = module.ses.smtp_from
   smtp_credentials_secret_arn = module.ses.smtp_credentials_secret_arn
+
+  # Entra vendor SSO — passthrough from module.entra. When the operator
+  # hasn't set entra_vendor_client_secret in tfvars, module.entra emits
+  # an empty client_secret_arn and cloud-service skips mounting the
+  # env + secrets, keeping SSO disabled.
+  entra_vendor_tenant_id         = module.entra.tenant_id
+  entra_vendor_client_id         = module.entra.client_id
+  entra_vendor_redirect_uri      = module.entra.redirect_uri
+  entra_vendor_client_secret_arn = module.entra.client_secret_arn
+  entra_portal_base_url          = "https://app.${var.dns_zone_name}"
 }
 
 # A alias record so browsers + bridge collectors reach the API at
