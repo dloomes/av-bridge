@@ -269,6 +269,35 @@ var catalogue = []Info{
       rate: 500`,
 	},
 
+	{
+		ID:          "visca_over_ip",
+		Name:        "VISCA-over-IP (PTZ cameras)",
+		Vendor:      "Sony standard",
+		Kind:        KindVendor,
+		Description: "Sony VISCA-over-IP on UDP 52381. Cross-vendor: works with Sony BRC/SRG, Panasonic AW-UE, PTZOptics, HuddleCam, Marshall CV, Lumens VC-A61P and other VISCA-compliant PTZ cameras.",
+		DeviceTypes: []string{"camera"},
+		Power:       PowerCapability{On: true, Off: true},
+		Commands: []string{
+			"power_on", "power_off",
+			"zoom_stop", "zoom_tele", "zoom_wide", "zoom_direct",
+			"focus_auto", "focus_manual", "focus_one_push",
+			"preset_recall", "preset_set",
+			"pan_left", "pan_right", "tilt_up", "tilt_down",
+			"pan_tilt_stop", "pan_tilt_home",
+		},
+		Metrics: []string{"power", "zoom_position", "zoom_percent", "version", "response_ms"},
+		ConfigSchema: []ConfigField{
+			{Name: "address", Required: true, Description: "Camera IP or host. Port 52381 is the Sony default; append :port to override.", Example: "192.168.50.20"},
+			{Name: "poll_rate", Required: false, Description: "How often to inquire power/zoom. Defaults to 30s.", Example: "30s"},
+		},
+		ExampleConfig: `- id: boardroom-cam
+  name: Boardroom PTZ
+  type: camera
+  protocol: visca_over_ip
+  address: 192.168.50.20
+  poll_rate: 30s`,
+	},
+
 	// ── Generic transports ──────────────────────────────────────────
 
 	{

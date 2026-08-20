@@ -37,6 +37,12 @@ func New(cfg config.DeviceConfig, deps Deps) (device.Device, error) {
 	case "serial":
 		return NewSerialAdapter(cfg), nil
 
+	case "visca_over_ip":
+		// Sony VISCA-over-IP — UDP:52381. Works with Sony BRC/SRG,
+		// Panasonic AW-UE, PTZOptics, HuddleCam, Marshall CV, Lumens
+		// VC-A61P and any other camera that speaks the Sony standard.
+		return NewViscaOverIPAdapter(cfg), nil
+
 	// ── Vendor-specific adapters ─────────────────────────────────────────────
 	case "tesira":
 		// Biamp Tesira DSPs — TTP over Telnet with subscription support
@@ -59,6 +65,6 @@ func New(cfg config.DeviceConfig, deps Deps) (device.Device, error) {
 		return NewPingAdapter(cfg), nil
 
 	default:
-		return nil, fmt.Errorf("unsupported protocol: %q (supported: rest, websocket, telnet, serial, tesira, sony_bravia, poly_videoos, aurora_rxt, aurora_vpx, ping)", cfg.Protocol)
+		return nil, fmt.Errorf("unsupported protocol: %q (supported: rest, websocket, telnet, serial, visca_over_ip, tesira, sony_bravia, poly_videoos, aurora_rxt, aurora_vpx, ping)", cfg.Protocol)
 	}
 }
