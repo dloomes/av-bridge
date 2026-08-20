@@ -185,6 +185,12 @@ func (a *ATENPDUAdapter) SendCommand(ctx context.Context, req device.CommandRequ
 		return nil, fmt.Errorf("aten_pdu command %q: %w", req.Name, err)
 	}
 
+	// Surface the raw device reply at INFO so operators can see how the PDU
+	// actually reacted (helps diagnose "success but nothing changed" cases
+	// where the CLI accepted the input but the outlet didn't switch).
+	slog.Info("aten_pdu command response",
+		"device", a.Cfg.ID, "command", req.Name, "raw_cli", raw, "response", resp)
+
 	parsed := map[string]any{"raw": resp}
 	if isATENError(resp) {
 		parsed["success"] = false
