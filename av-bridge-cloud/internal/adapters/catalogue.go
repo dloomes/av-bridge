@@ -107,14 +107,14 @@ var catalogue = []Info{
 		Commands:    []string{"outlet_on", "outlet_off", "outlet_reboot"},
 		Metrics: []string{
 			"voltage_v", "total_power_w", "outlet_count", "response_ms",
-			"outlet_1_state", "outlet_1_current_a", "outlet_1_power_w",
-			"outlet_2_state", "outlet_2_current_a", "outlet_2_power_w",
-			"outlet_3_state", "outlet_3_current_a", "outlet_3_power_w",
-			"outlet_4_state", "outlet_4_current_a", "outlet_4_power_w",
-			"outlet_5_state", "outlet_5_current_a", "outlet_5_power_w",
-			"outlet_6_state", "outlet_6_current_a", "outlet_6_power_w",
-			"outlet_7_state", "outlet_7_current_a", "outlet_7_power_w",
-			"outlet_8_state", "outlet_8_current_a", "outlet_8_power_w",
+			"outlet_1_state", "outlet_1_current_a", "outlet_1_power_w", "outlet_1_name",
+			"outlet_2_state", "outlet_2_current_a", "outlet_2_power_w", "outlet_2_name",
+			"outlet_3_state", "outlet_3_current_a", "outlet_3_power_w", "outlet_3_name",
+			"outlet_4_state", "outlet_4_current_a", "outlet_4_power_w", "outlet_4_name",
+			"outlet_5_state", "outlet_5_current_a", "outlet_5_power_w", "outlet_5_name",
+			"outlet_6_state", "outlet_6_current_a", "outlet_6_power_w", "outlet_6_name",
+			"outlet_7_state", "outlet_7_current_a", "outlet_7_power_w", "outlet_7_name",
+			"outlet_8_state", "outlet_8_current_a", "outlet_8_power_w", "outlet_8_name",
 		},
 		ConfigSchema: []ConfigField{
 			{Name: "address", Required: true, Description: "PDU IP or host. Port 23 is the ATEN Telnet default; append :port to override.", Example: "192.168.90.10"},
@@ -122,6 +122,7 @@ var catalogue = []Info{
 			{Name: "password", Required: true, Description: "Admin password.", Example: "${ATEN_PASSWORD}"},
 			{Name: "poll_rate", Required: false, Description: "How often to sample outlet state and power. 30s is a good default — every outlet is queried each poll.", Example: "30s"},
 			{Name: "tags.outlet_count", Required: false, Description: "Override the outlet count for non-PE6108G models. Defaults to 8.", Example: "16"},
+			{Name: "tags.outlet_N_name", Required: false, Description: "Optional per-outlet label override (e.g. tags.outlet_1_name: 'Codec'). Wins over the name configured on the PDU itself.", Example: "Codec"},
 		},
 		ExampleConfig: `- id: rack-a-pdu
   name: Rack A PDU

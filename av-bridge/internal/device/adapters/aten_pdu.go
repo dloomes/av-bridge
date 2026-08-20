@@ -173,6 +173,19 @@ func (a *ATENPDUAdapter) Poll(ctx context.Context) (*device.Telemetry, error) {
 				metrics[fmt.Sprintf("outlet_%d_power_w", i)] = watts
 			}
 		}
+
+		// Outlet name — user-configured label on the PDU's web UI (e.g. "Codec",
+		// "Display"). YAML tag override wins if set, so operators can rename
+		// without touching the device. If neither is available the name simply
+		// doesn't populate.
+		nameKey := fmt.Sprintf("outlet_%d_name", i)
+		if override := a.Cfg.Tags[nameKey]; override != "" {
+			metrics[nameKey] = override
+		} else if resp, err := a.exec(ctx, "read status "+outlet+" name"); err == nil {
+			if name := parseOutletName(resp, outlet); name != "" {
+				metrics[nameKey] = name
+			}
+		}
 	}
 
 	if resp, err := a.exec(ctx, "read meter dev volt simple"); err == nil {
@@ -297,6 +310,7 @@ func (a *ATENPDUAdapter) Capabilities() device.Capabilities {
 			fmt.Sprintf("outlet_%d_state", i),
 			fmt.Sprintf("outlet_%d_current_a", i),
 			fmt.Sprintf("outlet_%d_power_w", i),
+			fmt.Sprintf("outlet_%d_name", i),
 		)
 	}
 	commands := []string{"outlet_on", "outlet_off", "outlet_reboot"}
@@ -401,6 +415,53 @@ func parseOutletState(resp string) string {
 	}
 	return ""
 }
+
+// parseOutletName pulls the outlet's user-configured name out of the ATEN
+// `read status oNN name` response. Firmwares vary on the exact wording, so
+// we try a few shapes:
+//
+//	"o01 name: Codec"
+//	"Outlet 01 name: Codec"
+//	"name: Codec"
+//	"Codec"                     — some firmwares just print the raw value
+//
+// Command echo and empty markers ("N/A", "--", the outlet id repeated back)
+// are stripped so we don't surface junk as a label.
+func parseOutletName(resp, outletID string) string {
+	// Drop any line that just echoes the command back to us, or is our prompt.
+	var candidate string
+	for _, line := range strings.Split(resp, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(strings.ToLower(line), "read status") {
+			continue
+		}
+		if isATENPrompt(line + "\n") {
+			continue
+		}
+		candidate = line
+	}
+	if candidate == "" {
+		return ""
+	}
+
+	// Prefer explicit "name:" if present.
+	if m := outletNameRE.FindStringSubmatch(candidate); len(m) == 2 {
+		candidate = m[1]
+	}
+
+	candidate = strings.TrimSpace(candidate)
+	// Reject sentinel values and the outlet id echoed back on its own.
+	switch strings.ToLower(candidate) {
+	case "", "n/a", "na", "--", "none", outletID:
+		return ""
+	}
+	return candidate
+}
+
+var outletNameRE = regexp.MustCompile(`(?i)name\s*[:=]\s*(.+)$`)
 
 func parseNumericMetric(resp, pattern string) (float64, bool) {
 	re, err := regexp.Compile(pattern)
