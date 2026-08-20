@@ -60,11 +60,15 @@ func New(cfg config.DeviceConfig, deps Deps) (device.Device, error) {
 		// Aurora Multimedia VPX Series AV-over-IP encoders/decoders —
 		// JSON over Telnet (port 6970); mode auto-detected at connect
 		return NewAuroraVPXAdapter(cfg), nil
+	case "aten_pdu":
+		// ATEN eco PDU range (PE6108G and siblings) — Telnet CLI on port 23
+		// with per-outlet switching and per-outlet power metering
+		return NewATENPDUAdapter(cfg), nil
 	case "ping":
 		// ICMP reachability probe for devices with no vendor API
 		return NewPingAdapter(cfg), nil
 
 	default:
-		return nil, fmt.Errorf("unsupported protocol: %q (supported: rest, websocket, telnet, serial, visca_over_ip, tesira, sony_bravia, poly_videoos, aurora_rxt, aurora_vpx, ping)", cfg.Protocol)
+		return nil, fmt.Errorf("unsupported protocol: %q (supported: rest, websocket, telnet, serial, visca_over_ip, tesira, sony_bravia, poly_videoos, aurora_rxt, aurora_vpx, aten_pdu, ping)", cfg.Protocol)
 	}
 }

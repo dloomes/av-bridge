@@ -58,6 +58,12 @@ const COMMAND_PROMPTS: Record<string, PromptedArg> = {
   preset_recall: { kind: "number", arg: "preset", label: "Recall preset number", min: 0, max: 255 },
   preset_set:    { kind: "number", arg: "preset", label: "Save current position as preset", min: 0, max: 255 },
   zoom_direct:   { kind: "number", arg: "position", label: "Zoom position (0 = wide, 16384 = full tele)", min: 0, max: 16384 },
+  // ATEN PDU outlet switching — max here is the PE6108G's 8. Sites running a
+  // larger model (PE7 / PE8 with 16 outlets) override outlet_count in YAML;
+  // the bridge validates the actual bound and rejects out-of-range values.
+  outlet_on:     { kind: "number", arg: "outlet", label: "Outlet number to switch ON", min: 1, max: 8 },
+  outlet_off:    { kind: "number", arg: "outlet", label: "Outlet number to switch OFF", min: 1, max: 8 },
+  outlet_reboot: { kind: "number", arg: "outlet", label: "Outlet number to reboot (power cycle)", min: 1, max: 8 },
   dial: {
     kind: "text",
     arg: "address",

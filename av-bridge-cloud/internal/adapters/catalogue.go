@@ -97,6 +97,43 @@ var catalogue = []Info{
 	// ── Vendor-specific ──────────────────────────────────────────────
 
 	{
+		ID:          "aten_pdu",
+		Name:        "ATEN eco PDU",
+		Vendor:      "ATEN",
+		Kind:        KindVendor,
+		Description: "ATEN eco PDU range (PE6108G and siblings) over the Telnet CLI on port 23. Per-outlet on/off/reboot control and per-outlet power metering; device-level voltage and total power draw.",
+		DeviceTypes: []string{"control"},
+		Power:       PowerCapability{On: false, Off: false},
+		Commands:    []string{"outlet_on", "outlet_off", "outlet_reboot"},
+		Metrics: []string{
+			"voltage_v", "total_power_w", "outlet_count", "response_ms",
+			"outlet_1_state", "outlet_1_current_a", "outlet_1_power_w",
+			"outlet_2_state", "outlet_2_current_a", "outlet_2_power_w",
+			"outlet_3_state", "outlet_3_current_a", "outlet_3_power_w",
+			"outlet_4_state", "outlet_4_current_a", "outlet_4_power_w",
+			"outlet_5_state", "outlet_5_current_a", "outlet_5_power_w",
+			"outlet_6_state", "outlet_6_current_a", "outlet_6_power_w",
+			"outlet_7_state", "outlet_7_current_a", "outlet_7_power_w",
+			"outlet_8_state", "outlet_8_current_a", "outlet_8_power_w",
+		},
+		ConfigSchema: []ConfigField{
+			{Name: "address", Required: true, Description: "PDU IP or host. Port 23 is the ATEN Telnet default; append :port to override.", Example: "192.168.90.10"},
+			{Name: "username", Required: true, Description: "Admin username configured on the PDU.", Example: "administrator"},
+			{Name: "password", Required: true, Description: "Admin password.", Example: "${ATEN_PASSWORD}"},
+			{Name: "poll_rate", Required: false, Description: "How often to sample outlet state and power. 30s is a good default — every outlet is queried each poll.", Example: "30s"},
+			{Name: "tags.outlet_count", Required: false, Description: "Override the outlet count for non-PE6108G models. Defaults to 8.", Example: "16"},
+		},
+		ExampleConfig: `- id: rack-a-pdu
+  name: Rack A PDU
+  type: control
+  protocol: aten_pdu
+  address: 192.168.90.10
+  username: administrator
+  password: ${ATEN_PASSWORD}
+  poll_rate: 30s`,
+	},
+
+	{
 		ID:          "aurora_rxt",
 		Name:        "Aurora RXT-x Touch Panels",
 		Vendor:      "Aurora Multimedia",
