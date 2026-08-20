@@ -3,13 +3,16 @@ package adapters
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"regexp"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/dloomes/av-bridge/internal/config"
@@ -334,10 +337,38 @@ func (a *ATENPDUAdapter) Capabilities() device.Capabilities {
 
 // exec writes one CLI command and reads the reply. Serialised via cmdMu so
 // concurrent Poll + SendCommand don't share the wire.
+//
+// ATEN PDUs drop idle Telnet sessions after a few minutes; the next write
+// then returns EPIPE / ECONNRESET. We handle that transparently: on a
+// connection-level failure we mark the device offline, tear the socket
+// down, redial + reauthenticate, and retry the command once. If the retry
+// also fails we surface the error so the caller sees it.
 func (a *ATENPDUAdapter) exec(ctx context.Context, cmd string) (string, error) {
 	a.cmdMu.Lock()
 	defer a.cmdMu.Unlock()
 
+	resp, err := a.doExec(ctx, cmd)
+	if err == nil {
+		return resp, nil
+	}
+	if !isConnDropped(err) {
+		return resp, err
+	}
+
+	slog.Warn("aten_pdu: connection dropped, reconnecting",
+		"device", a.Cfg.ID, "cmd", cmd, "error", err)
+	a.SetStatus(device.StatusOffline)
+	a.closeConn()
+
+	if rerr := a.reconnect(ctx); rerr != nil {
+		return "", fmt.Errorf("aten_pdu: reconnect after %v failed: %w", err, rerr)
+	}
+	return a.doExec(ctx, cmd)
+}
+
+// doExec is the raw send-and-read — no reconnect logic. Only called via
+// exec so cmdMu is already held.
+func (a *ATENPDUAdapter) doExec(ctx context.Context, cmd string) (string, error) {
 	a.connMu.Lock()
 	conn := a.conn
 	reader := a.reader
@@ -391,6 +422,79 @@ func (a *ATENPDUAdapter) exec(ctx context.Context, cmd string) (string, error) {
 		return "", fmt.Errorf("aten_pdu: no response within %s", timeout)
 	}
 	return strings.TrimSpace(buf.String()), nil
+}
+
+// reconnect redials the PDU and re-runs the login handshake. Caller MUST
+// have already closed the old conn (typically via closeConn). Does not
+// take cmdMu — expects the caller to hold it.
+func (a *ATENPDUAdapter) reconnect(ctx context.Context) error {
+	log := slog.With("device", a.Cfg.ID, "address", a.address)
+
+	dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	d := net.Dialer{Timeout: 10 * time.Second}
+	conn, err := d.DialContext(dialCtx, "tcp", a.address)
+	if err != nil {
+		return fmt.Errorf("dial: %w", err)
+	}
+	reader := bufio.NewReader(newTelnetFilter(conn))
+
+	if err := waitFor(conn, reader, []string{"login:", "username:"}, 5*time.Second); err != nil {
+		conn.Close()
+		return fmt.Errorf("login prompt: %w", err)
+	}
+	if err := writeCRLF(conn, a.Cfg.Username); err != nil {
+		conn.Close()
+		return fmt.Errorf("send username: %w", err)
+	}
+	if err := waitFor(conn, reader, []string{"password:"}, 5*time.Second); err != nil {
+		conn.Close()
+		return fmt.Errorf("password prompt: %w", err)
+	}
+	if err := writeCRLF(conn, a.Cfg.Password); err != nil {
+		conn.Close()
+		return fmt.Errorf("send password: %w", err)
+	}
+	drainQuiet(conn, reader, 800*time.Millisecond)
+
+	a.connMu.Lock()
+	a.conn = conn
+	a.reader = reader
+	a.connMu.Unlock()
+	a.SetStatus(device.StatusOnline)
+	log.Info("aten_pdu reconnected")
+	return nil
+}
+
+// closeConn shuts the current socket (if any) and clears the reader/conn
+// slots. Safe to call with no connection open.
+func (a *ATENPDUAdapter) closeConn() {
+	a.connMu.Lock()
+	defer a.connMu.Unlock()
+	if a.conn != nil {
+		_ = a.conn.Close()
+	}
+	a.conn = nil
+	a.reader = nil
+}
+
+// isConnDropped reports whether an error indicates the underlying TCP
+// session is gone (peer closed, RST, pipe broken). These are the ones
+// worth retrying after a fresh dial; other errors (parse, prompt timeout)
+// aren't.
+func isConnDropped(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.Is(err, net.ErrClosed) || errors.Is(err, syscall.EPIPE) ||
+		errors.Is(err, syscall.ECONNRESET) {
+		return true
+	}
+	s := err.Error()
+	return strings.Contains(s, "broken pipe") ||
+		strings.Contains(s, "connection reset") ||
+		strings.Contains(s, "use of closed network connection")
 }
 
 // ── Parsing helpers ──────────────────────────────────────────────────────────
