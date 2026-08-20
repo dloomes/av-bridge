@@ -3,16 +3,13 @@ package adapters
 import (
 	"bufio"
 	"context"
-	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net"
 	"regexp"
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/dloomes/av-bridge/internal/config"
@@ -24,15 +21,22 @@ import (
 // same CLI grammar covers most of the PE6/PE7/PE8 range, so extending to more
 // models is a matter of overriding tags.outlet_count in config.
 //
+// Session model: **one command per Telnet session**. Observed on real PE6108G
+// firmware, the device closes the socket immediately after emitting a
+// command's response, so any attempt to keep a long-lived session for
+// pipelining fails on the second write. Every exec() opens a fresh socket,
+// runs the login handshake, sends the command, reads the reply, and closes.
+// It's ~250ms per command over LAN but eliminates the whole class of
+// broken-pipe / EOF failures the persistent-session approach was fighting.
+//
 // Login flow: ATEN prompts "Login:" then "Password:" — plain text, single line
-// each. After successful login the device sits at a `>` prompt awaiting
-// commands. There's no per-command reply terminator we can rely on across
-// firmwares, so we read until we see the prompt or a short idle window
-// elapses.
+// each. After successful login the device sits at a `>` prompt awaiting a
+// single command.
 //
 // Commands we use (from ATEN eco PDU CLI reference):
 //
 //	read status o<N> simple            — outlet on/off state
+//	read status o<N> name              — user-configured outlet label
 //	read meter outlet o<N> simple      — per-outlet current + power
 //	read meter dev volt simple         — device-level voltage
 //	read meter dev power simple        — device-level power draw
@@ -49,12 +53,8 @@ type ATENPDUAdapter struct {
 	address     string
 	outletCount int
 
-	connMu sync.Mutex
-	conn   net.Conn
-	reader *bufio.Reader
-
-	// cmdMu serialises the CLI. The ATEN accepts one command at a time; a
-	// concurrent Poll + SendCommand would interleave read bytes.
+	// cmdMu serialises exec calls so we don't open two Telnet sessions to
+	// the same PDU at once — some ATEN firmwares cap concurrent sessions.
 	cmdMu sync.Mutex
 }
 
@@ -85,69 +85,25 @@ func NewATENPDUAdapter(cfg config.DeviceConfig) *ATENPDUAdapter {
 }
 
 // ── Connection ────────────────────────────────────────────────────────────────
+//
+// The adapter holds no persistent Telnet session (see the type doc). Connect
+// is a one-shot reachability probe — it opens a session, runs the login
+// handshake, sends a cheap read command, and closes; success flips the device
+// online, failure flips it offline. Disconnect is a no-op.
 
 func (a *ATENPDUAdapter) Connect(ctx context.Context) error {
-	log := slog.With("device", a.Cfg.ID, "address", a.address)
-
-	d := net.Dialer{Timeout: 10 * time.Second}
-	conn, err := d.DialContext(ctx, "tcp", a.address)
-	if err != nil {
+	if _, err := a.exec(ctx, "read dev info"); err != nil {
 		a.SetStatus(device.StatusOffline)
-		return fmt.Errorf("aten_pdu connect %s (%s): %w", a.Cfg.ID, a.address, err)
+		return fmt.Errorf("aten_pdu connect probe %s (%s): %w", a.Cfg.ID, a.address, err)
 	}
-	log.Info("aten_pdu tcp connected")
-
-	reader := bufio.NewReader(newTelnetFilter(conn))
-
-	// Drain the initial banner up to the "Login:" prompt.
-	if err := waitFor(conn, reader, []string{"login:", "username:"}, 5*time.Second); err != nil {
-		conn.Close()
-		a.SetStatus(device.StatusOffline)
-		return fmt.Errorf("aten_pdu: waiting for login prompt: %w", err)
-	}
-	if err := writeCRLF(conn, a.Cfg.Username); err != nil {
-		conn.Close()
-		a.SetStatus(device.StatusOffline)
-		return fmt.Errorf("aten_pdu: send username: %w", err)
-	}
-
-	if err := waitFor(conn, reader, []string{"password:"}, 5*time.Second); err != nil {
-		conn.Close()
-		a.SetStatus(device.StatusOffline)
-		return fmt.Errorf("aten_pdu: waiting for password prompt: %w", err)
-	}
-	if err := writeCRLF(conn, a.Cfg.Password); err != nil {
-		conn.Close()
-		a.SetStatus(device.StatusOffline)
-		return fmt.Errorf("aten_pdu: send password: %w", err)
-	}
-
-	// Drain whatever the device prints after login (welcome text, menu, prompt)
-	// with a short settle window. We don't rely on a specific banner — just
-	// let the wire go quiet so the first command's response starts clean.
-	drainQuiet(conn, reader, 800*time.Millisecond)
-
-	a.connMu.Lock()
-	a.conn = conn
-	a.reader = reader
-	a.connMu.Unlock()
-
 	a.SetStatus(device.StatusOnline)
-	log.Info("aten_pdu connected", "outlets", a.outletCount)
+	slog.Info("aten_pdu ready", "device", a.Cfg.ID, "address", a.address, "outlets", a.outletCount)
 	return nil
 }
 
 func (a *ATENPDUAdapter) Disconnect() error {
-	a.connMu.Lock()
-	defer a.connMu.Unlock()
 	a.SetStatus(device.StatusOffline)
-	if a.conn == nil {
-		return nil
-	}
-	err := a.conn.Close()
-	a.conn = nil
-	a.reader = nil
-	return err
+	return nil
 }
 
 // ── Poll ──────────────────────────────────────────────────────────────────────
@@ -335,50 +291,23 @@ func (a *ATENPDUAdapter) Capabilities() device.Capabilities {
 
 // ── Transport ────────────────────────────────────────────────────────────────
 
-// exec writes one CLI command and reads the reply. Serialised via cmdMu so
-// concurrent Poll + SendCommand don't share the wire.
-//
-// ATEN PDUs drop idle Telnet sessions after a few minutes; the next write
-// then returns EPIPE / ECONNRESET. We handle that transparently: on a
-// connection-level failure we mark the device offline, tear the socket
-// down, redial + reauthenticate, and retry the command once. If the retry
-// also fails we surface the error so the caller sees it.
+// exec runs one CLI command against the PDU in its own Telnet session and
+// returns the response text. The full lifecycle happens per call: dial,
+// login, write, read, close. Serialised via cmdMu so concurrent Poll +
+// SendCommand don't open two sessions to the PDU simultaneously (some ATEN
+// firmwares cap concurrent sessions and reject the second).
 func (a *ATENPDUAdapter) exec(ctx context.Context, cmd string) (string, error) {
 	a.cmdMu.Lock()
 	defer a.cmdMu.Unlock()
 
-	resp, err := a.doExec(ctx, cmd)
-	if err == nil {
-		return resp, nil
+	conn, reader, err := a.dialAndLogin(ctx)
+	if err != nil {
+		return "", err
 	}
-	if !isConnDropped(err) {
-		return resp, err
-	}
-
-	slog.Warn("aten_pdu: connection dropped, reconnecting",
-		"device", a.Cfg.ID, "cmd", cmd, "error", err)
-	a.SetStatus(device.StatusOffline)
-	a.closeConn()
-
-	if rerr := a.reconnect(ctx); rerr != nil {
-		return "", fmt.Errorf("aten_pdu: reconnect after %v failed: %w", err, rerr)
-	}
-	return a.doExec(ctx, cmd)
-}
-
-// doExec is the raw send-and-read — no reconnect logic. Only called via
-// exec so cmdMu is already held.
-func (a *ATENPDUAdapter) doExec(ctx context.Context, cmd string) (string, error) {
-	a.connMu.Lock()
-	conn := a.conn
-	reader := a.reader
-	a.connMu.Unlock()
-	if conn == nil || reader == nil {
-		return "", fmt.Errorf("aten_pdu: not connected")
-	}
+	defer conn.Close()
 
 	if err := writeCRLF(conn, cmd); err != nil {
-		return "", fmt.Errorf("write %q: %w", cmd, err)
+		return "", fmt.Errorf("aten_pdu write %q: %w", cmd, err)
 	}
 
 	timeout := atenPDUReadTimeout
@@ -388,8 +317,9 @@ func (a *ATENPDUAdapter) doExec(ctx context.Context, cmd string) (string, error)
 		}
 	}
 
-	// Read until either the prompt reappears or the wire goes quiet.
-	// ATEN's per-command output length is small, so a short window is fine.
+	// Read until the wire goes quiet or the socket closes (ATEN closes it
+	// itself after emitting the response — that's an end-of-reply signal).
+	// The prompt check catches firmwares that don't drop the session.
 	var buf strings.Builder
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
@@ -402,99 +332,56 @@ func (a *ATENPDUAdapter) doExec(ctx context.Context, cmd string) (string, error)
 		}
 		if err != nil {
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-				// If we've collected anything at all, treat idle as end-of-reply.
 				if buf.Len() > 0 {
-					_ = conn.SetReadDeadline(time.Time{})
 					return strings.TrimSpace(buf.String()), nil
 				}
 				continue
 			}
-			_ = conn.SetReadDeadline(time.Time{})
-			return buf.String(), err
+			// EOF / broken pipe here is normal — ATEN just told us it's done.
+			return strings.TrimSpace(buf.String()), nil
 		}
 		if isATENPrompt(line) {
-			_ = conn.SetReadDeadline(time.Time{})
 			return strings.TrimSpace(buf.String()), nil
 		}
 	}
-	_ = conn.SetReadDeadline(time.Time{})
 	if buf.Len() == 0 {
 		return "", fmt.Errorf("aten_pdu: no response within %s", timeout)
 	}
 	return strings.TrimSpace(buf.String()), nil
 }
 
-// reconnect redials the PDU and re-runs the login handshake. Caller MUST
-// have already closed the old conn (typically via closeConn). Does not
-// take cmdMu — expects the caller to hold it.
-func (a *ATENPDUAdapter) reconnect(ctx context.Context) error {
-	log := slog.With("device", a.Cfg.ID, "address", a.address)
-
+// dialAndLogin opens a fresh Telnet session and runs the login handshake.
+// The returned conn is the caller's to close.
+func (a *ATENPDUAdapter) dialAndLogin(ctx context.Context) (net.Conn, *bufio.Reader, error) {
 	dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	d := net.Dialer{Timeout: 10 * time.Second}
 	conn, err := d.DialContext(dialCtx, "tcp", a.address)
 	if err != nil {
-		return fmt.Errorf("dial: %w", err)
+		return nil, nil, fmt.Errorf("aten_pdu dial %s: %w", a.address, err)
 	}
 	reader := bufio.NewReader(newTelnetFilter(conn))
 
 	if err := waitFor(conn, reader, []string{"login:", "username:"}, 5*time.Second); err != nil {
 		conn.Close()
-		return fmt.Errorf("login prompt: %w", err)
+		return nil, nil, fmt.Errorf("aten_pdu: login prompt: %w", err)
 	}
 	if err := writeCRLF(conn, a.Cfg.Username); err != nil {
 		conn.Close()
-		return fmt.Errorf("send username: %w", err)
+		return nil, nil, fmt.Errorf("aten_pdu: send username: %w", err)
 	}
 	if err := waitFor(conn, reader, []string{"password:"}, 5*time.Second); err != nil {
 		conn.Close()
-		return fmt.Errorf("password prompt: %w", err)
+		return nil, nil, fmt.Errorf("aten_pdu: password prompt: %w", err)
 	}
 	if err := writeCRLF(conn, a.Cfg.Password); err != nil {
 		conn.Close()
-		return fmt.Errorf("send password: %w", err)
+		return nil, nil, fmt.Errorf("aten_pdu: send password: %w", err)
 	}
-	drainQuiet(conn, reader, 800*time.Millisecond)
-
-	a.connMu.Lock()
-	a.conn = conn
-	a.reader = reader
-	a.connMu.Unlock()
-	a.SetStatus(device.StatusOnline)
-	log.Info("aten_pdu reconnected")
-	return nil
-}
-
-// closeConn shuts the current socket (if any) and clears the reader/conn
-// slots. Safe to call with no connection open.
-func (a *ATENPDUAdapter) closeConn() {
-	a.connMu.Lock()
-	defer a.connMu.Unlock()
-	if a.conn != nil {
-		_ = a.conn.Close()
-	}
-	a.conn = nil
-	a.reader = nil
-}
-
-// isConnDropped reports whether an error indicates the underlying TCP
-// session is gone (peer closed, RST, pipe broken). These are the ones
-// worth retrying after a fresh dial; other errors (parse, prompt timeout)
-// aren't.
-func isConnDropped(err error) bool {
-	if err == nil {
-		return false
-	}
-	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) ||
-		errors.Is(err, net.ErrClosed) || errors.Is(err, syscall.EPIPE) ||
-		errors.Is(err, syscall.ECONNRESET) {
-		return true
-	}
-	s := err.Error()
-	return strings.Contains(s, "broken pipe") ||
-		strings.Contains(s, "connection reset") ||
-		strings.Contains(s, "use of closed network connection")
+	// Swallow any post-login banner / menu output so the first bytes of the
+	// command response start clean. Short window — the PDU is fast on LAN.
+	drainQuiet(conn, reader, 300*time.Millisecond)
+	return conn, reader, nil
 }
 
 // ── Parsing helpers ──────────────────────────────────────────────────────────
