@@ -30,20 +30,41 @@ function prettyName(name: string): string {
 }
 
 // Commands that need an argument before sending. Keyed by command name;
-// the entry describes ONE numeric arg to prompt for. Kept as data (not a
-// switch in send()) so adding a new prompt-command is a one-line change.
-// Non-integer input and out-of-range values cancel the send with a
-// visible error rather than sending garbage to the device.
-interface PromptedArg {
-  arg: string;   // key to place in the outbound args map
-  label: string; // human prompt copy
-  min: number;
-  max: number;
-}
+// each entry describes ONE arg to prompt for — either a bounded integer
+// (preset numbers, zoom positions) or a free-text field (SIP addresses,
+// phone numbers). Kept as data (not a switch in send()) so adding a new
+// prompt-command is a one-line change.
+//
+// Invalid input keeps the modal open with an inline error rather than
+// sending garbage to the device.
+type PromptedArg =
+  | {
+      kind: "number";
+      arg: string;    // outbound args key
+      label: string;  // shown as the input's field label
+      min: number;
+      max: number;
+      helpText?: string; // optional line under the input; defaults to "Whole number between MIN and MAX"
+    }
+  | {
+      kind: "text";
+      arg: string;
+      label: string;
+      placeholder?: string;
+      helpText?: string;
+    };
+
 const COMMAND_PROMPTS: Record<string, PromptedArg> = {
-  preset_recall: { arg: "preset", label: "Recall preset number", min: 0, max: 255 },
-  preset_set:    { arg: "preset", label: "Save current position as preset", min: 0, max: 255 },
-  zoom_direct:   { arg: "position", label: "Zoom position (0 = wide, 16384 = full tele)", min: 0, max: 16384 },
+  preset_recall: { kind: "number", arg: "preset", label: "Recall preset number", min: 0, max: 255 },
+  preset_set:    { kind: "number", arg: "preset", label: "Save current position as preset", min: 0, max: 255 },
+  zoom_direct:   { kind: "number", arg: "position", label: "Zoom position (0 = wide, 16384 = full tele)", min: 0, max: 16384 },
+  dial: {
+    kind: "text",
+    arg: "address",
+    label: "Address to dial",
+    placeholder: "sip:room@example.com",
+    helpText: "SIP URI, H.323 address (host[:port] or user@host), or a phone number for POTS.",
+  },
 };
 
 // Modal state for numeric-arg prompts. `command` is null when closed.
@@ -131,28 +152,34 @@ export function CommandPanel({ device, telemetry }: Props) {
     }
   };
 
-  // Modal submit — validate the numeric input, close the modal on success,
-  // hand off to dispatch. Leaves the modal open with an inline error on
-  // invalid input so the user can correct without re-clicking the command.
+  // Modal submit — validate per arg kind, close on success, dispatch. Leaves
+  // the modal open with an inline error on invalid input so the user can
+  // correct without re-clicking the command button.
   const submitPrompt = () => {
     if (!prompt) return;
-    const trimmed = prompt.value.trim();
-    const n = Number(trimmed);
     const { spec, command } = prompt;
-    if (
-      trimmed === "" ||
-      !Number.isInteger(n) ||
-      n < spec.min ||
-      n > spec.max
-    ) {
-      setPrompt({
-        ...prompt,
-        error: `Enter an integer between ${spec.min} and ${spec.max}.`,
-      });
+    const trimmed = prompt.value.trim();
+    if (trimmed === "") {
+      setPrompt({ ...prompt, error: `${spec.label} is required.` });
       return;
     }
+    if (spec.kind === "number") {
+      const n = Number(trimmed);
+      if (!Number.isInteger(n) || n < spec.min || n > spec.max) {
+        setPrompt({
+          ...prompt,
+          error: `Enter an integer between ${spec.min} and ${spec.max}.`,
+        });
+        return;
+      }
+      setPrompt(null);
+      void dispatch(command, { [spec.arg]: n });
+      return;
+    }
+    // text kind — send the trimmed string as-is. The backend adapter is
+    // responsible for further shape validation (SIP URI, etc.).
     setPrompt(null);
-    void dispatch(command, { [spec.arg]: n });
+    void dispatch(command, { [spec.arg]: trimmed });
   };
 
   // Devices running as appliances (Microsoft Teams Rooms, Zoom Rooms, etc.)
@@ -233,23 +260,42 @@ export function CommandPanel({ device, telemetry }: Props) {
                 >
                   {prompt.spec.label}
                 </label>
-                <input
-                  id="prompt-value"
-                  type="number"
-                  inputMode="numeric"
-                  min={prompt.spec.min}
-                  max={prompt.spec.max}
-                  step={1}
-                  autoFocus
-                  value={prompt.value}
-                  onChange={(e) =>
-                    setPrompt({ ...prompt, value: e.target.value, error: null })
-                  }
-                  placeholder={`${prompt.spec.min}–${prompt.spec.max}`}
-                  className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm outline-none transition-colors focus:border-primary focus:shadow-[0_0_0_3px_hsl(var(--primary)/0.15)]"
-                />
+                {prompt.spec.kind === "number" ? (
+                  <input
+                    id="prompt-value"
+                    type="number"
+                    inputMode="numeric"
+                    min={prompt.spec.min}
+                    max={prompt.spec.max}
+                    step={1}
+                    autoFocus
+                    value={prompt.value}
+                    onChange={(e) =>
+                      setPrompt({ ...prompt, value: e.target.value, error: null })
+                    }
+                    placeholder={`${prompt.spec.min}–${prompt.spec.max}`}
+                    className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm outline-none transition-colors focus:border-primary focus:shadow-[0_0_0_3px_hsl(var(--primary)/0.15)]"
+                  />
+                ) : (
+                  <input
+                    id="prompt-value"
+                    type="text"
+                    autoFocus
+                    autoComplete="off"
+                    spellCheck={false}
+                    value={prompt.value}
+                    onChange={(e) =>
+                      setPrompt({ ...prompt, value: e.target.value, error: null })
+                    }
+                    placeholder={prompt.spec.placeholder}
+                    className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm outline-none transition-colors focus:border-primary focus:shadow-[0_0_0_3px_hsl(var(--primary)/0.15)]"
+                  />
+                )}
                 <p className="text-xs text-muted-foreground">
-                  Whole number between {prompt.spec.min} and {prompt.spec.max}.
+                  {prompt.spec.helpText ??
+                    (prompt.spec.kind === "number"
+                      ? `Whole number between ${prompt.spec.min} and ${prompt.spec.max}.`
+                      : "")}
                 </p>
               </div>
               {prompt.error && (
