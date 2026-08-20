@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { Loader2, Lock, Send, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Modal } from "@/components/modal";
 import { api } from "@/lib/api";
 import type { CommandResponse, DeviceDetail, Telemetry } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -45,9 +46,18 @@ const COMMAND_PROMPTS: Record<string, PromptedArg> = {
   zoom_direct:   { arg: "position", label: "Zoom position (0 = wide, 16384 = full tele)", min: 0, max: 16384 },
 };
 
+// Modal state for numeric-arg prompts. `command` is null when closed.
+interface PromptState {
+  command: string;
+  spec: PromptedArg;
+  value: string;
+  error: string | null;
+}
+
 export function CommandPanel({ device, telemetry }: Props) {
   const [pending, setPending] = useState<string | null>(null);
   const [result, setResult] = useState<ResultState | null>(null);
+  const [prompt, setPrompt] = useState<PromptState | null>(null);
 
   // Commands come from two sources merged: the adapter's declared
   // Capabilities().Commands (what the vendor integration supports out of
@@ -83,37 +93,21 @@ export function CommandPanel({ device, telemetry }: Props) {
     return true;
   });
 
-  const send = async (name: string) => {
-    // If this command takes an argument, prompt for it before sending.
-    // Using window.prompt for now — it's zero-plumbing and matches the
-    // native "get me a number" browser behaviour. Swap for a proper modal
-    // if the prompt list grows or we need richer arg types.
-    let args: Record<string, unknown> | undefined;
-    const promptSpec = COMMAND_PROMPTS[name];
-    if (promptSpec) {
-      const raw = window.prompt(
-        `${promptSpec.label} (${promptSpec.min}-${promptSpec.max})`
-      );
-      if (raw === null) return; // user cancelled — silent no-op, matches every other cancel path
-      const trimmed = raw.trim();
-      const n = Number(trimmed);
-      if (
-        trimmed === "" ||
-        !Number.isInteger(n) ||
-        n < promptSpec.min ||
-        n > promptSpec.max
-      ) {
-        setResult({
-          ok: false,
-          command: name,
-          message: `${promptSpec.label} must be an integer ${promptSpec.min}-${promptSpec.max} (got "${raw}")`,
-          at: Date.now(),
-        });
-        return;
-      }
-      args = { [promptSpec.arg]: n };
+  // Click handler for a command button. If the command needs an argument,
+  // opens the prompt modal (deferring dispatch); otherwise sends immediately.
+  const onCommandClick = (name: string) => {
+    const spec = COMMAND_PROMPTS[name];
+    if (spec) {
+      setPrompt({ command: name, spec, value: "", error: null });
+      return;
     }
+    void dispatch(name);
+  };
 
+  // dispatch actually posts the command. Split from the click handler so the
+  // modal's submit path can call it once validated. args is optional — no
+  // args = the pre-prompt-command flow.
+  const dispatch = async (name: string, args?: Record<string, unknown>) => {
     setPending(name);
     try {
       const res: CommandResponse = await api.sendCommand(device.id, { name, args });
@@ -135,6 +129,30 @@ export function CommandPanel({ device, telemetry }: Props) {
     } finally {
       setPending(null);
     }
+  };
+
+  // Modal submit — validate the numeric input, close the modal on success,
+  // hand off to dispatch. Leaves the modal open with an inline error on
+  // invalid input so the user can correct without re-clicking the command.
+  const submitPrompt = () => {
+    if (!prompt) return;
+    const trimmed = prompt.value.trim();
+    const n = Number(trimmed);
+    const { spec, command } = prompt;
+    if (
+      trimmed === "" ||
+      !Number.isInteger(n) ||
+      n < spec.min ||
+      n > spec.max
+    ) {
+      setPrompt({
+        ...prompt,
+        error: `Enter an integer between ${spec.min} and ${spec.max}.`,
+      });
+      return;
+    }
+    setPrompt(null);
+    void dispatch(command, { [spec.arg]: n });
   };
 
   // Devices running as appliances (Microsoft Teams Rooms, Zoom Rooms, etc.)
@@ -180,7 +198,7 @@ export function CommandPanel({ device, telemetry }: Props) {
                   size="sm"
                   variant={tone}
                   disabled={pending !== null}
-                  onClick={() => send(cmd)}
+                  onClick={() => onCommandClick(cmd)}
                 >
                   {isPending ? (
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -193,6 +211,68 @@ export function CommandPanel({ device, telemetry }: Props) {
             })}
           </div>
         )}
+
+        <Modal
+          open={prompt !== null}
+          onClose={() => setPrompt(null)}
+          title={prompt ? prettyName(prompt.command) : ""}
+          wide={false}
+        >
+          {prompt && (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                submitPrompt();
+              }}
+              className="space-y-4"
+            >
+              <div className="space-y-1.5">
+                <label
+                  htmlFor="prompt-value"
+                  className="text-sm font-medium text-foreground"
+                >
+                  {prompt.spec.label}
+                </label>
+                <input
+                  id="prompt-value"
+                  type="number"
+                  inputMode="numeric"
+                  min={prompt.spec.min}
+                  max={prompt.spec.max}
+                  step={1}
+                  autoFocus
+                  value={prompt.value}
+                  onChange={(e) =>
+                    setPrompt({ ...prompt, value: e.target.value, error: null })
+                  }
+                  placeholder={`${prompt.spec.min}–${prompt.spec.max}`}
+                  className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm outline-none transition-colors focus:border-primary focus:shadow-[0_0_0_3px_hsl(var(--primary)/0.15)]"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Whole number between {prompt.spec.min} and {prompt.spec.max}.
+                </p>
+              </div>
+              {prompt.error && (
+                <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs [color:hsl(var(--destructive))]">
+                  {prompt.error}
+                </div>
+              )}
+              <div className="flex justify-end gap-2 pt-1">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setPrompt(null)}
+                >
+                  Cancel
+                </Button>
+                <Button type="submit" size="sm">
+                  Send
+                </Button>
+              </div>
+            </form>
+          )}
+        </Modal>
 
         {result && (
           <div
