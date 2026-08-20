@@ -358,7 +358,15 @@ func (a *ATENPDUAdapter) exec(ctx context.Context, cmd string) (string, error) {
 
 // dialAndLogin opens a fresh Telnet session and runs the login handshake.
 // The returned conn is the caller's to close.
+//
+// Login must complete quickly — the PDU has an aggressive "Login timeout"
+// on the initial prompt (a few seconds). We wait for the buffer to END with
+// a known prompt (not just contain one somewhere) so a banner mentioning
+// the word "login" doesn't cause us to send our username before the real
+// prompt has appeared.
 func (a *ATENPDUAdapter) dialAndLogin(ctx context.Context) (net.Conn, *bufio.Reader, error) {
+	log := slog.With("device", a.Cfg.ID, "address", a.address)
+
 	dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	d := net.Dialer{Timeout: 10 * time.Second}
@@ -368,26 +376,59 @@ func (a *ATENPDUAdapter) dialAndLogin(ctx context.Context) (net.Conn, *bufio.Rea
 	}
 	reader := bufio.NewReader(newTelnetFilter(conn))
 
-	if err := waitFor(conn, reader, []string{"login:", "username:"}, 5*time.Second); err != nil {
+	banner, err := readUntilPrompt(conn, reader, []string{"login:", "username:"}, 5*time.Second)
+	log.Info("aten_pdu login banner", "banner", collapse(banner))
+	if err != nil {
 		conn.Close()
-		return nil, nil, fmt.Errorf("aten_pdu: login prompt: %w", err)
+		return nil, nil, fmt.Errorf("aten_pdu: login prompt: %w (saw %q)", err, collapse(banner))
 	}
 	if err := writeCRLF(conn, a.Cfg.Username); err != nil {
 		conn.Close()
 		return nil, nil, fmt.Errorf("aten_pdu: send username: %w", err)
 	}
-	if err := waitFor(conn, reader, []string{"password:"}, 5*time.Second); err != nil {
+
+	pwPrompt, err := readUntilPrompt(conn, reader, []string{"password:"}, 5*time.Second)
+	log.Info("aten_pdu after username", "text", collapse(pwPrompt))
+	if err != nil {
 		conn.Close()
-		return nil, nil, fmt.Errorf("aten_pdu: password prompt: %w", err)
+		return nil, nil, fmt.Errorf("aten_pdu: password prompt: %w (saw %q)", err, collapse(pwPrompt))
 	}
 	if err := writeCRLF(conn, a.Cfg.Password); err != nil {
 		conn.Close()
 		return nil, nil, fmt.Errorf("aten_pdu: send password: %w", err)
 	}
-	// Swallow any post-login banner / menu output so the first bytes of the
-	// command response start clean. Short window — the PDU is fast on LAN.
-	drainQuiet(conn, reader, 300*time.Millisecond)
+
+	// Read whatever the PDU prints after login — welcome banner, main menu,
+	// command prompt — so we know we've reached a stable state before firing
+	// the real command. Logged so we can spot menu shells that need an
+	// extra keystroke to enter command mode.
+	postLogin := drainAndReturn(conn, reader, 500*time.Millisecond)
+	log.Info("aten_pdu post-login", "text", collapse(postLogin))
 	return conn, reader, nil
+}
+
+// collapse turns a possibly multi-line captured buffer into a single-line
+// visible string suitable for logging. Newlines/tabs → spaces, control
+// bytes → dot, trims excess whitespace.
+func collapse(s string) string {
+	var b strings.Builder
+	prevSpace := false
+	for _, r := range s {
+		switch {
+		case r == '\r' || r == '\n' || r == '\t':
+			if !prevSpace {
+				b.WriteByte(' ')
+				prevSpace = true
+			}
+		case r < 0x20:
+			b.WriteByte('.')
+			prevSpace = false
+		default:
+			b.WriteRune(r)
+			prevSpace = r == ' '
+		}
+	}
+	return strings.TrimSpace(b.String())
 }
 
 // ── Parsing helpers ──────────────────────────────────────────────────────────
@@ -494,64 +535,79 @@ func firstLine(s string) string {
 
 // ── Small connection utilities ───────────────────────────────────────────────
 
-// waitFor reads lines until one contains any of the given lowercase needles,
-// or the deadline elapses. Case-insensitive substring match.
-func waitFor(conn net.Conn, reader *bufio.Reader, needles []string, timeout time.Duration) error {
+// readUntilPrompt reads bytes until the accumulated buffer (trimmed of
+// trailing whitespace / control bytes) ENDS with one of the given
+// lowercase needles, or the deadline elapses. Returns everything seen
+// (including trailing prompt) so callers can log or attach it to errors.
+//
+// End-of-buffer matching, not substring, is deliberate: banner text often
+// mentions "login" or "password" ahead of the actual prompt, and matching
+// early causes us to send credentials into the void before the PDU is
+// ready — the PDU then times the login out and closes the socket, and
+// every subsequent operation returns empty.
+func readUntilPrompt(conn net.Conn, reader *bufio.Reader, needles []string, timeout time.Duration) (string, error) {
 	deadline := time.Now().Add(timeout)
 	var seen strings.Builder
 	for time.Now().Before(deadline) {
 		if err := conn.SetReadDeadline(time.Now().Add(200 * time.Millisecond)); err != nil {
-			return err
+			return seen.String(), err
 		}
 		b, err := reader.ReadByte()
 		if err != nil {
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-				if matchesAny(seen.String(), needles) {
+				if endsWithAny(seen.String(), needles) {
 					_ = conn.SetReadDeadline(time.Time{})
-					return nil
+					return seen.String(), nil
 				}
 				continue
 			}
 			_ = conn.SetReadDeadline(time.Time{})
-			return err
+			return seen.String(), err
 		}
 		seen.WriteByte(b)
-		if matchesAny(seen.String(), needles) {
+		if endsWithAny(seen.String(), needles) {
 			_ = conn.SetReadDeadline(time.Time{})
-			return nil
+			return seen.String(), nil
 		}
 	}
 	_ = conn.SetReadDeadline(time.Time{})
-	return fmt.Errorf("timeout waiting for %v (saw %q)", needles, seen.String())
+	return seen.String(), fmt.Errorf("timeout waiting for %v", needles)
 }
 
-func matchesAny(s string, needles []string) bool {
-	lower := strings.ToLower(s)
+// endsWithAny reports whether the trimmed lowercase form of s ends with
+// any of the given (already-lowercase) needles.
+func endsWithAny(s string, needles []string) bool {
+	tail := strings.ToLower(strings.TrimRight(s, " \t\r\n\x00"))
 	for _, n := range needles {
-		if strings.Contains(lower, n) {
+		if strings.HasSuffix(tail, n) {
 			return true
 		}
 	}
 	return false
 }
 
-// drainQuiet reads and discards anything received within window (used after
-// login to swallow banners / menus before the first real command).
-func drainQuiet(conn net.Conn, reader *bufio.Reader, window time.Duration) {
+// drainAndReturn reads whatever the PDU sends over the given window and
+// returns it. Used after login to capture menu / prompt output so operators
+// can see what the device actually presents.
+func drainAndReturn(conn net.Conn, reader *bufio.Reader, window time.Duration) string {
 	deadline := time.Now().Add(window)
+	var buf strings.Builder
 	for time.Now().Before(deadline) {
-		if err := conn.SetReadDeadline(time.Now().Add(150 * time.Millisecond)); err != nil {
-			return
+		if err := conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond)); err != nil {
+			return buf.String()
 		}
-		if _, err := reader.ReadByte(); err != nil {
+		b, err := reader.ReadByte()
+		if err != nil {
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 				continue
 			}
 			_ = conn.SetReadDeadline(time.Time{})
-			return
+			return buf.String()
 		}
+		buf.WriteByte(b)
 	}
 	_ = conn.SetReadDeadline(time.Time{})
+	return buf.String()
 }
 
 func writeCRLF(conn net.Conn, s string) error {
