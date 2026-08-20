@@ -28,6 +28,23 @@ function prettyName(name: string): string {
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+// Commands that need an argument before sending. Keyed by command name;
+// the entry describes ONE numeric arg to prompt for. Kept as data (not a
+// switch in send()) so adding a new prompt-command is a one-line change.
+// Non-integer input and out-of-range values cancel the send with a
+// visible error rather than sending garbage to the device.
+interface PromptedArg {
+  arg: string;   // key to place in the outbound args map
+  label: string; // human prompt copy
+  min: number;
+  max: number;
+}
+const COMMAND_PROMPTS: Record<string, PromptedArg> = {
+  preset_recall: { arg: "preset", label: "Recall preset number", min: 0, max: 255 },
+  preset_set:    { arg: "preset", label: "Save current position as preset", min: 0, max: 255 },
+  zoom_direct:   { arg: "position", label: "Zoom position (0 = wide, 16384 = full tele)", min: 0, max: 16384 },
+};
+
 export function CommandPanel({ device, telemetry }: Props) {
   const [pending, setPending] = useState<string | null>(null);
   const [result, setResult] = useState<ResultState | null>(null);
@@ -67,9 +84,39 @@ export function CommandPanel({ device, telemetry }: Props) {
   });
 
   const send = async (name: string) => {
+    // If this command takes an argument, prompt for it before sending.
+    // Using window.prompt for now — it's zero-plumbing and matches the
+    // native "get me a number" browser behaviour. Swap for a proper modal
+    // if the prompt list grows or we need richer arg types.
+    let args: Record<string, unknown> | undefined;
+    const promptSpec = COMMAND_PROMPTS[name];
+    if (promptSpec) {
+      const raw = window.prompt(
+        `${promptSpec.label} (${promptSpec.min}-${promptSpec.max})`
+      );
+      if (raw === null) return; // user cancelled — silent no-op, matches every other cancel path
+      const trimmed = raw.trim();
+      const n = Number(trimmed);
+      if (
+        trimmed === "" ||
+        !Number.isInteger(n) ||
+        n < promptSpec.min ||
+        n > promptSpec.max
+      ) {
+        setResult({
+          ok: false,
+          command: name,
+          message: `${promptSpec.label} must be an integer ${promptSpec.min}-${promptSpec.max} (got "${raw}")`,
+          at: Date.now(),
+        });
+        return;
+      }
+      args = { [promptSpec.arg]: n };
+    }
+
     setPending(name);
     try {
-      const res: CommandResponse = await api.sendCommand(device.id, { name });
+      const res: CommandResponse = await api.sendCommand(device.id, { name, args });
       setResult({
         ok: true,
         command: name,
