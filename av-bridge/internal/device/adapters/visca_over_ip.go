@@ -337,23 +337,26 @@ func (a *ViscaOverIPAdapter) SendCommand(ctx context.Context, cmd device.Command
 	}, nil
 }
 
-// isJogCommand reports whether cmd is one of the directional drive
-// commands we auto-stop after a short duration.
+// isJogCommand reports whether cmd is one of the continuous-drive
+// commands we auto-stop after a short duration. Covers pan/tilt AND
+// zoom — both use the same "move-then-stop" click UX, they just target
+// different subsystems so they have different stop packets.
 func isJogCommand(name string) bool {
 	switch name {
-	case "pan_left", "pan_right", "tilt_up", "tilt_down":
+	case "pan_left", "pan_right", "tilt_up", "tilt_down",
+		"zoom_tele", "zoom_wide":
 		return true
 	}
 	return false
 }
 
-// sendJog is the "move a bit, then stop" execution used by the directional
-// commands. Sends the drive packet, sleeps duration_ms (default 250, clamp
-// 50-2000), then sends Pan-Tilt Stop. If duration_ms=0 the stop is
-// skipped — that's the escape hatch for a press-and-hold UI upstream that
-// will send its own stop.
+// sendJog is the "move a bit, then stop" execution used by the
+// continuous-drive commands. Sends the drive packet, sleeps
+// duration_ms (default 250, clamp 50-2000), then sends the matching
+// stop. If duration_ms=0 the stop is skipped — that's the escape hatch
+// for a press-and-hold UI upstream that will send its own stop.
 func (a *ViscaOverIPAdapter) sendJog(ctx context.Context, cmd device.CommandRequest) (*device.CommandResponse, error) {
-	drive, err := a.buildJogDrive(cmd)
+	drive, stop, err := a.buildJogDrive(cmd)
 	if err != nil {
 		return nil, err
 	}
@@ -384,7 +387,7 @@ func (a *ViscaOverIPAdapter) sendJog(ctx context.Context, cmd device.CommandRequ
 	}
 	stopCtx, stopCancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer stopCancel()
-	if _, err := a.roundTrip(stopCtx, viscaPayloadCommand, viscaPanTiltStop()); err != nil {
+	if _, err := a.roundTrip(stopCtx, viscaPayloadCommand, stop); err != nil {
 		return nil, fmt.Errorf("jog stop failed: %w", err)
 	}
 	return &device.CommandResponse{
@@ -393,21 +396,39 @@ func (a *ViscaOverIPAdapter) sendJog(ctx context.Context, cmd device.CommandRequ
 	}, nil
 }
 
-// buildJogDrive returns the drive payload for a jog command name.
-// Speeds honour cmd.Args["pan_speed"] / ["tilt_speed"] and default to a
-// gentle 8/8 — noticeable but not disorienting on a click.
-func (a *ViscaOverIPAdapter) buildJogDrive(cmd device.CommandRequest) ([]byte, error) {
+// buildJogDrive returns the drive payload AND the matching stop payload
+// for a jog command. Pan/tilt drives are halted by viscaPanTiltStop
+// (targets the pan-tilt subsystem); zoom drives are halted by
+// viscaZoomStop (targets the zoom lens). Sending the wrong stop is a
+// no-op on the wrong subsystem, so pairing them here keeps sendJog
+// subsystem-agnostic.
+//
+// Speed defaults chosen for a comfortable click nudge:
+//   pan_speed / tilt_speed: 8  (of max 0x18/0x14 = 24/20)
+//   zoom_speed:             4  (of max 7)
+// Callers can override via cmd.Args on a per-invocation basis.
+func (a *ViscaOverIPAdapter) buildJogDrive(cmd device.CommandRequest) (drive, stop []byte, err error) {
 	switch cmd.Name {
 	case "pan_left":
-		return viscaPanTilt(argByte(cmd.Args, "pan_speed", 8), 0, viscaPanLeft, viscaTiltStop), nil
+		return viscaPanTilt(argByte(cmd.Args, "pan_speed", 8), 0, viscaPanLeft, viscaTiltStop),
+			viscaPanTiltStop(), nil
 	case "pan_right":
-		return viscaPanTilt(argByte(cmd.Args, "pan_speed", 8), 0, viscaPanRight, viscaTiltStop), nil
+		return viscaPanTilt(argByte(cmd.Args, "pan_speed", 8), 0, viscaPanRight, viscaTiltStop),
+			viscaPanTiltStop(), nil
 	case "tilt_up":
-		return viscaPanTilt(0, argByte(cmd.Args, "tilt_speed", 8), viscaPanStop, viscaTiltUp), nil
+		return viscaPanTilt(0, argByte(cmd.Args, "tilt_speed", 8), viscaPanStop, viscaTiltUp),
+			viscaPanTiltStop(), nil
 	case "tilt_down":
-		return viscaPanTilt(0, argByte(cmd.Args, "tilt_speed", 8), viscaPanStop, viscaTiltDown), nil
+		return viscaPanTilt(0, argByte(cmd.Args, "tilt_speed", 8), viscaPanStop, viscaTiltDown),
+			viscaPanTiltStop(), nil
+	case "zoom_tele":
+		return viscaZoomTele(argByte(cmd.Args, "speed", 4)),
+			viscaZoomStop(), nil
+	case "zoom_wide":
+		return viscaZoomWide(argByte(cmd.Args, "speed", 4)),
+			viscaZoomStop(), nil
 	}
-	return nil, fmt.Errorf("visca_over_ip: not a jog command: %q", cmd.Name)
+	return nil, nil, fmt.Errorf("visca_over_ip: not a jog command: %q", cmd.Name)
 }
 
 func clampDuration(v, lo, hi int) int {
@@ -427,11 +448,9 @@ func (a *ViscaOverIPAdapter) buildCommand(cmd device.CommandRequest) ([]byte, er
 	case "power_off":
 		return viscaPower(false), nil
 	case "zoom_stop":
+		// Explicit stop — useful when duration_ms=0 was used on
+		// zoom_tele/zoom_wide to run the lens in continuous mode.
 		return viscaZoomStop(), nil
-	case "zoom_tele":
-		return viscaZoomTele(argByte(cmd.Args, "speed", 4)), nil
-	case "zoom_wide":
-		return viscaZoomWide(argByte(cmd.Args, "speed", 4)), nil
 	case "zoom_direct":
 		return viscaZoomDirect(argUint16(cmd.Args, "position", 0)), nil
 	case "focus_auto":
