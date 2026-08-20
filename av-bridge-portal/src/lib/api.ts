@@ -87,11 +87,68 @@ function authHeaders(): Record<string, string> {
   return headers;
 }
 
+// Statuses that indicate a transient upstream failure (Amplify SSR
+// nginx has returned before the backend saw the request, so retrying
+// is safe even for POST/PATCH — no risk of duplicate side-effect).
+// Any other 4xx/5xx is deterministic and shouldn't be retried.
+const RETRYABLE_STATUS = new Set([502, 503, 504]);
+
+// Small exponential backoff schedule between retries. Two retries =
+// three total attempts, covering an Amplify SSR cold start (~1-3s)
+// without making a genuinely-down backend feel any slower for the user.
+const RETRY_DELAYS_MS = [200, 500];
+
+async function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(resolve, ms);
+    if (signal) {
+      const onAbort = () => {
+        clearTimeout(t);
+        reject(new DOMException("Aborted", "AbortError"));
+      };
+      if (signal.aborted) return onAbort();
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
+  });
+}
+
+// fetchWithRetry wraps fetch() with a small retry loop for the RETRYABLE_STATUS
+// set. Retries the underlying fetch AND network-error throws (fetch itself
+// rejects on TCP resets, which the Amplify SSR nginx sometimes triggers
+// alongside its 502 body). AbortSignal is honoured — an aborted request
+// stops retrying immediately.
+async function fetchWithRetry(
+  url: string,
+  init: RequestInit & { signal?: AbortSignal }
+): Promise<Response> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
+    try {
+      const res = await fetch(url, init);
+      if (!RETRYABLE_STATUS.has(res.status) || attempt === RETRY_DELAYS_MS.length) {
+        return res;
+      }
+      // Drain the body so the connection can be reused.
+      try {
+        await res.text();
+      } catch {}
+    } catch (err) {
+      lastErr = err;
+      // Don't retry on abort — the caller wants to stop.
+      if (err instanceof DOMException && err.name === "AbortError") throw err;
+      if (attempt === RETRY_DELAYS_MS.length) throw err;
+    }
+    await sleep(RETRY_DELAYS_MS[attempt], init.signal);
+  }
+  // Unreachable — the loop above always returns or throws.
+  throw lastErr ?? new Error("fetchWithRetry: exhausted attempts");
+}
+
 async function request<T>(
   path: string,
   init?: RequestInit & { signal?: AbortSignal }
 ): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
+  const res = await fetchWithRetry(`${API_BASE}${path}`, {
     ...init,
     headers: {
       "Content-Type": "application/json",
@@ -129,7 +186,7 @@ async function requestText(
   path: string,
   init?: RequestInit & { signal?: AbortSignal }
 ): Promise<string> {
-  const res = await fetch(`${API_BASE}${path}`, {
+  const res = await fetchWithRetry(`${API_BASE}${path}`, {
     ...init,
     headers: { ...authHeaders(), ...(init?.headers ?? {}) },
     cache: "no-store",
