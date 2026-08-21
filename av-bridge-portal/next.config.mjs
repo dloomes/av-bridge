@@ -12,6 +12,11 @@ const nextConfig = {
       { source: "/healthz", destination: `${AV_BRIDGE}/healthz` },
       { source: "/metrics", destination: `${AV_BRIDGE}/metrics` },
       { source: "/api/v1/:path*", destination: `${AV_BRIDGE}/api/v1/:path*` },
+      // Pre-login endpoints. Reachable via the app origin so client-side
+      // calls from /sign-in, /forgot-password and /reset-password stay
+      // same-origin (no CORS preflight). Same forwarding pattern as
+      // /api/v1/*; auth is enforced at the cloud, not the proxy.
+      { source: "/public/:path*", destination: `${AV_BRIDGE}/public/:path*` },
     ];
   },
 };
