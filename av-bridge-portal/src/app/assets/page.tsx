@@ -25,7 +25,7 @@ import { useToast } from "@/components/toast";
 import { UserMenu } from "@/components/user-menu";
 import { useSession } from "@/hooks/useSession";
 import { api } from "@/lib/api";
-import { isAdmin } from "@/lib/session";
+import { hasPermission } from "@/lib/session";
 import type {
   AssetCategory,
   AssetRow,
@@ -94,7 +94,11 @@ function categoryLabel(c: AssetCategory): string {
 
 export default function AssetsPage() {
   const session = useSession();
-  const admin = isAdmin(session.user?.role) || !!session.user?.is_vendor;
+  // "admin" name preserved for callsite compatibility; now sourced from
+  // asset.crud so a custom role with that permission gets the same asset
+  // CRUD affordances the admin role gets. Vendor bypass keeps the same
+  // shape (whoami expands the vendor set, so hasPermission covers it too).
+  const admin = hasPermission(session.user, "asset.crud");
   const { toast } = useToast();
 
   const [assets, setAssets] = useState<AssetRow[] | null>(null);

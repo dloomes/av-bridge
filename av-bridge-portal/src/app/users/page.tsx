@@ -18,7 +18,7 @@ import { Modal } from "@/components/modal";
 import { UserMenu } from "@/components/user-menu";
 import { useSession } from "@/hooks/useSession";
 import { api } from "@/lib/api";
-import { isAdmin } from "@/lib/session";
+import { hasPermission } from "@/lib/session";
 import { formatRelative } from "@/lib/utils";
 import type {
   BuildingRow,
@@ -36,7 +36,14 @@ import type {
 // advisory. Setting it does no harm — nothing enforces it yet.
 export default function UsersPage() {
   const session = useSession();
-  const admin = isAdmin(session.user?.role);
+  // "admin" flag now = "can perform any user management action".
+  // Individual buttons still hit backend perms — this is a page-level
+  // "show the management chrome" gate, not per-action authorisation.
+  const admin =
+    hasPermission(session.user, "user.create") ||
+    hasPermission(session.user, "user.update") ||
+    hasPermission(session.user, "user.delete") ||
+    hasPermission(session.user, "user.reset_password");
   const [users, setUsers] = useState<UserRow[] | null>(null);
   const [roles, setRoles] = useState<RoleRow[] | null>(null);
   const [buildings, setBuildings] = useState<BuildingRow[] | null>(null);

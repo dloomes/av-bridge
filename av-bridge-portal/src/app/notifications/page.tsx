@@ -20,7 +20,7 @@ import { Modal } from "@/components/modal";
 import { UserMenu } from "@/components/user-menu";
 import { useSession } from "@/hooks/useSession";
 import { api } from "@/lib/api";
-import { canOperate, isAdmin } from "@/lib/session";
+import { hasPermission } from "@/lib/session";
 import { formatRelative } from "@/lib/utils";
 import type {
   AlertSeverity,
@@ -49,8 +49,12 @@ const TARGET_PLACEHOLDER: Record<NotificationChannelType, string> = {
 
 export default function NotificationsPage() {
   const session = useSession();
-  const admin = isAdmin(session.user?.role);
-  const operator = canOperate(session.user?.role);
+  // Variable names preserved for callsite compatibility. "admin" now
+  // means "can CRUD notification channels"; "operator" means "can fire
+  // a test message" — the finer split that already existed on the
+  // backend, now honoured by the UI.
+  const admin = hasPermission(session.user, "notification.crud");
+  const operator = hasPermission(session.user, "notification.test");
   const [channels, setChannels] = useState<NotificationChannel[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [editing, setEditing] = useState<{ mode: "create" | "edit"; existing?: NotificationChannel } | null>(null);

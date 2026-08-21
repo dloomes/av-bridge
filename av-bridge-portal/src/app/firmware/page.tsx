@@ -19,7 +19,7 @@ import { Modal } from "@/components/modal";
 import { UserMenu } from "@/components/user-menu";
 import { useSession } from "@/hooks/useSession";
 import { api } from "@/lib/api";
-import { isAdmin } from "@/lib/session";
+import { hasPermission } from "@/lib/session";
 import type { FirmwareRow, FirmwareTargetBody } from "@/lib/types";
 
 // FirmwarePage — read-only summary that stops lying about "outdated".
@@ -46,7 +46,7 @@ interface ModelGroup {
 
 export default function FirmwarePage() {
   const session = useSession();
-  const admin = isAdmin(session.user?.role);
+  const admin = hasPermission(session.user, "firmware_target.crud");
   const [rows, setRows] = useState<FirmwareRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<{ make: string; model: string } | null>(null);

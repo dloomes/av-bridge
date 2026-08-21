@@ -18,7 +18,7 @@ import { UserMenu } from "@/components/user-menu";
 import { usePolling } from "@/hooks/usePolling";
 import { useSession } from "@/hooks/useSession";
 import { api } from "@/lib/api";
-import { canOperate } from "@/lib/session";
+import { hasPermission } from "@/lib/session";
 import { formatRelative } from "@/lib/utils";
 import type { AlertItem, AlertSeverity, AlertStatus } from "@/lib/types";
 
@@ -51,7 +51,11 @@ const STATUS_LABEL: Record<AlertStatus, string> = {
 
 export default function AlertsPage() {
   const session = useSession();
-  const operator = canOperate(session.user?.role);
+  // "operator" name kept for callsite compatibility; sourced from the two
+  // real permissions the ack/resolve buttons trigger. Either perm is
+  // enough to show the row's action UI — the individual button then
+  // becomes a no-op on the backend side if that specific perm is missing.
+  const operator = hasPermission(session.user, "alert.acknowledge") || hasPermission(session.user, "alert.resolve");
   const [tab, setTab] = useState<Tab>("open");
   const [busy, setBusy] = useState<Record<string, "ack" | "resolve" | undefined>>({});
   const [error, setError] = useState<string | null>(null);

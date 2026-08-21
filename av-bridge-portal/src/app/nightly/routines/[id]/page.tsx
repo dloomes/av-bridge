@@ -9,7 +9,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { useToast } from "@/components/toast";
 import { useSession } from "@/hooks/useSession";
 import { api } from "@/lib/api";
-import { isAdmin } from "@/lib/session";
+import { hasPermission } from "@/lib/session";
 import type { NightlyRoutineDetail, UpdateNightlyRoutineBody } from "@/lib/api";
 import {
   RoutineBuilder,
@@ -34,7 +34,7 @@ export default function RoutineEditorPage() {
   const params = useParams<{ id: string }>();
   const routineID = params.id;
   const session = useSession();
-  const canManage = isAdmin(session.user?.role) || !!session.user?.is_vendor;
+  const canManage = hasPermission(session.user, "nightly.manage");
   const router = useRouter();
   const { toast } = useToast();
 

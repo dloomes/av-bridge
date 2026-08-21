@@ -17,7 +17,7 @@ import { Modal } from "@/components/modal";
 import { useToast } from "@/components/toast";
 import { useSession } from "@/hooks/useSession";
 import { api } from "@/lib/api";
-import { isAdmin } from "@/lib/session";
+import { hasPermission } from "@/lib/session";
 import { CANONICAL_ROUTINE } from "./canonical";
 import type { NightlyRoutineRow } from "@/lib/api";
 
@@ -30,7 +30,7 @@ import type { NightlyRoutineRow } from "@/lib/api";
 
 export default function RoutinesListPage() {
   const session = useSession();
-  const canManage = isAdmin(session.user?.role) || !!session.user?.is_vendor;
+  const canManage = hasPermission(session.user, "nightly.manage");
   const router = useRouter();
   const { toast } = useToast();
 

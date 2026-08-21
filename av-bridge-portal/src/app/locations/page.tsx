@@ -24,7 +24,7 @@ import {
 import { ConfirmDelete, type ImpactCounts } from "@/components/confirm-delete";
 import { useSession } from "@/hooks/useSession";
 import { api } from "@/lib/api";
-import { isAdmin } from "@/lib/session";
+import { hasPermission } from "@/lib/session";
 import type { BuildingRow, DeviceSummary, NamedRow } from "@/lib/types";
 
 interface ModalState {
@@ -44,7 +44,7 @@ interface DeleteState {
 
 export default function LocationsPage() {
   const session = useSession();
-  const admin = isAdmin(session.user?.role);
+  const admin = hasPermission(session.user, "hierarchy.crud");
   const [regions, setRegions] = useState<NamedRow[] | null>(null);
   const [locations, setLocations] = useState<NamedRow[] | null>(null);
   const [buildings, setBuildings] = useState<BuildingRow[] | null>(null);

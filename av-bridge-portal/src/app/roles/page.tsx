@@ -21,7 +21,7 @@ import {
   PERMISSIONS_BY_CATEGORY,
   KNOWN_PERMISSION_KEYS,
 } from "@/lib/permissions";
-import { isAdmin } from "@/lib/session";
+import { hasPermission } from "@/lib/session";
 import { formatRelative } from "@/lib/utils";
 import type { CreateRoleBody, RoleRow, UpdateRoleBody } from "@/lib/types";
 
@@ -41,7 +41,7 @@ import type { CreateRoleBody, RoleRow, UpdateRoleBody } from "@/lib/types";
 // role_permissions ships in a follow-up slice.
 export default function RolesPage() {
   const session = useSession();
-  const admin = isAdmin(session.user?.role);
+  const admin = hasPermission(session.user, "role.crud");
   const [roles, setRoles] = useState<RoleRow[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [editing, setEditing] = useState<{ mode: "create" | "edit" | "view"; existing?: RoleRow } | null>(null);

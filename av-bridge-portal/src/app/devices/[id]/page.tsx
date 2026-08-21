@@ -30,7 +30,7 @@ import { AuditFeed } from "@/components/audit-feed";
 import { usePolling } from "@/hooks/usePolling";
 import { useSession } from "@/hooks/useSession";
 import { api, API_BASE, currentToken } from "@/lib/api";
-import { canOperate, isAdmin } from "@/lib/session";
+import { hasPermission } from "@/lib/session";
 import type { DeviceDetail, Telemetry } from "@/lib/types";
 import { formatRelative } from "@/lib/utils";
 
@@ -39,8 +39,13 @@ export default function DeviceDetailPage() {
   const id = decodeURIComponent(params.id);
   const router = useRouter();
   const session = useSession();
-  const admin = isAdmin(session.user?.role);
-  const operator = canOperate(session.user?.role);
+  // Per-action permission gates — each mirrors the backend requirement so a
+  // custom role like "DSO" gets the exact set of controls it's authorised
+  // for. Vendors bypass at the backend and whoami returns the full expanded
+  // set, so hasPermission still resolves true here.
+  const canEditDevice   = hasPermission(session.user, "device.crud");
+  const canReconnect    = hasPermission(session.user, "reconnect.device");
+  const canSendCommand  = hasPermission(session.user, "command.device");
 
   const [device, setDevice] = useState<DeviceDetail | null>(null);
   const [deviceError, setDeviceError] = useState<Error | null>(null);
@@ -205,7 +210,7 @@ export default function DeviceDetailPage() {
             <RefreshCcw className="h-3.5 w-3.5" />
             Refresh
           </Button>
-          {operator && (
+          {canReconnect && (
             <Button
               variant="outline"
               size="sm"
@@ -216,7 +221,7 @@ export default function DeviceDetailPage() {
               {reconnecting ? "Reconnecting…" : "Reconnect"}
             </Button>
           )}
-          {admin && (
+          {canEditDevice && (
             <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}>
               <Pencil className="h-3.5 w-3.5" />
               Edit
@@ -226,7 +231,7 @@ export default function DeviceDetailPage() {
             <History className="h-3.5 w-3.5" />
             Activity
           </Button>
-          {admin && (
+          {canEditDevice && (
             <Button
               variant="outline"
               size="sm"
@@ -311,7 +316,7 @@ export default function DeviceDetailPage() {
                 telemetry.error?.message ?? telemetry.data?.error ?? undefined
               }
             />
-            {operator && <CommandPanel device={device} telemetry={telemetry.data} />}
+            {canSendCommand && <CommandPanel device={device} telemetry={telemetry.data} />}
           </div>
           <aside className="space-y-6">
             <EventFeed

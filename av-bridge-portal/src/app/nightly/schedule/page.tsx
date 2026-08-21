@@ -19,7 +19,7 @@ import { Modal } from "@/components/modal";
 import { useToast } from "@/components/toast";
 import { useSession } from "@/hooks/useSession";
 import { api } from "@/lib/api";
-import { isAdmin } from "@/lib/session";
+import { hasPermission } from "@/lib/session";
 import type {
   NightlyRoutineRow,
   NightlyRoomRow,
@@ -95,7 +95,7 @@ function isFutureDate(iso: string): boolean {
 
 export default function NightlySchedulePage() {
   const session = useSession();
-  const canManage = isAdmin(session.user?.role) || !!session.user?.is_vendor;
+  const canManage = hasPermission(session.user, "nightly.manage");
   const { toast } = useToast();
 
   // ── Customer default state ─────────────────────────────────────────────
