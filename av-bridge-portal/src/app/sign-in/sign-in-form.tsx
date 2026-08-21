@@ -159,6 +159,31 @@ function initialsFor(name: string): string {
   return joined || "·";
 }
 
+// SupportLink renders the customer-configured support contact as a real
+// link when it parses as one (email or URL) and as plain text otherwise.
+// Very forgiving — we don't want to block the vendor from typing "call
+// the ops desk on ext 4321" as their support line.
+function SupportLink({ value }: { value: string }) {
+  const trimmed = value.trim();
+  if (/^https?:\/\//i.test(trimmed)) {
+    return (
+      <a href={trimmed} className="text-foreground underline decoration-border underline-offset-2 hover:decoration-primary">
+        {trimmed}
+      </a>
+    );
+  }
+  // Loose email test — good enough to trigger mailto: without pretending to
+  // be a full RFC 5322 validator.
+  if (/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(trimmed)) {
+    return (
+      <a href={`mailto:${trimmed}`} className="text-foreground underline decoration-border underline-offset-2 hover:decoration-primary">
+        {trimmed}
+      </a>
+    );
+  }
+  return <span className="text-foreground">{trimmed}</span>;
+}
+
 interface SignInFormProps {
   branding: Branding;
   // True on the unbranded portal origin (app.<env>.involvecloud.com) —
@@ -265,7 +290,18 @@ export function SignInForm({ branding, showVendorSSO = false }: SignInFormProps)
       className="min-h-screen grid md:grid-cols-[1.1fr_1fr] bg-background text-foreground"
     >
       {/* ═══════════ LEFT: brand + hero (dark) ═══════════ */}
-      <section className="relative overflow-hidden bg-sidebar text-sidebar-foreground px-8 py-10 md:px-16 md:py-14 flex flex-col justify-between min-h-[380px] md:min-h-0">
+      <section
+        className="relative overflow-hidden bg-sidebar text-sidebar-foreground px-8 py-10 md:px-16 md:py-14 flex flex-col justify-between min-h-[380px] md:min-h-0"
+        style={
+          branding.sign_in_hero_data_url
+            ? {
+                backgroundImage: `linear-gradient(180deg, hsl(var(--sidebar) / 0.72), hsl(var(--sidebar) / 0.88)), url("${branding.sign_in_hero_data_url}")`,
+                backgroundSize: "cover",
+                backgroundPosition: "center",
+              }
+            : undefined
+        }
+      >
         {/* Accent halo bleeding from bottom-right */}
         <div
           aria-hidden="true"
@@ -405,8 +441,8 @@ export function SignInForm({ branding, showVendorSSO = false }: SignInFormProps)
               {heroTitle}
             </h2>
             <p className="mb-8 max-w-[340px] text-sm text-muted-foreground">
-              Enter your credentials to access your organisation&rsquo;s
-              dashboard.
+              {branding.sign_in_message?.trim() ||
+                "Enter your credentials to access your organisation’s dashboard."}
             </p>
 
             {error && (
@@ -513,7 +549,7 @@ export function SignInForm({ branding, showVendorSSO = false }: SignInFormProps)
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="text-[13.5px] font-medium text-foreground">
-                    Sign in with Microsoft
+                    {branding.sso_button_label?.trim() || "Sign in with Microsoft"}
                   </div>
                   <div className="mt-0.5 font-mono text-[10.5px] uppercase tracking-wider text-muted-foreground">
                     Vendor · Entra ID
@@ -555,6 +591,13 @@ export function SignInForm({ branding, showVendorSSO = false }: SignInFormProps)
                     Coming soon · contact ops to enrol
                   </div>
                 </div>
+              </div>
+            )}
+
+            {branding.support_contact?.trim() && (
+              <div className="mt-6 border-t border-border pt-4 text-center text-xs text-muted-foreground">
+                Need help?{" "}
+                <SupportLink value={branding.support_contact.trim()} />
               </div>
             )}
 

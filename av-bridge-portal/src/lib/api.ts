@@ -240,18 +240,30 @@ export interface LoginResponse {
 
 // Per-tenant branding, returned by GET /api/v1/branding. All fields are
 // optional — an unbranded customer sends {} and the portal falls back to
-// its default look. logo_data_url is a "data:image/...;base64,..." URI
-// so it can be used directly as an <img src=>.
+// its default look. Image fields (logo, hero) are "data:image/...;base64,..."
+// URIs so they can be used directly as <img src=>.
+//
+// Sign-in surface fields (sign_in_message, support_contact, sso_button_label,
+// sign_in_hero_data_url) are surfaced pre-auth by /public/branding?slug=…
+// so they render on the sign-in page before the user has credentials.
 export interface Branding {
   display_name?: string;
   accent_color?: string;
   logo_data_url?: string;
+  sign_in_message?: string;
+  support_contact?: string;
+  sso_button_label?: string;
+  sign_in_hero_data_url?: string;
 }
 
 export interface UpdateBrandingBody {
   display_name?: string;
   accent_color?: string;
   logo_data_url?: string;
+  sign_in_message?: string;
+  support_contact?: string;
+  sso_button_label?: string;
+  sign_in_hero_data_url?: string;
 }
 
 // Nightly Room Readiness schedule — the customer-level default row. See

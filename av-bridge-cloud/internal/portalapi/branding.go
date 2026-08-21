@@ -25,6 +25,19 @@ import (
 // SVG mark. Anything larger belongs in blob storage, not on the row.
 const maxLogoBytes = 256 * 1024
 
+// Cap on the sign-in hero image. Wider than the logo cap because a hero
+// covers the whole viewport; 1MB fits a well-compressed 1600x900 JPEG or a
+// WebP. Anything larger really needs a blob store.
+const maxHeroBytes = 1024 * 1024
+
+// Length caps for the free-text branding fields — mirror the CHECK
+// constraints in migration 0032 so validation is consistent both layers.
+const (
+	maxSignInMessageLen = 500
+	maxSupportContact   = 200
+	maxSSOButtonLabel   = 60
+)
+
 // Allowlist for content types we're willing to render as an <img src=> on
 // the portal. SVG is included but callers should be aware SVGs can carry
 // script — the handler strips <script> tags before storing (defense in
@@ -36,6 +49,15 @@ var allowedLogoTypes = map[string]bool{
 	"image/svg+xml": true,
 }
 
+// Hero image types — WebP added since it's the modern default for
+// full-viewport imagery. SVG still allowed; the same <script> strip runs.
+var allowedHeroTypes = map[string]bool{
+	"image/png":     true,
+	"image/jpeg":    true,
+	"image/svg+xml": true,
+	"image/webp":    true,
+}
+
 // GetBranding — GET /api/v1/branding
 //
 // Returns the caller's tenant branding. All four fields are optional; a
@@ -43,23 +65,36 @@ var allowedLogoTypes = map[string]bool{
 // its default look.
 func (h *Handler) GetBranding(w http.ResponseWriter, r *http.Request) {
 	type out struct {
-		DisplayName string `json:"display_name,omitempty"`
-		AccentColor string `json:"accent_color,omitempty"`
-		LogoDataURL string `json:"logo_data_url,omitempty"`
+		DisplayName     string `json:"display_name,omitempty"`
+		AccentColor     string `json:"accent_color,omitempty"`
+		LogoDataURL     string `json:"logo_data_url,omitempty"`
+		SignInMessage   string `json:"sign_in_message,omitempty"`
+		SupportContact  string `json:"support_contact,omitempty"`
+		SSOButtonLabel  string `json:"sso_button_label,omitempty"`
+		SignInHeroURL   string `json:"sign_in_hero_data_url,omitempty"`
 	}
 	var o out
 	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
 		var (
-			displayName *string
-			accentColor *string
-			logoType    *string
-			logo        []byte
+			displayName    *string
+			accentColor    *string
+			logoType       *string
+			logo           []byte
+			signInMessage  *string
+			supportContact *string
+			ssoButtonLabel *string
+			heroType       *string
+			hero           []byte
 		)
 		p, _ := portalauth.From(r.Context())
 		if err := tx.QueryRow(ctx, `
-			SELECT display_name, accent_color, logo_content_type, logo
+			SELECT display_name, accent_color, logo_content_type, logo,
+			       sign_in_message, support_contact, sso_button_label,
+			       sign_in_hero_content_type, sign_in_hero
 			  FROM customers WHERE id = $1`, p.CustomerID,
-		).Scan(&displayName, &accentColor, &logoType, &logo); err != nil {
+		).Scan(&displayName, &accentColor, &logoType, &logo,
+			&signInMessage, &supportContact, &ssoButtonLabel,
+			&heroType, &hero); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				// No customer row visible under RLS — treat as unbranded so
 				// the sign-in page still renders. Shouldn't happen for a
@@ -78,6 +113,19 @@ func (h *Handler) GetBranding(w http.ResponseWriter, r *http.Request) {
 			o.LogoDataURL = "data:" + *logoType + ";base64," +
 				base64.StdEncoding.EncodeToString(logo)
 		}
+		if signInMessage != nil {
+			o.SignInMessage = *signInMessage
+		}
+		if supportContact != nil {
+			o.SupportContact = *supportContact
+		}
+		if ssoButtonLabel != nil {
+			o.SSOButtonLabel = *ssoButtonLabel
+		}
+		if heroType != nil && len(hero) > 0 {
+			o.SignInHeroURL = "data:" + *heroType + ";base64," +
+				base64.StdEncoding.EncodeToString(hero)
+		}
 		return nil
 	})
 	if !ok {
@@ -90,9 +138,13 @@ func (h *Handler) GetBranding(w http.ResponseWriter, r *http.Request) {
 // payload" from "clear to null". An explicit empty string clears the field;
 // omitting it leaves the stored value alone.
 type updateBrandingReq struct {
-	DisplayName *string `json:"display_name,omitempty"`
-	AccentColor *string `json:"accent_color,omitempty"`
-	LogoDataURL *string `json:"logo_data_url,omitempty"`
+	DisplayName      *string `json:"display_name,omitempty"`
+	AccentColor      *string `json:"accent_color,omitempty"`
+	LogoDataURL      *string `json:"logo_data_url,omitempty"`
+	SignInMessage    *string `json:"sign_in_message,omitempty"`
+	SupportContact   *string `json:"support_contact,omitempty"`
+	SSOButtonLabel   *string `json:"sso_button_label,omitempty"`
+	SignInHeroURL    *string `json:"sign_in_hero_data_url,omitempty"`
 }
 
 // UpdateBranding — PATCH /api/v1/branding
@@ -143,6 +195,47 @@ func (h *Handler) UpdateBranding(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Sign-in hero decode — separate allowlist + size cap from the logo.
+	var (
+		heroBytes []byte
+		heroType  string
+		heroClear bool
+	)
+	if req.SignInHeroURL != nil {
+		if *req.SignInHeroURL == "" {
+			heroClear = true
+		} else {
+			b, ct, err := decodeImageDataURL(*req.SignInHeroURL, allowedHeroTypes, maxHeroBytes, "sign-in hero")
+			if err != nil {
+				writeErr(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			heroBytes = b
+			heroType = ct
+		}
+	}
+
+	// Length validation for the free-text fields. Trim first so a caller
+	// posting all whitespace hits the same "clear" path as an empty string.
+	if req.SignInMessage != nil {
+		if len(strings.TrimSpace(*req.SignInMessage)) > maxSignInMessageLen {
+			writeErr(w, http.StatusBadRequest, fmt.Sprintf("sign_in_message exceeds %d chars", maxSignInMessageLen))
+			return
+		}
+	}
+	if req.SupportContact != nil {
+		if len(strings.TrimSpace(*req.SupportContact)) > maxSupportContact {
+			writeErr(w, http.StatusBadRequest, fmt.Sprintf("support_contact exceeds %d chars", maxSupportContact))
+			return
+		}
+	}
+	if req.SSOButtonLabel != nil {
+		if len(strings.TrimSpace(*req.SSOButtonLabel)) > maxSSOButtonLabel {
+			writeErr(w, http.StatusBadRequest, fmt.Sprintf("sso_button_label exceeds %d chars", maxSSOButtonLabel))
+			return
+		}
+	}
+
 	p, _ := portalauth.From(r.Context())
 
 	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
@@ -179,6 +272,39 @@ func (h *Handler) UpdateBranding(w http.ResponseWriter, r *http.Request) {
 				add("logo_content_type", logoType)
 			}
 		}
+		if req.SignInMessage != nil {
+			v := strings.TrimSpace(*req.SignInMessage)
+			if v == "" {
+				add("sign_in_message", nil)
+			} else {
+				add("sign_in_message", v)
+			}
+		}
+		if req.SupportContact != nil {
+			v := strings.TrimSpace(*req.SupportContact)
+			if v == "" {
+				add("support_contact", nil)
+			} else {
+				add("support_contact", v)
+			}
+		}
+		if req.SSOButtonLabel != nil {
+			v := strings.TrimSpace(*req.SSOButtonLabel)
+			if v == "" {
+				add("sso_button_label", nil)
+			} else {
+				add("sso_button_label", v)
+			}
+		}
+		if req.SignInHeroURL != nil {
+			if heroClear {
+				add("sign_in_hero", nil)
+				add("sign_in_hero_content_type", nil)
+			} else {
+				add("sign_in_hero", heroBytes)
+				add("sign_in_hero_content_type", heroType)
+			}
+		}
 		if len(set) == 0 {
 			// No-op PATCH — treat as success rather than 400 so the portal
 			// can send a save even when nothing changed.
@@ -188,7 +314,7 @@ func (h *Handler) UpdateBranding(w http.ResponseWriter, r *http.Request) {
 		if _, err := tx.Exec(ctx, sql, args...); err != nil {
 			return err
 		}
-		// Audit — capture what changed (not the logo bytes themselves).
+		// Audit — capture what changed (not the image bytes themselves).
 		auditPayload := map[string]any{}
 		if req.DisplayName != nil {
 			auditPayload["display_name"] = *req.DisplayName
@@ -201,6 +327,22 @@ func (h *Handler) UpdateBranding(w http.ResponseWriter, r *http.Request) {
 				auditPayload["logo"] = "cleared"
 			} else {
 				auditPayload["logo"] = fmt.Sprintf("uploaded (%d bytes, %s)", len(logoBytes), logoType)
+			}
+		}
+		if req.SignInMessage != nil {
+			auditPayload["sign_in_message"] = strings.TrimSpace(*req.SignInMessage)
+		}
+		if req.SupportContact != nil {
+			auditPayload["support_contact"] = strings.TrimSpace(*req.SupportContact)
+		}
+		if req.SSOButtonLabel != nil {
+			auditPayload["sso_button_label"] = strings.TrimSpace(*req.SSOButtonLabel)
+		}
+		if req.SignInHeroURL != nil {
+			if heroClear {
+				auditPayload["sign_in_hero"] = "cleared"
+			} else {
+				auditPayload["sign_in_hero"] = fmt.Sprintf("uploaded (%d bytes, %s)", len(heroBytes), heroType)
 			}
 		}
 		return audit.Record(ctx, tx, p.CustomerID, stampActor(p, audit.Entry{
@@ -237,37 +379,48 @@ func isValidHexColor(s string) bool {
 	return true
 }
 
-// decodeLogoDataURL parses a "data:<content-type>;base64,<payload>" string.
-// Returns the raw bytes, the content-type, or an error suitable for a 400.
-// Enforces content-type allowlist + size cap. Also strips <script> tags
+// decodeLogoDataURL parses the logo upload. Delegates to decodeImageDataURL
+// with the logo-specific allowlist + size cap; kept as its own name so the
+// call site reads intent-first.
+func decodeLogoDataURL(dataURL string) ([]byte, string, error) {
+	return decodeImageDataURL(dataURL, allowedLogoTypes, maxLogoBytes, "logo")
+}
+
+// decodeImageDataURL parses a "data:<content-type>;base64,<payload>" string
+// against a caller-supplied allowlist and byte cap. Returns the raw bytes,
+// the content-type, or an error suitable for a 400. Strips <script> tags
 // from SVG bytes before returning — cheap defense in depth against an SVG
 // with embedded JavaScript getting rendered anywhere that isn't an <img>.
-func decodeLogoDataURL(dataURL string) ([]byte, string, error) {
+//
+// The `field` argument prefixes error messages so a 400 reads
+// "sign-in hero exceeds 1048576 byte cap" rather than a generic "image
+// exceeds cap" that would leave a caller guessing which upload failed.
+func decodeImageDataURL(dataURL string, allowed map[string]bool, maxBytes int, field string) ([]byte, string, error) {
 	const prefix = "data:"
 	if !strings.HasPrefix(dataURL, prefix) {
-		return nil, "", errors.New("logo_data_url must be a data URI")
+		return nil, "", fmt.Errorf("%s must be a data URI", field)
 	}
 	rest := dataURL[len(prefix):]
 	semi := strings.Index(rest, ";")
 	comma := strings.Index(rest, ",")
 	if semi < 0 || comma < 0 || comma < semi {
-		return nil, "", errors.New("logo_data_url is malformed")
+		return nil, "", fmt.Errorf("%s data URI is malformed", field)
 	}
 	contentType := rest[:semi]
 	encoding := rest[semi+1 : comma]
 	payload := rest[comma+1:]
 	if encoding != "base64" {
-		return nil, "", errors.New("logo_data_url must be base64-encoded")
+		return nil, "", fmt.Errorf("%s must be base64-encoded", field)
 	}
-	if !allowedLogoTypes[contentType] {
-		return nil, "", errors.New("logo content type must be image/png, image/jpeg, or image/svg+xml")
+	if !allowed[contentType] {
+		return nil, "", fmt.Errorf("%s content type %q not allowed", field, contentType)
 	}
 	raw, err := base64.StdEncoding.DecodeString(payload)
 	if err != nil {
-		return nil, "", errors.New("logo_data_url is not valid base64")
+		return nil, "", fmt.Errorf("%s is not valid base64", field)
 	}
-	if len(raw) > maxLogoBytes {
-		return nil, "", fmt.Errorf("logo exceeds %d byte cap", maxLogoBytes)
+	if len(raw) > maxBytes {
+		return nil, "", fmt.Errorf("%s exceeds %d byte cap", field, maxBytes)
 	}
 	if contentType == "image/svg+xml" {
 		raw = stripSVGScripts(raw)

@@ -37,11 +37,18 @@ func NewHandler(store *db.Store, log *slog.Logger) *Handler {
 
 // brandingResp matches the portal's Branding type in
 // av-bridge-portal/src/lib/api.ts so the same client code paths that
-// consume /api/v1/branding can consume this endpoint too.
+// consume /api/v1/branding can consume this endpoint too. Includes the
+// sign-in surface fields added in migration 0032 so a customer's tagline,
+// support line, hero image and SSO button label all render at the
+// unauthenticated sign-in page.
 type brandingResp struct {
-	DisplayName string `json:"display_name,omitempty"`
-	AccentColor string `json:"accent_color,omitempty"`
-	LogoDataURL string `json:"logo_data_url,omitempty"`
+	DisplayName    string `json:"display_name,omitempty"`
+	AccentColor    string `json:"accent_color,omitempty"`
+	LogoDataURL    string `json:"logo_data_url,omitempty"`
+	SignInMessage  string `json:"sign_in_message,omitempty"`
+	SupportContact string `json:"support_contact,omitempty"`
+	SSOButtonLabel string `json:"sso_button_label,omitempty"`
+	SignInHeroURL  string `json:"sign_in_hero_data_url,omitempty"`
 }
 
 // GetBranding — GET /public/branding?slug=<slug>
@@ -73,15 +80,25 @@ func (h *Handler) GetBranding(w http.ResponseWriter, r *http.Request) {
 	var (
 		displayName, accentColor, logoType string
 		logo                               []byte
+		signInMessage, supportContact      string
+		ssoButtonLabel                     string
+		heroType                           string
+		hero                               []byte
 	)
 	err := h.store.AdminPool().QueryRow(r.Context(), `
 		SELECT COALESCE(display_name,''),
 		       COALESCE(accent_color,''),
 		       COALESCE(logo_content_type,''),
-		       logo
+		       logo,
+		       COALESCE(sign_in_message,''),
+		       COALESCE(support_contact,''),
+		       COALESCE(sso_button_label,''),
+		       COALESCE(sign_in_hero_content_type,''),
+		       sign_in_hero
 		  FROM customers
 		 WHERE slug = $1`, slug,
-	).Scan(&displayName, &accentColor, &logoType, &logo)
+	).Scan(&displayName, &accentColor, &logoType, &logo,
+		&signInMessage, &supportContact, &ssoButtonLabel, &heroType, &hero)
 	if err != nil {
 		if !errors.Is(err, pgx.ErrNoRows) {
 			// Log the anomaly but keep the response uniform so the client
@@ -93,12 +110,19 @@ func (h *Handler) GetBranding(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := brandingResp{
-		DisplayName: displayName,
-		AccentColor: accentColor,
+		DisplayName:    displayName,
+		AccentColor:    accentColor,
+		SignInMessage:  signInMessage,
+		SupportContact: supportContact,
+		SSOButtonLabel: ssoButtonLabel,
 	}
 	if logoType != "" && len(logo) > 0 {
 		resp.LogoDataURL = "data:" + logoType + ";base64," +
 			base64.StdEncoding.EncodeToString(logo)
+	}
+	if heroType != "" && len(hero) > 0 {
+		resp.SignInHeroURL = "data:" + heroType + ";base64," +
+			base64.StdEncoding.EncodeToString(hero)
 	}
 	_ = json.NewEncoder(w).Encode(resp)
 }

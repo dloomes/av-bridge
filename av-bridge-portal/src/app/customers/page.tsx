@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   ArrowRight,
   Building2,
+  Palette,
   Pencil,
   Plus,
   Search,
@@ -63,6 +64,15 @@ export default function CustomersPage() {
   const actAs = (customerId: string) => {
     setScope(customerId);
     router.push("/");
+  };
+
+  // Edit-branding drops the vendor into the branding page scoped to this
+  // customer, so the same page a customer admin sees for their own tenant
+  // is what the vendor edits on the customer's behalf. The branding page
+  // shows a banner + "back to customers" button while scope is set.
+  const editBranding = (customerId: string) => {
+    setScope(customerId);
+    router.push("/settings/branding");
   };
 
   return (
@@ -159,7 +169,7 @@ export default function CustomersPage() {
                 <div>Entra tenant</div>
                 <div className="text-right pr-2">Devices</div>
                 <div className="text-right pr-2">Collectors</div>
-                <div className="w-[128px]" />
+                <div className="w-[168px]" />
               </div>
               {filtered.map((c) => (
                 <CustomerRow
@@ -167,6 +177,7 @@ export default function CustomersPage() {
                   c={c}
                   onActAs={() => actAs(c.id)}
                   onEdit={() => setEditing(c)}
+                  onEditBranding={() => editBranding(c.id)}
                 />
               ))}
             </Card>
@@ -195,10 +206,12 @@ function CustomerRow({
   c,
   onActAs,
   onEdit,
+  onEditBranding,
 }: {
   c: HelpdeskOverviewItem;
   onActAs: () => void;
   onEdit: () => void;
+  onEditBranding: () => void;
 }) {
   const slugHost = c.slug ? `${c.slug}.uat.involvecloud.com` : null;
   return (
@@ -226,11 +239,21 @@ function CustomerRow({
       </div>
       <div className="text-right pr-2 tabular-nums">{c.devices_total}</div>
       <div className="text-right pr-2 tabular-nums">{c.collectors_total}</div>
-      <div className="flex items-center gap-1 justify-end w-[128px]">
+      <div className="flex items-center gap-1 justify-end w-[168px]">
+        <Button
+          size="icon"
+          variant="ghost"
+          aria-label="Edit branding"
+          title="Edit branding"
+          onClick={onEditBranding}
+        >
+          <Palette className="h-3.5 w-3.5" />
+        </Button>
         <Button
           size="icon"
           variant="ghost"
           aria-label="Edit customer"
+          title="Edit name / slug"
           onClick={onEdit}
         >
           <Pencil className="h-3.5 w-3.5" />
