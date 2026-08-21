@@ -2,7 +2,7 @@
 // have their own routing purpose (app = universal portal, api = cloud API,
 // helpdesk = vendor console, etc.) and colliding a customer with any of
 // these would break auth or DNS. Kept as a Set for O(1) membership.
-const RESERVED_SLUGS = new Set<string>([
+export const RESERVED_SLUGS = new Set<string>([
   "app",
   "www",
   "api",
@@ -21,7 +21,23 @@ const RESERVED_SLUGS = new Set<string>([
 // 3-50 chars, [a-z0-9-], must start AND end alphanumeric. A hostname
 // label that doesn't match can't have been a legitimate slug, so we
 // bail rather than issue a lookup for it.
-const SLUG_RE = /^[a-z0-9][a-z0-9-]{1,48}[a-z0-9]$/;
+export const SLUG_RE = /^[a-z0-9][a-z0-9-]{1,48}[a-z0-9]$/;
+
+// validateSlug returns a human-readable error string when the input isn't
+// an acceptable slug, or null when it's fine (including the empty string,
+// which means "no slug set"). Shared between the create-customer and
+// edit-customer forms so both surface identical validation.
+export function validateSlug(raw: string): string | null {
+  const s = raw.trim().toLowerCase();
+  if (s === "") return null;
+  if (!SLUG_RE.test(s)) {
+    return "3-50 characters, lowercase letters/digits/hyphens only, start and end alphanumeric.";
+  }
+  if (RESERVED_SLUGS.has(s)) {
+    return `"${s}" is reserved for platform routing. Pick something else.`;
+  }
+  return null;
+}
 
 /**
  * Extracts a customer slug from a request hostname, or null when the

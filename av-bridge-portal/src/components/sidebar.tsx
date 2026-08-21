@@ -7,6 +7,7 @@ import {
   BarChart3,
   Bell,
   Boxes,
+  Building2,
   Cpu,
   HeartPulse,
   History,
@@ -89,7 +90,10 @@ const SECTIONS: NavSection[] = [
   {
     title: "Vendor",
     vendorOnly: true,
-    items: [{ href: "/helpdesk", label: "Helpdesk", icon: ShieldCheck }],
+    items: [
+      { href: "/customers", label: "Customers", icon: Building2 },
+      { href: "/helpdesk", label: "Helpdesk", icon: ShieldCheck },
+    ],
   },
   {
     title: "System",
