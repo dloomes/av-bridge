@@ -585,7 +585,7 @@ export function SignInForm({ branding, showVendorSSO = false }: SignInFormProps)
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="text-[13.5px] font-medium text-foreground">
-                    Single sign-on via Entra ID
+                    {branding.sso_button_label?.trim() || "Single sign-on via Entra ID"}
                   </div>
                   <div className="mt-0.5 font-mono text-[10.5px] uppercase tracking-wider text-muted-foreground">
                     Coming soon · contact ops to enrol
