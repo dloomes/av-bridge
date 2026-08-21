@@ -2,8 +2,8 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useState } from "react";
-import { CheckCircle2 } from "lucide-react";
+import { Suspense, useEffect, useState } from "react";
+import { CheckCircle2, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
 
@@ -16,7 +16,28 @@ import { api } from "@/lib/api";
 // "your link looks broken" message before the user types anything.
 const MIN_PASSWORD_LEN = 12;
 
+// The page is split so useSearchParams() sits inside a Suspense boundary —
+// Next.js requires that for the static-prerender step at build time. Without
+// the boundary the Amplify build fails with "should be wrapped in a suspense
+// boundary" and the page falls back to a client-side render only.
 export default function ResetPasswordPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-background text-foreground flex items-center justify-center">
+          <Loader2
+            className="h-5 w-5 animate-spin text-muted-foreground"
+            aria-hidden="true"
+          />
+        </div>
+      }
+    >
+      <ResetPasswordForm />
+    </Suspense>
+  );
+}
+
+function ResetPasswordForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const token = searchParams.get("token")?.trim() ?? "";
