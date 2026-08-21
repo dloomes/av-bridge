@@ -105,14 +105,20 @@ func (h *Handler) RequestReset(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) processResetRequest(ctx context.Context, email, ip, ua string) {
 	// Lookup user + customer slug in one round-trip. LEFT JOIN so vendor
 	// users (no customer_id) still return a row with an empty slug.
-	// disabled_at check keeps deactivated accounts out of the reset flow;
-	// same rule the login handler applies.
+	// Gates:
+	//   - disabled_at IS NULL — deactivated accounts don't reset (same as
+	//     the login handler).
+	//   - password_hash IS NOT NULL — migration 0031 made this nullable
+	//     for Entra-only users. Those users don't have a password to
+	//     reset; sending them an "add password" mail would confuse the
+	//     mental model AND circumvent the SSO-only intent. Silent skip
+	//     preserves anti-enumeration (still returns 202 above).
 	var (
-		userID        string
-		fullName      string
-		customerSlug  string
-		customerName  string
-		accentColor   string
+		userID       string
+		fullName     string
+		customerSlug string
+		customerName string
+		accentColor  string
 	)
 	err := h.store.AdminPool().QueryRow(ctx, `
 		SELECT u.id::text,
@@ -124,14 +130,21 @@ func (h *Handler) processResetRequest(ctx context.Context, email, ip, ua string)
 		  LEFT JOIN customers c ON c.id = u.customer_id
 		 WHERE lower(u.email) = $1
 		   AND u.disabled_at IS NULL
+		   AND u.password_hash IS NOT NULL
 		 LIMIT 1`, email).
 		Scan(&userID, &fullName, &customerSlug, &customerName, &accentColor)
 	if err != nil {
 		if !errors.Is(err, pgx.ErrNoRows) {
 			h.log.Warn("password reset: user lookup failed",
 				"error", err)
+		} else {
+			// pgx.ErrNoRows here means one of: unknown email, disabled
+			// account, or Entra-only user. Log without the email so we
+			// can distinguish "no work done" from "send failed" without
+			// leaking which addresses have accounts. Anti-enumeration
+			// still holds — the 202 response was flushed unconditionally.
+			h.log.Info("password reset: no eligible local-auth user for request")
 		}
-		// Silent success — no user, no email. Prevents enumeration.
 		return
 	}
 
