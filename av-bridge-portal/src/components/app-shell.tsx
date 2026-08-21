@@ -18,11 +18,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const session = useSession();
   const router = useRouter();
   const pathname = usePathname();
-  // Also treat /sign-in/callback (the Entra landing page) as an unauthed
-  // route — the callback is where the token gets written, so requiring a
-  // token to see it would deadlock the flow. Any future /sign-in/* pages
-  // (forgot-password, etc.) fall under the same rule.
-  const onSignIn = pathname === "/sign-in" || pathname.startsWith("/sign-in/");
+  // Auth-optional routes: shown without the sidebar chrome and reachable
+  // without a session. /sign-in itself, /sign-in/callback (Entra lands the
+  // token here, so requiring a token would deadlock the flow), plus the
+  // self-serve password reset pair — /forgot-password (start of flow) and
+  // /reset-password?token=... (email link landing). Signed-in users hit
+  // these too (e.g. someone clicks their own reset link mid-session) and
+  // still get the full-screen unauthed layout, which matches the intent.
+  const onSignIn =
+    pathname === "/sign-in" ||
+    pathname.startsWith("/sign-in/") ||
+    pathname === "/forgot-password" ||
+    pathname === "/reset-password";
 
   useEffect(() => {
     if (!session.hydrated) return;
