@@ -7,6 +7,8 @@ import { Sidebar } from "@/components/sidebar";
 import { BrandingProvider } from "@/components/branding-provider";
 import { ToastProvider } from "@/components/toast";
 import { useSession } from "@/hooks/useSession";
+import { api } from "@/lib/api";
+import { signIn } from "@/lib/session";
 
 // AppShell owns the top-level chrome decision: sign-in screen gets the full
 // viewport with no sidebar; every other route gets the sidebar + content
@@ -28,6 +30,36 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       router.replace("/sign-in");
     }
   }, [session.hydrated, session.token, onSignIn, router]);
+
+  // Session self-heal: an older stored user has no permissions[]. Fetch
+  // /whoami once so hasPermission() has data to work with, without making
+  // the user sign out and back in whenever the session shape evolves.
+  // Fires only when there IS a token — no auth attempt on the sign-in
+  // page. If whoami fails (expired token etc.) we leave the session alone
+  // and let the next authed request return 401 → sign-in redirect.
+  useEffect(() => {
+    if (!session.hydrated || !session.token || onSignIn) return;
+    if (session.user?.permissions !== undefined) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const who = await api.whoami();
+        if (cancelled) return;
+        signIn(session.token as string, {
+          user_id: who.user_id,
+          email: who.email,
+          name: who.name,
+          customer_id: who.customer_id,
+          role: who.role,
+          is_vendor: who.is_vendor,
+          permissions: who.permissions ?? [],
+        });
+      } catch {}
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [session.hydrated, session.token, session.user, onSignIn]);
 
   if (onSignIn) {
     // Sign-in still gets ToastProvider so login errors can surface as
