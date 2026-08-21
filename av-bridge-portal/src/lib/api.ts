@@ -484,6 +484,55 @@ export const api = {
       }
     }),
 
+  // Public — pre-login. Always resolves; the server returns 202 regardless
+  // of whether the email matches a user so we can't accidentally surface
+  // enumeration info to the caller. Only throws on transport errors.
+  requestPasswordReset: async (
+    email: string,
+    signal?: AbortSignal
+  ): Promise<void> => {
+    await fetch(`${API_BASE}/public/password-reset/request`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email }),
+      signal,
+      cache: "no-store",
+    });
+  },
+
+  // Public — completes a reset started via the email link. Bubbles the
+  // server's error body up so the form can render "link expired or already
+  // used" vs "password shorter than 12 characters" copy without probing.
+  completePasswordReset: async (
+    token: string,
+    new_password: string,
+    signal?: AbortSignal
+  ): Promise<void> => {
+    const res = await fetch(`${API_BASE}/public/password-reset/complete`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token, new_password }),
+      signal,
+      cache: "no-store",
+    });
+    if (!res.ok) {
+      let body = "";
+      try {
+        body = await res.text();
+      } catch {}
+      let msg = `${res.status} ${res.statusText}`;
+      if (body) {
+        try {
+          const parsed = JSON.parse(body) as { error?: string };
+          if (parsed.error) msg = parsed.error;
+        } catch {
+          msg = body;
+        }
+      }
+      throw new ApiError(msg, res.status);
+    }
+  },
+
   whoami: (signal?: AbortSignal) =>
     request<WhoamiResponse>("/api/v1/whoami", { signal }),
 

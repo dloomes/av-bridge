@@ -44,12 +44,14 @@ type BridgeConfigRoutes struct {
 	PutConfig http.HandlerFunc
 }
 
-// PublicRoutes bundles endpoints that need to serve without auth. Today only
-// /public/branding, used by the sign-in page hosted at
-// <slug>.<env>.involvecloud.com so the customer's logo/colours/name render
-// before any credentials exist. Nil fields skip registration.
+// PublicRoutes bundles endpoints that need to serve without auth: they run
+// before a user has any credentials to hand over (branding on the sign-in
+// page) or as part of establishing new credentials (password reset). Nil
+// fields skip registration. All are intentionally under /public/*.
 type PublicRoutes struct {
-	Branding http.HandlerFunc
+	Branding              http.HandlerFunc
+	PasswordResetRequest  http.HandlerFunc
+	PasswordResetComplete http.HandlerFunc
 }
 
 // NewServer wires the routes. Go 1.22 method-aware patterns keep us dependency-free.
@@ -72,6 +74,12 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 	// is intentionally readable without a token.
 	if public.Branding != nil {
 		mux.Handle("GET /public/branding", public.Branding)
+	}
+	if public.PasswordResetRequest != nil {
+		mux.Handle("POST /public/password-reset/request", public.PasswordResetRequest)
+	}
+	if public.PasswordResetComplete != nil {
+		mux.Handle("POST /public/password-reset/complete", public.PasswordResetComplete)
 	}
 
 	if portal != nil {

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Shield, ShieldCheck, ShieldOff, User } from "lucide-react";
@@ -478,12 +479,12 @@ export function SignInForm({ branding, showVendorSSO = false }: SignInFormProps)
                   className="flex items-baseline justify-between font-mono text-[10.5px] uppercase tracking-[0.12em] text-muted-foreground transition-colors group-focus-within:text-primary"
                 >
                   <span>Password</span>
-                  <a
-                    href="#"
+                  <Link
+                    href="/forgot-password"
                     className="font-sans text-xs normal-case tracking-normal text-foreground/70 no-underline border-b border-border hover:text-primary hover:border-primary transition-colors"
                   >
                     Forgot?
-                  </a>
+                  </Link>
                 </label>
                 <input
                   id="password"

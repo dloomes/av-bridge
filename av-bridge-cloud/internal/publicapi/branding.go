@@ -15,10 +15,12 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 
 	"github.com/dloomes/av-bridge-cloud/internal/db"
+	"github.com/dloomes/av-bridge-cloud/internal/notify"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -29,10 +31,50 @@ var slugRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,48}[a-z0-9]$`)
 type Handler struct {
 	store *db.Store
 	log   *slog.Logger
+	// smtp is the outbound relay used by the password reset flow. Zero
+	// value (Host == "") flips the reset sender into dry-run mode: the
+	// intended email is logged and the request path still returns 202,
+	// matching how the alerts dispatcher degrades on missing SMTP.
+	smtp notify.SMTPConfig
+	// portalBaseURL is the unbranded portal origin (e.g.
+	// "https://app.uat.involvecloud.com"). Reset URLs for vendor users
+	// and for customers with no configured slug point here. For customer
+	// users with a slug, the origin is derived by swapping the first
+	// hostname label to the slug (see resetOriginFor). Empty in dev.
+	portalBaseURL string
 }
 
-func NewHandler(store *db.Store, log *slog.Logger) *Handler {
-	return &Handler{store: store, log: log}
+// NewHandler wires the public (unauthenticated) portal endpoints. smtp
+// and portalBaseURL are only used by the password reset flow; branding
+// works without them.
+func NewHandler(store *db.Store, log *slog.Logger, smtp notify.SMTPConfig, portalBaseURL string) *Handler {
+	return &Handler{store: store, log: log, smtp: smtp, portalBaseURL: portalBaseURL}
+}
+
+// resetOriginFor returns the portal origin a reset URL should point to
+// for a given customer slug. Empty slug (vendor or unslugged customer)
+// falls back to the base portal URL. For a valid slug, the first label
+// of the base URL's host is replaced with the slug — so
+// "https://app.uat.involvecloud.com" + "acme" → "https://acme.uat.involvecloud.com".
+// Returns "" when portalBaseURL is unset (dev): callers use the raw
+// path in that case so the email still contains a usable link.
+func (h *Handler) resetOriginFor(slug string) string {
+	if h.portalBaseURL == "" {
+		return ""
+	}
+	if slug == "" {
+		return strings.TrimRight(h.portalBaseURL, "/")
+	}
+	u, err := url.Parse(h.portalBaseURL)
+	if err != nil || u.Host == "" {
+		return strings.TrimRight(h.portalBaseURL, "/")
+	}
+	hostParts := strings.SplitN(u.Host, ".", 2)
+	if len(hostParts) < 2 {
+		return strings.TrimRight(h.portalBaseURL, "/")
+	}
+	u.Host = slug + "." + hostParts[1]
+	return strings.TrimRight(u.String(), "/")
 }
 
 // brandingResp matches the portal's Branding type in

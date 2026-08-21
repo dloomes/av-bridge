@@ -247,9 +247,27 @@ func main() {
 
 	// Pre-login public endpoints — served without auth so the sign-in page
 	// hosted at <slug>.<env>.involvecloud.com can render the customer's
-	// logo/colours before a token exists. See internal/publicapi.
-	publicH := publicapi.NewHandler(store, log)
-	publicRoutes := api.PublicRoutes{Branding: publicH.GetBranding}
+	// logo/colours before a token exists, and so a user who has forgotten
+	// their password can trigger a reset without a session. See
+	// internal/publicapi. The SMTP config + portal base URL are the same
+	// values the alerts dispatcher and Entra callback use, so a single
+	// pair of env vars keeps reset URLs and reset emails coherent with
+	// the rest of the platform.
+	publicH := publicapi.NewHandler(store, log,
+		notify.SMTPConfig{
+			Host:     cfg.SMTPHost,
+			Port:     cfg.SMTPPort,
+			Username: cfg.SMTPUsername,
+			Password: cfg.SMTPPassword,
+			From:     cfg.SMTPFrom,
+		},
+		cfg.EntraPortalBaseURL,
+	)
+	publicRoutes := api.PublicRoutes{
+		Branding:              publicH.GetBranding,
+		PasswordResetRequest:  publicH.RequestReset,
+		PasswordResetComplete: publicH.CompleteReset,
+	}
 
 	srv := api.NewServer(cfg.ListenAddr, h, adminH, portalRoutes, bridgeRoutes, bridgeConfigRoutes, publicRoutes, log)
 
