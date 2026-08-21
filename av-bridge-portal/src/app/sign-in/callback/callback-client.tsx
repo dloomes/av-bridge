@@ -52,6 +52,7 @@ export function SignInCallbackClient() {
           customer_id: who.customer_id,
           role: who.role,
           is_vendor: who.is_vendor,
+          permissions: who.permissions ?? [],
         });
         router.replace("/");
       } catch {

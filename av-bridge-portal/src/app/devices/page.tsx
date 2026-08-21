@@ -8,8 +8,10 @@ import {
   CircleAlert,
   HelpCircle,
   Loader2,
+  Plus,
   Radio,
   Search,
+  Send,
   Signal,
   X,
 } from "lucide-react";
@@ -18,8 +20,13 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { UserMenu } from "@/components/user-menu";
+import { Modal } from "@/components/modal";
+import { DeviceForm } from "@/components/device-form";
+import { BulkCommandForm } from "@/components/bulk-command";
+import { useSession } from "@/hooks/useSession";
 import { usePolling } from "@/hooks/usePolling";
 import { api } from "@/lib/api";
+import { hasPermission } from "@/lib/session";
 import type {
   CollectorSummary,
   DeviceStatus,
@@ -66,11 +73,21 @@ type TypeFilter = "all" | DeviceType;
 export default function DevicesPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const session = useSession();
   const collectorFilter = searchParams.get("collector_id") ?? "";
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
+  const [createOpen, setCreateOpen] = useState(false);
+  const [bulkOpen, setBulkOpen] = useState(false);
+
+  // Backend gates POST /devices on device.crud and the bulk command endpoint
+  // on command.bulk — mirror those here so the buttons only appear when the
+  // action would actually work (vendor bypass expands to the full set on
+  // whoami so it Just Works for helpdesk callers).
+  const canCreateDevices = hasPermission(session.user, "device.crud");
+  const canSendBulk = hasPermission(session.user, "command.bulk");
 
   const fetcher = useCallback(
     (signal: AbortSignal) =>
@@ -155,9 +172,49 @@ export default function DevicesPage() {
               </p>
             </div>
           </div>
-          <UserMenu />
+          <div className="flex items-center gap-2">
+            {canSendBulk && (
+              <Button variant="outline" size="sm" onClick={() => setBulkOpen(true)}>
+                <Send className="h-3.5 w-3.5" />
+                Send to group
+              </Button>
+            )}
+            {canCreateDevices && (
+              <Button size="sm" onClick={() => setCreateOpen(true)}>
+                <Plus className="h-3.5 w-3.5" />
+                New device
+              </Button>
+            )}
+            <UserMenu />
+          </div>
         </div>
       </header>
+
+      <Modal
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        title="New device"
+      >
+        <DeviceForm
+          mode="create"
+          onCancel={() => setCreateOpen(false)}
+          onSuccess={() => {
+            setCreateOpen(false);
+            refresh();
+          }}
+        />
+      </Modal>
+
+      <Modal
+        open={bulkOpen}
+        onClose={() => setBulkOpen(false)}
+        title="Send command to devices"
+      >
+        <BulkCommandForm
+          devices={data ?? []}
+          onClose={() => setBulkOpen(false)}
+        />
+      </Modal>
 
       <div className="flex-1 px-6 py-6">
         <div className="mx-auto max-w-6xl space-y-4">

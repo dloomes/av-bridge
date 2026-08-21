@@ -15,6 +15,12 @@ export interface SessionUser {
   customer_id?: string;
   role: string;
   is_vendor?: boolean;
+  // Effective permissions returned by /whoami. For vendor callers the
+  // backend expands the "all permissions" bypass into the concrete set,
+  // so UI code can just probe hasPermission() without a separate branch.
+  // Missing / empty means "no permissions loaded yet" — the sidebar
+  // treats gated items as hidden until whoami hydrates them.
+  permissions?: string[];
 }
 
 const TOKEN_KEY = "av-bridge.session.token";
@@ -91,6 +97,19 @@ export function isAdmin(role?: string | null): boolean {
 }
 export function canOperate(role?: string | null): boolean {
   return role === "admin" || role === "operator";
+}
+
+// hasPermission reports whether the current session's effective permission
+// list contains the given key. This is the mechanism the sidebar and
+// action buttons use to hide UI a custom role can't act on — falls
+// through to the backend for the actual authorisation.
+//
+// While permissions are still loading (whoami not yet returned) this
+// returns false — better to briefly hide an item and reveal it than
+// flash a button the user isn't allowed to press.
+export function hasPermission(user: SessionUser | null | undefined, key: string): boolean {
+  if (!user?.permissions) return false;
+  return user.permissions.includes(key);
 }
 
 // buildMockToken assembles a `mock.<base64-json>` token from claims. Used by

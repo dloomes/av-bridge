@@ -8,9 +8,7 @@ import {
   ChevronRight,
   CircleSlash,
   DoorOpen,
-  Plus,
   RefreshCcw,
-  Send,
   Server,
   Wifi,
 } from "lucide-react";
@@ -21,16 +19,12 @@ import { StatusBadge } from "@/components/status-badge";
 import { DeviceCard } from "@/components/device-card";
 import { useBranding } from "@/components/branding-provider";
 import { FleetHealth } from "@/components/fleet-health";
-import { Modal } from "@/components/modal";
-import { DeviceForm } from "@/components/device-form";
-import { BulkCommandForm } from "@/components/bulk-command";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { usePolling } from "@/hooks/usePolling";
 import { useSession } from "@/hooks/useSession";
 import { api } from "@/lib/api";
-import { canOperate, isAdmin } from "@/lib/session";
 import { formatRelative, groupDevicesByLocation } from "@/lib/utils";
 import type {
   CollectorSummary,
@@ -85,10 +79,6 @@ export default function DashboardPage() {
       return next;
     });
 
-  const [createOpen, setCreateOpen] = useState(false);
-  const [bulkOpen, setBulkOpen] = useState(false);
-  const operator = canOperate(session.user?.role);
-
   const isLoading = fleet.loading && !fleet.data;
   const hasError = !!(fleet.error || devices.error);
 
@@ -129,49 +119,10 @@ export default function DashboardPage() {
             <RefreshCcw className="h-3.5 w-3.5" />
             Refresh
           </Button>
-          {operator && (
-            <Button variant="outline" size="sm" onClick={() => setBulkOpen(true)}>
-              <Send className="h-3.5 w-3.5" />
-              Send to group
-            </Button>
-          )}
-          {isAdmin(session.user?.role) && (
-            <Button size="sm" onClick={() => setCreateOpen(true)}>
-              <Plus className="h-3.5 w-3.5" />
-              New device
-            </Button>
-          )}
           <ConnectionIndicator />
           <UserMenu />
         </div>
       </header>
-
-      <Modal
-        open={createOpen}
-        onClose={() => setCreateOpen(false)}
-        title="New device"
-      >
-        <DeviceForm
-          mode="create"
-          onCancel={() => setCreateOpen(false)}
-          onSuccess={() => {
-            setCreateOpen(false);
-            devices.refresh();
-            fleet.refresh();
-          }}
-        />
-      </Modal>
-
-      <Modal
-        open={bulkOpen}
-        onClose={() => setBulkOpen(false)}
-        title="Send command to devices"
-      >
-        <BulkCommandForm
-          devices={devices.data ?? []}
-          onClose={() => setBulkOpen(false)}
-        />
-      </Modal>
 
       <div className="flex-1 min-h-0 overflow-y-auto">
         <div className="grid gap-6 p-6 lg:grid-cols-[minmax(0,1fr)_360px]">

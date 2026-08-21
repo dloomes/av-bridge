@@ -204,6 +204,11 @@ export interface WhoamiResponse {
   customer_id?: string;
   role: string;
   is_vendor?: boolean;
+  // Effective permission keys for the caller. For vendor accounts the
+  // backend expands the "all permissions" bypass, so this list is always
+  // authoritative for UI gating.
+  permissions?: string[];
+  building_scope_ids?: string[];
 }
 
 export interface HelpdeskCustomer {

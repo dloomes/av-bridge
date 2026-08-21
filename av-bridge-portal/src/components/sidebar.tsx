@@ -26,14 +26,19 @@ import { useBranding } from "@/components/branding-provider";
 import { usePolling } from "@/hooks/usePolling";
 import { useSession } from "@/hooks/useSession";
 import { api } from "@/lib/api";
-import { isAdmin } from "@/lib/session";
+import { hasPermission, isAdmin } from "@/lib/session";
 import { cn } from "@/lib/utils";
 import type { AlertsSummary } from "@/lib/types";
 
 // NavItem groups per-section entries with an optional badge. Grouping keeps
 // the sidebar scannable — one glance says "this is Monitor, that is Manage."
-// The role_visibility field gates vendor-only sections (Helpdesk) without
-// leaking the concept to non-vendor users.
+//
+// requires: string — the permission key needed for this item to appear. If
+// omitted the item is always visible for signed-in users. Keys match the
+// backend catalogue in av-bridge-cloud/internal/portalauth/permissions.go
+// (and its portal mirror in src/lib/permissions.ts). Roles authored on the
+// /roles page pick from that same list, so a custom role like "DSO" with
+// only view.dashboard sees Monitor items but not Users, Roles, etc.
 interface NavItem {
   href: string;
   label: string;
@@ -41,6 +46,7 @@ interface NavItem {
   badgeKey?: "alerts_open";
   vendorOnly?: boolean;
   adminOnly?: boolean;
+  requires?: string;
   matchExact?: boolean; // pathname must equal href (used only for "/")
 }
 
@@ -54,25 +60,29 @@ const SECTIONS: NavSection[] = [
   {
     title: "Monitor",
     items: [
+      // Overview stays ungated — it's the landing page, and hiding it
+      // would leave a permission-limited user with no visible home.
+      // The page itself renders a helpful empty state if the role has
+      // no other reads.
       { href: "/", label: "Overview", icon: LayoutDashboard, matchExact: true },
-      { href: "/alerts", label: "Alerts", icon: Bell, badgeKey: "alerts_open" },
-      { href: "/collectors", label: "Collectors", icon: Server },
-      { href: "/devices", label: "Devices", icon: Radio },
-      { href: "/adapters", label: "Adapters", icon: Puzzle },
-      { href: "/reports", label: "Reports", icon: BarChart3 },
-      { href: "/firmware", label: "Firmware", icon: Cpu },
-      { href: "/audit", label: "Activity", icon: History },
+      { href: "/alerts", label: "Alerts", icon: Bell, badgeKey: "alerts_open", requires: "view.dashboard" },
+      { href: "/collectors", label: "Collectors", icon: Server, requires: "view.dashboard" },
+      { href: "/devices", label: "Devices", icon: Radio, requires: "view.dashboard" },
+      { href: "/adapters", label: "Adapters", icon: Puzzle, requires: "view.dashboard" },
+      { href: "/reports", label: "Reports", icon: BarChart3, requires: "view.reports" },
+      { href: "/firmware", label: "Firmware", icon: Cpu, requires: "view.firmware" },
+      { href: "/audit", label: "Activity", icon: History, requires: "view.audit" },
     ],
   },
   {
     title: "Manage",
     items: [
-      { href: "/locations", label: "Locations", icon: MapPin },
-      { href: "/assets", label: "Assets", icon: Boxes },
-      { href: "/nightly/schedule", label: "Room Readiness", icon: Moon },
-      { href: "/users", label: "Users", icon: Users },
-      { href: "/roles", label: "Roles", icon: KeyRound },
-      { href: "/notifications", label: "Notifications", icon: Bell },
+      { href: "/locations", label: "Locations", icon: MapPin, requires: "hierarchy.crud" },
+      { href: "/assets", label: "Assets", icon: Boxes, requires: "view.assets" },
+      { href: "/nightly/schedule", label: "Room Readiness", icon: Moon, requires: "nightly.view" },
+      { href: "/users", label: "Users", icon: Users, requires: "view.users" },
+      { href: "/roles", label: "Roles", icon: KeyRound, requires: "role.crud" },
+      { href: "/notifications", label: "Notifications", icon: Bell, requires: "view.notifications" },
       { href: "/settings/branding", label: "Branding", icon: Palette, adminOnly: true },
     ],
   },
@@ -143,6 +153,7 @@ export function Sidebar() {
               {section.items
                 .filter((it) => !it.vendorOnly || isVendor)
                 .filter((it) => !it.adminOnly || canManageBranding)
+                .filter((it) => !it.requires || isVendor || hasPermission(session.user, it.requires))
                 .map((item) => {
                   const active = item.matchExact
                     ? pathname === item.href

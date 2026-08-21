@@ -213,6 +213,7 @@ export function SignInForm({ branding, showVendorSSO = false }: SignInFormProps)
           customer_id: who.customer_id,
           role: who.role,
           is_vendor: who.is_vendor,
+          permissions: who.permissions ?? [],
         });
       } catch {}
       router.replace("/");
