@@ -58,31 +58,54 @@ function BuildingBlock({ group }: { group: BuildingGroup }) {
     return (
       <div className="space-y-2">
         {group.rooms.map((r) => (
-          <RoomBlock key={r.room} room={r.room} devices={r.devices} />
+          <RoomBlock
+            key={r.room}
+            room={r.room}
+            building={null}
+            devices={r.devices}
+          />
         ))}
       </div>
     );
   }
+  const buildingName = group.building;
   return (
     <div>
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-center gap-2 px-2 py-1 text-xs font-semibold uppercase tracking-wide text-sidebar-foreground/60 hover:text-sidebar-foreground"
-      >
-        <ChevronRight
-          className={cn(
-            "h-3 w-3 transition-transform",
-            open && "rotate-90"
-          )}
-        />
-        <Building2 className="h-3.5 w-3.5" />
-        <span className="truncate">{group.building}</span>
-      </button>
+      <div className="flex w-full items-center gap-1 px-2 py-1 text-xs font-semibold uppercase tracking-wide text-sidebar-foreground/60">
+        {/* Chevron is its own button so the label link + expand toggle don't
+            steal each other's clicks. Small hit target on purpose — the
+            main affordance is the label, which navigates. */}
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          aria-label={open ? `Collapse ${buildingName}` : `Expand ${buildingName}`}
+          className="rounded p-0.5 hover:bg-white/10 hover:text-sidebar-foreground"
+        >
+          <ChevronRight
+            className={cn(
+              "h-3 w-3 transition-transform",
+              open && "rotate-90"
+            )}
+          />
+        </button>
+        <Link
+          href={`/devices?building=${encodeURIComponent(buildingName)}`}
+          className="flex min-w-0 flex-1 items-center gap-2 hover:text-sidebar-foreground"
+          title={`Show devices in ${buildingName}`}
+        >
+          <Building2 className="h-3.5 w-3.5" />
+          <span className="truncate">{buildingName}</span>
+        </Link>
+      </div>
       {open && (
         <div className="mt-1 space-y-2 pl-3">
           {group.rooms.map((r) => (
-            <RoomBlock key={r.room} room={r.room} devices={r.devices} />
+            <RoomBlock
+              key={r.room}
+              room={r.room}
+              building={buildingName}
+              devices={r.devices}
+            />
           ))}
         </div>
       )}
@@ -92,31 +115,46 @@ function BuildingBlock({ group }: { group: BuildingGroup }) {
 
 function RoomBlock({
   room,
+  building,
   devices,
 }: {
   room: string;
+  building: string | null;
   devices: DeviceSummary[];
 }) {
   const [open, setOpen] = useState(true);
+  const params = new URLSearchParams();
+  if (building) params.set("building", building);
+  params.set("room", room);
+  const roomHref = `/devices?${params.toString()}`;
   return (
     <div>
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-center gap-2 px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-sidebar-foreground/50 hover:text-sidebar-foreground"
-      >
-        <ChevronRight
-          className={cn(
-            "h-3 w-3 transition-transform",
-            open && "rotate-90"
-          )}
-        />
-        <DoorOpen className="h-3.5 w-3.5" />
-        <span className="truncate">{room}</span>
-        <span className="ml-auto text-[10px] text-sidebar-foreground/40">
-          {devices.length}
-        </span>
-      </button>
+      <div className="flex w-full items-center gap-1 px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-sidebar-foreground/50">
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          aria-label={open ? `Collapse ${room}` : `Expand ${room}`}
+          className="rounded p-0.5 hover:bg-white/10 hover:text-sidebar-foreground"
+        >
+          <ChevronRight
+            className={cn(
+              "h-3 w-3 transition-transform",
+              open && "rotate-90"
+            )}
+          />
+        </button>
+        <Link
+          href={roomHref}
+          className="flex min-w-0 flex-1 items-center gap-2 hover:text-sidebar-foreground"
+          title={`Show devices in ${room}`}
+        >
+          <DoorOpen className="h-3.5 w-3.5" />
+          <span className="truncate">{room}</span>
+          <span className="ml-auto text-[10px] text-sidebar-foreground/40">
+            {devices.length}
+          </span>
+        </Link>
+      </div>
       {open && (
         <ul className="mt-0.5 space-y-0.5 pl-3">
           {devices.map((d) => (

@@ -75,12 +75,39 @@ export default function DevicesPage() {
   const searchParams = useSearchParams();
   const session = useSession();
   const collectorFilter = searchParams.get("collector_id") ?? "";
+  // URL-driven filters — clicking a stat tile on the overview or a
+  // room/building in the Places sidebar lands here with these set.
+  // Bound to the URL so refresh + back-button + copy-link all preserve
+  // the filter, and so the filter chips can render a clean X to clear.
+  const rawStatus = searchParams.get("status") ?? "";
+  const statusFilter: StatusFilter =
+    rawStatus === "online" ||
+    rawStatus === "offline" ||
+    rawStatus === "degraded" ||
+    rawStatus === "unknown"
+      ? rawStatus
+      : "all";
+  const buildingFilter = searchParams.get("building") ?? "";
+  const roomFilter = searchParams.get("room") ?? "";
 
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
   const [createOpen, setCreateOpen] = useState(false);
   const [bulkOpen, setBulkOpen] = useState(false);
+
+  // Push a partial URL update: replace only the named keys, preserve
+  // everything else the caller landed with. Setting a value to empty
+  // clears that key. Kept local so the various dropdown handlers +
+  // chip-clears don't repeat the same URLSearchParams dance.
+  const updateFilters = (updates: Record<string, string>) => {
+    const next = new URLSearchParams(searchParams.toString());
+    for (const [k, v] of Object.entries(updates)) {
+      if (v === "") next.delete(k);
+      else next.set(k, v);
+    }
+    const qs = next.toString();
+    router.push(qs ? `/devices?${qs}` : "/devices");
+  };
 
   // Backend gates POST /devices on device.crud and the bulk command endpoint
   // on command.bulk — mirror those here so the buttons only appear when the
@@ -122,9 +149,21 @@ export default function DevicesPage() {
   const filtered = useMemo(() => {
     if (!data) return null;
     const needle = search.trim().toLowerCase();
+    const wantBuilding = buildingFilter.toLowerCase();
+    const wantRoom = roomFilter.toLowerCase();
     return data.filter((d) => {
       if (statusFilter !== "all" && d.status !== statusFilter) return false;
       if (typeFilter !== "all" && d.type !== typeFilter) return false;
+      if (wantBuilding && (d.building ?? "").toLowerCase() !== wantBuilding) return false;
+      // Room is stored on the device only as room_id, but the sidebar's
+      // Places tree groups by the room NAME rendered in d.location
+      // (which is "Building / Room"). Match on the tail so the URL
+      // stays human-readable ("?room=Conference Room 1") without
+      // needing a separate rooms API lookup.
+      if (wantRoom) {
+        const roomTail = (d.location ?? "").split(" / ").slice(-1)[0]?.toLowerCase() ?? "";
+        if (roomTail !== wantRoom) return false;
+      }
       if (needle) {
         const hay =
           d.name.toLowerCase() +
@@ -138,7 +177,7 @@ export default function DevicesPage() {
       }
       return true;
     });
-  }, [data, search, statusFilter, typeFilter]);
+  }, [data, search, statusFilter, typeFilter, buildingFilter, roomFilter]);
 
   const counts = useMemo(() => {
     if (!data) return { total: 0, online: 0, offline: 0, degraded: 0 };
@@ -154,7 +193,10 @@ export default function DevicesPage() {
     );
   }, [data]);
 
-  const clearCollectorFilter = () => router.push("/devices");
+  const clearCollectorFilter = () => updateFilters({ collector_id: "" });
+  const clearStatusFilter = () => updateFilters({ status: "" });
+  const clearBuildingFilter = () => updateFilters({ building: "" });
+  const clearRoomFilter = () => updateFilters({ room: "" });
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -218,20 +260,27 @@ export default function DevicesPage() {
 
       <div className="flex-1 px-6 py-6">
         <div className="mx-auto max-w-6xl space-y-4">
-          {collectorFilter && (
-            <div className="flex items-center gap-2 rounded-md border bg-muted/40 px-3 py-2 text-sm">
-              <span className="text-muted-foreground">Filtering to collector:</span>
-              <Badge variant="secondary" className="gap-1">
-                {collectorName || "…"}
-              </Badge>
-              <button
-                onClick={clearCollectorFilter}
-                className="ml-auto inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-                aria-label="Clear collector filter"
-              >
-                <X aria-hidden="true" className="h-3 w-3" />
-                Clear
-              </button>
+          {(collectorFilter || buildingFilter || roomFilter) && (
+            <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/40 px-3 py-2 text-sm">
+              <span className="text-muted-foreground">Filtering:</span>
+              {collectorFilter && (
+                <FilterChip
+                  label={`Collector: ${collectorName || "…"}`}
+                  onClear={clearCollectorFilter}
+                />
+              )}
+              {buildingFilter && (
+                <FilterChip
+                  label={`Building: ${buildingFilter}`}
+                  onClear={clearBuildingFilter}
+                />
+              )}
+              {roomFilter && (
+                <FilterChip
+                  label={`Room: ${roomFilter}`}
+                  onClear={clearRoomFilter}
+                />
+              )}
             </div>
           )}
 
@@ -251,7 +300,7 @@ export default function DevicesPage() {
             </div>
             <select
               value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
+              onChange={(e) => updateFilters({ status: e.target.value === "all" ? "" : e.target.value })}
               className="rounded-md border bg-background px-3 py-2 text-sm"
               aria-label="Filter by status"
             >
@@ -423,5 +472,26 @@ export default function DevicesPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+function FilterChip({
+  label,
+  onClear,
+}: {
+  label: string;
+  onClear: () => void;
+}) {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-1 text-xs">
+      <span className="text-foreground">{label}</span>
+      <button
+        onClick={onClear}
+        className="text-muted-foreground hover:text-foreground"
+        aria-label={`Clear ${label}`}
+      >
+        <X aria-hidden="true" className="h-3 w-3" />
+      </button>
+    </span>
   );
 }

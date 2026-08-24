@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import type { LucideIcon } from "lucide-react";
@@ -37,33 +38,57 @@ interface Props {
   icon: LucideIcon;
   tone?: Tone;
   hint?: string;
+  // When set, the card becomes a clickable link. Kept optional so a
+  // caller can still render a pure-summary tile with no interaction
+  // (e.g. read-only monitoring surfaces). Uses next/link so client-side
+  // navigation applies + prefetching kicks in on hover.
+  href?: string;
 }
 
-export function StatCard({ label, value, icon: Icon, tone = "neutral", hint }: Props) {
+export function StatCard({ label, value, icon: Icon, tone = "neutral", hint, href }: Props) {
   const t = toneStyles[tone];
-  return (
-    <Card className={cn(t.ring)}>
-      <CardContent className="p-5 flex items-center gap-4">
-        <div
+  const inner = (
+    <CardContent className="p-5 flex items-center gap-4">
+      <div
+        className={cn(
+          "h-11 w-11 rounded-md flex items-center justify-center",
+          t.iconBg
+        )}
+      >
+        <Icon className={cn("h-5 w-5", t.icon)} />
+      </div>
+      <div className="min-w-0">
+        <div className="text-xs uppercase tracking-wide text-muted-foreground">
+          {label}
+        </div>
+        <div className={cn("text-2xl font-semibold leading-tight", t.value)}>
+          {value}
+        </div>
+        {hint && (
+          <div className="text-xs text-muted-foreground mt-0.5">{hint}</div>
+        )}
+      </div>
+    </CardContent>
+  );
+  if (href) {
+    // Hover ring + subtle scale so users notice the tile is interactive
+    // without leaning on colour alone (accessibility). Focus ring picks
+    // up shadcn's ring token so keyboard nav gets an obvious outline.
+    return (
+      <Link
+        href={href}
+        className="block rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+      >
+        <Card
           className={cn(
-            "h-11 w-11 rounded-md flex items-center justify-center",
-            t.iconBg
+            t.ring,
+            "transition-shadow hover:shadow-md cursor-pointer"
           )}
         >
-          <Icon className={cn("h-5 w-5", t.icon)} />
-        </div>
-        <div className="min-w-0">
-          <div className="text-xs uppercase tracking-wide text-muted-foreground">
-            {label}
-          </div>
-          <div className={cn("text-2xl font-semibold leading-tight", t.value)}>
-            {value}
-          </div>
-          {hint && (
-            <div className="text-xs text-muted-foreground mt-0.5">{hint}</div>
-          )}
-        </div>
-      </CardContent>
-    </Card>
-  );
+          {inner}
+        </Card>
+      </Link>
+    );
+  }
+  return <Card className={cn(t.ring)}>{inner}</Card>;
 }
