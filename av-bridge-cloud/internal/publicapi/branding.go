@@ -42,13 +42,26 @@ type Handler struct {
 	// users with a slug, the origin is derived by swapping the first
 	// hostname label to the slug (see resetOriginFor). Empty in dev.
 	portalBaseURL string
+	// customerSSOEnabled mirrors "cloud is running with customer Entra
+	// SSO configured" — set by main.go from cfg.EntraCustomerClientID/
+	// Secret/RedirectURI presence. Combined with each customer's
+	// entra_tenant_id at query time to drive the sso_available flag on
+	// GET /public/branding.
+	customerSSOEnabled bool
 }
 
 // NewHandler wires the public (unauthenticated) portal endpoints. smtp
 // and portalBaseURL are only used by the password reset flow; branding
-// works without them.
-func NewHandler(store *db.Store, log *slog.Logger, smtp notify.SMTPConfig, portalBaseURL string) *Handler {
-	return &Handler{store: store, log: log, smtp: smtp, portalBaseURL: portalBaseURL}
+// works without them. customerSSOEnabled gates the sso_available flag
+// exposed to the sign-in page.
+func NewHandler(store *db.Store, log *slog.Logger, smtp notify.SMTPConfig, portalBaseURL string, customerSSOEnabled bool) *Handler {
+	return &Handler{
+		store:              store,
+		log:                log,
+		smtp:               smtp,
+		portalBaseURL:      portalBaseURL,
+		customerSSOEnabled: customerSSOEnabled,
+	}
 }
 
 // resetOriginFor returns the portal origin a reset URL should point to
@@ -91,6 +104,13 @@ type brandingResp struct {
 	SupportContact string `json:"support_contact,omitempty"`
 	SSOButtonLabel string `json:"sso_button_label,omitempty"`
 	SignInHeroURL  string `json:"sign_in_hero_data_url,omitempty"`
+	// SSOAvailable is true when the customer has an entra_tenant_id set
+	// AND the cloud is running with customer Entra SSO configured. Portal
+	// gates the "Sign in with Microsoft" tile on this — false means the
+	// branded page falls back to the local password form only. Emitted as
+	// a non-omitempty bool so the client can treat "field missing" the
+	// same as "false" (older cloud versions) and route accordingly.
+	SSOAvailable bool `json:"sso_available"`
 }
 
 // GetBranding — GET /public/branding?slug=<slug>
@@ -126,6 +146,7 @@ func (h *Handler) GetBranding(w http.ResponseWriter, r *http.Request) {
 		ssoButtonLabel                     string
 		heroType                           string
 		hero                               []byte
+		entraTenantID                      string
 	)
 	err := h.store.AdminPool().QueryRow(r.Context(), `
 		SELECT COALESCE(display_name,''),
@@ -136,11 +157,13 @@ func (h *Handler) GetBranding(w http.ResponseWriter, r *http.Request) {
 		       COALESCE(support_contact,''),
 		       COALESCE(sso_button_label,''),
 		       COALESCE(sign_in_hero_content_type,''),
-		       sign_in_hero
+		       sign_in_hero,
+		       COALESCE(entra_tenant_id,'')
 		  FROM customers
 		 WHERE slug = $1`, slug,
 	).Scan(&displayName, &accentColor, &logoType, &logo,
-		&signInMessage, &supportContact, &ssoButtonLabel, &heroType, &hero)
+		&signInMessage, &supportContact, &ssoButtonLabel, &heroType, &hero,
+		&entraTenantID)
 	if err != nil {
 		if !errors.Is(err, pgx.ErrNoRows) {
 			// Log the anomaly but keep the response uniform so the client
@@ -157,6 +180,10 @@ func (h *Handler) GetBranding(w http.ResponseWriter, r *http.Request) {
 		SignInMessage:  signInMessage,
 		SupportContact: supportContact,
 		SSOButtonLabel: ssoButtonLabel,
+		// SSO available only when both sides are ready: the cloud has an
+		// Entra customer app registration configured AND the customer row
+		// has a tenant set. Missing either side = tile stays inert.
+		SSOAvailable: h.customerSSOEnabled && entraTenantID != "",
 	}
 	if logoType != "" && len(logo) > 0 {
 		resp.LogoDataURL = "data:" + logoType + ";base64," +

@@ -215,20 +215,39 @@ func main() {
 			log,
 		)
 
+		// Entra customer SSO — M2. One multi-tenant Entra app; the target
+		// tenant is looked up per request from customers.entra_tenant_id.
+		// Constructed only when ClientID+ClientSecret+RedirectURI are set;
+		// nil-check downstream skips route registration when not.
+		entraCustomer := portalapi.NewEntraCustomerHandler(
+			store,
+			cfg.EntraCustomerClientID,
+			cfg.EntraCustomerClientSecret,
+			cfg.EntraCustomerRedirectURI,
+			cfg.EntraPortalBaseURL,
+			log,
+		)
+
 		portalRoutes = &api.PortalRoutes{
-			Resolver:    resolver,
-			Portal:      portalapi.New(store, cipher, dispatcher, nightlyDigest, nightlyExecutor, log),
-			WSHub:       hub,
-			EntraVendor: entraVendor,
+			Resolver:      resolver,
+			Portal:        portalapi.New(store, cipher, dispatcher, nightlyDigest, nightlyExecutor, log),
+			WSHub:         hub,
+			EntraVendor:   entraVendor,
+			EntraCustomer: entraCustomer,
 		}
 		entraStatus := "disabled"
 		if entraVendor != nil {
 			entraStatus = "enabled"
 		}
+		entraCustomerStatus := "disabled"
+		if entraCustomer != nil {
+			entraCustomerStatus = "enabled"
+		}
 		log.Info("portal API enabled",
 			"customer_id", cfg.PoCPortalCustomerID, "role", cfg.PoCPortalRole,
 			"local_auth", "enabled", "mock_jwt", "enabled",
-			"entra_vendor_sso", entraStatus)
+			"entra_vendor_sso", entraStatus,
+			"entra_customer_sso", entraCustomerStatus)
 	} else {
 		log.Warn("POC_PORTAL_TOKEN not set — portal read API disabled")
 	}
@@ -253,6 +272,9 @@ func main() {
 	// values the alerts dispatcher and Entra callback use, so a single
 	// pair of env vars keeps reset URLs and reset emails coherent with
 	// the rest of the platform.
+	customerSSOEnabled := cfg.EntraCustomerClientID != "" &&
+		cfg.EntraCustomerClientSecret != "" &&
+		cfg.EntraCustomerRedirectURI != ""
 	publicH := publicapi.NewHandler(store, log,
 		notify.SMTPConfig{
 			Host:     cfg.SMTPHost,
@@ -262,6 +284,7 @@ func main() {
 			From:     cfg.SMTPFrom,
 		},
 		cfg.EntraPortalBaseURL,
+		customerSSOEnabled,
 	)
 	publicRoutes := api.PublicRoutes{
 		Branding:              publicH.GetBranding,

@@ -16,15 +16,16 @@ import (
 // PortalRoutes bundles the dependencies needed to mount the portal-facing read
 // API. portal must be non-nil; resolver gates every /api/v1 route. WSHub is
 // optional — when set, GET /ws/events is exposed for live device-event
-// fan-out, gated by the same Resolver as the rest of /api/v1. EntraVendor is
-// optional — when non-nil, the vendor SSO authorize/callback routes are
-// registered (they live outside the auth middleware since a pre-login user
-// has no bearer token).
+// fan-out, gated by the same Resolver as the rest of /api/v1. EntraVendor and
+// EntraCustomer are optional — when non-nil, their SSO authorize/callback
+// routes are registered (they live outside the auth middleware since a
+// pre-login user has no bearer token).
 type PortalRoutes struct {
-	Resolver    portalauth.Resolver
-	Portal      *portalapi.Handler
-	WSHub       *wsfanout.Hub
-	EntraVendor *portalapi.EntraVendorHandler
+	Resolver      portalauth.Resolver
+	Portal        *portalapi.Handler
+	WSHub         *wsfanout.Hub
+	EntraVendor   *portalapi.EntraVendorHandler
+	EntraCustomer *portalapi.EntraCustomerHandler
 }
 
 // BridgeCommandRoutes are the cloud-side endpoints the bridge polls for
@@ -113,6 +114,10 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 		if portal.EntraVendor != nil {
 			mux.Handle("GET /api/v1/auth/entra/vendor/authorize", http.HandlerFunc(portal.EntraVendor.Authorize))
 			mux.Handle("GET /api/v1/auth/entra/vendor/callback", http.HandlerFunc(portal.EntraVendor.Callback))
+		}
+		if portal.EntraCustomer != nil {
+			mux.Handle("GET /api/v1/auth/entra/customer/authorize", http.HandlerFunc(portal.EntraCustomer.Authorize))
+			mux.Handle("GET /api/v1/auth/entra/customer/callback", http.HandlerFunc(portal.EntraCustomer.Callback))
 		}
 
 		// Whoami is any authenticated user — no specific permission needed

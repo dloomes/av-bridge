@@ -26,6 +26,17 @@ const ENTRA_ERROR_LABELS: Record<string, string> = {
     "We couldn't set up your account. Contact ops.",
   session_mint_failed:
     "Sign-in succeeded but we couldn't start your session. Try again.",
+  // Customer-SSO-specific codes emitted by /api/v1/auth/entra/customer/*.
+  missing_slug:
+    "This sign-in link is missing a customer identifier. Please try again from your organisation's sign-in URL.",
+  unknown_customer:
+    "We couldn't find your organisation. Please check the sign-in URL or contact ops.",
+  sso_not_configured:
+    "Single sign-on isn't set up for your organisation yet. Please sign in with a password or contact ops.",
+  missing_customer:
+    "The sign-in link expired. Please try signing in again.",
+  tid_mismatch:
+    "The Microsoft account you used isn't in your organisation's Entra tenant. Sign in with a work account from that tenant.",
 };
 
 // Two sign-in paths on this page:
@@ -189,11 +200,21 @@ interface SignInFormProps {
   branding: Branding;
   // True on the unbranded portal origin (app.<env>.involvecloud.com) —
   // shows the vendor SSO tile. False on branded customer subdomains,
-  // where SSO comes in with M2's multi-tenant customer app.
+  // where the customer-SSO tile takes over when branding.sso_available.
   showVendorSSO?: boolean;
+  // Customer slug when this page is rendered under a branded subdomain
+  // (e.g. "acme"). Combined with appOrigin to build the customer SSO
+  // authorize URL. Absent on the unbranded app.<env> origin.
+  slug?: string;
+  // Fully-qualified origin of the unbranded portal (e.g.
+  // "https://app.uat.involvecloud.com") — where the customer SSO tile
+  // needs to point so authorize + callback land same-origin (single
+  // Entra redirect_uri, cookie domain sanity). Empty string falls back
+  // to a relative link.
+  appOrigin?: string;
 }
 
-export function SignInForm({ branding, showVendorSSO = false }: SignInFormProps) {
+export function SignInForm({ branding, showVendorSSO = false, slug, appOrigin = "" }: SignInFormProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [email, setEmail] = useState("");
@@ -558,9 +579,42 @@ export function SignInForm({ branding, showVendorSSO = false }: SignInFormProps)
                 </div>
                 <span className="text-foreground/50">→</span>
               </a>
+            ) : branding.sso_available && slug ? (
+              // Customer SSO — live tile. Cross-origin link to app.<env>
+              // so authorize + Microsoft's callback land on the same
+              // origin (the multi-tenant app reg has one registered
+              // redirect_uri; cookies scoped to that host). The customer
+              // handler on the cloud reads the slug, looks up their
+              // entra_tenant_id, and routes the OIDC flow to their
+              // Entra tenant. The Microsoft mark matches the vendor
+              // tile for visual consistency.
+              <a
+                href={`${appOrigin}/api/v1/auth/entra/customer/authorize?slug=${encodeURIComponent(slug)}`}
+                className="flex items-center gap-3 rounded-md border border-border bg-background px-4 py-3.5 text-sm text-foreground no-underline transition-colors hover:border-input hover:bg-muted"
+              >
+                <div className="grid h-7 w-7 place-items-center rounded-md bg-muted text-muted-foreground shrink-0">
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor" aria-hidden="true">
+                    <rect x="1" y="1" width="5.5" height="5.5" />
+                    <rect x="7.5" y="1" width="5.5" height="5.5" opacity="0.72" />
+                    <rect x="1" y="7.5" width="5.5" height="5.5" opacity="0.72" />
+                    <rect x="7.5" y="7.5" width="5.5" height="5.5" opacity="0.5" />
+                  </svg>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-[13.5px] font-medium text-foreground">
+                    {branding.sso_button_label?.trim() || "Sign in with Microsoft"}
+                  </div>
+                  <div className="mt-0.5 font-mono text-[10.5px] uppercase tracking-wider text-muted-foreground">
+                    {branding.display_name?.trim() || "Entra ID"}
+                  </div>
+                </div>
+                <span className="text-foreground/50">→</span>
+              </a>
             ) : (
-              // Customer-branded pages fall through to a disabled tile
-              // until M2 wires the customer-tenant multi-tenant app.
+              // Branded page, but the customer has no entra_tenant_id set
+              // yet OR the cloud isn't configured for customer SSO. Keep
+              // the inert affordance so people know SSO is a thing they
+              // can ask ops to enrol.
               <div
                 role="button"
                 aria-disabled="true"
@@ -589,7 +643,7 @@ export function SignInForm({ branding, showVendorSSO = false }: SignInFormProps)
                     {branding.sso_button_label?.trim() || "Single sign-on via Entra ID"}
                   </div>
                   <div className="mt-0.5 font-mono text-[10.5px] uppercase tracking-wider text-muted-foreground">
-                    Coming soon · contact ops to enrol
+                    Contact ops to enrol
                   </div>
                 </div>
               </div>

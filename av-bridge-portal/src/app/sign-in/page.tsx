@@ -44,6 +44,29 @@ async function fetchBranding(slug: string | null): Promise<Branding> {
   }
 }
 
+// appOriginFromHost derives the unbranded portal origin from the request
+// hostname. Customer SSO's authorize URL always points at the app.<env>
+// subdomain (that's where the Entra callback lands, single registered
+// redirect_uri), so branded pages need to link cross-origin. On a
+// branded host like "acme.uat.involvecloud.com" the slug label is
+// replaced with "app"; on the app.<env> origin or when there's no host
+// info, an empty string is returned so the client falls back to a
+// same-origin relative link.
+function appOriginFromHost(host: string | null | undefined): string {
+  if (!host) return "";
+  const raw = host.split(",")[0].trim();
+  const [hostname, port] = raw.split(":");
+  if (!hostname) return "";
+  const parts = hostname.toLowerCase().split(".");
+  if (parts.length < 3) return "";
+  // Assume https anywhere the hostname has a public suffix pattern. Local
+  // dev with a made-up 3-label host would fall through here too, but
+  // customer SSO doesn't run without a proper HTTPS origin anyway.
+  const suffix = parts.slice(1).join(".");
+  const portPart = port ? `:${port}` : "";
+  return `https://app.${suffix}${portPart}`;
+}
+
 export default async function SignInPage() {
   // Amplify SSR runs behind CloudFront, which can rewrite the direct `Host`
   // to the internal *.amplifyapp.com hostname while preserving the caller's
@@ -55,8 +78,17 @@ export default async function SignInPage() {
   const slug = extractSlugFromHost(hostHeader);
   const branding = await fetchBranding(slug);
   // Vendor Entra SSO surfaces only on the unbranded portal origin
-  // (app.<env>.involvecloud.com). Branded customer subdomains stay on
-  // the local-password flow until M2 wires customer-tenant Entra.
+  // (app.<env>.involvecloud.com). Branded customer subdomains get their
+  // own customer-SSO tile when the customer has entra_tenant_id set
+  // (M2) — sso_available on the branding response gates that.
   const showVendorSSO = slug === null;
-  return <SignInForm branding={branding} showVendorSSO={showVendorSSO} />;
+  const appOrigin = appOriginFromHost(hostHeader);
+  return (
+    <SignInForm
+      branding={branding}
+      showVendorSSO={showVendorSSO}
+      slug={slug ?? undefined}
+      appOrigin={appOrigin}
+    />
+  );
 }

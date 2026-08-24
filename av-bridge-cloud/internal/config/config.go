@@ -136,6 +136,18 @@ type Config struct {
 	EntraVendorClientSecret string
 	EntraVendorRedirectURI  string
 	EntraPortalBaseURL      string
+
+	// Entra ID customer sign-in — M2: multi-tenant Entra app registration
+	// in Involve's tenant, published as multi-tenant. One app registration
+	// serves ALL customers. TenantID is intentionally absent — the customer
+	// tenant is looked up per-request from customers.entra_tenant_id.
+	// When any of ClientID / ClientSecret / RedirectURI is unset, the
+	// customer SSO path is disabled and the branded sign-in tile shows the
+	// legacy "Coming soon" copy. Reuses EntraPortalBaseURL for the
+	// callback-return origin (both flows land users on the same portal).
+	EntraCustomerClientID     string
+	EntraCustomerClientSecret string
+	EntraCustomerRedirectURI  string
 }
 
 func FromEnv() (Config, error) {
@@ -249,6 +261,10 @@ func FromEnv() (Config, error) {
 		EntraVendorClientSecret: os.Getenv("ENTRA_VENDOR_CLIENT_SECRET"),
 		EntraVendorRedirectURI:  os.Getenv("ENTRA_VENDOR_REDIRECT_URI"),
 		EntraPortalBaseURL:      os.Getenv("ENTRA_PORTAL_BASE_URL"),
+
+		EntraCustomerClientID:     os.Getenv("ENTRA_CUSTOMER_CLIENT_ID"),
+		EntraCustomerClientSecret: os.Getenv("ENTRA_CUSTOMER_CLIENT_SECRET"),
+		EntraCustomerRedirectURI:  os.Getenv("ENTRA_CUSTOMER_REDIRECT_URI"),
 	}
 	if c.MigrationDSN == "" {
 		return c, fmt.Errorf("DATABASE_MIGRATION_URL is required")

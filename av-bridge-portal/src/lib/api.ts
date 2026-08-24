@@ -254,6 +254,11 @@ export interface Branding {
   support_contact?: string;
   sso_button_label?: string;
   sign_in_hero_data_url?: string;
+  // True only when the customer has an entra_tenant_id configured AND the
+  // cloud is running with a customer Entra app registration. Gates whether
+  // the sign-in page shows a live "Sign in with Microsoft" tile or the
+  // inert "Coming soon" placeholder. Absent (older cloud) treats as false.
+  sso_available?: boolean;
 }
 
 export interface UpdateBrandingBody {
