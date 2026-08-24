@@ -65,13 +65,20 @@ var allowedHeroTypes = map[string]bool{
 // its default look.
 func (h *Handler) GetBranding(w http.ResponseWriter, r *http.Request) {
 	type out struct {
-		DisplayName     string `json:"display_name,omitempty"`
-		AccentColor     string `json:"accent_color,omitempty"`
-		LogoDataURL     string `json:"logo_data_url,omitempty"`
-		SignInMessage   string `json:"sign_in_message,omitempty"`
-		SupportContact  string `json:"support_contact,omitempty"`
-		SSOButtonLabel  string `json:"sso_button_label,omitempty"`
-		SignInHeroURL   string `json:"sign_in_hero_data_url,omitempty"`
+		DisplayName    string `json:"display_name,omitempty"`
+		AccentColor    string `json:"accent_color,omitempty"`
+		LogoDataURL    string `json:"logo_data_url,omitempty"`
+		SignInMessage  string `json:"sign_in_message,omitempty"`
+		SupportContact string `json:"support_contact,omitempty"`
+		SSOButtonLabel string `json:"sso_button_label,omitempty"`
+		SignInHeroURL  string `json:"sign_in_hero_data_url,omitempty"`
+		// Non-omitempty — the admin UI drives a toggle off this, and
+		// "field missing" needs to mean "off" not "unknown".
+		SSORequired bool `json:"sso_required"`
+		// entra_tenant_id is emitted so the admin UI can gate the SSO
+		// toggle behind "customer has Entra configured". Omitted when
+		// unset so the payload stays compact for unbranded tenants.
+		EntraTenantID string `json:"entra_tenant_id,omitempty"`
 	}
 	var o out
 	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
@@ -85,16 +92,20 @@ func (h *Handler) GetBranding(w http.ResponseWriter, r *http.Request) {
 			ssoButtonLabel *string
 			heroType       *string
 			hero           []byte
+			ssoRequired    bool
+			entraTenantID  *string
 		)
 		p, _ := portalauth.From(r.Context())
 		if err := tx.QueryRow(ctx, `
 			SELECT display_name, accent_color, logo_content_type, logo,
 			       sign_in_message, support_contact, sso_button_label,
-			       sign_in_hero_content_type, sign_in_hero
+			       sign_in_hero_content_type, sign_in_hero,
+			       COALESCE(sso_required, false),
+			       entra_tenant_id
 			  FROM customers WHERE id = $1`, p.CustomerID,
 		).Scan(&displayName, &accentColor, &logoType, &logo,
 			&signInMessage, &supportContact, &ssoButtonLabel,
-			&heroType, &hero); err != nil {
+			&heroType, &hero, &ssoRequired, &entraTenantID); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				// No customer row visible under RLS — treat as unbranded so
 				// the sign-in page still renders. Shouldn't happen for a
@@ -126,6 +137,10 @@ func (h *Handler) GetBranding(w http.ResponseWriter, r *http.Request) {
 			o.SignInHeroURL = "data:" + *heroType + ";base64," +
 				base64.StdEncoding.EncodeToString(hero)
 		}
+		o.SSORequired = ssoRequired
+		if entraTenantID != nil {
+			o.EntraTenantID = *entraTenantID
+		}
 		return nil
 	})
 	if !ok {
@@ -138,13 +153,19 @@ func (h *Handler) GetBranding(w http.ResponseWriter, r *http.Request) {
 // payload" from "clear to null". An explicit empty string clears the field;
 // omitting it leaves the stored value alone.
 type updateBrandingReq struct {
-	DisplayName      *string `json:"display_name,omitempty"`
-	AccentColor      *string `json:"accent_color,omitempty"`
-	LogoDataURL      *string `json:"logo_data_url,omitempty"`
-	SignInMessage    *string `json:"sign_in_message,omitempty"`
-	SupportContact   *string `json:"support_contact,omitempty"`
-	SSOButtonLabel   *string `json:"sso_button_label,omitempty"`
-	SignInHeroURL    *string `json:"sign_in_hero_data_url,omitempty"`
+	DisplayName    *string `json:"display_name,omitempty"`
+	AccentColor    *string `json:"accent_color,omitempty"`
+	LogoDataURL    *string `json:"logo_data_url,omitempty"`
+	SignInMessage  *string `json:"sign_in_message,omitempty"`
+	SupportContact *string `json:"support_contact,omitempty"`
+	SSOButtonLabel *string `json:"sso_button_label,omitempty"`
+	SignInHeroURL  *string `json:"sign_in_hero_data_url,omitempty"`
+	// SSORequired flips the SSO-only policy for this tenant (M4). Only
+	// allowed to be set to true when the customer has entra_tenant_id
+	// configured — otherwise enabling would lock the tenant out because
+	// no local login is possible AND no Entra tenant is set to route
+	// through. Guardrail enforced inside UpdateBranding before the write.
+	SSORequired *bool `json:"sso_required,omitempty"`
 }
 
 // UpdateBranding — PATCH /api/v1/branding
@@ -238,6 +259,27 @@ func (h *Handler) UpdateBranding(w http.ResponseWriter, r *http.Request) {
 
 	p, _ := portalauth.From(r.Context())
 
+	// SSO-only guardrail: enabling requires entra_tenant_id to be set on
+	// the same customer row. Disabling is unconditional. Runs a quick
+	// pre-check against the admin pool so a 400 comes back before we
+	// even open the tx. Vendor callers with X-Customer-Scope get the
+	// correct row because p.CustomerID reflects the acted-as customer.
+	if req.SSORequired != nil && *req.SSORequired {
+		var entraTenantID string
+		if err := h.store.AdminPool().QueryRow(r.Context(),
+			`SELECT COALESCE(entra_tenant_id,'') FROM customers WHERE id = $1`, p.CustomerID,
+		).Scan(&entraTenantID); err != nil {
+			h.log.Error("branding update: entra_tenant_id lookup", "error", err)
+			writeErr(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		if entraTenantID == "" {
+			writeErr(w, http.StatusBadRequest,
+				"cannot require SSO — set the customer's Entra tenant first or nobody will be able to sign in")
+			return
+		}
+	}
+
 	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
 		// Build the UPDATE dynamically so absent fields don't overwrite
 		// stored values. RLS on customers restricts the row to the caller's
@@ -305,6 +347,9 @@ func (h *Handler) UpdateBranding(w http.ResponseWriter, r *http.Request) {
 				add("sign_in_hero_content_type", heroType)
 			}
 		}
+		if req.SSORequired != nil {
+			add("sso_required", *req.SSORequired)
+		}
 		if len(set) == 0 {
 			// No-op PATCH — treat as success rather than 400 so the portal
 			// can send a save even when nothing changed.
@@ -344,6 +389,9 @@ func (h *Handler) UpdateBranding(w http.ResponseWriter, r *http.Request) {
 			} else {
 				auditPayload["sign_in_hero"] = fmt.Sprintf("uploaded (%d bytes, %s)", len(heroBytes), heroType)
 			}
+		}
+		if req.SSORequired != nil {
+			auditPayload["sso_required"] = *req.SSORequired
 		}
 		return audit.Record(ctx, tx, p.CustomerID, stampActor(p, audit.Entry{
 			Action:     "branding.update",

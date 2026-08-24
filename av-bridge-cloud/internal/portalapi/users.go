@@ -129,13 +129,32 @@ func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "at least one role is required")
 		return
 	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	// SSO-only tenants can't take a locally-authored password. Reject
+	// before the bcrypt work — no point burning CPU on a hash we'd throw
+	// away. Users on those tenants get provisioned by Entra JIT on their
+	// first sign-in instead.
+	var ssoRequired bool
+	if err := h.store.AdminPool().QueryRow(ctx,
+		`SELECT COALESCE(sso_required, false) FROM customers WHERE id = $1`, p.CustomerID,
+	).Scan(&ssoRequired); err != nil {
+		h.log.Error("create user: sso lookup", "error", err)
+		writeErr(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if ssoRequired {
+		writeErr(w, http.StatusForbidden,
+			"local user creation is disabled for this tenant — users are provisioned on first Entra sign-in")
+		return
+	}
+
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), 10)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	defer cancel()
 
 	if err := h.validateRoleIDsInTenant(ctx, p.CustomerID, req.RoleIDs); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
@@ -372,13 +391,32 @@ func (h *Handler) ResetUserPassword(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "new password must be at least 12 characters")
 		return
 	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	// Refuse if the tenant has flipped SSO-only. Setting a password on a
+	// user whose sign-in path is Entra-only just leaves inert bytes on
+	// the row — better to reject explicitly so the admin doesn't think
+	// they've done something useful.
+	var ssoRequired bool
+	if err := h.store.AdminPool().QueryRow(ctx,
+		`SELECT COALESCE(sso_required, false) FROM customers WHERE id = $1`, p.CustomerID,
+	).Scan(&ssoRequired); err != nil {
+		h.log.Error("reset password: sso lookup", "error", err)
+		writeErr(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if ssoRequired {
+		writeErr(w, http.StatusForbidden,
+			"password reset is disabled for this tenant — users sign in with SSO")
+		return
+	}
+
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), 10)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	defer cancel()
 
 	tag, err := h.store.AdminPool().Exec(ctx, `
 		UPDATE users SET password_hash = $3

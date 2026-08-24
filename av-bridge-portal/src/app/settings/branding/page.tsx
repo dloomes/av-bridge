@@ -52,6 +52,8 @@ export default function BrandingPage() {
   const [supportContact, setSupportContact] = useState(branding.support_contact ?? "");
   const [ssoButtonLabel, setSsoButtonLabel] = useState(branding.sso_button_label ?? "");
   const [heroDataURL, setHeroDataURL] = useState(branding.sign_in_hero_data_url ?? "");
+  const [ssoRequired, setSsoRequired] = useState<boolean>(!!branding.sso_required);
+  const [confirmingSsoLock, setConfirmingSsoLock] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -66,6 +68,7 @@ export default function BrandingPage() {
     setSupportContact(branding.support_contact ?? "");
     setSsoButtonLabel(branding.sso_button_label ?? "");
     setHeroDataURL(branding.sign_in_hero_data_url ?? "");
+    setSsoRequired(!!branding.sso_required);
   }, [branding]);
 
   // A vendor session with a customer scope means "editing this customer's
@@ -134,6 +137,7 @@ export default function BrandingPage() {
       support_contact?: string;
       sso_button_label?: string;
       sign_in_hero_data_url?: string;
+      sso_required?: boolean;
     } = {};
     if (displayName !== (branding.display_name ?? "")) {
       body.display_name = displayName;
@@ -156,6 +160,9 @@ export default function BrandingPage() {
     if (heroDataURL !== (branding.sign_in_hero_data_url ?? "")) {
       body.sign_in_hero_data_url = heroDataURL;
     }
+    if (ssoRequired !== !!branding.sso_required) {
+      body.sso_required = ssoRequired;
+    }
     try {
       await api.updateBranding(body);
       refresh();
@@ -174,7 +181,14 @@ export default function BrandingPage() {
     signInMessage !== (branding.sign_in_message ?? "") ||
     supportContact !== (branding.support_contact ?? "") ||
     ssoButtonLabel !== (branding.sso_button_label ?? "") ||
-    heroDataURL !== (branding.sign_in_hero_data_url ?? "");
+    heroDataURL !== (branding.sign_in_hero_data_url ?? "") ||
+    ssoRequired !== !!branding.sso_required;
+
+  // SSO-only requires the tenant to have an Entra tenant configured. The
+  // toggle stays disabled otherwise; a save with sso_required=true would
+  // hit the backend guardrail and 400, but preventing the click is
+  // cleaner UX than surfacing the API error.
+  const canEnableSSO = !!branding.entra_tenant_id && !!branding.sso_available;
 
   return (
     <div className="flex flex-col h-screen">
@@ -438,6 +452,55 @@ export default function BrandingPage() {
             </CardContent>
           </Card>
 
+          <Card>
+            <CardContent className="space-y-4 p-6">
+              <div>
+                <h2 className="text-sm font-semibold">Sign-in policy</h2>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Control who can sign in and how. Password reset and local
+                  user creation are also disabled while SSO-only is on.
+                </p>
+              </div>
+
+              <label
+                className={`flex items-start gap-3 rounded-md border p-3 ${
+                  canEnableSSO ? "border-input" : "border-input/50 opacity-60"
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  className="mt-1 h-4 w-4"
+                  checked={ssoRequired}
+                  disabled={!canEnableSSO && !ssoRequired}
+                  onChange={(e) => {
+                    if (e.target.checked && !ssoRequired) {
+                      setConfirmingSsoLock(true);
+                    } else {
+                      setSsoRequired(e.target.checked);
+                    }
+                  }}
+                />
+                <div className="min-w-0">
+                  <div className="text-sm font-medium">Require single sign-on</div>
+                  <div className="text-xs text-muted-foreground mt-0.5">
+                    {canEnableSSO ? (
+                      <>
+                        Users must sign in via Microsoft. Local passwords stop
+                        working immediately — including yours.
+                      </>
+                    ) : (
+                      <>
+                        Not available. Set the customer&rsquo;s Entra tenant ID
+                        first (via /customers) so there&rsquo;s a working
+                        sign-in path before you lock out passwords.
+                      </>
+                    )}
+                  </div>
+                </div>
+              </label>
+            </CardContent>
+          </Card>
+
           {(error || (saved && !error && !dirty)) && (
             <div className="text-sm">
               {error ? (
@@ -457,6 +520,52 @@ export default function BrandingPage() {
               Save changes
             </Button>
           </div>
+
+          {confirmingSsoLock && (
+            <div
+              className="fixed inset-0 z-50 flex items-center justify-center bg-background/70 backdrop-blur-sm p-4"
+              onClick={() => setConfirmingSsoLock(false)}
+            >
+              <div
+                className="max-w-md rounded-md border bg-card p-5 shadow-lg"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <h3 className="text-base font-semibold">
+                  Require SSO for this tenant?
+                </h3>
+                <p className="mt-2 text-sm text-muted-foreground">
+                  After you save, every user in this tenant loses the ability
+                  to sign in with a password. Anyone not enrolled in Entra —
+                  including yourself, if you don&rsquo;t have a working SSO
+                  session — will be locked out until an admin (or ops) reverts
+                  the setting via the API or DB.
+                </p>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Confirm that at least one admin user can sign in via
+                  Microsoft, and that the Sign-in mappings you&rsquo;ve
+                  configured cover the roles your team needs.
+                </p>
+                <div className="mt-4 flex items-center justify-end gap-2">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setConfirmingSsoLock(false)}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      setSsoRequired(true);
+                      setConfirmingSsoLock(false);
+                    }}
+                  >
+                    I understand, enable SSO-only
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
 
           <Card>
             <CardContent className="p-6 space-y-2">

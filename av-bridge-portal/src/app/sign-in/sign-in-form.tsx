@@ -215,6 +215,17 @@ interface SignInFormProps {
 }
 
 export function SignInForm({ branding, showVendorSSO = false, slug, appOrigin = "" }: SignInFormProps) {
+  // SSO-only mode: the customer has flipped M4's toggle AND their tenant
+  // has SSO available. The password form is hidden entirely — Microsoft
+  // becomes the only route in. Only ever true on a branded customer page
+  // (the vendor path uses showVendorSSO which is orthogonal). Absent
+  // sso_available (older cloud, missing config) collapses to false and
+  // the form stays, matching the pre-M4 default.
+  const ssoOnlyMode =
+    !showVendorSSO &&
+    !!slug &&
+    !!branding.sso_required &&
+    !!branding.sso_available;
   const router = useRouter();
   const searchParams = useSearchParams();
   const [email, setEmail] = useState("");
@@ -473,6 +484,13 @@ export function SignInForm({ branding, showVendorSSO = false, slug, appOrigin = 
               </div>
             )}
 
+            {ssoOnlyMode && (
+              <div className="mb-6 rounded-md border border-border bg-muted/30 px-3 py-3 text-xs text-muted-foreground">
+                Your organisation requires sign-in with Microsoft. Use the
+                button below.
+              </div>
+            )}
+            {!ssoOnlyMode && (
             <form onSubmit={handleLogin} className="flex flex-col gap-[18px]">
               <div className="flex flex-col gap-1.5 group">
                 <label
@@ -543,13 +561,16 @@ export function SignInForm({ branding, showVendorSSO = false, slug, appOrigin = 
                 </svg>
               </Button>
             </form>
+            )}
 
-            {/* Divider */}
-            <div className="my-7 flex items-center gap-3 font-mono text-[10.5px] uppercase tracking-[0.14em] text-muted-foreground">
-              <span className="h-px flex-1 bg-border" />
-              or
-              <span className="h-px flex-1 bg-border" />
-            </div>
+            {/* Divider — hidden in SSO-only mode since the form above is gone */}
+            {!ssoOnlyMode && (
+              <div className="my-7 flex items-center gap-3 font-mono text-[10.5px] uppercase tracking-[0.14em] text-muted-foreground">
+                <span className="h-px flex-1 bg-border" />
+                or
+                <span className="h-px flex-1 bg-border" />
+              </div>
+            )}
 
             {showVendorSSO ? (
               // Vendor SSO — live tile. Routes through the portal's own

@@ -111,6 +111,12 @@ type brandingResp struct {
 	// a non-omitempty bool so the client can treat "field missing" the
 	// same as "false" (older cloud versions) and route accordingly.
 	SSOAvailable bool `json:"sso_available"`
+	// SSORequired is true when the customer has flipped the SSO-only
+	// toggle. Combined with sso_available on the client to hide the
+	// email/password form entirely, leaving the Microsoft tile as the
+	// only route in. Independent-not-implied: a customer with SSO
+	// available but not required still gets both options.
+	SSORequired bool `json:"sso_required"`
 }
 
 // GetBranding — GET /public/branding?slug=<slug>
@@ -147,6 +153,7 @@ func (h *Handler) GetBranding(w http.ResponseWriter, r *http.Request) {
 		heroType                           string
 		hero                               []byte
 		entraTenantID                      string
+		ssoRequired                        bool
 	)
 	err := h.store.AdminPool().QueryRow(r.Context(), `
 		SELECT COALESCE(display_name,''),
@@ -158,12 +165,13 @@ func (h *Handler) GetBranding(w http.ResponseWriter, r *http.Request) {
 		       COALESCE(sso_button_label,''),
 		       COALESCE(sign_in_hero_content_type,''),
 		       sign_in_hero,
-		       COALESCE(entra_tenant_id,'')
+		       COALESCE(entra_tenant_id,''),
+		       COALESCE(sso_required, false)
 		  FROM customers
 		 WHERE slug = $1`, slug,
 	).Scan(&displayName, &accentColor, &logoType, &logo,
 		&signInMessage, &supportContact, &ssoButtonLabel, &heroType, &hero,
-		&entraTenantID)
+		&entraTenantID, &ssoRequired)
 	if err != nil {
 		if !errors.Is(err, pgx.ErrNoRows) {
 			// Log the anomaly but keep the response uniform so the client
@@ -184,6 +192,12 @@ func (h *Handler) GetBranding(w http.ResponseWriter, r *http.Request) {
 		// Entra customer app registration configured AND the customer row
 		// has a tenant set. Missing either side = tile stays inert.
 		SSOAvailable: h.customerSSOEnabled && entraTenantID != "",
+		// SSORequired is a raw echo of the customer's stored flag.
+		// Clients combine with sso_available to decide layout; a customer
+		// row with sso_required=true but no entra_tenant_id (which the
+		// PATCH guardrail prevents) would still fall back to showing the
+		// password form because sso_available would be false.
+		SSORequired: ssoRequired,
 	}
 	if logoType != "" && len(logo) > 0 {
 		resp.LogoDataURL = "data:" + logoType + ";base64," +

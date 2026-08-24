@@ -65,18 +65,25 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	var (
-		userID     string
-		hash       string
-		role       string
-		disabledAt *time.Time
+		userID      string
+		hash        string
+		role        string
+		disabledAt  *time.Time
+		ssoRequired bool
 	)
+	// LEFT JOIN to customers so a vendor-tenant user (customer_id NULL)
+	// still returns a row with sso_required=false — the SSO-only toggle
+	// is per-customer and doesn't apply to vendor rows. COALESCE keeps
+	// the null-customer case coherent.
 	err := h.store.AdminPool().QueryRow(ctx, `
-		SELECT id::text, password_hash, role, disabled_at
-		  FROM users
-		 WHERE lower(email) = $1
-		 ORDER BY disabled_at NULLS FIRST
+		SELECT u.id::text, COALESCE(u.password_hash, ''), u.role, u.disabled_at,
+		       COALESCE(c.sso_required, false)
+		  FROM users u
+		  LEFT JOIN customers c ON c.id = u.customer_id
+		 WHERE lower(u.email) = $1
+		 ORDER BY u.disabled_at NULLS FIRST
 		 LIMIT 1`,
-		req.Email).Scan(&userID, &hash, &role, &disabledAt)
+		req.Email).Scan(&userID, &hash, &role, &disabledAt, &ssoRequired)
 	if err != nil || disabledAt != nil {
 		// bcrypt.CompareHashAndPassword is expensive (~65 ms). Running it
 		// even on the miss path keeps timing between "unknown user" and
@@ -89,6 +96,17 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(req.Password)); err != nil {
 		writeErr(w, http.StatusUnauthorized, "invalid credentials")
+		return
+	}
+	// SSO-only tenant refuses local password login even with correct
+	// credentials — the flag flips the tenant to Entra-only. We run this
+	// AFTER the bcrypt check so timing between "wrong password" and
+	// "SSO-only" doesn't leak which case hit; the user sees a distinct
+	// message anyway because at that point they're authenticated and
+	// there's no enumeration risk.
+	if ssoRequired {
+		writeErr(w, http.StatusForbidden,
+			"local password sign-in is disabled for this tenant — use the Sign in with Microsoft button")
 		return
 	}
 
@@ -178,14 +196,31 @@ func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 
-	var currentHash string
-	if err := h.store.AdminPool().QueryRow(ctx,
-		`SELECT password_hash FROM users WHERE id = $1`, p.UserID).Scan(&currentHash); err != nil {
+	// Look up hash + SSO-only in one round-trip so we can refuse the
+	// change on an SSO-only tenant before validating the current
+	// password. A user on such a tenant has no working password anyway
+	// (the flag makes Entra the only route in), so setting a new one
+	// would be pointless.
+	var (
+		currentHash string
+		ssoRequired bool
+	)
+	if err := h.store.AdminPool().QueryRow(ctx, `
+		SELECT COALESCE(u.password_hash, ''), COALESCE(c.sso_required, false)
+		  FROM users u
+		  LEFT JOIN customers c ON c.id = u.customer_id
+		 WHERE u.id = $1`,
+		p.UserID).Scan(&currentHash, &ssoRequired); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeErr(w, http.StatusUnauthorized, "user not found")
 			return
 		}
 		writeErr(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if ssoRequired {
+		writeErr(w, http.StatusForbidden,
+			"password change is disabled for this tenant — sign in with SSO")
 		return
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(currentHash), []byte(req.CurrentPassword)); err != nil {

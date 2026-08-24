@@ -262,6 +262,16 @@ export interface Branding {
   // the sign-in page shows a live "Sign in with Microsoft" tile or the
   // inert "Coming soon" placeholder. Absent (older cloud) treats as false.
   sso_available?: boolean;
+  // Per-customer flag (M4). When true AND sso_available is also true, the
+  // sign-in page hides the email/password form entirely — Microsoft SSO
+  // becomes the only route in. When sso_available is false the flag has
+  // no visible effect (the guardrail on the PATCH endpoint prevents this
+  // combination from being reachable via the admin UI).
+  sso_required?: boolean;
+  // Echoed on the authed GET only (not /public/branding) so the admin UI
+  // can gate the SSO-only toggle behind "customer has an Entra tenant
+  // set". Present on GET /api/v1/branding.
+  entra_tenant_id?: string;
 }
 
 export interface UpdateBrandingBody {
@@ -272,6 +282,9 @@ export interface UpdateBrandingBody {
   support_contact?: string;
   sso_button_label?: string;
   sign_in_hero_data_url?: string;
+  // M4 SSO-only toggle. Setting true is guarded server-side to require
+  // entra_tenant_id already be present; setting false is unconditional.
+  sso_required?: boolean;
 }
 
 // Nightly Room Readiness schedule — the customer-level default row. See

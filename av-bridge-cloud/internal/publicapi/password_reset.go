@@ -113,6 +113,10 @@ func (h *Handler) processResetRequest(ctx context.Context, email, ip, ua string)
 	//     reset; sending them an "add password" mail would confuse the
 	//     mental model AND circumvent the SSO-only intent. Silent skip
 	//     preserves anti-enumeration (still returns 202 above).
+	//   - customer.sso_required IS NOT TRUE — a tenant that has flipped
+	//     SSO-only refuses password reset for the same reason. Vendor
+	//     rows have customer_id NULL, so the COALESCE keeps them in the
+	//     positive branch.
 	var (
 		userID       string
 		fullName     string
@@ -131,6 +135,7 @@ func (h *Handler) processResetRequest(ctx context.Context, email, ip, ua string)
 		 WHERE lower(u.email) = $1
 		   AND u.disabled_at IS NULL
 		   AND u.password_hash IS NOT NULL
+		   AND COALESCE(c.sso_required, false) = false
 		 LIMIT 1`, email).
 		Scan(&userID, &fullName, &customerSlug, &customerName, &accentColor)
 	if err != nil {
