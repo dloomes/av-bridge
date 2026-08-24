@@ -47,14 +47,18 @@ type BridgeConfigRoutes struct {
 
 // PublicRoutes bundles endpoints that need to serve without auth: they run
 // before a user has any credentials to hand over (branding on the sign-in
-// page), as part of establishing new credentials (password reset), or to
-// redeem a vendor-issued break-glass link (magic-link consume). Nil
-// fields skip registration. All are intentionally under /public/*.
+// page), as part of establishing new credentials (password reset), to
+// redeem a vendor-issued break-glass link (magic-link consume), or to
+// redeem a pre-provisioned collector enrollment token from an on-site
+// install script. Nil fields skip registration. All are intentionally
+// under /public/*.
 type PublicRoutes struct {
 	Branding              http.HandlerFunc
 	PasswordResetRequest  http.HandlerFunc
 	PasswordResetComplete http.HandlerFunc
 	MagicLinkConsume      http.HandlerFunc
+	CollectorEnroll       http.HandlerFunc
+	CollectorInstallScript http.HandlerFunc
 }
 
 // NewServer wires the routes. Go 1.22 method-aware patterns keep us dependency-free.
@@ -86,6 +90,12 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 	}
 	if public.MagicLinkConsume != nil {
 		mux.Handle("GET /public/magic-link/consume", public.MagicLinkConsume)
+	}
+	if public.CollectorEnroll != nil {
+		mux.Handle("POST /public/collectors/enroll", public.CollectorEnroll)
+	}
+	if public.CollectorInstallScript != nil {
+		mux.Handle("GET /public/collectors/install.sh", public.CollectorInstallScript)
 	}
 
 	if portal != nil {
@@ -167,6 +177,11 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 		// listings the sidebar uses to render its location tree.
 		mux.Handle("GET /api/v1/status", wrapPerm(portalauth.PermViewDashboard, portal.Portal.Status))
 		mux.Handle("GET /api/v1/collectors", wrapPerm(portalauth.PermViewDashboard, portal.Portal.ListCollectors))
+		// Pre-provisioning + enrollment (collector-enroll v1). Gated by
+		// collector.crud — customer admins get it out of the box, vendor
+		// bypass rides the standard middleware path.
+		mux.Handle("POST /api/v1/collectors", wrapPerm(portalauth.PermCollectorCRUD, portal.Portal.CreateCollector))
+		mux.Handle("POST /api/v1/collectors/{id}/enrollment-token", wrapPerm(portalauth.PermCollectorCRUD, portal.Portal.ReissueCollectorEnrollmentToken))
 		mux.Handle("GET /api/v1/devices", wrapPerm(portalauth.PermViewDashboard, portal.Portal.ListDevices))
 		mux.Handle("GET /api/v1/devices/{id}", wrapPerm(portalauth.PermViewDashboard, portal.Portal.GetDevice))
 		mux.Handle("GET /api/v1/devices/{id}/telemetry", wrapPerm(portalauth.PermViewDashboard, portal.Portal.GetTelemetry))

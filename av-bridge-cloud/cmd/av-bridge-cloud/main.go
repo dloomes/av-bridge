@@ -285,12 +285,16 @@ func main() {
 		},
 		cfg.EntraPortalBaseURL,
 		customerSSOEnabled,
+		cipher,
+		cfg.CloudBaseURL,
 	)
 	publicRoutes := api.PublicRoutes{
-		Branding:              publicH.GetBranding,
-		PasswordResetRequest:  publicH.RequestReset,
-		PasswordResetComplete: publicH.CompleteReset,
-		MagicLinkConsume:      publicH.ConsumeMagicLink,
+		Branding:               publicH.GetBranding,
+		PasswordResetRequest:   publicH.RequestReset,
+		PasswordResetComplete:  publicH.CompleteReset,
+		MagicLinkConsume:       publicH.ConsumeMagicLink,
+		CollectorEnroll:        publicH.EnrollCollector,
+		CollectorInstallScript: publicH.ServeInstallScript,
 	}
 	// M4.1: seed the shared magic-link portal base URL used by the
 	// mint side of the flow (portalapi). Small package-var setter is

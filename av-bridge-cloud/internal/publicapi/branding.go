@@ -21,6 +21,7 @@ import (
 
 	"github.com/dloomes/av-bridge-cloud/internal/db"
 	"github.com/dloomes/av-bridge-cloud/internal/notify"
+	"github.com/dloomes/av-bridge-cloud/internal/secrets"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -48,19 +49,40 @@ type Handler struct {
 	// entra_tenant_id at query time to drive the sso_available flag on
 	// GET /public/branding.
 	customerSSOEnabled bool
+	// cipher decrypts collector HMAC secrets on the enrollment redeem
+	// path — the raw secret lives only in memory during that request,
+	// travels to the bridge over TLS, and never persists in plaintext.
+	cipher secrets.Cipher
+	// cloudBaseURL is the origin the enrolled bridge should POST to
+	// (e.g. "https://api.uat.involvecloud.com"). Returned to the
+	// on-site install script so the bridge's cloud.webhook_url doesn't
+	// have to be hand-configured.
+	cloudBaseURL string
 }
 
 // NewHandler wires the public (unauthenticated) portal endpoints. smtp
 // and portalBaseURL are only used by the password reset flow; branding
 // works without them. customerSSOEnabled gates the sso_available flag
-// exposed to the sign-in page.
-func NewHandler(store *db.Store, log *slog.Logger, smtp notify.SMTPConfig, portalBaseURL string, customerSSOEnabled bool) *Handler {
+// exposed to the sign-in page. cipher + cloudBaseURL power the
+// collector enrollment redeem path — passed as trailing args to keep
+// existing callers explicit about which surface they're enabling.
+func NewHandler(
+	store *db.Store,
+	log *slog.Logger,
+	smtp notify.SMTPConfig,
+	portalBaseURL string,
+	customerSSOEnabled bool,
+	cipher secrets.Cipher,
+	cloudBaseURL string,
+) *Handler {
 	return &Handler{
 		store:              store,
 		log:                log,
 		smtp:               smtp,
 		portalBaseURL:      portalBaseURL,
 		customerSSOEnabled: customerSSOEnabled,
+		cipher:             cipher,
+		cloudBaseURL:       cloudBaseURL,
 	}
 }
 

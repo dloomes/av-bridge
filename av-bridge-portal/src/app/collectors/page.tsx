@@ -1,16 +1,34 @@
 "use client";
 
-import { useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { CircleAlert, HelpCircle, Loader2, Server, Signal } from "lucide-react";
+import {
+  CircleAlert,
+  Copy,
+  HelpCircle,
+  Loader2,
+  Plus,
+  RefreshCw,
+  Server,
+  Signal,
+  Zap,
+} from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Modal } from "@/components/modal";
 import { UserMenu } from "@/components/user-menu";
 import { usePolling } from "@/hooks/usePolling";
+import { useSession } from "@/hooks/useSession";
 import { api } from "@/lib/api";
+import { hasPermission } from "@/lib/session";
 import { formatRelative } from "@/lib/utils";
-import type { CollectorSummary } from "@/lib/types";
+import type {
+  BuildingRow,
+  CollectorSummary,
+  CreateCollectorResponse,
+} from "@/lib/types";
 
 // One-glance answer to "how are my collectors doing?" Table-first, no
 // per-collector detail yet — clicking through takes you to the existing
@@ -38,6 +56,9 @@ const SYNC_TONE: Record<string, Tone> = {
 };
 
 export default function CollectorsPage() {
+  const session = useSession();
+  const canManage = hasPermission(session.user, "collector.crud");
+
   const fetcher = useCallback(
     (signal: AbortSignal) => api.listCollectors(signal),
     []
@@ -46,6 +67,17 @@ export default function CollectorsPage() {
     fetcher,
     15_000
   );
+
+  const [adding, setAdding] = useState(false);
+  const [enrollment, setEnrollment] = useState<
+    | {
+        name: string;
+        bridgeCollectorID: string;
+        token: string;
+        expiresAt: string;
+      }
+    | null
+  >(null);
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -62,7 +94,15 @@ export default function CollectorsPage() {
               </p>
             </div>
           </div>
-          <UserMenu />
+          <div className="flex items-center gap-2">
+            {canManage && (
+              <Button size="sm" onClick={() => setAdding(true)}>
+                <Plus className="h-3.5 w-3.5" />
+                New collector
+              </Button>
+            )}
+            <UserMenu />
+          </div>
         </div>
       </header>
 
@@ -93,6 +133,7 @@ export default function CollectorsPage() {
                       <th scope="col" className="px-4 py-3 font-medium">Status</th>
                       <th scope="col" className="px-4 py-3 font-medium">Config sync</th>
                       <th scope="col" className="px-4 py-3 font-medium">Last seen</th>
+                      {canManage && <th scope="col" className="px-4 py-3 font-medium text-right"> </th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -100,7 +141,7 @@ export default function CollectorsPage() {
                       <>
                         {[0, 1, 2].map((i) => (
                           <tr key={i} className="border-b last:border-0">
-                            {[0, 1, 2, 3, 4, 5, 6].map((j) => (
+                            {Array.from({ length: canManage ? 8 : 7 }).map((_, j) => (
                               <td key={j} className="px-4 py-3.5">
                                 <Skeleton className="h-4 w-24" />
                               </td>
@@ -111,19 +152,25 @@ export default function CollectorsPage() {
                     )}
                     {data && data.length === 0 && (
                       <tr>
-                        <td colSpan={7} className="px-4 py-16 text-center">
-                          <div className="mx-auto max-w-md space-y-2">
+                        <td colSpan={8} className="px-4 py-16 text-center">
+                          <div className="mx-auto max-w-md space-y-3">
                             <div className="mx-auto h-10 w-10 rounded-md bg-muted flex items-center justify-center">
                               <Server aria-hidden="true" className="h-5 w-5 text-muted-foreground" />
                             </div>
                             <div className="font-medium">No collectors registered yet</div>
                             <div className="text-sm text-muted-foreground">
-                              Provision one with Ansible from{" "}
-                              <code className="rounded bg-muted px-1 py-0.5 text-xs">
-                                av-bridge-ops/
-                              </code>
-                              .
+                              {canManage
+                                ? "Click New collector to pre-provision one and get a one-time install token for an engineer to run on site."
+                                : "Ask an admin to add a collector — you'll see it here once it's phoned home."}
                             </div>
+                            {canManage && (
+                              <div>
+                                <Button size="sm" onClick={() => setAdding(true)}>
+                                  <Plus className="h-3.5 w-3.5" />
+                                  New collector
+                                </Button>
+                              </div>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -210,6 +257,21 @@ export default function CollectorsPage() {
                               <span>never</span>
                             )}
                           </td>
+                          {canManage && (
+                            <td className="px-4 py-3.5 align-top text-right">
+                              <ReissueTokenButton
+                                collector={c}
+                                onIssued={(token, expiresAt) =>
+                                  setEnrollment({
+                                    name: c.name,
+                                    bridgeCollectorID: c.bridge_collector_id,
+                                    token,
+                                    expiresAt,
+                                  })
+                                }
+                              />
+                            </td>
+                          )}
                         </tr>
                       );
                     })}
@@ -226,6 +288,357 @@ export default function CollectorsPage() {
             </div>
           )}
         </div>
+      </div>
+
+      <Modal
+        open={adding}
+        onClose={() => setAdding(false)}
+        title="New collector"
+        wide={false}
+      >
+        <NewCollectorForm
+          onCancel={() => setAdding(false)}
+          onCreated={(res) => {
+            setAdding(false);
+            refresh();
+            setEnrollment({
+              name: res.name,
+              bridgeCollectorID: res.bridge_collector_id,
+              token: res.enrollment_token,
+              expiresAt: res.expires_at,
+            });
+          }}
+        />
+      </Modal>
+
+      <Modal
+        open={enrollment !== null}
+        onClose={() => setEnrollment(null)}
+        title="Collector enrollment"
+        wide={false}
+      >
+        {enrollment && (
+          <EnrollmentInstructions
+            name={enrollment.name}
+            bridgeCollectorID={enrollment.bridgeCollectorID}
+            token={enrollment.token}
+            expiresAt={enrollment.expiresAt}
+            onClose={() => setEnrollment(null)}
+          />
+        )}
+      </Modal>
+    </div>
+  );
+}
+
+function ReissueTokenButton({
+  collector,
+  onIssued,
+}: {
+  collector: CollectorSummary;
+  onIssued: (token: string, expiresAt: string) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const label =
+    collector.last_seen_at
+      ? "Re-issue enrollment token"
+      : "Show enrollment token";
+  const Icon = collector.last_seen_at ? RefreshCw : Zap;
+  return (
+    <>
+      <Button
+        variant="ghost"
+        size="icon"
+        aria-label={label}
+        title={label}
+        disabled={busy}
+        onClick={async () => {
+          setErr(null);
+          setBusy(true);
+          try {
+            const r = await api.reissueCollectorEnrollmentToken(collector.id);
+            onIssued(r.enrollment_token, r.expires_at);
+          } catch (e) {
+            setErr((e as Error).message);
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        {busy ? (
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        ) : (
+          <Icon className="h-3.5 w-3.5" />
+        )}
+      </Button>
+      {err && (
+        <div className="text-[10px] [color:hsl(var(--destructive))] mt-1 max-w-[160px] truncate" title={err}>
+          {err}
+        </div>
+      )}
+    </>
+  );
+}
+
+function NewCollectorForm({
+  onCancel,
+  onCreated,
+}: {
+  onCancel: () => void;
+  onCreated: (res: CreateCollectorResponse & { name: string }) => void;
+}) {
+  const [name, setName] = useState("");
+  const [buildings, setBuildings] = useState<BuildingRow[] | null>(null);
+  const [buildingID, setBuildingID] = useState<string>("");
+  const [bridgeCollectorID, setBridgeCollectorID] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const ctrl = new AbortController();
+    api
+      .listBuildings(ctrl.signal)
+      .then(setBuildings)
+      .catch(() => {}); // buildings are optional — the form still saves without one
+    return () => ctrl.abort();
+  }, []);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!name.trim()) return;
+    setError(null);
+    setSubmitting(true);
+    try {
+      const res = await api.createCollector({
+        name: name.trim(),
+        building_id: buildingID || null,
+        bridge_collector_id: bridgeCollectorID.trim() || undefined,
+      });
+      onCreated({ ...res, name: name.trim() });
+    } catch (e) {
+      setError((e as Error).message);
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <form onSubmit={submit} className="flex flex-col gap-4 text-sm">
+      <div className="flex flex-col gap-1.5">
+        <label htmlFor="collector-name" className="text-xs font-medium text-muted-foreground">
+          Display name
+        </label>
+        <input
+          id="collector-name"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          disabled={submitting}
+          required
+          autoFocus
+          placeholder="e.g. Head office bridge"
+          className="h-9 rounded-md border border-input bg-background px-3 text-sm outline-none focus:border-primary"
+        />
+        <p className="text-[11px] text-muted-foreground">
+          Shown in the portal + audit logs. Rename later at any time.
+        </p>
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <label htmlFor="collector-building" className="text-xs font-medium text-muted-foreground">
+          Building (optional)
+        </label>
+        <select
+          id="collector-building"
+          value={buildingID}
+          onChange={(e) => setBuildingID(e.target.value)}
+          disabled={submitting || !buildings}
+          className="h-9 rounded-md border border-input bg-background px-3 text-sm outline-none focus:border-primary"
+        >
+          <option value="">— Unassigned —</option>
+          {(buildings ?? []).map((b) => (
+            <option key={b.id} value={b.id}>
+              {b.name}
+            </option>
+          ))}
+        </select>
+        <p className="text-[11px] text-muted-foreground">
+          Devices auto-inherit this building unless you place them in specific rooms.
+        </p>
+      </div>
+
+      <details className="rounded-md border border-input bg-muted/20 px-3 py-2 text-xs">
+        <summary className="cursor-pointer select-none text-muted-foreground">
+          Advanced: override on-wire id
+        </summary>
+        <div className="mt-2 flex flex-col gap-1.5">
+          <input
+            value={bridgeCollectorID}
+            onChange={(e) => setBridgeCollectorID(e.target.value)}
+            disabled={submitting}
+            placeholder="derived from name if empty"
+            className="h-9 rounded-md border border-input bg-background px-3 font-mono text-xs outline-none focus:border-primary"
+          />
+          <p className="text-[11px] text-muted-foreground">
+            The stable identifier the bridge sends on every heartbeat.
+            Lowercase alphanumerics, dashes, underscores. Leave blank to
+            auto-generate — the default is fine unless you have a naming
+            convention.
+          </p>
+        </div>
+      </details>
+
+      {error && (
+        <div className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 [color:hsl(var(--destructive))]">
+          {error}
+        </div>
+      )}
+
+      <div className="flex items-center justify-end gap-2 pt-2">
+        <Button type="button" variant="ghost" onClick={onCancel} disabled={submitting}>
+          Cancel
+        </Button>
+        <Button type="submit" disabled={submitting || !name.trim()}>
+          {submitting ? (
+            <>
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              Creating…
+            </>
+          ) : (
+            "Create + mint token"
+          )}
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+function EnrollmentInstructions({
+  name,
+  bridgeCollectorID,
+  token,
+  expiresAt,
+  onClose,
+}: {
+  name: string;
+  bridgeCollectorID: string;
+  token: string;
+  expiresAt: string;
+  onClose: () => void;
+}) {
+  const [copiedField, setCopiedField] = useState<"token" | "curl" | null>(null);
+  const [remainingSec, setRemainingSec] = useState(() =>
+    Math.max(0, Math.floor((new Date(expiresAt).getTime() - Date.now()) / 1000))
+  );
+
+  useEffect(() => {
+    const t = setInterval(() => {
+      setRemainingSec(
+        Math.max(0, Math.floor((new Date(expiresAt).getTime() - Date.now()) / 1000))
+      );
+    }, 1000);
+    return () => clearInterval(t);
+  }, [expiresAt]);
+
+  const hours = Math.floor(remainingSec / 3600);
+  const mins = Math.floor((remainingSec % 3600) / 60);
+  const expired = remainingSec === 0;
+
+  // One-liner that pipes install.sh through bash with the token. The
+  // hostname behind install.sh is derived from the browser origin so
+  // this works cleanly in both uat and prod without a hard-coded URL.
+  const installURL =
+    typeof window !== "undefined"
+      ? `${window.location.origin}/public/collectors/install.sh`
+      : "https://<portal>/public/collectors/install.sh";
+  const oneLiner = `curl -fsSL ${installURL} | sudo AV_ENROLL_TOKEN=${token} bash`;
+
+  const copy = async (v: string, which: "token" | "curl") => {
+    try {
+      await navigator.clipboard.writeText(v);
+      setCopiedField(which);
+      setTimeout(() => setCopiedField(null), 2000);
+    } catch {
+      /* clipboard blocked; input is still selectable */
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-4 text-sm">
+      <div className="rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-3">
+        <p className="[color:hsl(var(--warning))] font-medium">
+          One-shot install token for{" "}
+          <span className="font-mono">{bridgeCollectorID}</span>.
+        </p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Anyone who runs this can enrol{" "}
+          <span className="font-mono">{name}</span> once. Send it through a
+          trusted channel; regenerate if it leaks.
+        </p>
+      </div>
+
+      <div>
+        <div className="mb-1 flex items-center justify-between">
+          <label className="text-xs font-medium text-muted-foreground">
+            Copy-paste one-liner
+          </label>
+          <span className="text-[10px] text-muted-foreground">
+            {expired
+              ? "Expired"
+              : hours >= 1
+              ? `Expires in ${hours}h ${mins}m`
+              : `Expires in ${mins}m ${remainingSec % 60}s`}
+          </span>
+        </div>
+        <div className="flex gap-2">
+          <input
+            readOnly
+            value={oneLiner}
+            onFocus={(e) => e.currentTarget.select()}
+            className="min-w-0 flex-1 h-9 rounded-md border border-input bg-muted/30 px-3 text-xs font-mono outline-none"
+          />
+          <Button
+            type="button"
+            onClick={() => copy(oneLiner, "curl")}
+            disabled={expired}
+          >
+            <Copy className="h-3.5 w-3.5" />
+            {copiedField === "curl" ? "Copied" : "Copy"}
+          </Button>
+        </div>
+        <p className="mt-1.5 text-[11px] text-muted-foreground">
+          Run on a fresh Ubuntu / Debian box at the site. The script
+          installs the bridge as a systemd service, redeems this token
+          for the HMAC secret, and starts phoning home.
+        </p>
+      </div>
+
+      <details className="rounded-md border border-input bg-muted/20 px-3 py-2 text-xs">
+        <summary className="cursor-pointer select-none text-muted-foreground">
+          Just the token
+        </summary>
+        <div className="mt-2 flex gap-2">
+          <input
+            readOnly
+            value={token}
+            onFocus={(e) => e.currentTarget.select()}
+            className="min-w-0 flex-1 h-9 rounded-md border border-input bg-background px-3 font-mono text-xs outline-none"
+          />
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => copy(token, "token")}
+            disabled={expired}
+          >
+            {copiedField === "token" ? "Copied" : "Copy"}
+          </Button>
+        </div>
+      </details>
+
+      <div className="flex items-center justify-end pt-2">
+        <Button variant="ghost" size="sm" onClick={onClose}>
+          Done
+        </Button>
       </div>
     </div>
   );

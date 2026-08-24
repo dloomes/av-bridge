@@ -148,6 +148,14 @@ type Config struct {
 	EntraCustomerClientID     string
 	EntraCustomerClientSecret string
 	EntraCustomerRedirectURI  string
+
+	// CloudBaseURL is the fully-qualified /ingest + /bridge origin that
+	// on-site collectors POST to (e.g. "https://api.uat.involvecloud.com").
+	// Returned in the collector enrollment redeem response so the install
+	// script can write cloud.webhook_url without a manual step. Empty in
+	// dev — install script then falls back to whichever host the redeem
+	// request came in on.
+	CloudBaseURL string
 }
 
 func FromEnv() (Config, error) {
@@ -265,6 +273,8 @@ func FromEnv() (Config, error) {
 		EntraCustomerClientID:     os.Getenv("ENTRA_CUSTOMER_CLIENT_ID"),
 		EntraCustomerClientSecret: os.Getenv("ENTRA_CUSTOMER_CLIENT_SECRET"),
 		EntraCustomerRedirectURI:  os.Getenv("ENTRA_CUSTOMER_REDIRECT_URI"),
+
+		CloudBaseURL: os.Getenv("CLOUD_BASE_URL"),
 	}
 	if c.MigrationDSN == "" {
 		return c, fmt.Errorf("DATABASE_MIGRATION_URL is required")

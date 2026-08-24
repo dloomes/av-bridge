@@ -106,6 +106,27 @@ export interface CollectorSummary {
   config_sync_status: "current" | "stale" | "unknown";
 }
 
+// Collector-enrollment (M-collector-enroll v1). Create pre-provisions
+// a row + mints a token; reissue mints a fresh token for an existing
+// row without changing its stable identity or HMAC secret.
+export interface CreateCollectorBody {
+  name: string;
+  building_id?: string | null;
+  bridge_collector_id?: string;
+}
+
+export interface CreateCollectorResponse {
+  id: string;
+  bridge_collector_id: string;
+  enrollment_token: string;
+  expires_at: string;
+}
+
+export interface EnrollmentTokenResponse {
+  enrollment_token: string;
+  expires_at: string;
+}
+
 export interface NamedRow {
   id: string;
   name: string;

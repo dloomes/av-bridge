@@ -8,6 +8,8 @@ import type {
   BulkCommandResponse,
   CollectorSummary,
   CommandRequest,
+  CreateCollectorBody,
+  CreateCollectorResponse,
   CommandResponse,
   CreateAssetBody,
   CreateCustomerBody,
@@ -21,6 +23,7 @@ import type {
   DeviceEvent,
   DeviceSummary,
   DeviceUptimeRow,
+  EnrollmentTokenResponse,
   FirmwareRow,
   FirmwareTarget,
   FirmwareTargetBody,
@@ -742,6 +745,24 @@ export const api = {
 
   listCollectors: (signal?: AbortSignal) =>
     request<CollectorSummary[]>("/api/v1/collectors", { signal }),
+
+  // Pre-provision a collector + mint an enrollment token in one call.
+  // Response includes the raw token — display once, don't re-fetch.
+  createCollector: (body: CreateCollectorBody, signal?: AbortSignal) =>
+    request<CreateCollectorResponse>("/api/v1/collectors", {
+      method: "POST",
+      body: JSON.stringify(body),
+      signal,
+    }),
+
+  // Fresh enrollment token for an already-created collector. Used when
+  // the original token was lost or expired between create and site
+  // visit. Collector's stable id / HMAC secret don't change.
+  reissueCollectorEnrollmentToken: (id: string, signal?: AbortSignal) =>
+    request<EnrollmentTokenResponse>(
+      `/api/v1/collectors/${encodeURIComponent(id)}/enrollment-token`,
+      { method: "POST", signal }
+    ),
 
   listAdapters: (signal?: AbortSignal) =>
     request<AdapterInfo[]>("/api/v1/adapters", { signal }),

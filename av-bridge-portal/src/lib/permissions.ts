@@ -53,6 +53,7 @@ export const PERMISSIONS: readonly PermissionDef[] = [
   // Fleet management
   { key: "device.crud",       title: "Manage devices",       description: "Add, edit, and remove devices from the tenant.",           category: "Fleet management" },
   { key: "hierarchy.crud",    title: "Manage locations",     description: "Regions, locations, buildings, rooms — full CRUD.",         category: "Fleet management" },
+  { key: "collector.crud",    title: "Manage collectors",    description: "Pre-provision on-prem bridges from the portal and issue enrollment tokens for site setup.", category: "Fleet management" },
 
   // Notifications
   { key: "notification.crud", title: "Manage notification channels", description: "Add, edit, and remove email / Teams / webhook channels.",       category: "Notifications" },

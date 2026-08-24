@@ -48,6 +48,13 @@ const (
 	PermDeviceCRUD    = "device.crud"
 	PermHierarchyCRUD = "hierarchy.crud"
 	PermAssetCRUD     = "asset.crud"
+	// collector.crud — pre-provision a new bridge (collector) from the
+	// portal and mint an enrollment token an engineer runs on-site.
+	// Kept distinct from device.crud so a customer admin can be
+	// trusted with device inventory without also being trusted to
+	// stand up new bridges (which is more sensitive: the bridge is a
+	// long-lived HMAC-authenticated identity).
+	PermCollectorCRUD = "collector.crud"
 )
 
 // Outbound notifications — channel CRUD is the manage side; test is the
@@ -110,6 +117,7 @@ var KnownPermissions = map[string]struct{}{
 	PermAlertResolve:       {},
 	PermDeviceCRUD:         {},
 	PermHierarchyCRUD:      {},
+	PermCollectorCRUD:      {},
 	PermNotificationCRUD:   {},
 	PermNotificationTest:   {},
 	PermFirmwareTargetCRUD: {},
