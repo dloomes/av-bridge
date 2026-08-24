@@ -139,6 +139,20 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 			portalauth.Middleware(portal.Resolver,
 				portalauth.RequireVendor(http.HandlerFunc(portal.Portal.HelpdeskUpdateCustomer))))
 
+		// Vendor-tenant user management (M3.1). Same-shape endpoints as
+		// the customer /users CRUD but scoped to the single vendor
+		// tenant and RequireVendor'd. No POST — new vendor users are
+		// only provisioned via Entra JIT (see entra.go).
+		mux.Handle("GET /api/v1/helpdesk/users",
+			portalauth.Middleware(portal.Resolver,
+				portalauth.RequireVendor(http.HandlerFunc(portal.Portal.HelpdeskListUsers))))
+		mux.Handle("PATCH /api/v1/helpdesk/users/{id}",
+			portalauth.Middleware(portal.Resolver,
+				portalauth.RequireVendor(http.HandlerFunc(portal.Portal.HelpdeskUpdateUser))))
+		mux.Handle("DELETE /api/v1/helpdesk/users/{id}",
+			portalauth.Middleware(portal.Resolver,
+				portalauth.RequireVendor(http.HandlerFunc(portal.Portal.HelpdeskDeleteUser))))
+
 		// Dashboard-level reads. view.dashboard covers the shape of the
 		// portal's main pages: fleet status, device list + detail + live
 		// telemetry, event stream, alerts feed, and the physical-hierarchy

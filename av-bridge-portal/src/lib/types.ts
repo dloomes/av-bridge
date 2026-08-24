@@ -486,6 +486,28 @@ export interface UpdateRoleMappingBody {
   role: string;
 }
 
+// Vendor-tenant user row (M3.1). Slimmer than the customer UserRow — no
+// role_ids / role_names / building scope, and role_source is exposed so
+// admins can see at-a-glance whether a role is Entra-managed or a
+// manual override.
+export interface VendorUserRow {
+  id: string;
+  email: string;
+  full_name?: string;
+  role: string;         // admin | operator | viewer
+  role_source: string;  // 'entra' | 'manual'
+  provider: string;     // 'local' | 'entra'
+  disabled: boolean;
+  created_at?: string;
+  last_login_at?: string;
+}
+
+export interface UpdateVendorUserBody {
+  full_name?: string;
+  role?: string;
+  disabled?: boolean;
+}
+
 export interface HealthResponse {
   status: string;
   time: string;

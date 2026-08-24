@@ -38,7 +38,9 @@ import type {
   UpdateRoleBody,
   UpdateRoleMappingBody,
   UpdateUserBody,
+  UpdateVendorUserBody,
   UserRow,
+  VendorUserRow,
 } from "./types";
 
 // HTTP requests go to the Next.js dev server, which proxies to av-bridge via
@@ -1234,6 +1236,33 @@ export const api = {
   deleteVendorRoleMapping: async (id: string, signal?: AbortSignal): Promise<void> => {
     const res = await fetch(
       `${API_BASE}/api/v1/vendor-role-mappings/${encodeURIComponent(id)}`,
+      { method: "DELETE", headers: authHeaders(), signal, cache: "no-store" }
+    );
+    if (!res.ok) {
+      let body = "";
+      try { body = await res.text(); } catch {}
+      throw new ApiError(`${res.status} ${res.statusText}${body ? `: ${body}` : ""}`, res.status);
+    }
+  },
+
+  // -- vendor-tenant user management (M3.1) -----------------------------------
+  //
+  // Sibling to the customer /users CRUD but scoped to the single vendor
+  // tenant. No create — new vendor users come from Entra JIT.
+
+  listVendorUsers: (signal?: AbortSignal) =>
+    request<VendorUserRow[]>("/api/v1/helpdesk/users", { signal }),
+
+  updateVendorUser: (id: string, body: UpdateVendorUserBody, signal?: AbortSignal) =>
+    request<void>(`/api/v1/helpdesk/users/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+      signal,
+    }),
+
+  deleteVendorUser: async (id: string, signal?: AbortSignal): Promise<void> => {
+    const res = await fetch(
+      `${API_BASE}/api/v1/helpdesk/users/${encodeURIComponent(id)}`,
       { method: "DELETE", headers: authHeaders(), signal, cache: "no-store" }
     );
     if (!res.ok) {

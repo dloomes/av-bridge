@@ -375,86 +375,125 @@ func (h *EntraCustomerHandler) linkOrCreateUser(ctx context.Context, customerID 
 		return "", errors.New("id_token has neither email nor preferred_username")
 	}
 
+	// Three lookup paths — same as before, but strict-sync runs at the
+	// end regardless of which path found (or created) the user row.
+	// syncEntraRoleGrants wipes previous entra grants and re-derives
+	// from current groups, so revocations propagate too.
 	var userID string
 	err := pool.QueryRow(ctx, `
 		SELECT id::text FROM users
 		 WHERE customer_id = $1 AND entra_sub = $2
 		 LIMIT 1`,
 		customerID, claims.Sub).Scan(&userID)
-	if err == nil {
-		return userID, nil
-	}
-	if !errors.Is(err, pgx.ErrNoRows) {
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return "", fmt.Errorf("lookup by sub: %w", err)
 	}
-
-	err = pool.QueryRow(ctx, `
-		UPDATE users
-		   SET entra_sub = $2, provider = 'entra'
-		 WHERE customer_id = $1 AND lower(email) = lower($3) AND entra_sub IS NULL
-		 RETURNING id::text`,
-		customerID, claims.Sub, email).Scan(&userID)
-	if err == nil {
-		h.log.Info("entra customer: linked existing local user",
+	if userID == "" {
+		err = pool.QueryRow(ctx, `
+			UPDATE users
+			   SET entra_sub = $2, provider = 'entra'
+			 WHERE customer_id = $1 AND lower(email) = lower($3) AND entra_sub IS NULL
+			 RETURNING id::text`,
+			customerID, claims.Sub, email).Scan(&userID)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return "", fmt.Errorf("link by email: %w", err)
+		}
+		if userID != "" {
+			h.log.Info("entra customer: linked existing local user",
+				"user_id", userID, "customer_id", customerID, "email", email)
+		}
+	}
+	if userID == "" {
+		name := strings.TrimSpace(claims.Name)
+		if name == "" {
+			name = email
+		}
+		if err := pool.QueryRow(ctx, `
+			INSERT INTO users (email, full_name, customer_id, role, provider, entra_sub)
+			VALUES ($1, $2, $3, 'viewer', 'entra', $4)
+			RETURNING id::text`,
+			email, name, customerID, claims.Sub).Scan(&userID); err != nil {
+			return "", fmt.Errorf("jit create: %w", err)
+		}
+		h.log.Info("entra customer: JIT-created user",
 			"user_id", userID, "customer_id", customerID, "email", email)
-		return userID, nil
-	}
-	if !errors.Is(err, pgx.ErrNoRows) {
-		return "", fmt.Errorf("link by email: %w", err)
 	}
 
-	name := strings.TrimSpace(claims.Name)
-	if name == "" {
-		name = email
-	}
-	err = pool.QueryRow(ctx, `
-		INSERT INTO users (email, full_name, customer_id, role, provider, entra_sub)
-		VALUES ($1, $2, $3, 'viewer', 'entra', $4)
-		RETURNING id::text`,
-		email, name, customerID, claims.Sub).Scan(&userID)
-	if err != nil {
-		return "", fmt.Errorf("jit create: %w", err)
-	}
-
-	// M3: resolve Entra groups → customer-scoped role_mappings → roles
-	// and grant them via user_roles. Silent on unmapped groups; log a
-	// warn on DB errors so an ops mis-config surfaces without breaking
-	// sign-in. New user with no mappings ends up with only the legacy
-	// users.role='viewer' fallback until an admin promotes them.
-	granted := h.applyEntraRoleGrants(ctx, customerID, userID, claims.Groups)
-	h.log.Info("entra customer: JIT-created user",
-		"user_id", userID, "customer_id", customerID, "email", email,
-		"group_count", len(claims.Groups), "roles_granted", granted)
+	// M3.1: strict-sync on every sign-in. Wipes previous entra-derived
+	// role grants and re-derives from current group memberships. Manual
+	// role grants (granted_by='manual') are untouched — an admin's
+	// explicit promotion outlives group churn.
+	granted := h.syncEntraRoleGrants(ctx, customerID, userID, claims.Groups)
+	h.log.Info("entra customer: role sync",
+		"user_id", userID, "customer_id", customerID,
+		"group_count", len(claims.Groups), "entra_grants", granted)
 	return userID, nil
 }
 
-// applyEntraRoleGrants resolves the caller's group memberships against
-// customer role_mappings and inserts matching rows into user_roles.
-// Returns the number of role grants inserted (0 when no groups match or
-// no rows exist). Errors are logged and swallowed — a mapping table
-// glitch shouldn't fail sign-in.
+// syncEntraRoleGrants strict-syncs the user's Entra-derived role grants
+// against current group memberships and the customer's mapping table.
+// Called on every Entra sign-in (JIT create AND link AND existing user),
+// not just the first one, so revoked group memberships also revoke
+// portal access on next sign-in.
 //
-// The join is done in a single query: role_mappings → roles (by
-// customer_id + case-insensitive name match). Duplicate grants use
-// ON CONFLICT DO NOTHING so a group→role mapping that references the
-// same role as another mapping doesn't blow up the INSERT.
-func (h *EntraCustomerHandler) applyEntraRoleGrants(ctx context.Context, customerID, userID string, groupIDs []string) int {
-	if len(groupIDs) == 0 {
+// Contract:
+//   * user_roles rows with granted_by='entra' for this user are the
+//     "authoritative Entra set" — this function wipes and rebuilds them.
+//   * user_roles rows with granted_by='manual' are the admin's own edits
+//     and are never touched.
+//   * ON CONFLICT DO NOTHING keeps a manual grant for the same role as
+//     the target of a mapping — manual "wins" for storage of that
+//     (user, role) pair, so if the manual assignment is later revoked
+//     the entra sync will re-establish the grant.
+//
+// Errors are logged and swallowed — a role_mappings hiccup shouldn't
+// fail sign-in. Returns the count of entra grants after the sync (0 in
+// error paths OR when no mappings match).
+func (h *EntraCustomerHandler) syncEntraRoleGrants(ctx context.Context, customerID, userID string, groupIDs []string) int {
+	tx, err := h.store.AdminPool().Begin(ctx)
+	if err != nil {
+		h.log.Warn("entra customer: sync begin failed",
+			"user_id", userID, "customer_id", customerID, "error", err)
 		return 0
 	}
-	tag, err := h.store.AdminPool().Exec(ctx, `
-		INSERT INTO user_roles (user_id, role_id)
-		SELECT $2::uuid, r.id
+	defer tx.Rollback(ctx)
+
+	// Wipe all previous entra grants first — anything the mappings no
+	// longer justify disappears. Manual grants (granted_by='manual')
+	// are left alone.
+	if _, err := tx.Exec(ctx, `
+		DELETE FROM user_roles
+		 WHERE user_id = $1 AND granted_by = 'entra'`, userID); err != nil {
+		h.log.Warn("entra customer: sync wipe failed",
+			"user_id", userID, "customer_id", customerID, "error", err)
+		return 0
+	}
+	if len(groupIDs) == 0 {
+		if err := tx.Commit(ctx); err != nil {
+			h.log.Warn("entra customer: sync commit failed",
+				"user_id", userID, "customer_id", customerID, "error", err)
+			return 0
+		}
+		return 0
+	}
+	tag, err := tx.Exec(ctx, `
+		INSERT INTO user_roles (user_id, role_id, granted_by)
+		SELECT $2::uuid, r.id, 'entra'
 		  FROM role_mappings m
 		  JOIN roles r
 		    ON r.customer_id = m.customer_id
 		   AND lower(r.name) = lower(m.role)
 		 WHERE m.customer_id = $1
 		   AND m.group_id = ANY($3::text[])
-		ON CONFLICT DO NOTHING`,
+		ON CONFLICT (user_id, role_id) DO NOTHING`,
 		customerID, userID, groupIDs)
 	if err != nil {
-		h.log.Warn("entra customer: role grant failed",
+		h.log.Warn("entra customer: sync insert failed",
+			"user_id", userID, "customer_id", customerID, "error", err)
+		return 0
+	}
+	if err := tx.Commit(ctx); err != nil {
+		h.log.Warn("entra customer: sync commit failed",
 			"user_id", userID, "customer_id", customerID, "error", err)
 		return 0
 	}

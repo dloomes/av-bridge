@@ -94,6 +94,7 @@ const SECTIONS: NavSection[] = [
     items: [
       { href: "/customers", label: "Customers", icon: Building2 },
       { href: "/helpdesk", label: "Helpdesk", icon: ShieldCheck },
+      { href: "/helpdesk/users", label: "Helpdesk users", icon: Users },
     ],
   },
   {

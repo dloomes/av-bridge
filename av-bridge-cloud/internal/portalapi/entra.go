@@ -18,6 +18,7 @@ import (
 	"github.com/dloomes/av-bridge-cloud/internal/db"
 	"github.com/dloomes/av-bridge-cloud/internal/portalauth"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // EntraVendorHandler owns the OIDC sign-in flow for helpdesk (vendor)
@@ -273,12 +274,18 @@ func (h *EntraVendorHandler) exchangeCode(ctx context.Context, code, verifier st
 //  3. Otherwise INSERT a new provider='entra' user row with the given
 //     entra_sub, no password_hash.
 //
-// Role assignment: on JIT CREATE ONLY, the vendor role_mappings rows are
-// consulted — the first (highest-priority) group in the token that
-// matches a mapping wins, and its role goes onto users.role. If no group
-// matches, fallback is 'viewer'. Existing users keep their existing role
-// on subsequent sign-ins (M3.1 will look at strict-sync); this matches
-// the pragmatic default that manual admin promotions survive re-sign-in.
+// Role assignment (M3.1 strict-sync): after ANY of the three paths
+// resolves a user, vendor role_mappings are consulted. The highest-
+// priority matching role wins (admin > operator > viewer). users.role
+// + role_source are updated ONLY when:
+//   * the row is a fresh JIT create, OR
+//   * role_source='entra' (this user is under Entra control)
+// A row with role_source='manual' — an admin promoted them via the
+// vendor /users UI — keeps their role even if their group memberships
+// change. That's the escape hatch for override-with-intent.
+//
+// When no group matches and the user is fresh, we insert with 'viewer'
+// + role_source='entra'.
 func (h *EntraVendorHandler) linkOrCreateUser(ctx context.Context, claims portalauth.EntraClaims) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
@@ -289,57 +296,84 @@ func (h *EntraVendorHandler) linkOrCreateUser(ctx context.Context, claims portal
 		return "", errors.New("id_token has neither email nor preferred_username")
 	}
 
+	// Three lookup paths — after any of them resolves, strict-sync runs
+	// so revoked group memberships propagate on next sign-in.
 	var userID string
 	err := pool.QueryRow(ctx, `
 		SELECT id::text FROM users
 		 WHERE vendor_tenant_id = $1 AND entra_sub = $2
 		 LIMIT 1`,
 		h.vendorTenantID, claims.Sub).Scan(&userID)
-	if err == nil {
-		return userID, nil
-	}
-	if !errors.Is(err, pgx.ErrNoRows) {
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return "", fmt.Errorf("lookup by sub: %w", err)
 	}
+	if userID == "" {
+		err = pool.QueryRow(ctx, `
+			UPDATE users
+			   SET entra_sub = $2, provider = 'entra'
+			 WHERE vendor_tenant_id = $1 AND lower(email) = lower($3) AND entra_sub IS NULL
+			 RETURNING id::text`,
+			h.vendorTenantID, claims.Sub, email).Scan(&userID)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return "", fmt.Errorf("link by email: %w", err)
+		}
+		if userID != "" {
+			h.log.Info("entra: linked existing local user", "user_id", userID, "email", email)
+		}
+	}
+	created := false
+	if userID == "" {
+		newRole := resolveVendorRoleFromGroups(ctx, pool, h.vendorTenantID, claims.Groups)
+		name := strings.TrimSpace(claims.Name)
+		if name == "" {
+			name = email
+		}
+		// Fresh JIT row starts with role_source='entra' — mappings own
+		// the role until a vendor admin explicitly overrides via the
+		// /helpdesk/users UI (which will flip role_source to 'manual').
+		if err := pool.QueryRow(ctx, `
+			INSERT INTO users (email, full_name, vendor_tenant_id, role, provider, entra_sub, role_source)
+			VALUES ($1, $2, $3, $5, 'entra', $4, 'entra')
+			RETURNING id::text`,
+			email, name, h.vendorTenantID, claims.Sub, newRole).Scan(&userID); err != nil {
+			return "", fmt.Errorf("jit create: %w", err)
+		}
+		created = true
+		h.log.Info("entra: JIT-created vendor user",
+			"user_id", userID, "email", email, "role", newRole,
+			"group_count", len(claims.Groups))
+	}
 
-	// Try the email path — first-time link for an existing local user.
-	err = pool.QueryRow(ctx, `
-		UPDATE users
-		   SET entra_sub = $2, provider = 'entra'
-		 WHERE vendor_tenant_id = $1 AND lower(email) = lower($3) AND entra_sub IS NULL
-		 RETURNING id::text`,
-		h.vendorTenantID, claims.Sub, email).Scan(&userID)
-	if err == nil {
-		h.log.Info("entra: linked existing local user", "user_id", userID, "email", email)
-		return userID, nil
+	// M3.1 strict-sync: overwrite users.role from mappings only if the
+	// row is entra-managed. Skip the write when the row is fresh (the
+	// INSERT above already applied mappings). role_source='manual'
+	// rows are left untouched — that's the admin override escape hatch.
+	if !created {
+		syncVendorRole(ctx, pool, h.vendorTenantID, userID, claims.Groups, h.log)
 	}
-	if !errors.Is(err, pgx.ErrNoRows) {
-		return "", fmt.Errorf("link by email: %w", err)
-	}
-
-	// JIT create — no matching row anywhere. Resolve the caller's groups
-	// against the vendor tenant's role_mappings; the first legacy role
-	// name we hit ranks admin > operator > viewer so a user who belongs
-	// to both an admin AND an operator group ends up admin. If no groups
-	// match, fall back to 'viewer' — the same conservative default the
-	// pre-M3 code used.
-	newRole := resolveVendorRoleFromGroups(ctx, pool, h.vendorTenantID, claims.Groups)
-	name := strings.TrimSpace(claims.Name)
-	if name == "" {
-		name = email
-	}
-	err = pool.QueryRow(ctx, `
-		INSERT INTO users (email, full_name, vendor_tenant_id, role, provider, entra_sub)
-		VALUES ($1, $2, $3, $5, 'entra', $4)
-		RETURNING id::text`,
-		email, name, h.vendorTenantID, claims.Sub, newRole).Scan(&userID)
-	if err != nil {
-		return "", fmt.Errorf("jit create: %w", err)
-	}
-	h.log.Info("entra: JIT-created vendor user",
-		"user_id", userID, "email", email, "role", newRole,
-		"group_count", len(claims.Groups))
 	return userID, nil
+}
+
+// syncVendorRole is the M3.1 strict-sync entry point for vendor rows.
+// Only mutates users.role when role_source='entra'. Errors are logged
+// and swallowed.
+func syncVendorRole(ctx context.Context, pool interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+}, vendorTenantID, userID string, groupIDs []string, log *slog.Logger) {
+	newRole := resolveVendorRoleFromGroups(ctx, pool, vendorTenantID, groupIDs)
+	// Only writes if the row is still under Entra control. A manual
+	// promotion (role_source='manual') isn't overwritten.
+	if _, err := pool.Exec(ctx, `
+		UPDATE users
+		   SET role = $2
+		 WHERE id = $1
+		   AND vendor_tenant_id = $3
+		   AND role_source = 'entra'`,
+		userID, newRole, vendorTenantID); err != nil {
+		log.Warn("entra: vendor role sync failed",
+			"user_id", userID, "error", err)
+	}
 }
 
 // vendorRolePriority orders the three legacy vendor roles from highest
