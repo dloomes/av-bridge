@@ -1,13 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
-  Building2,
-  ChevronRight,
   CircleSlash,
-  DoorOpen,
   RefreshCcw,
   Server,
   Wifi,
@@ -16,7 +13,6 @@ import { ConnectionIndicator } from "@/components/connection-indicator";
 import { StatCard } from "@/components/stat-card";
 import { UserMenu } from "@/components/user-menu";
 import { StatusBadge } from "@/components/status-badge";
-import { DeviceCard } from "@/components/device-card";
 import { useBranding } from "@/components/branding-provider";
 import { FleetHealth } from "@/components/fleet-health";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -25,7 +21,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { usePolling } from "@/hooks/usePolling";
 import { useSession } from "@/hooks/useSession";
 import { api } from "@/lib/api";
-import { formatRelative, groupDevicesByLocation } from "@/lib/utils";
+import { formatRelative } from "@/lib/utils";
 import type {
   CollectorSummary,
   DeviceStatus,
@@ -52,6 +48,11 @@ export default function DashboardPage() {
     (signal) => api.fleetStatus(signal),
     15_000
   );
+  // Device list still polled — it drives the FleetHealth aside (which
+  // pins offline / degraded rooms to the right column) and gives the
+  // sidebar's Places tree its data. The overview no longer renders a
+  // per-device list of its own; that lives behind the Places nav on
+  // the left and the /devices page.
   const devices = usePolling<DeviceSummary[]>(
     (signal) => api.listDevices(signal),
     15_000
@@ -60,24 +61,6 @@ export default function DashboardPage() {
     (signal) => api.listCollectors(signal),
     15_000
   );
-  const refreshTick = useMemo(
-    () => devices.lastUpdated ?? 0,
-    [devices.lastUpdated]
-  );
-
-  const groups = useMemo(
-    () => (devices.data ? groupDevicesByLocation(devices.data) : []),
-    [devices.data]
-  );
-
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
-  const toggle = (key: string) =>
-    setCollapsed((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
 
   const isLoading = fleet.loading && !fleet.data;
   const hasError = !!(fleet.error || devices.error);
@@ -98,7 +81,7 @@ export default function DashboardPage() {
               {branding.display_name || "AV Bridge"}
             </h1>
             <p className="text-sm text-muted-foreground">
-              Room overview · auto-refreshing every 15s
+              Fleet snapshot · browse devices via <span className="font-medium">Places</span> on the left · refreshes every 15s
             </p>
           </div>
         </div>
@@ -220,123 +203,6 @@ export default function DashboardPage() {
               )}
             </section>
 
-            <section className="space-y-3">
-              <div className="flex items-center justify-between">
-                <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
-                  Devices
-                </h2>
-                <span className="text-xs text-muted-foreground">
-                  {devices.data?.length ?? 0} device
-                  {devices.data?.length === 1 ? "" : "s"}
-                </span>
-              </div>
-
-              {devices.loading && !devices.data ? (
-                <div className="flex flex-col gap-2">
-                  {[0, 1, 2].map((i) => (
-                    <Skeleton key={i} className="h-12 w-full" />
-                  ))}
-                </div>
-              ) : devices.data && devices.data.length > 0 ? (
-                <div className="space-y-6">
-                  {groups.map((g, gi) => {
-                    const buildingKey = g.building ?? `__flat__${gi}`;
-                    const buildingOpen = !collapsed.has(`b:${buildingKey}`);
-                    const buildingDevices = g.rooms.reduce(
-                      (n, r) => n + r.devices.length,
-                      0
-                    );
-                    return (
-                      <div key={buildingKey} className="space-y-3">
-                        {g.building && (
-                          <button
-                            type="button"
-                            onClick={() => toggle(`b:${buildingKey}`)}
-                            className="flex w-full items-center gap-2 text-left hover:opacity-80"
-                          >
-                            <ChevronRight
-                              className={`h-3.5 w-3.5 text-muted-foreground transition-transform ${
-                                buildingOpen ? "rotate-90" : ""
-                              }`}
-                            />
-                            <Building2 className="h-4 w-4 text-muted-foreground" />
-                            <div className="flex flex-col items-start leading-tight">
-                              {(g.region || g.locationName) && (
-                                <span className="text-[10px] uppercase tracking-wide text-muted-foreground/70">
-                                  {[g.region, g.locationName]
-                                    .filter(Boolean)
-                                    .join(" · ")}
-                                </span>
-                              )}
-                              <h3 className="text-sm font-semibold">
-                                {g.building}
-                              </h3>
-                            </div>
-                            <span className="text-[11px] text-muted-foreground/70">
-                              · {buildingDevices} device
-                              {buildingDevices === 1 ? "" : "s"}
-                            </span>
-                            <div className="h-px flex-1 bg-border" />
-                          </button>
-                        )}
-                        {buildingOpen && (
-                          <div
-                            className={
-                              g.building ? "space-y-4 pl-6" : "space-y-4"
-                            }
-                          >
-                            {g.rooms.map((r) => {
-                              const roomKey = `r:${buildingKey}::${r.room}`;
-                              const roomOpen = !collapsed.has(roomKey);
-                              return (
-                                <div key={r.room} className="space-y-2">
-                                  <button
-                                    type="button"
-                                    onClick={() => toggle(roomKey)}
-                                    className="flex w-full items-center gap-2 text-left hover:opacity-80"
-                                  >
-                                    <ChevronRight
-                                      className={`h-3 w-3 text-muted-foreground transition-transform ${
-                                        roomOpen ? "rotate-90" : ""
-                                      }`}
-                                    />
-                                    <DoorOpen className="h-3.5 w-3.5 text-muted-foreground" />
-                                    <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                                      {r.room}
-                                    </h4>
-                                    <span className="text-[11px] text-muted-foreground/70">
-                                      · {r.devices.length} device
-                                      {r.devices.length === 1 ? "" : "s"}
-                                    </span>
-                                  </button>
-                                  {roomOpen && (
-                                    <div className="flex flex-col gap-2">
-                                      {r.devices.map((d) => (
-                                        <DeviceCard
-                                          key={d.id}
-                                          device={d}
-                                          refreshTick={refreshTick}
-                                        />
-                                      ))}
-                                    </div>
-                                  )}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : (
-                <Card>
-                  <CardContent className="p-10 text-center text-sm text-muted-foreground">
-                    No devices configured.
-                  </CardContent>
-                </Card>
-              )}
-            </section>
           </div>
 
           <aside className="lg:sticky lg:top-6 lg:h-[calc(100vh-7rem)]">
