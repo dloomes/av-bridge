@@ -11,6 +11,7 @@ import {
   RefreshCw,
   Server,
   Signal,
+  Trash2,
   Zap,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -78,6 +79,7 @@ export default function CollectorsPage() {
       }
     | null
   >(null);
+  const [deleting, setDeleting] = useState<CollectorSummary | null>(null);
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -259,17 +261,32 @@ export default function CollectorsPage() {
                           </td>
                           {canManage && (
                             <td className="px-4 py-3.5 align-top text-right">
-                              <ReissueTokenButton
-                                collector={c}
-                                onIssued={(token, expiresAt) =>
-                                  setEnrollment({
-                                    name: c.name,
-                                    bridgeCollectorID: c.bridge_collector_id,
-                                    token,
-                                    expiresAt,
-                                  })
-                                }
-                              />
+                              <div className="inline-flex items-center gap-1">
+                                <ReissueTokenButton
+                                  collector={c}
+                                  onIssued={(token, expiresAt) =>
+                                    setEnrollment({
+                                      name: c.name,
+                                      bridgeCollectorID: c.bridge_collector_id,
+                                      token,
+                                      expiresAt,
+                                    })
+                                  }
+                                />
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  aria-label="Delete collector"
+                                  title={
+                                    c.device_count > 0
+                                      ? `Refuses while ${c.device_count} device(s) attached — delete them first`
+                                      : "Delete collector"
+                                  }
+                                  onClick={() => setDeleting(c)}
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </Button>
+                              </div>
                             </td>
                           )}
                         </tr>
@@ -327,6 +344,94 @@ export default function CollectorsPage() {
           />
         )}
       </Modal>
+
+      <Modal
+        open={deleting !== null}
+        onClose={() => setDeleting(null)}
+        title="Delete collector"
+        wide={false}
+      >
+        {deleting && (
+          <DeleteCollectorConfirm
+            collector={deleting}
+            onCancel={() => setDeleting(null)}
+            onDeleted={async () => {
+              setDeleting(null);
+              await refresh();
+            }}
+          />
+        )}
+      </Modal>
+    </div>
+  );
+}
+
+function DeleteCollectorConfirm({
+  collector,
+  onCancel,
+  onDeleted,
+}: {
+  collector: CollectorSummary;
+  onCancel: () => void;
+  onDeleted: () => Promise<void>;
+}) {
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const run = async () => {
+    setError(null);
+    setSubmitting(true);
+    try {
+      await api.deleteCollector(collector.id);
+      await onDeleted();
+    } catch (e) {
+      setError((e as Error).message);
+      setSubmitting(false);
+    }
+  };
+  return (
+    <div className="flex flex-col gap-4 text-sm">
+      <p>
+        Permanently remove{" "}
+        <span className="font-medium">{collector.name}</span>
+        {collector.bridge_collector_id && (
+          <>
+            {" "}
+            (<span className="font-mono text-xs">{collector.bridge_collector_id}</span>)
+          </>
+        )}
+        ?
+      </p>
+      <p className="text-xs text-muted-foreground">
+        This unregisters the bridge. Its HMAC secret stops working immediately —
+        the bridge will fail every heartbeat and stop appearing in this list.
+        {collector.device_count > 0 && (
+          <>
+            {" "}
+            The server refuses if any devices are still attached; delete or
+            move the {collector.device_count} device(s) first.
+          </>
+        )}
+      </p>
+      {error && (
+        <div className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 [color:hsl(var(--destructive))]">
+          {error}
+        </div>
+      )}
+      <div className="flex items-center justify-end gap-2 pt-2">
+        <Button type="button" variant="ghost" onClick={onCancel} disabled={submitting}>
+          Cancel
+        </Button>
+        <Button type="button" onClick={run} disabled={submitting}>
+          {submitting ? (
+            <>
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              Deleting…
+            </>
+          ) : (
+            "Delete"
+          )}
+        </Button>
+      </div>
     </div>
   );
 }

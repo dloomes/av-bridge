@@ -279,6 +279,84 @@ func defaultBridgeCollectorID(name string) string {
 	return root + "-" + hex.EncodeToString(suf[:])
 }
 
+// DeleteCollector — DELETE /api/v1/collectors/{id}
+//
+// Refuses if any live devices (deleted_at IS NULL) still reference this
+// collector — the schema has ON DELETE CASCADE all the way down through
+// devices → telemetry/events/commands/alerts, so a raw delete would
+// silently wipe a lot of history. Soft-deleted device rows don't block
+// (they're already tombstoned from the user's point of view; letting the
+// cascade take them out is the whole point of "delete forever").
+func (h *Handler) DeleteCollector(w http.ResponseWriter, r *http.Request) {
+	p, ok := h.requireCustomerScope(w, r)
+	if !ok {
+		return
+	}
+	id := r.PathValue("id")
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	// One round-trip: confirm the collector belongs to this tenant AND
+	// count its live devices. count > 0 → 409, count = 0 (or NULL row)
+	// → we know it's safe to delete OR that the row doesn't exist.
+	var (
+		exists     bool
+		liveDevices int
+		name       string
+	)
+	err := h.store.AdminPool().QueryRow(ctx, `
+		SELECT c.name,
+		       (SELECT count(*) FROM devices d
+		         WHERE d.collector_id = c.id
+		           AND d.deleted_at IS NULL)::int
+		  FROM collectors c
+		 WHERE c.id = $1 AND c.customer_id = $2`,
+		id, p.CustomerID,
+	).Scan(&name, &liveDevices)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeErr(w, http.StatusNotFound, "collector not found")
+			return
+		}
+		h.log.Error("delete collector: lookup", "error", err)
+		writeErr(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	exists = true
+	_ = exists
+
+	if liveDevices > 0 {
+		writeErr(w, http.StatusConflict, fmt.Sprintf(
+			"collector still has %d device(s) — delete or move them first, then retry",
+			liveDevices,
+		))
+		return
+	}
+
+	tag, err := h.store.AdminPool().Exec(ctx,
+		`DELETE FROM collectors WHERE id = $1 AND customer_id = $2`,
+		id, p.CustomerID)
+	if err != nil {
+		h.log.Error("delete collector: exec", "error", err)
+		writeErr(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		writeErr(w, http.StatusNotFound, "collector not found")
+		return
+	}
+
+	_ = h.store.WithTenantScoped(r.Context(), p.CustomerID, principalScope(p), func(tx pgx.Tx) error {
+		return audit.Record(r.Context(), tx, p.CustomerID, stampActor(p, audit.Entry{
+			Action:     "collector.delete",
+			TargetKind: "collector", TargetID: id,
+			Before: mustJSON(map[string]any{"name": name}),
+		}))
+	})
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // bridgeCollectorIDValid enforces the same shape defaultBridgeCollectorID
 // produces so a caller who supplies their own id can't sneak whitespace
 // or slashes through to the bridge's persistent identifier.

@@ -764,6 +764,31 @@ export const api = {
       { method: "POST", signal }
     ),
 
+  // Permanently remove a collector. Refused server-side if any live
+  // (non-tombstoned) devices still reference it — the schema cascades
+  // through devices → telemetry, so the guardrail prevents an accidental
+  // history wipe. Caller can retry after deleting/moving the devices.
+  deleteCollector: async (id: string, signal?: AbortSignal): Promise<void> => {
+    const res = await fetch(
+      `${API_BASE}/api/v1/collectors/${encodeURIComponent(id)}`,
+      { method: "DELETE", headers: authHeaders(), signal, cache: "no-store" }
+    );
+    if (!res.ok) {
+      let body = "";
+      try { body = await res.text(); } catch {}
+      let msg = `${res.status} ${res.statusText}`;
+      if (body) {
+        try {
+          const parsed = JSON.parse(body) as { error?: string };
+          if (parsed.error) msg = parsed.error;
+        } catch {
+          msg = body;
+        }
+      }
+      throw new ApiError(msg, res.status);
+    }
+  },
+
   listAdapters: (signal?: AbortSignal) =>
     request<AdapterInfo[]>("/api/v1/adapters", { signal }),
 

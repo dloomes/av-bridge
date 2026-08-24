@@ -182,6 +182,7 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 		// bypass rides the standard middleware path.
 		mux.Handle("POST /api/v1/collectors", wrapPerm(portalauth.PermCollectorCRUD, portal.Portal.CreateCollector))
 		mux.Handle("POST /api/v1/collectors/{id}/enrollment-token", wrapPerm(portalauth.PermCollectorCRUD, portal.Portal.ReissueCollectorEnrollmentToken))
+		mux.Handle("DELETE /api/v1/collectors/{id}", wrapPerm(portalauth.PermCollectorCRUD, portal.Portal.DeleteCollector))
 		mux.Handle("GET /api/v1/devices", wrapPerm(portalauth.PermViewDashboard, portal.Portal.ListDevices))
 		mux.Handle("GET /api/v1/devices/{id}", wrapPerm(portalauth.PermViewDashboard, portal.Portal.GetDevice))
 		mux.Handle("GET /api/v1/devices/{id}/telemetry", wrapPerm(portalauth.PermViewDashboard, portal.Portal.GetTelemetry))
