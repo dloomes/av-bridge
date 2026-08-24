@@ -465,6 +465,27 @@ export interface UpdateRoleBody {
   permissions?: string[];
 }
 
+// Entra group -> role mapping (M3). Same wire shape for both customer +
+// vendor scopes; role_id is only populated for customer mappings when
+// the role name still resolves (empty on orphaned mappings + all vendor
+// rows, since the vendor path has no roles table).
+export interface RoleMappingRow {
+  id: string;
+  group_id: string;
+  role: string;
+  role_id?: string;
+  created_at?: string;
+}
+
+export interface CreateRoleMappingBody {
+  group_id: string;
+  role: string;
+}
+
+export interface UpdateRoleMappingBody {
+  role: string;
+}
+
 export interface HealthResponse {
   status: string;
   time: string;

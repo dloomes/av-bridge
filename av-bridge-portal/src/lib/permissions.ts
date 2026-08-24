@@ -67,6 +67,7 @@ export const PERMISSIONS: readonly PermissionDef[] = [
   { key: "user.reset_password", title: "Reset user passwords", description: "Set a new password for a user without knowing the current one.",   category: "Users & Roles" },
   { key: "user.delete",         title: "Delete users",         description: "Permanently remove a user from the tenant.",                       category: "Users & Roles" },
   { key: "role.crud",           title: "Manage roles",         description: "Create, edit, and delete custom roles inside this tenant.",        category: "Users & Roles" },
+  { key: "role_mapping.manage", title: "Manage sign-in mappings", description: "Map Entra security groups to roles so SSO users land with the right permissions on first sign-in.", category: "Users & Roles" },
   // Tenant
   { key: "branding.update",     title: "Update branding",      description: "Upload the tenant logo, change the accent colour and portal display name.", category: "Tenant" },
   // Assets

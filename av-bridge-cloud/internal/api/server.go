@@ -176,6 +176,32 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 		mux.Handle("GET /api/v1/roles", wrapPerm(portalauth.PermViewUsers, portal.Portal.ListRoles))
 		mux.Handle("GET /api/v1/roles/{id}", wrapPerm(portalauth.PermViewUsers, portal.Portal.GetRole))
 
+		// Entra group → role mappings (M3). Customer-scoped: gated by
+		// role_mapping.manage. Reads share the same gate — the mapping
+		// table is admin ops surface, not something we want random tenant
+		// users browsing. Vendor cross-tenant editing rides X-Customer-Scope
+		// + the vendor-bypass rule the middleware already applies.
+		mux.Handle("GET /api/v1/role-mappings", wrapPerm(portalauth.PermRoleMappingManage, portal.Portal.ListCustomerRoleMappings))
+		mux.Handle("POST /api/v1/role-mappings", wrapPerm(portalauth.PermRoleMappingManage, portal.Portal.CreateCustomerRoleMapping))
+		mux.Handle("PATCH /api/v1/role-mappings/{id}", wrapPerm(portalauth.PermRoleMappingManage, portal.Portal.UpdateCustomerRoleMapping))
+		mux.Handle("DELETE /api/v1/role-mappings/{id}", wrapPerm(portalauth.PermRoleMappingManage, portal.Portal.DeleteCustomerRoleMapping))
+
+		// Vendor-scoped role mappings — RequireVendor since the vendor
+		// tenant has no per-tenant roles table and only the helpdesk
+		// itself needs to configure them (there's one vendor tenant today).
+		mux.Handle("GET /api/v1/vendor-role-mappings",
+			portalauth.Middleware(portal.Resolver,
+				portalauth.RequireVendor(http.HandlerFunc(portal.Portal.ListVendorRoleMappings))))
+		mux.Handle("POST /api/v1/vendor-role-mappings",
+			portalauth.Middleware(portal.Resolver,
+				portalauth.RequireVendor(http.HandlerFunc(portal.Portal.CreateVendorRoleMapping))))
+		mux.Handle("PATCH /api/v1/vendor-role-mappings/{id}",
+			portalauth.Middleware(portal.Resolver,
+				portalauth.RequireVendor(http.HandlerFunc(portal.Portal.UpdateVendorRoleMapping))))
+		mux.Handle("DELETE /api/v1/vendor-role-mappings/{id}",
+			portalauth.Middleware(portal.Resolver,
+				portalauth.RequireVendor(http.HandlerFunc(portal.Portal.DeleteVendorRoleMapping))))
+
 		// Tenant branding — reads are open to any authed user (the portal
 		// needs the logo/colours for the current tenant to render), writes
 		// gate on branding.update. Vendor cross-tenant editing rides the

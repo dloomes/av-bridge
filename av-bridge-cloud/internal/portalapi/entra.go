@@ -273,11 +273,12 @@ func (h *EntraVendorHandler) exchangeCode(ctx context.Context, code, verifier st
 //  3. Otherwise INSERT a new provider='entra' user row with the given
 //     entra_sub, no password_hash.
 //
-// Role assignment: existing users keep their existing role. New JIT
-// users get 'viewer' by default — a helpdesk admin promotes them via
-// the user CRUD once the account exists. Deliberately conservative:
-// automatic admin from "was in some Entra group" is exactly the shape
-// of the mis-config that causes access-control incidents.
+// Role assignment: on JIT CREATE ONLY, the vendor role_mappings rows are
+// consulted — the first (highest-priority) group in the token that
+// matches a mapping wins, and its role goes onto users.role. If no group
+// matches, fallback is 'viewer'. Existing users keep their existing role
+// on subsequent sign-ins (M3.1 will look at strict-sync); this matches
+// the pragmatic default that manual admin promotions survive re-sign-in.
 func (h *EntraVendorHandler) linkOrCreateUser(ctx context.Context, claims portalauth.EntraClaims) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
@@ -316,21 +317,81 @@ func (h *EntraVendorHandler) linkOrCreateUser(ctx context.Context, claims portal
 		return "", fmt.Errorf("link by email: %w", err)
 	}
 
-	// JIT create — no matching row anywhere.
+	// JIT create — no matching row anywhere. Resolve the caller's groups
+	// against the vendor tenant's role_mappings; the first legacy role
+	// name we hit ranks admin > operator > viewer so a user who belongs
+	// to both an admin AND an operator group ends up admin. If no groups
+	// match, fall back to 'viewer' — the same conservative default the
+	// pre-M3 code used.
+	newRole := resolveVendorRoleFromGroups(ctx, pool, h.vendorTenantID, claims.Groups)
 	name := strings.TrimSpace(claims.Name)
 	if name == "" {
 		name = email
 	}
 	err = pool.QueryRow(ctx, `
 		INSERT INTO users (email, full_name, vendor_tenant_id, role, provider, entra_sub)
-		VALUES ($1, $2, $3, 'viewer', 'entra', $4)
+		VALUES ($1, $2, $3, $5, 'entra', $4)
 		RETURNING id::text`,
-		email, name, h.vendorTenantID, claims.Sub).Scan(&userID)
+		email, name, h.vendorTenantID, claims.Sub, newRole).Scan(&userID)
 	if err != nil {
 		return "", fmt.Errorf("jit create: %w", err)
 	}
-	h.log.Info("entra: JIT-created vendor user", "user_id", userID, "email", email, "role", "viewer")
+	h.log.Info("entra: JIT-created vendor user",
+		"user_id", userID, "email", email, "role", newRole,
+		"group_count", len(claims.Groups))
 	return userID, nil
+}
+
+// vendorRolePriority orders the three legacy vendor roles from highest
+// (0) to lowest (2). Used by resolveVendorRoleFromGroups so a user in
+// both an admins-group AND a viewers-group is promoted to admin, not
+// demoted to viewer.
+func vendorRolePriority(r string) int {
+	switch r {
+	case "admin":
+		return 0
+	case "operator":
+		return 1
+	case "viewer":
+		return 2
+	default:
+		return 3
+	}
+}
+
+// resolveVendorRoleFromGroups queries role_mappings for the given vendor
+// tenant, filters by which groups the caller actually belongs to, and
+// returns the highest-priority matching role. Falls back to 'viewer' when
+// no groups or no matches. Any DB error is logged and treated as "no
+// match" so a role_mappings hiccup can't block sign-in.
+func resolveVendorRoleFromGroups(ctx context.Context, pool interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+}, vendorTenantID string, groupIDs []string) string {
+	const fallback = "viewer"
+	if len(groupIDs) == 0 {
+		return fallback
+	}
+	rows, err := pool.Query(ctx, `
+		SELECT role
+		  FROM role_mappings
+		 WHERE vendor_tenant_id = $1
+		   AND group_id = ANY($2::text[])`,
+		vendorTenantID, groupIDs)
+	if err != nil {
+		return fallback
+	}
+	defer rows.Close()
+	best := fallback
+	for rows.Next() {
+		var role string
+		if err := rows.Scan(&role); err != nil {
+			continue
+		}
+		if vendorRolePriority(role) < vendorRolePriority(best) {
+			best = role
+		}
+	}
+	return best
 }
 
 // mintSession inserts a user_sessions row and returns the raw av_ token.

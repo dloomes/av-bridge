@@ -15,6 +15,7 @@ import type {
   CreateCustomerResponse,
   CreateDeviceBody,
   CreateRoleBody,
+  CreateRoleMappingBody,
   CreateUserBody,
   DeviceDetail,
   DeviceEvent,
@@ -28,12 +29,14 @@ import type {
   NamedRow,
   NotificationChannel,
   NotificationChannelBody,
+  RoleMappingRow,
   RoleRow,
   RoomActivityRow,
   Telemetry,
   UpdateAssetBody,
   UpdateDeviceBody,
   UpdateRoleBody,
+  UpdateRoleMappingBody,
   UpdateUserBody,
   UserRow,
 } from "./types";
@@ -1153,6 +1156,71 @@ export const api = {
   deleteRole: async (id: string, signal?: AbortSignal): Promise<void> => {
     const res = await fetch(
       `${API_BASE}/api/v1/roles/${encodeURIComponent(id)}`,
+      { method: "DELETE", headers: authHeaders(), signal, cache: "no-store" }
+    );
+    if (!res.ok) {
+      let body = "";
+      try { body = await res.text(); } catch {}
+      throw new ApiError(`${res.status} ${res.statusText}${body ? `: ${body}` : ""}`, res.status);
+    }
+  },
+
+  // -- Entra group -> role mappings (M3) ----------------------------------------
+  //
+  // Two scopes: customer (a customer admin manages mappings for their own
+  // tenant, or a vendor acting-as-customer does it for them) and vendor
+  // (helpdesk staff manage helpdesk-tenant mappings). Signatures mirror
+  // the roles CRUD so the settings UI can reuse patterns.
+
+  listRoleMappings: (signal?: AbortSignal) =>
+    request<RoleMappingRow[]>("/api/v1/role-mappings", { signal }),
+
+  createRoleMapping: (body: CreateRoleMappingBody, signal?: AbortSignal) =>
+    request<{ id: string }>("/api/v1/role-mappings", {
+      method: "POST",
+      body: JSON.stringify(body),
+      signal,
+    }),
+
+  updateRoleMapping: (id: string, body: UpdateRoleMappingBody, signal?: AbortSignal) =>
+    request<void>(`/api/v1/role-mappings/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+      signal,
+    }),
+
+  deleteRoleMapping: async (id: string, signal?: AbortSignal): Promise<void> => {
+    const res = await fetch(
+      `${API_BASE}/api/v1/role-mappings/${encodeURIComponent(id)}`,
+      { method: "DELETE", headers: authHeaders(), signal, cache: "no-store" }
+    );
+    if (!res.ok) {
+      let body = "";
+      try { body = await res.text(); } catch {}
+      throw new ApiError(`${res.status} ${res.statusText}${body ? `: ${body}` : ""}`, res.status);
+    }
+  },
+
+  listVendorRoleMappings: (signal?: AbortSignal) =>
+    request<RoleMappingRow[]>("/api/v1/vendor-role-mappings", { signal }),
+
+  createVendorRoleMapping: (body: CreateRoleMappingBody, signal?: AbortSignal) =>
+    request<{ id: string }>("/api/v1/vendor-role-mappings", {
+      method: "POST",
+      body: JSON.stringify(body),
+      signal,
+    }),
+
+  updateVendorRoleMapping: (id: string, body: UpdateRoleMappingBody, signal?: AbortSignal) =>
+    request<void>(`/api/v1/vendor-role-mappings/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+      signal,
+    }),
+
+  deleteVendorRoleMapping: async (id: string, signal?: AbortSignal): Promise<void> => {
+    const res = await fetch(
+      `${API_BASE}/api/v1/vendor-role-mappings/${encodeURIComponent(id)}`,
       { method: "DELETE", headers: authHeaders(), signal, cache: "no-store" }
     );
     if (!res.ok) {

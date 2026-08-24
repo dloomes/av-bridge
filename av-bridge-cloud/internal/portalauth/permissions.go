@@ -71,6 +71,12 @@ const (
 	PermUserResetPassword = "user.reset_password"
 	PermUserDelete        = "user.delete"
 	PermRoleCRUD          = "role.crud"
+	// role_mapping.manage — CRUD over the Entra group → role mappings
+	// consulted at JIT time. Kept distinct from role.crud so a tenant
+	// can grant the "who defines groups → roles" capability separately
+	// from "who defines what roles mean", though in practice the
+	// system-default admin role holds both.
+	PermRoleMappingManage = "role_mapping.manage"
 )
 
 // Tenant-branding management. Reads are open to any authenticated user in
@@ -112,6 +118,7 @@ var KnownPermissions = map[string]struct{}{
 	PermUserResetPassword:  {},
 	PermUserDelete:         {},
 	PermRoleCRUD:           {},
+	PermRoleMappingManage:  {},
 	PermBrandingUpdate:     {},
 	PermViewAssets:         {},
 	PermAssetCRUD:          {},

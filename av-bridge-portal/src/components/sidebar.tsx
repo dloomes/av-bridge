@@ -83,6 +83,7 @@ const SECTIONS: NavSection[] = [
       { href: "/nightly/schedule", label: "Room Readiness", icon: Moon, requires: "nightly.view" },
       { href: "/users", label: "Users", icon: Users, requires: "view.users" },
       { href: "/roles", label: "Roles", icon: KeyRound, requires: "role.crud" },
+      { href: "/sign-in-mappings", label: "Sign-in mappings", icon: ShieldCheck, requires: "role_mapping.manage" },
       { href: "/notifications", label: "Notifications", icon: Bell, requires: "view.notifications" },
       { href: "/settings/branding", label: "Branding", icon: Palette, adminOnly: true },
     ],

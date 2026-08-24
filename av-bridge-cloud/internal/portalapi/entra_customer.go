@@ -356,9 +356,15 @@ func (h *EntraCustomerHandler) exchangeCode(ctx context.Context, tenantID, code,
 //  2. by (customer_id, lower(email)) with entra_sub NULL — first Entra
 //     sign-in for an existing local user; link entra_sub onto the row
 //  3. INSERT a new provider='entra' row scoped to the customer with
-//     role='viewer'. M3 will replace 'viewer' with a role_mappings lookup;
-//     for now we're deliberately conservative — an admin promotes real
-//     users via /users after JIT.
+//     role='viewer' (kept on users.role for display / legacy fallback).
+//
+// M3: after INSERT, the caller's Entra groups are resolved against
+// customer-scoped role_mappings. Any matching role NAMES are looked up
+// in the customer's roles table and joined to the new user via
+// user_roles. Unmapped groups and non-existent role names are silently
+// skipped (an admin renaming a role shouldn't lock users out); if no
+// role gets granted at all, the fallback users.role='viewer' still
+// leaves them with the seeded viewer role via the audit path.
 func (h *EntraCustomerHandler) linkOrCreateUser(ctx context.Context, customerID string, claims portalauth.EntraClaims) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
@@ -409,9 +415,50 @@ func (h *EntraCustomerHandler) linkOrCreateUser(ctx context.Context, customerID 
 	if err != nil {
 		return "", fmt.Errorf("jit create: %w", err)
 	}
+
+	// M3: resolve Entra groups → customer-scoped role_mappings → roles
+	// and grant them via user_roles. Silent on unmapped groups; log a
+	// warn on DB errors so an ops mis-config surfaces without breaking
+	// sign-in. New user with no mappings ends up with only the legacy
+	// users.role='viewer' fallback until an admin promotes them.
+	granted := h.applyEntraRoleGrants(ctx, customerID, userID, claims.Groups)
 	h.log.Info("entra customer: JIT-created user",
-		"user_id", userID, "customer_id", customerID, "email", email, "role", "viewer")
+		"user_id", userID, "customer_id", customerID, "email", email,
+		"group_count", len(claims.Groups), "roles_granted", granted)
 	return userID, nil
+}
+
+// applyEntraRoleGrants resolves the caller's group memberships against
+// customer role_mappings and inserts matching rows into user_roles.
+// Returns the number of role grants inserted (0 when no groups match or
+// no rows exist). Errors are logged and swallowed — a mapping table
+// glitch shouldn't fail sign-in.
+//
+// The join is done in a single query: role_mappings → roles (by
+// customer_id + case-insensitive name match). Duplicate grants use
+// ON CONFLICT DO NOTHING so a group→role mapping that references the
+// same role as another mapping doesn't blow up the INSERT.
+func (h *EntraCustomerHandler) applyEntraRoleGrants(ctx context.Context, customerID, userID string, groupIDs []string) int {
+	if len(groupIDs) == 0 {
+		return 0
+	}
+	tag, err := h.store.AdminPool().Exec(ctx, `
+		INSERT INTO user_roles (user_id, role_id)
+		SELECT $2::uuid, r.id
+		  FROM role_mappings m
+		  JOIN roles r
+		    ON r.customer_id = m.customer_id
+		   AND lower(r.name) = lower(m.role)
+		 WHERE m.customer_id = $1
+		   AND m.group_id = ANY($3::text[])
+		ON CONFLICT DO NOTHING`,
+		customerID, userID, groupIDs)
+	if err != nil {
+		h.log.Warn("entra customer: role grant failed",
+			"user_id", userID, "customer_id", customerID, "error", err)
+		return 0
+	}
+	return int(tag.RowsAffected())
 }
 
 // mintSession creates a user_sessions row and returns the raw av_ token.

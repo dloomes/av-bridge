@@ -258,6 +258,7 @@ func seedSystemRoles(ctx context.Context, tx pgx.Tx, customerID string) error {
 				"firmware_target.crud",
 				"user.create", "user.update", "user.reset_password", "user.delete",
 				"role.crud",
+				"role_mapping.manage",
 				"branding.update",
 				"view.assets", "asset.crud",
 				"nightly.view", "nightly.manage",
