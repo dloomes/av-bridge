@@ -1271,6 +1271,28 @@ export const api = {
       throw new ApiError(`${res.status} ${res.statusText}${body ? `: ${body}` : ""}`, res.status);
     }
   },
+
+  // -- vendor break-glass sign-in links (M4.1) --------------------------------
+  //
+  // Both endpoints return {url, expires_at}. Vendor-only server-side —
+  // the customer path enforces IsVendor + a customer_id in the caller's
+  // scope; vendor path is behind RequireVendor at the mux. Backend
+  // rate-limits with a 5-second cooldown per user so a double-click
+  // surfaces a 500 with "just issued a link" — the UI can retry a
+  // moment later, but usually the first successful mint is what the
+  // caller wants anyway.
+
+  issueMagicLink: (userID: string, signal?: AbortSignal) =>
+    request<{ url: string; expires_at: string }>(
+      `/api/v1/users/${encodeURIComponent(userID)}/magic-link`,
+      { method: "POST", signal }
+    ),
+
+  issueVendorMagicLink: (userID: string, signal?: AbortSignal) =>
+    request<{ url: string; expires_at: string }>(
+      `/api/v1/helpdesk/users/${encodeURIComponent(userID)}/magic-link`,
+      { method: "POST", signal }
+    ),
 };
 
 export { ApiError };

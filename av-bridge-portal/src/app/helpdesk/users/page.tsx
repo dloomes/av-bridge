@@ -16,6 +16,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Modal } from "@/components/modal";
 import { UserMenu } from "@/components/user-menu";
+import { MagicLinkModal, MagicLinkTrigger } from "@/components/magic-link-modal";
 import { useSession } from "@/hooks/useSession";
 import { api } from "@/lib/api";
 import { formatRelative } from "@/lib/utils";
@@ -44,6 +45,9 @@ export default function HelpdeskUsersPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [editing, setEditing] = useState<VendorUserRow | null>(null);
   const [deleting, setDeleting] = useState<VendorUserRow | null>(null);
+  const [magicLink, setMagicLink] = useState<
+    { user: VendorUserRow; url: string; expiresAt: string } | null
+  >(null);
 
   const load = useCallback(async (signal?: AbortSignal) => {
     try {
@@ -121,6 +125,7 @@ export default function HelpdeskUsersPage() {
                   isSelf={session.user?.user_id === u.id}
                   onEdit={() => setEditing(u)}
                   onDelete={() => setDeleting(u)}
+                  onMagicLink={(r) => setMagicLink({ user: u, ...r })}
                 />
               ))}
             </CardContent>
@@ -164,6 +169,22 @@ export default function HelpdeskUsersPage() {
           />
         )}
       </Modal>
+
+      <Modal
+        open={magicLink !== null}
+        onClose={() => setMagicLink(null)}
+        title="One-time sign-in link"
+        wide={false}
+      >
+        {magicLink && (
+          <MagicLinkModal
+            url={magicLink.url}
+            expiresAt={magicLink.expiresAt}
+            targetLabel={magicLink.user.full_name || magicLink.user.email}
+            onClose={() => setMagicLink(null)}
+          />
+        )}
+      </Modal>
     </div>
   );
 }
@@ -173,9 +194,10 @@ interface UserRowProps {
   isSelf: boolean;
   onEdit: () => void;
   onDelete: () => void;
+  onMagicLink: (result: { url: string; expiresAt: string }) => void;
 }
 
-function UserRow({ u, isSelf, onEdit, onDelete }: UserRowProps) {
+function UserRow({ u, isSelf, onEdit, onDelete, onMagicLink }: UserRowProps) {
   return (
     <div className="grid grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)_auto] items-center gap-3 border-b px-4 py-3 text-sm last:border-b-0 hover:bg-muted/30">
       <div className="min-w-0">
@@ -227,6 +249,12 @@ function UserRow({ u, isSelf, onEdit, onDelete }: UserRowProps) {
         <Button size="sm" variant="ghost" onClick={onEdit}>
           Edit
         </Button>
+        {!u.disabled && (
+          <MagicLinkTrigger
+            onMint={() => api.issueVendorMagicLink(u.id)}
+            onResult={onMagicLink}
+          />
+        )}
         <Button
           size="icon"
           variant="ghost"

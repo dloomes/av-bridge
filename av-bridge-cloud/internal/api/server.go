@@ -47,12 +47,14 @@ type BridgeConfigRoutes struct {
 
 // PublicRoutes bundles endpoints that need to serve without auth: they run
 // before a user has any credentials to hand over (branding on the sign-in
-// page) or as part of establishing new credentials (password reset). Nil
+// page), as part of establishing new credentials (password reset), or to
+// redeem a vendor-issued break-glass link (magic-link consume). Nil
 // fields skip registration. All are intentionally under /public/*.
 type PublicRoutes struct {
 	Branding              http.HandlerFunc
 	PasswordResetRequest  http.HandlerFunc
 	PasswordResetComplete http.HandlerFunc
+	MagicLinkConsume      http.HandlerFunc
 }
 
 // NewServer wires the routes. Go 1.22 method-aware patterns keep us dependency-free.
@@ -81,6 +83,9 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 	}
 	if public.PasswordResetComplete != nil {
 		mux.Handle("POST /public/password-reset/complete", public.PasswordResetComplete)
+	}
+	if public.MagicLinkConsume != nil {
+		mux.Handle("GET /public/magic-link/consume", public.MagicLinkConsume)
 	}
 
 	if portal != nil {
@@ -152,6 +157,9 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 		mux.Handle("DELETE /api/v1/helpdesk/users/{id}",
 			portalauth.Middleware(portal.Resolver,
 				portalauth.RequireVendor(http.HandlerFunc(portal.Portal.HelpdeskDeleteUser))))
+		mux.Handle("POST /api/v1/helpdesk/users/{id}/magic-link",
+			portalauth.Middleware(portal.Resolver,
+				portalauth.RequireVendor(http.HandlerFunc(portal.Portal.IssueVendorMagicLink))))
 
 		// Dashboard-level reads. view.dashboard covers the shape of the
 		// portal's main pages: fleet status, device list + detail + live
@@ -276,6 +284,13 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 		mux.Handle("POST /api/v1/users", wrapPerm(portalauth.PermUserCreate, portal.Portal.CreateUser))
 		mux.Handle("PATCH /api/v1/users/{id}", wrapPerm(portalauth.PermUserUpdate, portal.Portal.UpdateUser))
 		mux.Handle("POST /api/v1/users/{id}/reset-password", wrapPerm(portalauth.PermUserResetPassword, portal.Portal.ResetUserPassword))
+		// M4.1 break-glass. Vendor-only enforcement lives inside the
+		// handler because we want to reuse the /users route path (it
+		// composes with X-Customer-Scope and the customer-user CRUD
+		// permissions). Non-vendor callers get a 403 with a clear
+		// "vendor helpdesk only" message.
+		mux.Handle("POST /api/v1/users/{id}/magic-link",
+			portalauth.Middleware(portal.Resolver, http.HandlerFunc(portal.Portal.IssueCustomerMagicLink)))
 		mux.Handle("DELETE /api/v1/users/{id}", wrapPerm(portalauth.PermUserDelete, portal.Portal.DeleteUser))
 
 		// Role catalogue writes — single role.crud permission covers all

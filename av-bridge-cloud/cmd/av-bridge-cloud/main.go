@@ -290,7 +290,13 @@ func main() {
 		Branding:              publicH.GetBranding,
 		PasswordResetRequest:  publicH.RequestReset,
 		PasswordResetComplete: publicH.CompleteReset,
+		MagicLinkConsume:      publicH.ConsumeMagicLink,
 	}
+	// M4.1: seed the shared magic-link portal base URL used by the
+	// mint side of the flow (portalapi). Small package-var setter is
+	// cheaper than restructuring the existing portalapi.Handler ctor
+	// for one string.
+	portalapi.SetMagicLinkPortalBaseURL(cfg.EntraPortalBaseURL)
 
 	srv := api.NewServer(cfg.ListenAddr, h, adminH, portalRoutes, bridgeRoutes, bridgeConfigRoutes, publicRoutes, log)
 

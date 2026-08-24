@@ -16,6 +16,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Modal } from "@/components/modal";
 import { UserMenu } from "@/components/user-menu";
+import { MagicLinkModal, MagicLinkTrigger } from "@/components/magic-link-modal";
 import { useSession } from "@/hooks/useSession";
 import { api } from "@/lib/api";
 import { hasPermission } from "@/lib/session";
@@ -51,6 +52,12 @@ export default function UsersPage() {
   const [editing, setEditing] = useState<{ mode: "create" | "edit"; existing?: UserRow } | null>(null);
   const [resetting, setResetting] = useState<UserRow | null>(null);
   const [deleting, setDeleting] = useState<UserRow | null>(null);
+  // Break-glass sign-in link (M4.1). Populated after a successful mint;
+  // rendering shows the URL + expiry countdown. Vendor-only in UI +
+  // enforced server-side.
+  const [magicLink, setMagicLink] = useState<
+    { user: UserRow; url: string; expiresAt: string } | null
+  >(null);
 
   const load = useCallback(async (signal?: AbortSignal) => {
     try {
@@ -136,11 +143,13 @@ export default function UsersPage() {
                     key={u.id}
                     user={u}
                     admin={admin}
+                    isVendor={!!session.user?.is_vendor}
                     isSelf={u.id === session.user?.user_id}
                     onEdit={() => setEditing({ mode: "edit", existing: u })}
                     onReset={() => setResetting(u)}
                     onToggle={() => handleToggleDisabled(u)}
                     onDelete={() => setDeleting(u)}
+                    onMagicLink={(r) => setMagicLink({ user: u, ...r })}
                   />
                 ))}
               </div>
@@ -203,6 +212,22 @@ export default function UsersPage() {
             />
           )}
         </Modal>
+
+        <Modal
+          open={magicLink !== null}
+          onClose={() => setMagicLink(null)}
+          title="One-time sign-in link"
+          wide={false}
+        >
+          {magicLink && (
+            <MagicLinkModal
+              url={magicLink.url}
+              expiresAt={magicLink.expiresAt}
+              targetLabel={magicLink.user.full_name || magicLink.user.email}
+              onClose={() => setMagicLink(null)}
+            />
+          )}
+        </Modal>
       </div>
     </div>
   );
@@ -211,19 +236,23 @@ export default function UsersPage() {
 function UserRowView({
   user,
   admin,
+  isVendor,
   isSelf,
   onEdit,
   onReset,
   onToggle,
   onDelete,
+  onMagicLink,
 }: {
   user: UserRow;
   admin: boolean;
+  isVendor: boolean;
   isSelf: boolean;
   onEdit: () => void;
   onReset: () => void;
   onToggle: () => void;
   onDelete: () => void;
+  onMagicLink: (result: { url: string; expiresAt: string }) => void;
 }) {
   return (
     <div className="flex items-center gap-3 p-3">
@@ -289,6 +318,12 @@ function UserRowView({
           <Button variant="ghost" size="icon" aria-label="Reset password" onClick={onReset}>
             <KeyRound className="h-3.5 w-3.5" />
           </Button>
+          {isVendor && !user.disabled && (
+            <MagicLinkTrigger
+              onMint={() => api.issueMagicLink(user.id)}
+              onResult={onMagicLink}
+            />
+          )}
           <Button
             variant="ghost"
             size="icon"
