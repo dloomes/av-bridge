@@ -72,6 +72,11 @@ interface BuildingsMapProps {
 export function BuildingsMap({ entries, mapboxToken, className }: BuildingsMapProps) {
   const mapRef = useRef<MapRef | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
+  // The map is only safe to command (fitBounds, flyTo) after its `load`
+  // event fires — before then the underlying mapbox-gl instance rejects
+  // camera calls silently. We track load state so the fit-to-bounds
+  // effect can wait for the map to be ready on first mount.
+  const [mapLoaded, setMapLoaded] = useState(false);
 
   // Filter down to plottable entries once — a caller might pass rows
   // whose coords haven't been set yet.
@@ -107,26 +112,27 @@ export function BuildingsMap({ entries, mapboxToken, className }: BuildingsMapPr
 
   // Whenever the bounds materially change, re-fit. Zooming out to the
   // whole world when the first building lands is jarring, so a single
-  // pin flies to a sensible zoom instead.
+  // pin flies to a sensible zoom instead. Guarded on mapLoaded so the
+  // very first fit (which happens on initial mount) isn't dropped.
   useEffect(() => {
-    if (!mapRef.current) return;
+    if (!mapRef.current || !mapLoaded) return;
     if (plottable.length === 1) {
       const only = plottable[0];
       mapRef.current.flyTo({
         center: [only.building.longitude!, only.building.latitude!],
-        zoom: 12,
+        zoom: 13,
         essential: true,
       });
       return;
     }
     if (bounds) {
       mapRef.current.fitBounds(bounds, {
-        padding: 60,
+        padding: 80,
         duration: 600,
-        maxZoom: 13,
+        maxZoom: 14,
       });
     }
-  }, [bounds, plottable]);
+  }, [bounds, plottable, mapLoaded]);
 
   if (!mapboxToken) {
     return (
@@ -175,7 +181,11 @@ export function BuildingsMap({ entries, mapboxToken, className }: BuildingsMapPr
       <Map
         ref={mapRef}
         mapboxAccessToken={mapboxToken}
-        mapStyle="mapbox://styles/mapbox/light-v11"
+        // Standard full-colour streets style — roads, land use, and
+        // labels all in their natural palette. Swap for outdoors-v12
+        // if terrain becomes useful; light-v11 was the muted default
+        // we started with.
+        mapStyle="mapbox://styles/mapbox/streets-v12"
         initialViewState={{
           longitude: plottable[0].building.longitude!,
           latitude: plottable[0].building.latitude!,
@@ -183,6 +193,7 @@ export function BuildingsMap({ entries, mapboxToken, className }: BuildingsMapPr
         }}
         style={{ width: "100%", height: 480 }}
         attributionControl={true}
+        onLoad={() => setMapLoaded(true)}
       >
         <NavigationControl position="top-right" showCompass={false} />
         {plottable.map((e) => {
