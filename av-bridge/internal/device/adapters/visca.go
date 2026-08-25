@@ -288,3 +288,166 @@ func parseInqVersion(payload []byte) (string, error) {
 	fw := uint16(payload[6])<<8 | uint16(payload[7])
 	return fmt.Sprintf("vendor:%04X model:%04X fw:%04X", vendor, model, fw), nil
 }
+
+// -----------------------------------------------------------------------------
+// Lumens VC-A61P extensions (RS127 command set §12).
+//
+// These are camera-identity + module-firmware inquiries Lumens layered on
+// top of the Sony VISCA base spec. Non-Lumens cameras will typically
+// reply with a "syntax error" (VISCA 60 XX), which the adapter treats
+// as an opportunistic-inquiry failure — the metric just isn't populated.
+// All fields returned by these commands are static per device, so the
+// caller only needs to fire them once per session.
+// -----------------------------------------------------------------------------
+
+// Lumens firmware module identifiers — one per module the About panel
+// enumerates. Order matches the "Detail Information" line the web UI
+// renders (VBO_VBP_VBM_VBR_VBN_VBS_VBI_VBK) so a concatenated summary
+// reads identically to what the operator sees on the camera.
+var lumensFWModules = []struct {
+	// selector is the fifth byte of the inquiry — 0x00..0x07 picks one
+	// of the eight firmware modules per the RS127 spec §12 table.
+	selector byte
+	// prefix is a defensive check against the module label the camera
+	// echoes in the reply. All eight modules are 3 ASCII chars starting
+	// with "VB"; the third char varies (O, P, M, R, N, S, I, K).
+	prefix string
+}{
+	{0x00, "VBO"}, // Boot
+	{0x01, "VBP"}, // CM0
+	{0x02, "VBM"}, // RTOS
+	{0x03, "VBR"}, // Linux
+	{0x04, "VBN"}, // MCU
+	{0x05, "VBS"}, // IQ
+	{0x06, "VBI"}, // CTRL_BD
+	{0x07, "VBK"}, // CPLD
+}
+
+// viscaLumensInqFWModule builds the FW-version-Inq for one module.
+// Wire: 8x 09 00 02 00 0N FF where N is the module selector.
+func viscaLumensInqFWModule(selector byte) []byte {
+	return []byte{viscaCmdHeader, 0x09, 0x00, 0x02, 0x00, selector, viscaTerminator}
+}
+
+// parseLumensFWModule reads a module firmware reply and returns the
+// concatenated ASCII string (e.g. "VBO0100"). The reply shape is
+// y0 50 mm nn oo pp qq rr ss FF for most modules; the CPLD module (VBK)
+// is one byte shorter — the parser handles both without special-casing.
+func parseLumensFWModule(payload []byte) (string, error) {
+	// payload layout: [0]=0x90 [1]=0x50 [2..N]=ASCII chars [last]=0xFF
+	if len(payload) < 4 {
+		return "", errors.New("visca: lumens fw module reply too short")
+	}
+	// Trim leading 90 50 and trailing FF.
+	body := payload[2 : len(payload)-1]
+	// Some replies pack the ASCII into low nibbles ("0p 0q 0r ...") but
+	// the RS127 spec for the module inquiry is straight ASCII. Fall back
+	// to hex if we see a non-printable byte so we at least return
+	// something rather than silently dropping the field.
+	for _, b := range body {
+		if b < 0x20 || b > 0x7E {
+			return fmt.Sprintf("%X", body), nil
+		}
+	}
+	return string(body), nil
+}
+
+// viscaLumensInqCamID / viscaLumensInqSerial / viscaLumensInqMAC — the
+// three "identity" commands the RS127 spec exposes beyond the stock
+// VISCA version inquiry. All three return ASCII payloads (or, in the
+// MAC case, 6 raw bytes rendered colon-separated).
+
+func viscaLumensInqCamID() []byte {
+	return []byte{viscaCmdHeader, 0x09, 0x7E, 0xCE, viscaTerminator}
+}
+
+// parseLumensCamID reads the CAM_ID_Inq reply. Payload after 90 50 …
+// FF is a nul-padded ASCII string (up to 12 bytes per spec). Trims
+// trailing spaces / nuls so a "VC-A61P" reply doesn't come back with
+// eight bytes of padding hanging off the end.
+func parseLumensCamID(payload []byte) (string, error) {
+	if len(payload) < 4 {
+		return "", errors.New("visca: cam-id reply too short")
+	}
+	body := payload[2 : len(payload)-1]
+	out := make([]byte, 0, len(body))
+	for _, b := range body {
+		if b == 0x00 || b == 0x20 {
+			continue
+		}
+		if b < 0x20 || b > 0x7E {
+			// Non-printable in the middle of the string is suspicious;
+			// stop and return whatever we've accumulated so far.
+			break
+		}
+		out = append(out, b)
+	}
+	return string(out), nil
+}
+
+func viscaLumensInqSerial() []byte {
+	return []byte{viscaCmdHeader, 0x09, 0x02, 0x18, viscaTerminator}
+}
+
+// parseLumensSerial handles both response shapes RS127 §12 documents:
+// default (9 ASCII bytes) and custom (11 nibble-packed bytes). We
+// detect by checking whether every byte is 0x0X — if so, unpack the
+// low nibbles; otherwise treat as ASCII directly.
+func parseLumensSerial(payload []byte) (string, error) {
+	if len(payload) < 4 {
+		return "", errors.New("visca: serial reply too short")
+	}
+	body := payload[2 : len(payload)-1]
+	// Nibble-packed variant — every byte high nibble is 0.
+	packed := true
+	for _, b := range body {
+		if b&0xF0 != 0x00 {
+			packed = false
+			break
+		}
+	}
+	out := make([]byte, 0, len(body))
+	if packed {
+		for i := 0; i+1 < len(body); i += 2 {
+			out = append(out, (body[i]<<4)|(body[i+1]&0x0F))
+		}
+	} else {
+		out = append(out, body...)
+	}
+	// Trim padding.
+	trimmed := make([]byte, 0, len(out))
+	for _, b := range out {
+		if b == 0x00 || b == 0x20 {
+			continue
+		}
+		if b < 0x20 || b > 0x7E {
+			break
+		}
+		trimmed = append(trimmed, b)
+	}
+	return string(trimmed), nil
+}
+
+func viscaLumensInqMAC() []byte {
+	return []byte{viscaCmdHeader, 0x09, 0x04, 0x78, viscaTerminator}
+}
+
+// parseLumensMAC reads a MAC_Address_Read reply. Per RS127 the payload
+// is 12 nibble-packed bytes ("ab cd ef gh ij kl" → six pairs); we pack
+// them into the standard colon-separated form.
+func parseLumensMAC(payload []byte) (string, error) {
+	if len(payload) < 4 {
+		return "", errors.New("visca: mac reply too short")
+	}
+	body := payload[2 : len(payload)-1]
+	if len(body) < 12 {
+		return "", fmt.Errorf("visca: mac reply expected 12 nibbles, got %d bytes", len(body))
+	}
+	octets := make([]string, 6)
+	for i := 0; i < 6; i++ {
+		hi := body[i*2] & 0x0F
+		lo := body[i*2+1] & 0x0F
+		octets[i] = fmt.Sprintf("%X%X", hi, lo)
+	}
+	return octets[0] + ":" + octets[1] + ":" + octets[2] + ":" + octets[3] + ":" + octets[4] + ":" + octets[5], nil
+}

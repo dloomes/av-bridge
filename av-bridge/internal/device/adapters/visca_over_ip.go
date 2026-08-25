@@ -67,7 +67,19 @@ type viscaTelemetry struct {
 	zoomPos       uint16
 	zoomKnown     bool
 	versionString string
-	lastInqAt     time.Time
+
+	// Lumens VC-A61P (RS127) extensions. Populated once — the values
+	// are static per device — then re-emitted on every Poll.
+	// lumensProbed flips true after the first probe attempt whether or
+	// not any values came back, so we don't hammer the camera with
+	// vendor-specific inquiries it doesn't understand.
+	lumensProbed  bool
+	cameraID      string // e.g. "VC-A61P"
+	serialNumber  string // e.g. "VA6C02885"
+	macAddress    string // e.g. "AB:CD:EF:12:34:56"
+	firmwareLabel string // e.g. "VBO0100_VBP0101_..." (concatenation)
+
+	lastInqAt time.Time
 }
 
 func NewViscaOverIPAdapter(cfg config.DeviceConfig) *ViscaOverIPAdapter {
@@ -278,6 +290,11 @@ func (a *ViscaOverIPAdapter) Poll(ctx context.Context) (*device.Telemetry, error
 	}
 	a.teleMu.RLock()
 	version := a.tele.versionString
+	probed := a.tele.lumensProbed
+	camID := a.tele.cameraID
+	serial := a.tele.serialNumber
+	mac := a.tele.macAddress
+	fwLabel := a.tele.firmwareLabel
 	a.teleMu.RUnlock()
 	if version == "" {
 		if reply, err := a.roundTrip(ctx, viscaPayloadInquiry, viscaInqVersion()); err == nil {
@@ -289,8 +306,44 @@ func (a *ViscaOverIPAdapter) Poll(ctx context.Context) (*device.Telemetry, error
 			}
 		}
 	}
+	// One-shot Lumens (VC-A61P / RS127) probe. Runs on the first poll
+	// after every Connect; if any inquiry succeeds we cache the value
+	// for the rest of the session. Non-Lumens cameras reply with
+	// "syntax error" to these — we ignore the failure and mark probed
+	// so we don't keep asking.
+	if !probed {
+		camID, serial, mac, fwLabel = a.probeLumensIdentity(ctx)
+		a.teleMu.Lock()
+		a.tele.lumensProbed = true
+		a.tele.cameraID = camID
+		a.tele.serialNumber = serial
+		a.tele.macAddress = mac
+		a.tele.firmwareLabel = fwLabel
+		a.teleMu.Unlock()
+	}
 	if version != "" {
 		metrics["version"] = version
+	}
+	// Standardised keys so the ingest handler's tag-mining picks them
+	// up automatically (see av-bridge-cloud/internal/ingest/handler.go —
+	// firmware_version, serial_number, mac_address, model land in the
+	// devices table's top-level columns via the same pick() flow tags
+	// use).
+	if camID != "" {
+		metrics["model"] = camID
+	}
+	if serial != "" {
+		metrics["serial_number"] = serial
+	}
+	if mac != "" {
+		metrics["mac_address"] = mac
+	}
+	if fwLabel != "" {
+		// firmware_version is what the ingest handler already maps into
+		// devices.firmware_version — using that key means the firmware
+		// page shows the readable Lumens string ("VBO0100_VBP0101_...")
+		// instead of the numeric VISCA hex from parseInqVersion.
+		metrics["firmware_version"] = fwLabel
 	}
 	metrics["response_ms"] = 0 // filled by the sender if it cares
 
@@ -301,6 +354,57 @@ func (a *ViscaOverIPAdapter) Poll(ctx context.Context) (*device.Telemetry, error
 	t := a.BaseTelemetry()
 	t.Metrics = metrics
 	return t, nil
+}
+
+// probeLumensIdentity runs the Lumens VC-A61P extension inquiries once
+// per session. Each inquiry gets a short 1s budget — a syntax-error
+// reply from a non-Lumens camera comes back in tens of ms, so this
+// finishes fast whether the camera supports these or not.
+//
+// Returns whatever the camera coughed up; the caller stores the tuple
+// on the telemetry struct even if some values are empty. All four
+// fields are static per device so we only probe once.
+func (a *ViscaOverIPAdapter) probeLumensIdentity(parent context.Context) (camID, serial, mac, fwLabel string) {
+	probeCtx, cancel := context.WithTimeout(parent, 3*time.Second)
+	defer cancel()
+
+	if reply, err := a.roundTrip(probeCtx, viscaPayloadInquiry, viscaLumensInqCamID()); err == nil {
+		if v, perr := parseLumensCamID(reply); perr == nil && v != "" {
+			camID = v
+		}
+	}
+	if reply, err := a.roundTrip(probeCtx, viscaPayloadInquiry, viscaLumensInqSerial()); err == nil {
+		if v, perr := parseLumensSerial(reply); perr == nil && v != "" {
+			serial = v
+		}
+	}
+	if reply, err := a.roundTrip(probeCtx, viscaPayloadInquiry, viscaLumensInqMAC()); err == nil {
+		if v, perr := parseLumensMAC(reply); perr == nil && v != "" {
+			mac = v
+		}
+	}
+	// Firmware label is the concatenation of the eight module version
+	// strings the About panel calls "Detail Information". We collect
+	// whatever the camera returns — a shorter reply just means fewer
+	// modules make it into the joined string.
+	parts := make([]string, 0, len(lumensFWModules))
+	for _, m := range lumensFWModules {
+		reply, err := a.roundTrip(probeCtx, viscaPayloadInquiry, viscaLumensInqFWModule(m.selector))
+		if err != nil {
+			// Non-Lumens cameras will fail here — bail early on the first
+			// module miss rather than firing all eight for no reason.
+			return
+		}
+		v, perr := parseLumensFWModule(reply)
+		if perr != nil || v == "" {
+			continue
+		}
+		parts = append(parts, v)
+	}
+	if len(parts) > 0 {
+		fwLabel = strings.Join(parts, "_")
+	}
+	return
 }
 
 // SendCommand dispatches a command name to the correct VISCA builder.
@@ -490,7 +594,15 @@ func (a *ViscaOverIPAdapter) Capabilities() device.Capabilities {
 			"pan_left", "pan_right", "tilt_up", "tilt_down",
 			"pan_tilt_stop", "pan_tilt_home",
 		},
-		Metrics: []string{"power", "zoom_position", "zoom_percent", "version", "response_ms"},
+		Metrics: []string{
+			"power", "zoom_position", "zoom_percent", "version",
+			// Lumens VC-A61P extras — populated when the camera answers
+			// the RS127 identity inquiries. Other vendors leave these
+			// empty. Standard key names so the ingest handler picks
+			// them up into the top-level device columns.
+			"model", "serial_number", "mac_address", "firmware_version",
+			"response_ms",
+		},
 	}
 }
 
