@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   AlertTriangle,
   Bell,
@@ -73,6 +73,7 @@ const TONE_STYLES: Record<
 export default function DashboardPage() {
   const session = useSession();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { branding } = useBranding();
 
   // Vendor users without a customer scope have nothing to show here — every
@@ -84,6 +85,18 @@ export default function DashboardPage() {
       router.replace("/helpdesk");
     }
   }, [session.hydrated, session.user, session.scope, router]);
+
+  // Landing-page preference: `/` is the app root but a user may have
+  // set Map as their default. If so, bounce them there — unless
+  // ?force=1 is present, which the sidebar's Overview link sets so
+  // clicking Overview mid-session doesn't ping-pong back to Map.
+  useEffect(() => {
+    if (!session.hydrated) return;
+    if (searchParams?.get("force")) return;
+    if (session.user?.landing_page === "map") {
+      router.replace("/map");
+    }
+  }, [session.hydrated, session.user, searchParams, router]);
 
   const fleet = usePolling<FleetStatus>(
     (signal) => api.fleetStatus(signal),
@@ -197,11 +210,10 @@ export default function DashboardPage() {
           )}
           <div>
             <h1 className="text-xl font-semibold">
-              {branding.display_name || "AV Bridge"}
+              {branding.display_name || "AV Bridge"} · Overview
             </h1>
             <p className="text-sm text-muted-foreground">
-              Click a tile or building to drill in · browse via{" "}
-              <span className="font-medium">Places</span> on the left · refreshes every 15s
+              Fleet-wide summary and building tiles · refreshes every 15s
             </p>
           </div>
         </div>

@@ -46,7 +46,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // and let the next authed request return 401 → sign-in redirect.
   useEffect(() => {
     if (!session.hydrated || !session.token || onSignIn) return;
-    if (session.user?.permissions !== undefined) return;
+    // Re-fetch whoami whenever the stored session is missing any field
+    // that has been added since the user last signed in. permissions
+    // was the original trigger; landing_page was added later and
+    // sessions minted before it stay undefined without this. Any new
+    // whoami field should be added to this condition so existing
+    // sessions catch up without a sign-out.
+    if (
+      session.user?.permissions !== undefined &&
+      session.user?.landing_page !== undefined
+    ) {
+      return;
+    }
     let cancelled = false;
     (async () => {
       try {

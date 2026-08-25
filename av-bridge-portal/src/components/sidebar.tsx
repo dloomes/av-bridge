@@ -67,8 +67,13 @@ interface NavSection {
 // Ungated: hiding them would leave a permission-limited user with no
 // visible home; the pages themselves render a helpful empty state if
 // the role has no other reads.
+// Overview href carries ?force=1 so users whose default landing page
+// is Map can still click Overview mid-session without immediately
+// getting bounced back to /map. The Overview page reads ?force to
+// short-circuit its landing_page redirect. matchExact still compares
+// only the pathname, so the active state stays correct.
 const OVERVIEW_ITEM: NavItem = {
-  href: "/",
+  href: "/?force=1",
   label: "Overview",
   icon: LayoutDashboard,
   matchExact: true,
@@ -204,15 +209,18 @@ export function Sidebar() {
 
       <nav className="flex-1 overflow-y-auto px-3 pb-2 scrollbar-thin">
         <div className="pt-1 space-y-0.5">
+          {/* Active state compares against the pathname only — the
+              Overview href carries ?force=1 but the URL bar just shows
+              "/", so a naive href-equality check would never highlight. */}
           <NavLink
             item={OVERVIEW_ITEM}
-            active={pathname === OVERVIEW_ITEM.href}
+            active={pathname === "/"}
             badge={0}
             criticalOpen={criticalOpen}
           />
           <NavLink
             item={MAP_ITEM}
-            active={pathname === MAP_ITEM.href}
+            active={pathname === "/map"}
             badge={0}
             criticalOpen={criticalOpen}
           />
