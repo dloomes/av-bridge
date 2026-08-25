@@ -17,16 +17,24 @@
 # stripped (-s -w). version + buildTime stay "dev" here; the signed
 # release builds will override via ldflags in a follow-up.
 FROM golang:1.25-alpine AS bridge-build
+# Build args stamp the version + build time into the binary via ldflags.
+# Default to "dev"/"unknown" so a plain `docker build` still succeeds;
+# the deploy script passes --build-arg BRIDGE_VERSION=$(git describe …)
+# and --build-arg BRIDGE_BUILD_TIME=<utc-timestamp> so a published
+# collector shows a real tag on the /collectors page instead of "dev".
+ARG BRIDGE_VERSION=dev
+ARG BRIDGE_BUILD_TIME=unknown
 WORKDIR /src
 COPY av-bridge/go.mod av-bridge/go.sum ./
 RUN go mod download
 COPY av-bridge/ .
-RUN CGO_ENABLED=0 GOOS=windows GOARCH=amd64 \
-    go build -ldflags "-s -w" -o /out/av-bridge-windows-amd64.exe ./cmd/av-bridge \
+RUN LDFLAGS="-s -w -X main.version=${BRIDGE_VERSION} -X main.buildTime=${BRIDGE_BUILD_TIME}" \
+ && CGO_ENABLED=0 GOOS=windows GOARCH=amd64 \
+    go build -ldflags "$LDFLAGS" -o /out/av-bridge-windows-amd64.exe ./cmd/av-bridge \
  && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-    go build -ldflags "-s -w" -o /out/av-bridge-linux-amd64      ./cmd/av-bridge \
+    go build -ldflags "$LDFLAGS" -o /out/av-bridge-linux-amd64      ./cmd/av-bridge \
  && CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
-    go build -ldflags "-s -w" -o /out/av-bridge-linux-arm64      ./cmd/av-bridge
+    go build -ldflags "$LDFLAGS" -o /out/av-bridge-linux-arm64      ./cmd/av-bridge
 
 # ---- Cloud (native linux) build -------------------------------------------
 FROM golang:1.22-alpine AS cloud-build

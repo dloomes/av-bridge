@@ -330,20 +330,28 @@ func viscaLumensInqFWModule(selector byte) []byte {
 }
 
 // parseLumensFWModule reads a module firmware reply and returns the
-// concatenated ASCII string (e.g. "VBO0100"). The reply shape is
+// concatenated ASCII string (e.g. "VBO100"). The reply shape is
 // y0 50 mm nn oo pp qq rr ss FF for most modules; the CPLD module (VBK)
-// is one byte shorter — the parser handles both without special-casing.
+// is one byte shorter per spec and observed firmware pads different
+// modules differently — some with 0x20 (space), some with 0x00 (null).
+// Trim both before rendering.
 func parseLumensFWModule(payload []byte) (string, error) {
 	// payload layout: [0]=0x90 [1]=0x50 [2..N]=ASCII chars [last]=0xFF
 	if len(payload) < 4 {
 		return "", errors.New("visca: lumens fw module reply too short")
 	}
-	// Trim leading 90 50 and trailing FF.
+	// Trim leading 90 50 and trailing FF, then any trailing padding
+	// (null or space). Historic bug: without the null trim, a body
+	// like `56 42 4B 31 30 35 00` (ASCII "VBK105" + one null pad)
+	// tripped the "non-printable byte -> fall back to hex" branch and
+	// came out as "56424B31303500" on the Devices page.
 	body := payload[2 : len(payload)-1]
-	// Some replies pack the ASCII into low nibbles ("0p 0q 0r ...") but
-	// the RS127 spec for the module inquiry is straight ASCII. Fall back
-	// to hex if we see a non-printable byte so we at least return
-	// something rather than silently dropping the field.
+	for len(body) > 0 && (body[len(body)-1] == 0x00 || body[len(body)-1] == 0x20) {
+		body = body[:len(body)-1]
+	}
+	// After trimming padding, any remaining non-printable byte is a
+	// sign we didn't parse the reply correctly — fall back to hex so
+	// something surfaces rather than silently dropping the field.
 	for _, b := range body {
 		if b < 0x20 || b > 0x7E {
 			return fmt.Sprintf("%X", body), nil
