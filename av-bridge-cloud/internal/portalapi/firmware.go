@@ -37,6 +37,14 @@ func (h *Handler) FirmwareSummary(w http.ResponseWriter, r *http.Request) {
 	}
 	out := []item{}
 	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
+		// Ingest populates devices.make/model from t.Tags["make"] first
+		// (see ingest/handler.go — tag-supplied make/model win over
+		// lens metrics). But a portal-only edit that adds `make`/`model`
+		// as tags never triggers ingest, so the top-level columns stay
+		// NULL until a fresh telemetry poll lands. To keep the firmware
+		// page useful right after a tag edit we also read the tags
+		// JSONB and prefer the column when it's set — same precedence
+		// as ingest, just backfilled at query time.
 		rows, err := tx.Query(ctx, `
 			SELECT
 			  d.id::text,
@@ -46,17 +54,22 @@ func (h *Handler) FirmwareSummary(w http.ResponseWriter, r *http.Request) {
 			    WHEN r.name IS NOT NULL THEN r.name
 			    ELSE ''
 			  END AS dev_location,
-			  COALESCE(d.make, '')             AS mk,
-			  COALESCE(d.model, '')            AS md,
+			  eff.make_eff                     AS mk,
+			  eff.model_eff                    AS md,
 			  COALESCE(d.firmware_version, '') AS fw,
 			  COALESCE(ft.target_version, '')  AS target_ver,
 			  COALESCE(ft.docs_url, '')        AS docs
 			FROM devices d
+			CROSS JOIN LATERAL (
+			    SELECT
+			      COALESCE(NULLIF(d.make, ''),  NULLIF(d.tags->>'make', ''),  '') AS make_eff,
+			      COALESCE(NULLIF(d.model, ''), NULLIF(d.tags->>'model', ''), '') AS model_eff
+			) eff
 			LEFT JOIN rooms r     ON r.id = d.room_id
 			LEFT JOIN buildings b ON b.id = r.building_id
 			LEFT JOIN firmware_targets ft
-			  ON ft.make  = COALESCE(d.make, '')
-			 AND ft.model = COALESCE(d.model, '')
+			  ON ft.make  = eff.make_eff
+			 AND ft.model = eff.model_eff
 			WHERE d.deleted_at IS NULL
 			ORDER BY mk, md, dev_name`)
 		if err != nil {
