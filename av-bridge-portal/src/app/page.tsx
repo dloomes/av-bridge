@@ -5,11 +5,14 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
+  Bell,
   Building2,
   CircleSlash,
+  DoorOpen,
   MapPin,
   RefreshCcw,
   Server,
+  ServerCrash,
   Wifi,
 } from "lucide-react";
 import { ConnectionIndicator } from "@/components/connection-indicator";
@@ -23,7 +26,12 @@ import { usePolling } from "@/hooks/usePolling";
 import { useSession } from "@/hooks/useSession";
 import { api } from "@/lib/api";
 import { cn, formatRelative, groupDevicesByLocation } from "@/lib/utils";
-import type { DeviceSummary, FleetStatus } from "@/lib/types";
+import type {
+  AlertsSummary,
+  CollectorSummary,
+  DeviceSummary,
+  FleetStatus,
+} from "@/lib/types";
 
 // Building-level "map" tile aggregates the four fleet statuses for a
 // single building. Composed on the client from the same /api/v1/devices
@@ -88,6 +96,18 @@ export default function DashboardPage() {
     (signal) => api.listDevices(signal),
     30_000
   );
+  // Alerts summary + collectors drive the second tile row. Both are
+  // small responses and the poll cadences match the /alerts + /collectors
+  // pages already, so switching between them and the overview is
+  // effectively free.
+  const alerts = usePolling<AlertsSummary>(
+    (signal) => api.alertsSummary(signal),
+    15_000
+  );
+  const collectors = usePolling<CollectorSummary[]>(
+    (signal) => api.listCollectors(signal),
+    15_000
+  );
 
   const buildings = useMemo<BuildingStatus[]>(() => {
     if (!devices.data) return [];
@@ -125,7 +145,43 @@ export default function DashboardPage() {
     });
   }, [devices.data]);
 
+  // Room rollup: derived from the device list rather than a separate
+  // /rooms endpoint, so it stays consistent with what the building
+  // tiles + Places sidebar already show. A room "has an issue" when
+  // any device in it is offline or degraded — matches the ops
+  // heuristic behind FleetHealth's original design.
+  const roomStats = useMemo(() => {
+    if (!devices.data) return null;
+    const groups = groupDevicesByLocation(devices.data);
+    let total = 0;
+    let withIssue = 0;
+    for (const g of groups) {
+      for (const r of g.rooms) {
+        total += 1;
+        if (r.devices.some((d) => d.status === "offline" || d.status === "degraded")) {
+          withIssue += 1;
+        }
+      }
+    }
+    return { total, withIssue };
+  }, [devices.data]);
+
+  const collectorStats = useMemo(() => {
+    if (!collectors.data) return null;
+    let offline = 0;
+    for (const c of collectors.data) {
+      if (c.status === "offline") offline += 1;
+    }
+    return { offline };
+  }, [collectors.data]);
+
   const isLoading = fleet.loading && !fleet.data;
+  // Second-row loading is decoupled from fleet — the four device tiles
+  // can render while rooms/alerts/collectors are still fetching.
+  const isRow2Loading =
+    (devices.loading && !devices.data) ||
+    (alerts.loading && !alerts.data) ||
+    (collectors.loading && !collectors.data);
 
   return (
     <div className="flex h-screen flex-col">
@@ -163,6 +219,8 @@ export default function DashboardPage() {
             onClick={() => {
               fleet.refresh();
               devices.refresh();
+              alerts.refresh();
+              collectors.refresh();
             }}
           >
             <RefreshCcw className="h-3.5 w-3.5" />
@@ -192,8 +250,10 @@ export default function DashboardPage() {
               </Card>
             )}
 
-            <section>
+            <section className="space-y-4">
               <h2 className="sr-only">Fleet summary</h2>
+              {/* Row 1 — device rollup. Fleet endpoint is fast + independent
+                  of devices/collectors so this row lights up first. */}
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                 {isLoading ? (
                   <>
@@ -230,6 +290,77 @@ export default function DashboardPage() {
                       icon={AlertTriangle}
                       tone="warning"
                       href="/devices?status=degraded"
+                    />
+                  </>
+                )}
+              </div>
+
+              {/* Row 2 — the "what should I look at first?" rollup:
+                  rooms, live-attention alerts, and any collectors that
+                  fell off. Rooms with an issue tint red only when
+                  there's actually something to act on so a healthy
+                  fleet reads all-neutral. */}
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                {isRow2Loading ? (
+                  <>
+                    <Skeleton className="h-[88px]" />
+                    <Skeleton className="h-[88px]" />
+                    <Skeleton className="h-[88px]" />
+                    <Skeleton className="h-[88px]" />
+                  </>
+                ) : (
+                  <>
+                    <StatCard
+                      label="Rooms"
+                      value={roomStats?.total ?? 0}
+                      icon={DoorOpen}
+                    />
+                    <StatCard
+                      label="Rooms with issues"
+                      value={roomStats?.withIssue ?? 0}
+                      icon={AlertTriangle}
+                      tone={
+                        (roomStats?.withIssue ?? 0) > 0
+                          ? "destructive"
+                          : "neutral"
+                      }
+                      // Same offline-first filter the "Offline" tile
+                      // uses. A room with only degraded devices is a
+                      // softer signal — user can still find it via the
+                      // /devices?status=degraded route.
+                      href={
+                        (roomStats?.withIssue ?? 0) > 0
+                          ? "/devices?status=offline"
+                          : undefined
+                      }
+                    />
+                    <StatCard
+                      label={
+                        (alerts.data?.critical_open ?? 0) > 0
+                          ? "Open alerts (critical)"
+                          : "Open alerts"
+                      }
+                      value={alerts.data?.open ?? 0}
+                      icon={Bell}
+                      tone={
+                        (alerts.data?.critical_open ?? 0) > 0
+                          ? "destructive"
+                          : (alerts.data?.open ?? 0) > 0
+                          ? "warning"
+                          : "success"
+                      }
+                      href="/alerts"
+                    />
+                    <StatCard
+                      label="Offline collectors"
+                      value={collectorStats?.offline ?? 0}
+                      icon={ServerCrash}
+                      tone={
+                        (collectorStats?.offline ?? 0) > 0
+                          ? "destructive"
+                          : "success"
+                      }
+                      href="/collectors"
                     />
                   </>
                 )}
