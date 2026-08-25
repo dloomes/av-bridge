@@ -59,15 +59,21 @@ interface NavSection {
   vendorOnly?: boolean;
 }
 
+// Overview lives outside SECTIONS — it's the landing page and always
+// sits at the very top of the sidebar, above Places. Ungated: hiding it
+// would leave a permission-limited user with no visible home; the page
+// renders a helpful empty state if the role has no other reads.
+const OVERVIEW_ITEM: NavItem = {
+  href: "/",
+  label: "Overview",
+  icon: LayoutDashboard,
+  matchExact: true,
+};
+
 const SECTIONS: NavSection[] = [
   {
     title: "Monitor",
     items: [
-      // Overview stays ungated — it's the landing page, and hiding it
-      // would leave a permission-limited user with no visible home.
-      // The page itself renders a helpful empty state if the role has
-      // no other reads.
-      { href: "/", label: "Overview", icon: LayoutDashboard, matchExact: true },
       { href: "/alerts", label: "Alerts", icon: Bell, badgeKey: "alerts_open", requires: "view.dashboard" },
       { href: "/collectors", label: "Collectors", icon: Server, requires: "view.dashboard" },
       { href: "/devices", label: "Devices", icon: Radio, requires: "view.dashboard" },
@@ -185,6 +191,15 @@ export function Sidebar() {
 
       <nav className="flex-1 overflow-y-auto px-3 pb-2 scrollbar-thin">
         <div className="pt-1">
+          <NavLink
+            item={OVERVIEW_ITEM}
+            active={pathname === OVERVIEW_ITEM.href}
+            badge={0}
+            criticalOpen={criticalOpen}
+          />
+        </div>
+
+        <div className="pt-3">
           <SectionHeader
             title="Places"
             open={isOpen("Places")}
@@ -196,6 +211,8 @@ export function Sidebar() {
             </div>
           )}
         </div>
+
+        <div className="my-3 border-t border-white/5" role="separator" />
 
         {SECTIONS.filter((s) => !s.vendorOnly || isVendor).map((section) => {
           const open = isOpen(section.title);
@@ -216,35 +233,15 @@ export function Sidebar() {
                       const active = item.matchExact
                         ? pathname === item.href
                         : pathname.startsWith(item.href);
-                      const Icon = item.icon;
                       const badge = item.badgeKey ? badges[item.badgeKey] : 0;
                       return (
-                        <Link
+                        <NavLink
                           key={item.href}
-                          href={item.href}
-                          className={cn(
-                            "flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors",
-                            active
-                              ? "bg-white/10 text-white"
-                              : "text-sidebar-foreground/70 hover:bg-white/5 hover:text-white"
-                          )}
-                        >
-                          <Icon className="h-4 w-4" />
-                          <span className="flex-1">{item.label}</span>
-                          {badge > 0 && (
-                            <span
-                              className={cn(
-                                "inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[10px] font-semibold",
-                                item.badgeKey === "alerts_open" && criticalOpen > 0
-                                  ? "bg-red-500 text-white"
-                                  : "bg-white/15 text-white"
-                              )}
-                              aria-label={`${badge} ${item.label.toLowerCase()}`}
-                            >
-                              {badge}
-                            </span>
-                          )}
-                        </Link>
+                          item={item}
+                          active={active}
+                          badge={badge}
+                          criticalOpen={criticalOpen}
+                        />
                       );
                     })}
                 </div>
@@ -258,6 +255,47 @@ export function Sidebar() {
         <EnvironmentBadge />
       </div>
     </aside>
+  );
+}
+
+function NavLink({
+  item,
+  active,
+  badge,
+  criticalOpen,
+}: {
+  item: NavItem;
+  active: boolean;
+  badge: number;
+  criticalOpen: number;
+}) {
+  const Icon = item.icon;
+  return (
+    <Link
+      href={item.href}
+      className={cn(
+        "flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors",
+        active
+          ? "bg-white/10 text-white"
+          : "text-sidebar-foreground/70 hover:bg-white/5 hover:text-white"
+      )}
+    >
+      <Icon className="h-4 w-4" />
+      <span className="flex-1">{item.label}</span>
+      {badge > 0 && (
+        <span
+          className={cn(
+            "inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[10px] font-semibold",
+            item.badgeKey === "alerts_open" && criticalOpen > 0
+              ? "bg-red-500 text-white"
+              : "bg-white/15 text-white"
+          )}
+          aria-label={`${badge} ${item.label.toLowerCase()}`}
+        >
+          {badge}
+        </span>
+      )}
+    </Link>
   );
 }
 
