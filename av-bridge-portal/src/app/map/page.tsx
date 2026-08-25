@@ -52,7 +52,7 @@ const BuildingsMap = dynamic(
   {
     ssr: false,
     loading: () => (
-      <div className="flex h-[480px] items-center justify-center rounded-lg border border-border bg-muted/20">
+      <div className="flex h-[640px] lg:h-[760px] items-center justify-center rounded-lg border border-border bg-muted/20">
         <Skeleton className="h-full w-full" />
       </div>
     ),
@@ -310,7 +310,7 @@ export default function MapPage() {
                 )}
               </div>
               {buildings.loading && !buildings.data ? (
-                <Skeleton className="h-[480px]" />
+                <Skeleton className="h-[640px] lg:h-[760px]" />
               ) : (
                 <BuildingsMap entries={entries} mapboxToken={MAPBOX_TOKEN} />
               )}

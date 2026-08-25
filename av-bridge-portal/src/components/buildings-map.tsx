@@ -138,7 +138,7 @@ export function BuildingsMap({ entries, mapboxToken, className }: BuildingsMapPr
     return (
       <div
         className={cn(
-          "flex h-[420px] items-center justify-center rounded-lg border border-dashed border-border bg-muted/30 px-6 text-center",
+          "flex h-[640px] lg:h-[760px] items-center justify-center rounded-lg border border-dashed border-border bg-muted/30 px-6 text-center",
           className
         )}
       >
@@ -158,7 +158,7 @@ export function BuildingsMap({ entries, mapboxToken, className }: BuildingsMapPr
     return (
       <div
         className={cn(
-          "flex h-[420px] items-center justify-center rounded-lg border border-dashed border-border bg-muted/30 px-6 text-center",
+          "flex h-[640px] lg:h-[760px] items-center justify-center rounded-lg border border-dashed border-border bg-muted/30 px-6 text-center",
           className
         )}
       >
@@ -177,7 +177,16 @@ export function BuildingsMap({ entries, mapboxToken, className }: BuildingsMapPr
   const openEntry = openId ? plottable.find((e) => e.building.id === openId) : null;
 
   return (
-    <div className={cn("relative overflow-hidden rounded-lg border border-border", className)}>
+    <div
+      className={cn(
+        // Tall by default so the map is the page's centre of gravity;
+        // even taller on lg where there's room. Map itself fills the
+        // wrapper via height: 100%, so tweaking these heights is the
+        // one place to change the map size going forward.
+        "relative h-[640px] lg:h-[760px] overflow-hidden rounded-lg border border-border",
+        className
+      )}
+    >
       <Map
         ref={mapRef}
         mapboxAccessToken={mapboxToken}
@@ -191,7 +200,7 @@ export function BuildingsMap({ entries, mapboxToken, className }: BuildingsMapPr
           latitude: plottable[0].building.latitude!,
           zoom: 10,
         }}
-        style={{ width: "100%", height: 480 }}
+        style={{ width: "100%", height: "100%" }}
         attributionControl={true}
         onLoad={() => setMapLoaded(true)}
       >
