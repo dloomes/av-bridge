@@ -60,6 +60,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           role: who.role,
           is_vendor: who.is_vendor,
           permissions: who.permissions ?? [],
+          landing_page: who.landing_page,
         });
       } catch {}
     })();

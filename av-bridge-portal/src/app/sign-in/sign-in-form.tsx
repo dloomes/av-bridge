@@ -7,7 +7,7 @@ import { Shield, ShieldCheck, ShieldOff, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { api, type Branding } from "@/lib/api";
 import { hexToHslTriple } from "@/lib/hex-to-hsl";
-import { buildMockToken, signIn, type SessionUser } from "@/lib/session";
+import { buildMockToken, landingPath, signIn, type SessionUser } from "@/lib/session";
 
 // Human-readable labels for the ?entra_error= codes the callback sets on
 // its bounce-back. The codes are ours (not Microsoft's — we normalise
@@ -262,6 +262,7 @@ export function SignInForm({ branding, showVendorSSO = false, slug, appOrigin = 
       // but we seed a SessionUser now so the immediate redirect renders with
       // the right role gating instead of flashing viewer defaults.
       signIn(token, { email: email.trim(), role });
+      let landing = "/";
       try {
         const who = await api.whoami();
         signIn(token, {
@@ -272,9 +273,11 @@ export function SignInForm({ branding, showVendorSSO = false, slug, appOrigin = 
           role: who.role,
           is_vendor: who.is_vendor,
           permissions: who.permissions ?? [],
+          landing_page: who.landing_page,
         });
+        landing = landingPath(who.landing_page);
       } catch {}
-      router.replace("/");
+      router.replace(landing);
     } catch (err) {
       setError((err as Error).message || "Sign-in failed");
     } finally {

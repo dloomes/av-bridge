@@ -16,6 +16,7 @@ import {
   Wifi,
 } from "lucide-react";
 import { ConnectionIndicator } from "@/components/connection-indicator";
+import { SetAsDefaultToggle } from "@/components/set-as-default-toggle";
 import { StatCard } from "@/components/stat-card";
 import { UserMenu } from "@/components/user-menu";
 import { useBranding } from "@/components/branding-provider";
@@ -205,6 +206,7 @@ export default function DashboardPage() {
           </div>
         </div>
         <div className="flex items-center gap-3">
+          <SetAsDefaultToggle page="overview" />
           <span className="text-xs text-muted-foreground">
             Last update{" "}
             {formatRelative(

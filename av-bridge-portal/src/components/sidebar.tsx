@@ -14,6 +14,7 @@ import {
   HeartPulse,
   History,
   LayoutDashboard,
+  Map as MapIcon,
   MapPin,
   Moon,
   Palette,
@@ -59,14 +60,22 @@ interface NavSection {
   vendorOnly?: boolean;
 }
 
-// Overview lives outside SECTIONS — it's the landing page and always
-// sits at the very top of the sidebar, above Places. Ungated: hiding it
-// would leave a permission-limited user with no visible home; the page
-// renders a helpful empty state if the role has no other reads.
+// Overview + Map live outside SECTIONS — the two landing surfaces sit
+// side-by-side at the very top of the sidebar, above Places, so whichever
+// one the user has set as their default is one click from the other.
+// Ungated: hiding them would leave a permission-limited user with no
+// visible home; the pages themselves render a helpful empty state if
+// the role has no other reads.
 const OVERVIEW_ITEM: NavItem = {
   href: "/",
   label: "Overview",
   icon: LayoutDashboard,
+  matchExact: true,
+};
+const MAP_ITEM: NavItem = {
+  href: "/map",
+  label: "Map",
+  icon: MapIcon,
   matchExact: true,
 };
 
@@ -190,10 +199,16 @@ export function Sidebar() {
       </div>
 
       <nav className="flex-1 overflow-y-auto px-3 pb-2 scrollbar-thin">
-        <div className="pt-1">
+        <div className="pt-1 space-y-0.5">
           <NavLink
             item={OVERVIEW_ITEM}
             active={pathname === OVERVIEW_ITEM.href}
+            badge={0}
+            criticalOpen={criticalOpen}
+          />
+          <NavLink
+            item={MAP_ITEM}
+            active={pathname === MAP_ITEM.href}
             badge={0}
             criticalOpen={criticalOpen}
           />

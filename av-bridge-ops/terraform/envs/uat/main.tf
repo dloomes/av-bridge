@@ -244,6 +244,12 @@ module "portal" {
     # for the client component that reads it.
     NEXT_PUBLIC_AV_BRIDGE_ENV = "uat"
 
+    # Mapbox access token for the overview / map view. Public token, URL-
+    # restricted in the Mapbox dashboard so leaking the bundle can't run up
+    # a bill. Unset in terraform.tfvars leaves the map view rendering an
+    # "add a token" hint rather than blowing up the build.
+    NEXT_PUBLIC_MAPBOX_TOKEN = var.mapbox_public_token
+
     NEXT_TELEMETRY_DISABLED = "1"
   }
 }

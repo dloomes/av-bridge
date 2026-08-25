@@ -476,6 +476,8 @@ export default function LocationsPage() {
                                                       name: bld.name,
                                                       address: bld.address,
                                                       timezone: bld.timezone,
+                                                      latitude: bld.latitude,
+                                                      longitude: bld.longitude,
                                                     },
                                                   })
                                                 }

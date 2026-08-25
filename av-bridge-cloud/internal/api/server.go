@@ -138,6 +138,9 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 		// Whoami is any authenticated user — no specific permission needed
 		// (it returns the caller's own identity + effective permissions).
 		mux.Handle("GET /api/v1/whoami", wrap(portal.Portal.Whoami))
+		// Preference update — any authenticated user can flip their own
+		// landing_page. Same auth stance as whoami.
+		mux.Handle("PATCH /api/v1/me/preferences", wrap(portal.Portal.UpdateMyPreferences))
 
 		// Vendor-only cross-tenant endpoints — RequireVendor stays because
 		// vendor is a Principal flag orthogonal to the customer RBAC.

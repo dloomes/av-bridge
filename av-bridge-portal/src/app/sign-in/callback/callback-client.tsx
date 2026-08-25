@@ -18,7 +18,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { api } from "@/lib/api";
-import { signIn } from "@/lib/session";
+import { landingPath, signIn } from "@/lib/session";
 
 export function SignInCallbackClient() {
   const router = useRouter();
@@ -53,8 +53,9 @@ export function SignInCallbackClient() {
           role: who.role,
           is_vendor: who.is_vendor,
           permissions: who.permissions ?? [],
+          landing_page: who.landing_page,
         });
-        router.replace("/");
+        router.replace(landingPath(who.landing_page));
       } catch {
         // whoami failure at this point means either the freshly-minted
         // token was rejected (server bug) or the network flapped. Either

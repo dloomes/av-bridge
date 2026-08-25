@@ -217,6 +217,10 @@ export interface WhoamiResponse {
   // authoritative for UI gating.
   permissions?: string[];
   building_scope_ids?: string[];
+  // Preferred landing page after sign-in. Defaults to "overview" on the
+  // backend when a user has never chosen; both pages remain reachable
+  // from the sidebar regardless.
+  landing_page?: "overview" | "map";
 }
 
 export interface HelpdeskCustomer {
@@ -561,6 +565,16 @@ export const api = {
 
   whoami: (signal?: AbortSignal) =>
     request<WhoamiResponse>("/api/v1/whoami", { signal }),
+
+  updatePreferences: (
+    body: { landing_page?: "overview" | "map" },
+    signal?: AbortSignal
+  ) =>
+    request<{ landing_page: string }>("/api/v1/me/preferences", {
+      method: "PATCH",
+      body: JSON.stringify(body),
+      signal,
+    }),
 
   getBranding: (signal?: AbortSignal) =>
     request<Branding>("/api/v1/branding", { signal }),
@@ -908,7 +922,14 @@ export const api = {
     }),
 
   createBuilding: (
-    body: { location_id: string; name: string; address?: string; timezone?: string },
+    body: {
+      location_id: string;
+      name: string;
+      address?: string;
+      timezone?: string;
+      latitude?: number;
+      longitude?: number;
+    },
     signal?: AbortSignal
   ) =>
     request<{ id: string; name: string }>("/api/v1/buildings", {
@@ -938,7 +959,14 @@ export const api = {
 
   updateBuilding: (
     id: string,
-    body: { name?: string; address?: string; timezone?: string },
+    body: {
+      name?: string;
+      address?: string;
+      timezone?: string;
+      latitude?: number;
+      longitude?: number;
+      clear_coords?: boolean;
+    },
     signal?: AbortSignal
   ) =>
     request<{ id: string }>(`/api/v1/buildings/${encodeURIComponent(id)}`, {

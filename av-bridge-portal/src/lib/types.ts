@@ -206,13 +206,21 @@ export interface UpdateAssetBody {
   notes?: string;
 }
 
-// BuildingRow extends NamedRow with the optional address + timezone the
-// buildings list endpoint returns alongside the shared fields. Keeping it
-// separate so the simpler tables don't grow phantom optional columns.
+// BuildingRow extends NamedRow with the optional address, timezone, and
+// geographic coords the buildings list endpoint returns alongside the
+// shared fields. Keeping it separate so the simpler tables don't grow
+// phantom optional columns.
 export interface BuildingRow extends NamedRow {
   address?: string;
   timezone?: string;
+  latitude?: number;
+  longitude?: number;
 }
+
+// User-facing preference for which page to land on at sign-in. Both
+// pages stay reachable from the sidebar; this is only used to pick the
+// post-login redirect target.
+export type LandingPage = "overview" | "map";
 
 // AuditEntry mirrors the JSON shape returned by GET /api/v1/audit.
 // before/after are intentionally `unknown` — the cloud returns whatever

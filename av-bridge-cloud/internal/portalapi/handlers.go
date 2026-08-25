@@ -1023,6 +1023,7 @@ func (h *Handler) Whoami(w http.ResponseWriter, r *http.Request) {
 		IsVendor         bool     `json:"is_vendor,omitempty"`
 		Permissions      []string `json:"permissions"`
 		BuildingScopeIDs []string `json:"building_scope_ids"`
+		LandingPage      string   `json:"landing_page"`
 	}
 	// Portal uses this list to gate UI (show/hide buttons) — vendor bypass
 	// still applies server-side, but for the UI we surface the effective
@@ -1045,6 +1046,12 @@ func (h *Handler) Whoami(w http.ResponseWriter, r *http.Request) {
 	if scope == nil {
 		scope = []string{}
 	}
+	// Preference lookup is best-effort — a mock-JWT dev user has no users
+	// row so we default to "overview" rather than failing whoami.
+	landingPage := "overview"
+	_ = h.store.AdminPool().QueryRow(r.Context(),
+		`SELECT landing_page FROM users WHERE id::text = $1`, p.UserID).Scan(&landingPage)
+
 	writeJSON(w, http.StatusOK, out{
 		UserID:           p.UserID,
 		Email:            p.Email,
@@ -1054,7 +1061,52 @@ func (h *Handler) Whoami(w http.ResponseWriter, r *http.Request) {
 		IsVendor:         p.IsVendor,
 		Permissions:      perms,
 		BuildingScopeIDs: scope,
+		LandingPage:      landingPage,
 	})
+}
+
+// UpdateMyPreferences — PATCH /api/v1/me/preferences
+//
+// Currently only the landing_page preference is exposed. Body is a partial
+// update: any omitted field is left alone. Whitelisted values are enforced
+// here in addition to the CHECK constraint so an invalid value returns 400
+// instead of a database error.
+func (h *Handler) UpdateMyPreferences(w http.ResponseWriter, r *http.Request) {
+	p, ok := portalauth.From(r.Context())
+	if !ok {
+		writeErr(w, http.StatusUnauthorized, "no principal")
+		return
+	}
+	var req struct {
+		LandingPage *string `json:"landing_page,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if req.LandingPage == nil {
+		writeErr(w, http.StatusBadRequest, "no fields to update")
+		return
+	}
+	if *req.LandingPage != "overview" && *req.LandingPage != "map" {
+		writeErr(w, http.StatusBadRequest, "landing_page must be 'overview' or 'map'")
+		return
+	}
+	tag, err := h.store.AdminPool().Exec(r.Context(),
+		`UPDATE users SET landing_page = $1 WHERE id::text = $2`,
+		*req.LandingPage, p.UserID)
+	if err != nil {
+		h.log.Error("update preferences", "error", err)
+		writeErr(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		// Mock-JWT dev users have no row — pretend success so the UI toggle
+		// still updates the local session even though nothing was persisted.
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"landing_page": *req.LandingPage})
 }
 
 // HelpdeskOverview — GET /api/v1/helpdesk/overview

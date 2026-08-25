@@ -21,6 +21,18 @@ export interface SessionUser {
   // Missing / empty means "no permissions loaded yet" — the sidebar
   // treats gated items as hidden until whoami hydrates them.
   permissions?: string[];
+  // Preferred landing page for this user. Sign-in redirects here; a small
+  // "Set as default" toggle on Overview/Map flips this without leaving
+  // the page.
+  landing_page?: "overview" | "map";
+}
+
+// landingPath resolves a landing_page preference to a route. Defaults to
+// the overview when a preference is missing or unrecognised — new users
+// have never chosen and the whoami default is "overview" too, so this
+// keeps the two aligned.
+export function landingPath(pref?: string | null): string {
+  return pref === "map" ? "/map" : "/";
 }
 
 const TOKEN_KEY = "av-bridge.session.token";

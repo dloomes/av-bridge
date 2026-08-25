@@ -31,10 +31,12 @@ type createLocationReq struct {
 	Name     string `json:"name"`
 }
 type createBuildingReq struct {
-	LocationID string `json:"location_id"`
-	Name       string `json:"name"`
-	Address    string `json:"address,omitempty"`
-	Timezone   string `json:"timezone,omitempty"`
+	LocationID string   `json:"location_id"`
+	Name       string   `json:"name"`
+	Address    string   `json:"address,omitempty"`
+	Timezone   string   `json:"timezone,omitempty"`
+	Latitude   *float64 `json:"latitude,omitempty"`
+	Longitude  *float64 `json:"longitude,omitempty"`
 }
 type createRoomReq struct {
 	BuildingID string `json:"building_id"`
@@ -120,15 +122,20 @@ func (h *Handler) CreateBuilding(w http.ResponseWriter, r *http.Request) {
 	}
 	p, _ := portalauth.From(r.Context())
 
+	if !coordPairValid(req.Latitude, req.Longitude) {
+		writeErr(w, http.StatusBadRequest, "latitude and longitude must be provided together and within range")
+		return
+	}
+
 	var id string
 	notFound := false
 	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
 		err := tx.QueryRow(ctx, `
-			INSERT INTO buildings (customer_id, location_id, name, address, timezone)
-			SELECT $1, $2, $3, NULLIF($4,''), NULLIF($5,'')
+			INSERT INTO buildings (customer_id, location_id, name, address, timezone, latitude, longitude)
+			SELECT $1, $2, $3, NULLIF($4,''), NULLIF($5,''), $6, $7
 			WHERE EXISTS (SELECT 1 FROM locations WHERE id = $2)
 			RETURNING id::text`,
-			p.CustomerID, req.LocationID, req.Name, req.Address, req.Timezone).Scan(&id)
+			p.CustomerID, req.LocationID, req.Name, req.Address, req.Timezone, req.Latitude, req.Longitude).Scan(&id)
 		if errors.Is(err, pgx.ErrNoRows) {
 			notFound = true
 			return nil
@@ -234,21 +241,25 @@ func (h *Handler) ListLocations(w http.ResponseWriter, r *http.Request) {
 	h.listSimple(w, r, `SELECT id::text, name, region_id::text FROM locations ORDER BY name`)
 }
 func (h *Handler) ListBuildings(w http.ResponseWriter, r *http.Request) {
-	// Buildings carry address + timezone in addition to the shared fields, so
-	// they need their own row shape rather than the generic listSimple path.
+	// Buildings carry address + timezone + optional coords in addition to the
+	// shared fields, so they need their own row shape rather than the generic
+	// listSimple path.
 	type buildingRow struct {
-		ID       string `json:"id"`
-		Name     string `json:"name"`
-		ParentID string `json:"parent_id"`
-		Address  string `json:"address,omitempty"`
-		Timezone string `json:"timezone,omitempty"`
+		ID        string   `json:"id"`
+		Name      string   `json:"name"`
+		ParentID  string   `json:"parent_id"`
+		Address   string   `json:"address,omitempty"`
+		Timezone  string   `json:"timezone,omitempty"`
+		Latitude  *float64 `json:"latitude,omitempty"`
+		Longitude *float64 `json:"longitude,omitempty"`
 	}
 	out := []buildingRow{}
 	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `
 			SELECT id::text, name, location_id::text,
 			       COALESCE(address,'') AS address,
-			       COALESCE(timezone,'') AS timezone
+			       COALESCE(timezone,'') AS timezone,
+			       latitude, longitude
 			FROM buildings ORDER BY name`)
 		if err != nil {
 			return err
@@ -256,7 +267,7 @@ func (h *Handler) ListBuildings(w http.ResponseWriter, r *http.Request) {
 		defer rows.Close()
 		for rows.Next() {
 			var rr buildingRow
-			if err := rows.Scan(&rr.ID, &rr.Name, &rr.ParentID, &rr.Address, &rr.Timezone); err != nil {
+			if err := rows.Scan(&rr.ID, &rr.Name, &rr.ParentID, &rr.Address, &rr.Timezone, &rr.Latitude, &rr.Longitude); err != nil {
 				return err
 			}
 			out = append(out, rr)
@@ -267,6 +278,26 @@ func (h *Handler) ListBuildings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// coordPairValid enforces the "both-or-neither + in-range" rule on a
+// (lat, lon) input pair. Returns true when either both are nil or both
+// are present and inside their WGS84 ranges. Kept as a plain helper so
+// both CreateBuilding and UpdateBuilding can share it.
+func coordPairValid(lat, lon *float64) bool {
+	if lat == nil && lon == nil {
+		return true
+	}
+	if lat == nil || lon == nil {
+		return false
+	}
+	if *lat < -90 || *lat > 90 {
+		return false
+	}
+	if *lon < -180 || *lon > 180 {
+		return false
+	}
+	return true
 }
 func (h *Handler) ListRooms(w http.ResponseWriter, r *http.Request) {
 	h.listSimple(w, r, `SELECT id::text, name, building_id::text FROM rooms ORDER BY name`)
@@ -282,9 +313,16 @@ type updateNamedReq struct {
 }
 
 type updateBuildingReq struct {
-	Name     *string `json:"name,omitempty"`
-	Address  *string `json:"address,omitempty"`
-	Timezone *string `json:"timezone,omitempty"`
+	Name      *string  `json:"name,omitempty"`
+	Address   *string  `json:"address,omitempty"`
+	Timezone  *string  `json:"timezone,omitempty"`
+	Latitude  *float64 `json:"latitude,omitempty"`
+	Longitude *float64 `json:"longitude,omitempty"`
+	// ClearCoords lets the client explicitly wipe both lat/lon back to NULL
+	// in a single PATCH. Without this the pointer-per-field pattern can't
+	// distinguish "unset" (leave alone) from "wipe" (set to null) since JSON
+	// null decodes as nil which is identical to an omitted field.
+	ClearCoords bool `json:"clear_coords,omitempty"`
 }
 
 // updateSimpleNamed is the shared workhorse for the three name-only tables.
@@ -373,6 +411,17 @@ func (h *Handler) UpdateBuilding(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Timezone != nil {
 		add("timezone", nullIfEmpty(*req.Timezone))
+	}
+	if req.ClearCoords {
+		add("latitude", nil)
+		add("longitude", nil)
+	} else if req.Latitude != nil || req.Longitude != nil {
+		if !coordPairValid(req.Latitude, req.Longitude) {
+			writeErr(w, http.StatusBadRequest, "latitude and longitude must be provided together and within range")
+			return
+		}
+		add("latitude", *req.Latitude)
+		add("longitude", *req.Longitude)
 	}
 	if len(set) == 0 {
 		writeErr(w, http.StatusBadRequest, "no fields to update")

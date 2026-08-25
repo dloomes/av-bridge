@@ -82,3 +82,10 @@ variable "dns_zone_name" {
   type        = string
   default     = "uat.involvecloud.com"
 }
+
+variable "mapbox_public_token" {
+  description = "Mapbox public access token for the portal's map view. URL-restrict it in the Mapbox dashboard so a leaked bundle can't be reused. Empty = map view renders a hint asking ops to configure a token."
+  type        = string
+  sensitive   = false
+  default     = ""
+}
