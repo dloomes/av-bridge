@@ -750,11 +750,15 @@ function EnrollmentInstructions({
           ) : (
             <>
               Run in an <strong>elevated</strong> PowerShell on the target
-              Windows host. Drop <span className="font-mono">av-bridge.exe</span>{" "}
-              into <span className="font-mono">C:\Program Files\av-bridge\</span>{" "}
-              first, or set <span className="font-mono">AV_BRIDGE_BINARY_URL</span>{" "}
-              to a download URL. The script registers the Windows Service
-              and starts it.
+              Windows host. The script downloads the collector exe from{" "}
+              <Link
+                href="/downloads"
+                className="text-primary underline-offset-4 hover:underline"
+              >
+                Downloads
+              </Link>
+              , redeems this token, registers the Windows Service, and
+              starts it — no pre-staging required.
             </>
           )}
         </p>
