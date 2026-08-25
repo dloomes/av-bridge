@@ -109,21 +109,27 @@ export default function MapPage() {
         g.rooms.flatMap((r) => r.devices)
       );
     }
-    return buildings.data.map<BuildingsMapEntry>((b) => {
-      const devs = byName.get(b.name.toLowerCase()) ?? [];
-      const totals = devs.reduce(
-        (acc, d) => {
-          acc.total += 1;
-          if (d.status === "online") acc.online += 1;
-          else if (d.status === "offline") acc.offline += 1;
-          else if (d.status === "degraded") acc.degraded += 1;
-          else acc.unknown += 1;
-          return acc;
-        },
-        { total: 0, online: 0, offline: 0, degraded: 0, unknown: 0 }
-      );
-      return { building: b, worst: worstOf(devs), totals };
-    });
+    return buildings.data
+      .map<BuildingsMapEntry>((b) => {
+        const devs = byName.get(b.name.toLowerCase()) ?? [];
+        const totals = devs.reduce(
+          (acc, d) => {
+            acc.total += 1;
+            if (d.status === "online") acc.online += 1;
+            else if (d.status === "offline") acc.offline += 1;
+            else if (d.status === "degraded") acc.degraded += 1;
+            else acc.unknown += 1;
+            return acc;
+          },
+          { total: 0, online: 0, offline: 0, degraded: 0, unknown: 0 }
+        );
+        return { building: b, worst: worstOf(devs), totals };
+      })
+      // Empty buildings — structural placeholders with no devices yet —
+      // aren't operationally interesting on the map or the "missing
+      // coordinates" nudge, so drop them entirely. They still exist in
+      // /locations, they just don't clutter the map view.
+      .filter((e) => e.totals.total > 0);
   }, [buildings.data, devices.data]);
 
   const missingCoords = useMemo(
