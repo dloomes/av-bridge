@@ -24,7 +24,7 @@ import { usePolling } from "@/hooks/usePolling";
 import { useSession } from "@/hooks/useSession";
 import { api } from "@/lib/api";
 import { hasPermission } from "@/lib/session";
-import { formatRelative } from "@/lib/utils";
+import { cn, formatRelative } from "@/lib/utils";
 import type {
   BuildingRow,
   CollectorSummary,
@@ -648,14 +648,24 @@ function EnrollmentInstructions({
   const mins = Math.floor((remainingSec % 3600) / 60);
   const expired = remainingSec === 0;
 
-  // One-liner that pipes install.sh through bash with the token. The
-  // hostname behind install.sh is derived from the browser origin so
-  // this works cleanly in both uat and prod without a hard-coded URL.
-  const installURL =
+  // One-liners derive their URLs from the browser origin so this works
+  // cleanly in both UAT and prod without a hard-coded portal hostname.
+  // Two flavours: Linux (curl | bash) and Windows (iwr | iex under an
+  // elevated PowerShell). Same token wire, same enrollment endpoint —
+  // only the client-side script differs.
+  const origin =
     typeof window !== "undefined"
-      ? `${window.location.origin}/public/collectors/install.sh`
-      : "https://<portal>/public/collectors/install.sh";
-  const oneLiner = `curl -fsSL ${installURL} | sudo AV_ENROLL_TOKEN=${token} bash`;
+      ? window.location.origin
+      : "https://<portal>";
+  const installShURL = `${origin}/public/collectors/install.sh`;
+  const installPsURL = `${origin}/public/collectors/install.ps1`;
+  const oneLinerLinux = `curl -fsSL ${installShURL} | sudo AV_ENROLL_TOKEN=${token} bash`;
+  // PowerShell has to set the env var in the same statement scope as
+  // iex, so we build a small compound: set token, invoke web request,
+  // pipe body to invoke-expression.
+  const oneLinerWindows = `$env:AV_ENROLL_TOKEN='${token}'; iwr ${installPsURL} -UseBasicParsing | iex`;
+  const [platform, setPlatform] = useState<"linux" | "windows">("linux");
+  const oneLiner = platform === "linux" ? oneLinerLinux : oneLinerWindows;
 
   const copy = async (v: string, which: "token" | "curl") => {
     try {
@@ -694,6 +704,26 @@ function EnrollmentInstructions({
               : `Expires in ${mins}m ${remainingSec % 60}s`}
           </span>
         </div>
+        {/* Platform toggle — the token is portable; only the client-side
+            bootstrap script differs. Keeping the two side-by-side means
+            a copy-paste never has to be transcribed between OSes. */}
+        <div className="mb-2 inline-flex rounded-md border border-input bg-muted/30 p-0.5 text-[11px]">
+          {(["linux", "windows"] as const).map((p) => (
+            <button
+              key={p}
+              type="button"
+              onClick={() => setPlatform(p)}
+              className={cn(
+                "px-2.5 py-1 rounded transition-colors",
+                platform === p
+                  ? "bg-background shadow-sm font-medium"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              {p === "linux" ? "Linux (bash)" : "Windows (PowerShell)"}
+            </button>
+          ))}
+        </div>
         <div className="flex gap-2">
           <input
             readOnly
@@ -711,9 +741,22 @@ function EnrollmentInstructions({
           </Button>
         </div>
         <p className="mt-1.5 text-[11px] text-muted-foreground">
-          Run on a fresh Ubuntu / Debian box at the site. The script
-          installs the bridge as a systemd service, redeems this token
-          for the HMAC secret, and starts phoning home.
+          {platform === "linux" ? (
+            <>
+              Run on a fresh Ubuntu / Debian box at the site. The script
+              installs the bridge as a systemd service, redeems this
+              token for the HMAC secret, and starts phoning home.
+            </>
+          ) : (
+            <>
+              Run in an <strong>elevated</strong> PowerShell on the target
+              Windows host. Drop <span className="font-mono">av-bridge.exe</span>{" "}
+              into <span className="font-mono">C:\Program Files\av-bridge\</span>{" "}
+              first, or set <span className="font-mono">AV_BRIDGE_BINARY_URL</span>{" "}
+              to a download URL. The script registers the Windows Service
+              and starts it.
+            </>
+          )}
         </p>
       </div>
 

@@ -57,8 +57,9 @@ type PublicRoutes struct {
 	PasswordResetRequest  http.HandlerFunc
 	PasswordResetComplete http.HandlerFunc
 	MagicLinkConsume      http.HandlerFunc
-	CollectorEnroll       http.HandlerFunc
-	CollectorInstallScript http.HandlerFunc
+	CollectorEnroll          http.HandlerFunc
+	CollectorInstallScript   http.HandlerFunc
+	CollectorInstallScriptPS http.HandlerFunc
 }
 
 // NewServer wires the routes. Go 1.22 method-aware patterns keep us dependency-free.
@@ -96,6 +97,9 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 	}
 	if public.CollectorInstallScript != nil {
 		mux.Handle("GET /public/collectors/install.sh", public.CollectorInstallScript)
+	}
+	if public.CollectorInstallScriptPS != nil {
+		mux.Handle("GET /public/collectors/install.ps1", public.CollectorInstallScriptPS)
 	}
 
 	if portal != nil {

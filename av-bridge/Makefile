@@ -26,6 +26,10 @@ build-arm64: ## Cross-compile for Linux arm64 (Raspberry Pi 4+)
 	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 \
 	$(GO) build -ldflags "$(LDFLAGS)" -o $(BINARY)-linux-arm64 $(CMD)
 
+build-windows: ## Cross-compile for Windows amd64 (Windows Server / Win10+)
+	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
+	$(GO) build -ldflags "$(LDFLAGS)" -o $(BINARY)-windows-amd64.exe $(CMD)
+
 dist-arm64: build-arm64 ## Bundle arm64 binary + service + install.sh into a tarball
 	@mkdir -p dist/av-bridge-linux-arm64
 	cp $(BINARY)-linux-arm64 dist/av-bridge-linux-arm64/$(BINARY)
@@ -49,6 +53,18 @@ dist-amd64: build-linux ## Bundle linux/amd64 binary + service + install.sh into
 	tar -C dist -czf dist/av-bridge-linux-amd64.tar.gz av-bridge-linux-amd64
 	@echo ""
 	@echo "Built: dist/av-bridge-linux-amd64.tar.gz ($(VERSION))"
+
+dist-windows: build-windows ## Bundle Windows amd64 binary + install.ps1 into a zip
+	@mkdir -p dist/av-bridge-windows-amd64
+	cp $(BINARY)-windows-amd64.exe dist/av-bridge-windows-amd64/av-bridge.exe
+	cp deployments/install.ps1 dist/av-bridge-windows-amd64/ 2>/dev/null || true
+	cp config.example.yaml dist/av-bridge-windows-amd64/
+	cp deployments/README-deploy.md dist/av-bridge-windows-amd64/README.md 2>/dev/null || true
+	@which zip > /dev/null 2>&1 && \
+	  (cd dist && zip -qr av-bridge-windows-amd64.zip av-bridge-windows-amd64) || \
+	  (cd dist && powershell -Command "Compress-Archive -Path av-bridge-windows-amd64 -DestinationPath av-bridge-windows-amd64.zip -Force")
+	@echo ""
+	@echo "Built: dist/av-bridge-windows-amd64.zip ($(VERSION))"
 
 ## ── Test ─────────────────────────────────────────────────────────────────────
 
@@ -129,7 +145,7 @@ certs: ## Generate self-signed TLS certs for local dev
 ## ── Housekeeping ─────────────────────────────────────────────────────────────
 
 clean: ## Remove build artefacts
-	rm -f $(BINARY) $(BINARY)-linux-amd64 $(BINARY)-linux-arm64
+	rm -f $(BINARY) $(BINARY)-linux-amd64 $(BINARY)-linux-arm64 $(BINARY)-windows-amd64.exe
 	rm -rf dist/
 	rm -f coverage.out coverage.html
 

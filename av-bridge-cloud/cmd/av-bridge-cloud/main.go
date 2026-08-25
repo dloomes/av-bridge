@@ -293,8 +293,9 @@ func main() {
 		PasswordResetRequest:   publicH.RequestReset,
 		PasswordResetComplete:  publicH.CompleteReset,
 		MagicLinkConsume:       publicH.ConsumeMagicLink,
-		CollectorEnroll:        publicH.EnrollCollector,
-		CollectorInstallScript: publicH.ServeInstallScript,
+		CollectorEnroll:          publicH.EnrollCollector,
+		CollectorInstallScript:   publicH.ServeInstallScript,
+		CollectorInstallScriptPS: publicH.ServeInstallScriptPS,
 	}
 	// M4.1: seed the shared magic-link portal base URL used by the
 	// mint side of the flow (portalapi). Small package-var setter is
