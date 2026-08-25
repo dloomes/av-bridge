@@ -105,19 +105,19 @@ New-Item -ItemType Directory -Force -Path (Join-Path $ConfigDir 'logs')  | Out-N
 # script to resolve the current GitHub release.
 
 if (-not (Test-Path $BinaryPath)) {
-    if ($env:AV_BRIDGE_BINARY_URL) {
-        Write-Host "==> Downloading av-bridge from $($env:AV_BRIDGE_BINARY_URL)"
-        try {
-            Invoke-WebRequest -Uri $env:AV_BRIDGE_BINARY_URL -OutFile $BinaryPath -UseBasicParsing
-        } catch {
-            Die "binary download failed: $($_.Exception.Message)"
-        }
+    # Default to the cloud's own downloads endpoint — same origin the
+    # script was fetched from, so no cross-domain worry. AV_BRIDGE_BINARY_URL
+    # still overrides for air-gapped / mirrored setups.
+    $binaryUrl = if ($env:AV_BRIDGE_BINARY_URL) {
+        $env:AV_BRIDGE_BINARY_URL
     } else {
-        Die @"
-$BinaryPath not found. Options:
-  * Extract av-bridge-windows-amd64.zip into $InstallDir first, then re-run.
-  * Or set AV_BRIDGE_BINARY_URL to a direct download URL before invoking this script.
-"@
+        "$CloudBaseUrl/public/downloads/av-bridge-windows-amd64.exe"
+    }
+    Write-Host "==> Downloading av-bridge from $binaryUrl"
+    try {
+        Invoke-WebRequest -Uri $binaryUrl -OutFile $BinaryPath -UseBasicParsing
+    } catch {
+        Die "binary download failed: $($_.Exception.Message)"
     }
 }
 

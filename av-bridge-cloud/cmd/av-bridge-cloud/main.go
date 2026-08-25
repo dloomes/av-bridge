@@ -296,6 +296,8 @@ func main() {
 		CollectorEnroll:          publicH.EnrollCollector,
 		CollectorInstallScript:   publicH.ServeInstallScript,
 		CollectorInstallScriptPS: publicH.ServeInstallScriptPS,
+		ListDownloads:            publicH.ListDownloads,
+		ServeDownload:            publicH.ServeDownload,
 	}
 	// M4.1: seed the shared magic-link portal base URL used by the
 	// mint side of the flow (portalapi). Small package-var setter is

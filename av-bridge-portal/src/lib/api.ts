@@ -205,6 +205,18 @@ async function requestText(
   return res.text();
 }
 
+// DownloadItem mirrors the cloud's /public/downloads shape — one row
+// per allowlisted binary. `available` is false in dev builds where
+// the artefact wasn't baked into the image; the UI shows a disabled
+// button in that case instead of a broken link.
+export interface DownloadItem {
+  key: string;
+  filename: string;
+  size_bytes: number;
+  content_type: string;
+  available: boolean;
+}
+
 export interface WhoamiResponse {
   user_id?: string;
   email?: string;
@@ -575,6 +587,12 @@ export const api = {
       body: JSON.stringify(body),
       signal,
     }),
+
+  // Downloads are served from the cloud's public surface — no auth
+  // needed because the artefacts are public (customer sites fetch
+  // them during collector enrolment). Signing lands as a follow-up.
+  listDownloads: (signal?: AbortSignal) =>
+    request<DownloadItem[]>("/public/downloads", { signal }),
 
   getBranding: (signal?: AbortSignal) =>
     request<Branding>("/api/v1/branding", { signal }),

@@ -11,6 +11,7 @@ import {
   Building2,
   ChevronRight,
   Cpu,
+  Download as DownloadIcon,
   HeartPulse,
   History,
   LayoutDashboard,
@@ -116,7 +117,10 @@ const SECTIONS: NavSection[] = [
   },
   {
     title: "System",
-    items: [{ href: "/health", label: "Health", icon: HeartPulse }],
+    items: [
+      { href: "/health", label: "Health", icon: HeartPulse },
+      { href: "/downloads", label: "Downloads", icon: DownloadIcon },
+    ],
   },
 ];
 

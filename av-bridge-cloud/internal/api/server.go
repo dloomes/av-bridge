@@ -60,6 +60,8 @@ type PublicRoutes struct {
 	CollectorEnroll          http.HandlerFunc
 	CollectorInstallScript   http.HandlerFunc
 	CollectorInstallScriptPS http.HandlerFunc
+	ListDownloads            http.HandlerFunc
+	ServeDownload            http.HandlerFunc
 }
 
 // NewServer wires the routes. Go 1.22 method-aware patterns keep us dependency-free.
@@ -100,6 +102,12 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 	}
 	if public.CollectorInstallScriptPS != nil {
 		mux.Handle("GET /public/collectors/install.ps1", public.CollectorInstallScriptPS)
+	}
+	if public.ListDownloads != nil {
+		mux.Handle("GET /public/downloads", public.ListDownloads)
+	}
+	if public.ServeDownload != nil {
+		mux.Handle("GET /public/downloads/{key}", public.ServeDownload)
 	}
 
 	if portal != nil {
