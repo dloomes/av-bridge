@@ -331,6 +331,13 @@ func (a *ViscaOverIPAdapter) Poll(ctx context.Context) (*device.Telemetry, error
 	// use).
 	if camID != "" {
 		metrics["model"] = camID
+		// The RS127 CAM_ID_Inq is a Lumens extension — any camera
+		// that answered it with an ASCII model string is a Lumens
+		// device. Stamp `make` accordingly so the device row shows
+		// as "Lumens VC-A61P" on Devices / Firmware / Assets rather
+		// than an unbranded VC-A61P. Ingest picks up `make` via the
+		// same tag-mining path model uses.
+		metrics["make"] = "Lumens"
 	}
 	if serial != "" {
 		metrics["serial_number"] = serial
@@ -600,7 +607,7 @@ func (a *ViscaOverIPAdapter) Capabilities() device.Capabilities {
 			// the RS127 identity inquiries. Other vendors leave these
 			// empty. Standard key names so the ingest handler picks
 			// them up into the top-level device columns.
-			"model", "serial_number", "mac_address", "firmware_version",
+			"make", "model", "serial_number", "mac_address", "firmware_version",
 			"response_ms",
 		},
 	}
