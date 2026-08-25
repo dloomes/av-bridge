@@ -82,19 +82,24 @@ chmod 750 "$CONFIG_DIR"
 
 # ── Binary ───────────────────────────────────────────────────────────────────
 
-# For collector-enroll v1 we assume the binary has been placed at
-# /usr/local/bin/av-bridge already (via a tarball, package, or Ansible
-# role). A follow-up will teach this script to fetch signed releases
-# from GitHub; the check below stays useful either way.
+# Default to the cloud's own downloads endpoint — same origin the
+# script was fetched from, so no cross-domain / cert worries. Set
+# AV_BRIDGE_BINARY_URL to override for air-gapped mirrors or when
+# targeting an architecture we don't publish. Detects host arch so
+# an amd64 laptop and an arm64 Raspberry Pi both Just Work.
 if [ ! -x "$BIN_PATH" ]; then
-    if [ -n "${AV_BRIDGE_BINARY_URL:-}" ]; then
-        echo "==> Downloading av-bridge from ${AV_BRIDGE_BINARY_URL}"
-        curl -fsSL -o "$BIN_PATH" "$AV_BRIDGE_BINARY_URL"
-        chmod 755 "$BIN_PATH"
-    else
-        die "$BIN_PATH not found. Install the av-bridge binary first
-       (e.g. from the tarball produced by \`make dist\`), then re-run."
+    if [ -z "${AV_BRIDGE_BINARY_URL:-}" ]; then
+        case "$(uname -m)" in
+            x86_64|amd64)   ARCH_KEY="av-bridge-linux-amd64" ;;
+            aarch64|arm64)  ARCH_KEY="av-bridge-linux-arm64" ;;
+            *)              die "unsupported architecture: $(uname -m). Set AV_BRIDGE_BINARY_URL to a compatible binary." ;;
+        esac
+        AV_BRIDGE_BINARY_URL="${CLOUD_URL}/public/downloads/${ARCH_KEY}"
     fi
+    echo "==> Downloading av-bridge from ${AV_BRIDGE_BINARY_URL}"
+    curl -fsSL -o "$BIN_PATH" "$AV_BRIDGE_BINARY_URL" \
+        || die "binary download failed"
+    chmod 755 "$BIN_PATH"
 fi
 
 # ── Config + env ─────────────────────────────────────────────────────────────

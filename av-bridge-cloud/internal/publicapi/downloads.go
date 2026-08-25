@@ -35,6 +35,16 @@ var downloadCatalogue = map[string]downloadEntry{
 		filename:    "av-bridge-windows-amd64.exe",
 		contentType: "application/octet-stream",
 	},
+	"av-bridge-linux-amd64": {
+		diskPath:    "/downloads/av-bridge-linux-amd64",
+		filename:    "av-bridge-linux-amd64",
+		contentType: "application/octet-stream",
+	},
+	"av-bridge-linux-arm64": {
+		diskPath:    "/downloads/av-bridge-linux-arm64",
+		filename:    "av-bridge-linux-arm64",
+		contentType: "application/octet-stream",
+	},
 }
 
 // ListDownloads — GET /public/downloads
