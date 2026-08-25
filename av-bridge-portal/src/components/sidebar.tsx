@@ -2,12 +2,14 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 import {
   Activity as ActivityIcon,
   BarChart3,
   Bell,
   Boxes,
   Building2,
+  ChevronRight,
   Cpu,
   HeartPulse,
   History,
@@ -103,6 +105,37 @@ const SECTIONS: NavSection[] = [
   },
 ];
 
+// Per-section collapsed state persists in localStorage so a user's layout
+// preferences survive a reload. `undefined` (or missing key) means "open" —
+// only explicit `false` collapses a section.
+const SECTION_STATE_KEY = "sidebar.sections.open";
+
+function useSectionOpenState() {
+  const [state, setState] = useState<Record<string, boolean>>({});
+  const [hydrated, setHydrated] = useState(false);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(SECTION_STATE_KEY);
+      if (raw) setState(JSON.parse(raw));
+    } catch {}
+    setHydrated(true);
+  }, []);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    try {
+      localStorage.setItem(SECTION_STATE_KEY, JSON.stringify(state));
+    } catch {}
+  }, [state, hydrated]);
+
+  const isOpen = (key: string) => state[key] !== false;
+  const toggle = (key: string) =>
+    setState((prev) => ({ ...prev, [key]: prev[key] === false ? true : false }));
+
+  return { isOpen, toggle };
+}
+
 export function Sidebar() {
   const pathname = usePathname();
   const session = useSession();
@@ -112,6 +145,7 @@ export function Sidebar() {
   // vendor-bypass makes every permission check pass anyway, so hiding
   // admin links from vendor would just hurt their workflow.
   const canManageBranding = isAdmin(session.user?.role) || isVendor;
+  const { isOpen, toggle } = useSectionOpenState();
 
   // Poll the alerts summary so the sidebar Alerts item can show a live
   // count. Polls every 15s (matches the alerts page cadence) — sidebar is
@@ -150,69 +184,107 @@ export function Sidebar() {
       </div>
 
       <nav className="flex-1 overflow-y-auto px-3 pb-2 scrollbar-thin">
-        {SECTIONS.filter((s) => !s.vendorOnly || isVendor).map((section) => (
-          <div key={section.title} className="pt-3 first:pt-1">
-            <div className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/40">
-              {section.title}
+        <div className="pt-1">
+          <SectionHeader
+            title="Places"
+            open={isOpen("Places")}
+            onToggle={() => toggle("Places")}
+          />
+          {isOpen("Places") && (
+            <div className="pr-1">
+              <LocationNav />
             </div>
-            <div className="space-y-0.5">
-              {section.items
-                .filter((it) => !it.vendorOnly || isVendor)
-                .filter((it) => !it.adminOnly || canManageBranding)
-                .filter((it) => !it.requires || isVendor || hasPermission(session.user, it.requires))
-                .map((item) => {
-                  const active = item.matchExact
-                    ? pathname === item.href
-                    : pathname.startsWith(item.href);
-                  const Icon = item.icon;
-                  const badge = item.badgeKey ? badges[item.badgeKey] : 0;
-                  return (
-                    <Link
-                      key={item.href}
-                      href={item.href}
-                      className={cn(
-                        "flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors",
-                        active
-                          ? "bg-white/10 text-white"
-                          : "text-sidebar-foreground/70 hover:bg-white/5 hover:text-white"
-                      )}
-                    >
-                      <Icon className="h-4 w-4" />
-                      <span className="flex-1">{item.label}</span>
-                      {badge > 0 && (
-                        <span
-                          className={cn(
-                            "inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[10px] font-semibold",
-                            item.badgeKey === "alerts_open" && criticalOpen > 0
-                              ? "bg-red-500 text-white"
-                              : "bg-white/15 text-white"
-                          )}
-                          aria-label={`${badge} ${item.label.toLowerCase()}`}
-                        >
-                          {badge}
-                        </span>
-                      )}
-                    </Link>
-                  );
-                })}
-            </div>
-          </div>
-        ))}
-
-        <div className="pt-4">
-          <div className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/40">
-            Places
-          </div>
-          <div className="pr-1">
-            <LocationNav />
-          </div>
+          )}
         </div>
+
+        {SECTIONS.filter((s) => !s.vendorOnly || isVendor).map((section) => {
+          const open = isOpen(section.title);
+          return (
+            <div key={section.title} className="pt-3">
+              <SectionHeader
+                title={section.title}
+                open={open}
+                onToggle={() => toggle(section.title)}
+              />
+              {open && (
+                <div className="space-y-0.5">
+                  {section.items
+                    .filter((it) => !it.vendorOnly || isVendor)
+                    .filter((it) => !it.adminOnly || canManageBranding)
+                    .filter((it) => !it.requires || isVendor || hasPermission(session.user, it.requires))
+                    .map((item) => {
+                      const active = item.matchExact
+                        ? pathname === item.href
+                        : pathname.startsWith(item.href);
+                      const Icon = item.icon;
+                      const badge = item.badgeKey ? badges[item.badgeKey] : 0;
+                      return (
+                        <Link
+                          key={item.href}
+                          href={item.href}
+                          className={cn(
+                            "flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors",
+                            active
+                              ? "bg-white/10 text-white"
+                              : "text-sidebar-foreground/70 hover:bg-white/5 hover:text-white"
+                          )}
+                        >
+                          <Icon className="h-4 w-4" />
+                          <span className="flex-1">{item.label}</span>
+                          {badge > 0 && (
+                            <span
+                              className={cn(
+                                "inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[10px] font-semibold",
+                                item.badgeKey === "alerts_open" && criticalOpen > 0
+                                  ? "bg-red-500 text-white"
+                                  : "bg-white/15 text-white"
+                              )}
+                              aria-label={`${badge} ${item.label.toLowerCase()}`}
+                            >
+                              {badge}
+                            </span>
+                          )}
+                        </Link>
+                      );
+                    })}
+                </div>
+              )}
+            </div>
+          );
+        })}
       </nav>
 
       <div className="px-5 py-4 border-t border-white/5 text-xs text-sidebar-foreground/50">
         <EnvironmentBadge />
       </div>
     </aside>
+  );
+}
+
+function SectionHeader({
+  title,
+  open,
+  onToggle,
+}: {
+  title: string;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-expanded={open}
+      className="group flex w-full items-center gap-1 rounded px-3 pb-1 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/40 hover:text-sidebar-foreground/70"
+    >
+      <ChevronRight
+        className={cn(
+          "h-3 w-3 transition-transform",
+          open && "rotate-90"
+        )}
+      />
+      <span>{title}</span>
+    </button>
   );
 }
 
