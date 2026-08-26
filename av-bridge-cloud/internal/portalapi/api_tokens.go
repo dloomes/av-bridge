@@ -58,40 +58,54 @@ type apiTokenRow struct {
 // history when auditing a suspicious call from an old key. Ordered
 // active-first, most-recent-first.
 func (h *Handler) ListAPITokens(w http.ResponseWriter, r *http.Request) {
-	out := []apiTokenRow{}
-	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, `
-			SELECT t.id::text, t.name, t.token_prefix,
-			       COALESCE(t.scopes, '{}'::text[]),
-			       t.created_at,
-			       COALESCE(cu.email, ''),
-			       t.last_used_at, COALESCE(t.last_used_ip, ''),
-			       t.expires_at, t.revoked_at,
-			       COALESCE(ru.email, '')
-			  FROM api_tokens t
-			  LEFT JOIN users cu ON cu.id = t.created_by
-			  LEFT JOIN users ru ON ru.id = t.revoked_by
-			 ORDER BY (t.revoked_at IS NULL) DESC,
-			          t.created_at DESC`)
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var rr apiTokenRow
-			if err := rows.Scan(
-				&rr.ID, &rr.Name, &rr.TokenPrefix, &rr.Scopes,
-				&rr.CreatedAt, &rr.CreatedBy,
-				&rr.LastUsedAt, &rr.LastUsedIP,
-				&rr.ExpiresAt, &rr.RevokedAt, &rr.RevokedBy,
-			); err != nil {
-				return err
-			}
-			out = append(out, rr)
-		}
-		return rows.Err()
-	})
+	p, ok := h.requireCustomerScope(w, r)
 	if !ok {
+		return
+	}
+	// The users table is only granted to app_admin — it lives outside
+	// the tenant-scoped RLS world so a LEFT JOIN under app_tenant fails
+	// with "permission denied for table users". Follow the ListUsers
+	// pattern: run under AdminPool with an explicit customer_id filter
+	// so RLS BYPASSRLS lets the join succeed but the WHERE keeps
+	// tenants isolated.
+	rows, err := h.store.AdminPool().Query(r.Context(), `
+		SELECT t.id::text, t.name, t.token_prefix,
+		       COALESCE(t.scopes, '{}'::text[]),
+		       t.created_at,
+		       COALESCE(cu.email, ''),
+		       t.last_used_at, COALESCE(t.last_used_ip, ''),
+		       t.expires_at, t.revoked_at,
+		       COALESCE(ru.email, '')
+		  FROM api_tokens t
+		  LEFT JOIN users cu ON cu.id = t.created_by
+		  LEFT JOIN users ru ON ru.id = t.revoked_by
+		 WHERE t.customer_id = $1
+		 ORDER BY (t.revoked_at IS NULL) DESC,
+		          t.created_at DESC`, p.CustomerID)
+	if err != nil {
+		h.log.Error("list api tokens", "error", err)
+		writeErr(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	defer rows.Close()
+	out := []apiTokenRow{}
+	for rows.Next() {
+		var rr apiTokenRow
+		if err := rows.Scan(
+			&rr.ID, &rr.Name, &rr.TokenPrefix, &rr.Scopes,
+			&rr.CreatedAt, &rr.CreatedBy,
+			&rr.LastUsedAt, &rr.LastUsedIP,
+			&rr.ExpiresAt, &rr.RevokedAt, &rr.RevokedBy,
+		); err != nil {
+			h.log.Error("scan api token row", "error", err)
+			writeErr(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		out = append(out, rr)
+	}
+	if err := rows.Err(); err != nil {
+		h.log.Error("iterate api tokens", "error", err)
+		writeErr(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 	writeJSON(w, http.StatusOK, out)
