@@ -26,14 +26,18 @@ import type { VendorUserRow } from "@/lib/types";
 //
 // Two things this surface exists for:
 //
-//   * Promote / demote helpdesk staff whose Entra group memberships
-//     didn't cover their needs (or when a group mapping wasn't yet
-//     configured at their first sign-in). Setting a role here flips
-//     users.role_source to 'manual' so future Entra sign-ins won't
-//     re-derive it from group churn.
+//   * Rename a helpdesk user (display name only — the role now always
+//     tracks the caller's Entra group membership, so we deliberately
+//     don't expose a role select here).
 //
 //   * Deactivate a helpdesk user without deleting them (revokes every
 //     open session immediately, retains audit history).
+//
+// Roles are managed at the source of truth — the vendor's Entra groups
+// mapped in /sign-in-mappings. A helpdesk user's role updates on each
+// Entra sign-in based on group membership; changing what someone
+// should be able to do is a group-membership change, not a portal
+// override.
 //
 // Vendor-only: sidebar item is gated at the sidebar layer, and the
 // backend endpoints RequireVendor. Non-vendor sessions that reach this
@@ -78,8 +82,15 @@ export default function HelpdeskUsersPage() {
           <div>
             <h1 className="text-2xl font-semibold">Helpdesk users</h1>
             <p className="text-sm text-muted-foreground">
-              Your team. Roles here override Entra group mappings until
-              cleared.
+              Your team. Roles are managed by Entra group membership —
+              change them in{" "}
+              <a
+                href="/sign-in-mappings"
+                className="text-primary underline-offset-2 hover:underline"
+              >
+                Sign-in mappings
+              </a>
+              .
             </p>
           </div>
           <UserMenu />
@@ -276,21 +287,15 @@ interface EditFormProps {
   onSaved: () => Promise<void>;
 }
 
-const ROLES = ["admin", "operator", "viewer"] as const;
-
 function EditForm({ user, onCancel, onSaved }: EditFormProps) {
   const [fullName, setFullName] = useState(user.full_name ?? "");
-  const [role, setRole] = useState(user.role);
   const [disabled, setDisabled] = useState(user.disabled);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const dirty =
     fullName.trim() !== (user.full_name ?? "").trim() ||
-    role !== user.role ||
     disabled !== user.disabled;
-
-  const roleChanged = role !== user.role;
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -301,15 +306,19 @@ function EditForm({ user, onCancel, onSaved }: EditFormProps) {
     }
     setSubmitting(true);
     try {
+      // Role deliberately absent — Entra group membership is the sole
+      // source of truth for vendor role assignment. Fixing role here
+      // was previously supposed to flip role_source to manual and
+      // pin the value across sign-ins; that turned out fragile and
+      // confusing, so we've removed the UI. Backend PATCH still
+      // accepts a role field for API consumers if they need it.
       const body: {
         full_name?: string;
-        role?: string;
         disabled?: boolean;
       } = {};
       if (fullName.trim() !== (user.full_name ?? "").trim()) {
         body.full_name = fullName.trim();
       }
-      if (role !== user.role) body.role = role;
       if (disabled !== user.disabled) body.disabled = disabled;
       await api.updateVendorUser(user.id, body);
       await onSaved();
@@ -340,29 +349,21 @@ function EditForm({ user, onCancel, onSaved }: EditFormProps) {
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <label htmlFor="role" className="text-xs font-medium text-muted-foreground">
-          Role
-        </label>
-        <select
-          id="role"
-          value={role}
-          onChange={(e) => setRole(e.target.value)}
-          disabled={submitting}
-          className="h-9 rounded-md border border-input bg-background px-3 text-sm outline-none focus:border-primary"
-        >
-          {ROLES.map((r) => (
-            <option key={r} value={r}>
-              {r}
-            </option>
-          ))}
-        </select>
-        {roleChanged && (
-          <p className="mt-0.5 flex items-start gap-1.5 text-[11px] text-muted-foreground">
-            <ShieldCheck className="mt-px h-3 w-3 shrink-0" />
-            Setting a role here flips the source to manual — future Entra
-            sign-ins won&rsquo;t change this role.
-          </p>
-        )}
+        <label className="text-xs font-medium text-muted-foreground">Role</label>
+        <div className="flex h-9 items-center rounded-md border border-input bg-muted/30 px-3 text-sm">
+          <span className="font-medium">{user.role}</span>
+        </div>
+        <p className="mt-0.5 flex items-start gap-1.5 text-[11px] text-muted-foreground">
+          <ShieldCheck className="mt-px h-3 w-3 shrink-0" />
+          Managed by Entra group membership. To change, edit{" "}
+          <a
+            href="/sign-in-mappings"
+            className="text-primary underline-offset-2 hover:underline"
+          >
+            Sign-in mappings
+          </a>{" "}
+          or reassign the user in Entra.
+        </p>
       </div>
 
       <label className="flex items-start gap-3 rounded-md border border-input p-3">
