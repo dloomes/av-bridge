@@ -10,6 +10,7 @@ import (
 
 	"github.com/dloomes/av-bridge-cloud/internal/portalapi"
 	"github.com/dloomes/av-bridge-cloud/internal/portalauth"
+	"github.com/dloomes/av-bridge-cloud/internal/pubapi"
 	"github.com/dloomes/av-bridge-cloud/internal/wsfanout"
 )
 
@@ -45,6 +46,16 @@ type BridgeConfigRoutes struct {
 	PutConfig http.HandlerFunc
 }
 
+// PubAPIRoutes bundles the customer-facing programmatic API. Resolver
+// gates every /pub/v1 route on a valid api_tokens row and attaches the
+// token's Principal to ctx. Handler owns the read endpoints. Both may
+// be nil — when the server starts without the public API wired, /pub
+// routes are simply not registered.
+type PubAPIRoutes struct {
+	Resolver *pubapi.Resolver
+	Handler  *pubapi.Handler
+}
+
 // PublicRoutes bundles endpoints that need to serve without auth: they run
 // before a user has any credentials to hand over (branding on the sign-in
 // page), as part of establishing new credentials (password reset), to
@@ -68,7 +79,7 @@ type PublicRoutes struct {
 // adminCollectors may be nil — registration endpoints are off when no ADMIN_API_TOKEN
 // is configured. portal may be nil — read API is off when no POC_PORTAL_TOKEN is set.
 // bridgeCommands wires POST /bridge/poll and POST /bridge/commands/{id}/result.
-func NewServer(addr string, ingest, adminCollectors http.Handler, portal *PortalRoutes, bridgeCommands BridgeCommandRoutes, bridgeConfig BridgeConfigRoutes, public PublicRoutes, log *slog.Logger) *http.Server {
+func NewServer(addr string, ingest, adminCollectors http.Handler, portal *PortalRoutes, pubAPI *PubAPIRoutes, bridgeCommands BridgeCommandRoutes, bridgeConfig BridgeConfigRoutes, public PublicRoutes, log *slog.Logger) *http.Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -383,6 +394,64 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 		mux.Handle("PATCH /api/v1/notifications/channels/{id}", wrapPerm(portalauth.PermNotificationCRUD, portal.Portal.UpdateNotificationChannel))
 		mux.Handle("DELETE /api/v1/notifications/channels/{id}", wrapPerm(portalauth.PermNotificationCRUD, portal.Portal.DeleteNotificationChannel))
 		mux.Handle("POST /api/v1/notifications/channels/{id}/test", wrapPerm(portalauth.PermNotificationTest, portal.Portal.TestNotificationChannel))
+
+		// Public-API token management. Portal-side CRUD for the /pub/v1
+		// integration API keys — list gates on api_token.view (so an
+		// auditor can inspect the fleet without minting rights) and
+		// mint/revoke gate on api_token.manage.
+		mux.Handle("GET /api/v1/api-tokens", wrapPerm(portalauth.PermAPITokenView, portal.Portal.ListAPITokens))
+		mux.Handle("POST /api/v1/api-tokens", wrapPerm(portalauth.PermAPITokenManage, portal.Portal.CreateAPIToken))
+		mux.Handle("DELETE /api/v1/api-tokens/{id}", wrapPerm(portalauth.PermAPITokenManage, portal.Portal.RevokeAPIToken))
+	}
+
+	// Public / integration API (/pub/v1). Auth is a distinct api_tokens-
+	// backed resolver — no portal session tokens, no X-Customer-Scope
+	// header, no vendor bypass. Every route composes inside
+	// pubAPI.Resolver.Middleware. Scope gates are separate from the
+	// tenant RBAC — a token carries the scopes it was minted with, and
+	// v1 restricts those to view.* keys at issuance time.
+	//
+	// Ping is unscoped (any valid token) so an integrator can smoke-
+	// test auth without knowing which scopes their token holds.
+	if pubAPI != nil && pubAPI.Resolver != nil && pubAPI.Handler != nil {
+		pubWrap := func(h http.HandlerFunc) http.Handler {
+			return pubAPI.Resolver.Middleware(h)
+		}
+		pubWrapScope := func(scope string, h http.HandlerFunc) http.Handler {
+			return pubAPI.Resolver.Middleware(pubapi.RequireScope(scope)(h))
+		}
+		mux.Handle("GET /pub/v1/ping", pubWrap(pubAPI.Handler.Ping))
+
+		// OpenAPI + Swagger UI are unauthenticated: an integrator
+		// wants to browse the spec BEFORE minting their first token,
+		// and Postman/Insomnia import a spec by URL without a bearer
+		// header. Nothing is actually callable from Swagger UI's "Try
+		// it out" without pasting a real token in the Authorize
+		// dialog, so leaving these open changes no risk surface.
+		mux.Handle("GET /pub/v1/openapi.json", http.HandlerFunc(pubAPI.Handler.OpenAPISpec))
+		mux.Handle("GET /pub/v1/docs", http.HandlerFunc(pubAPI.Handler.SwaggerUI))
+
+		// Devices — list + detail + telemetry + per-device events.
+		mux.Handle("GET /pub/v1/devices",
+			pubWrapScope(portalauth.PermViewDashboard, pubAPI.Handler.ListDevices))
+		mux.Handle("GET /pub/v1/devices/{id}",
+			pubWrapScope(portalauth.PermViewDashboard, pubAPI.Handler.GetDevice))
+		mux.Handle("GET /pub/v1/devices/{id}/telemetry",
+			pubWrapScope(portalauth.PermViewDashboard, pubAPI.Handler.GetDeviceTelemetry))
+		mux.Handle("GET /pub/v1/devices/{id}/events",
+			pubWrapScope(portalauth.PermViewDashboard, pubAPI.Handler.GetDeviceEvents))
+
+		// Hierarchy — flat lists, no pagination.
+		mux.Handle("GET /pub/v1/buildings",
+			pubWrapScope(portalauth.PermViewDashboard, pubAPI.Handler.ListBuildings))
+		mux.Handle("GET /pub/v1/rooms",
+			pubWrapScope(portalauth.PermViewDashboard, pubAPI.Handler.ListRooms))
+
+		// Cross-cutting reads.
+		mux.Handle("GET /pub/v1/alerts",
+			pubWrapScope(portalauth.PermViewDashboard, pubAPI.Handler.ListAlerts))
+		mux.Handle("GET /pub/v1/events",
+			pubWrapScope(portalauth.PermViewDashboard, pubAPI.Handler.ListEvents))
 	}
 
 	// Bridge-side command channel — HMAC-authenticated, same scheme as /ingest.

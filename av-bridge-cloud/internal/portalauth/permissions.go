@@ -99,6 +99,16 @@ const (
 	PermNightlyManage = "nightly.manage"
 )
 
+// Public API tokens — programmatic access. view lets a role see the
+// token list + last-used timestamps (useful for compliance / audit
+// dashboards); manage lets an admin mint, name, and revoke tokens.
+// Both are admin-only by seed — an integrating system's key is a
+// long-lived tenant credential, not a per-user preference.
+const (
+	PermAPITokenView   = "api_token.view"
+	PermAPITokenManage = "api_token.manage"
+)
+
 // KnownPermissions is the closed set of valid permission keys — used by the
 // roles CRUD handler to reject unknown strings, and by the permission
 // engine to fail-closed if a role somehow references a permission that has
@@ -132,6 +142,8 @@ var KnownPermissions = map[string]struct{}{
 	PermAssetCRUD:          {},
 	PermNightlyView:        {},
 	PermNightlyManage:      {},
+	PermAPITokenView:       {},
+	PermAPITokenManage:     {},
 }
 
 // IsKnownPermission returns true if the string is a member of the

@@ -25,6 +25,7 @@ import {
   ShieldCheck,
   Users,
   KeyRound,
+  Key,
 } from "lucide-react";
 import { LocationNav } from "@/components/location-nav";
 import { useBranding } from "@/components/branding-provider";
@@ -108,6 +109,7 @@ const SECTIONS: NavSection[] = [
       { href: "/roles", label: "Roles", icon: KeyRound, requires: "role.crud" },
       { href: "/sign-in-mappings", label: "Sign-in mappings", icon: ShieldCheck, requires: "role_mapping.manage" },
       { href: "/notifications", label: "Notifications", icon: Bell, requires: "view.notifications" },
+      { href: "/settings/api-tokens", label: "API tokens", icon: Key, requires: "api_token.view" },
       { href: "/settings/branding", label: "Branding", icon: Palette, adminOnly: true },
     ],
   },

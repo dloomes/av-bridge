@@ -21,6 +21,7 @@ import (
 	"github.com/dloomes/av-bridge-cloud/internal/notify"
 	"github.com/dloomes/av-bridge-cloud/internal/portalapi"
 	"github.com/dloomes/av-bridge-cloud/internal/portalauth"
+	"github.com/dloomes/av-bridge-cloud/internal/pubapi"
 	"github.com/dloomes/av-bridge-cloud/internal/publicapi"
 	"github.com/dloomes/av-bridge-cloud/internal/secrets"
 	"github.com/dloomes/av-bridge-cloud/internal/collectorhealth"
@@ -305,7 +306,16 @@ func main() {
 	// for one string.
 	portalapi.SetMagicLinkPortalBaseURL(cfg.EntraPortalBaseURL)
 
-	srv := api.NewServer(cfg.ListenAddr, h, adminH, portalRoutes, bridgeRoutes, bridgeConfigRoutes, publicRoutes, log)
+	// Public integration API (/pub/v1). Its own auth resolver keyed on
+	// api_tokens rows, independent of the portal session chain. No
+	// config gate needed — the resolver just returns 401 if no tokens
+	// exist yet, so keeping it always-mounted is fine.
+	pubAPIRoutes := &api.PubAPIRoutes{
+		Resolver: pubapi.NewResolver(store.AdminPool(), log),
+		Handler:  pubapi.New(store, log),
+	}
+
+	srv := api.NewServer(cfg.ListenAddr, h, adminH, portalRoutes, pubAPIRoutes, bridgeRoutes, bridgeConfigRoutes, publicRoutes, log)
 
 	// Slice 3.1 — sweep stuck in_progress commands across all tenants.
 	// sweeperCtx / stopSweeper were declared earlier (before executor

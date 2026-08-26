@@ -494,6 +494,38 @@ export interface UpdateRoleBody {
   permissions?: string[];
 }
 
+// Public API tokens. Wire shape mirrors the Go apiTokenRow in portalapi.
+// The raw `token` secret is ONLY returned by createAPIToken — the list
+// endpoint never surfaces it, and the DB never stores it in plaintext.
+// token_prefix is safe to display: it's the first 8 hex chars of the
+// wire token, useful as a stable label the operator can compare against
+// what's configured in the integrating system.
+export interface APITokenRow {
+  id: string;
+  name: string;
+  token_prefix: string;
+  scopes: string[];
+  created_at: string;
+  created_by?: string;
+  last_used_at?: string | null;
+  last_used_ip?: string;
+  expires_at?: string | null;
+  revoked_at?: string | null;
+  revoked_by?: string;
+}
+
+export interface CreateAPITokenBody {
+  name: string;
+  scopes: string[];
+  expires_at?: string | null;
+}
+
+export interface CreateAPITokenResponse extends APITokenRow {
+  // Raw wire token — shown to the operator exactly once and then
+  // discarded. Format: avb_<prefix>_<secret>.
+  token: string;
+}
+
 // Entra group -> role mapping (M3). Same wire shape for both customer +
 // vendor scopes; role_id is only populated for customer mappings when
 // the role name still resolves (empty on orphaned mappings + all vendor

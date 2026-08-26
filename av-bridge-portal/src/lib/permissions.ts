@@ -20,7 +20,8 @@ export type PermissionCategory =
   | "Users & Roles"
   | "Tenant"
   | "Assets"
-  | "Room Readiness";
+  | "Room Readiness"
+  | "Public API";
 
 export interface PermissionDef {
   key: string;
@@ -76,6 +77,9 @@ export const PERMISSIONS: readonly PermissionDef[] = [
   // Room Readiness (nightly lifecycle)
   { key: "nightly.view",        title: "View Room Readiness",  description: "See nightly schedules, routines, and run history.",                       category: "Room Readiness" },
   { key: "nightly.manage",      title: "Manage Room Readiness", description: "Edit the nightly schedule, room overrides, and test routines.",         category: "Room Readiness" },
+  // Public API
+  { key: "api_token.view",      title: "View API tokens",       description: "See the list of API tokens minted for programmatic access, and their last-used timestamps.", category: "Public API" },
+  { key: "api_token.manage",    title: "Manage API tokens",     description: "Mint, name, and revoke API tokens used by external systems to read from the tenant.",       category: "Public API" },
 ];
 
 // PERMISSIONS_BY_CATEGORY is what the matrix renders — same items, grouped

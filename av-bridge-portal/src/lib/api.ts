@@ -2,6 +2,7 @@ import type {
   AdapterInfo,
   AlertItem,
   AlertsSummary,
+  APITokenRow,
   AssetRow,
   AuditEntry,
   BuildingRow,
@@ -11,6 +12,8 @@ import type {
   CreateCollectorBody,
   CreateCollectorResponse,
   CommandResponse,
+  CreateAPITokenBody,
+  CreateAPITokenResponse,
   CreateAssetBody,
   CreateCustomerBody,
   UpdateCustomerBody,
@@ -1385,6 +1388,35 @@ export const api = {
       `/api/v1/helpdesk/users/${encodeURIComponent(userID)}/magic-link`,
       { method: "POST", signal }
     ),
+
+  // -- public API tokens ------------------------------------------------------
+  //
+  // Portal-side management of the /pub/v1 integration API keys. The raw
+  // secret is returned exactly once by createAPIToken; the list never
+  // includes it (only token_prefix is safe to display). Revoke is
+  // soft-delete so the row stays for audit + history.
+
+  listAPITokens: (signal?: AbortSignal) =>
+    request<APITokenRow[]>("/api/v1/api-tokens", { signal }),
+
+  createAPIToken: (body: CreateAPITokenBody, signal?: AbortSignal) =>
+    request<CreateAPITokenResponse>("/api/v1/api-tokens", {
+      method: "POST",
+      body: JSON.stringify(body),
+      signal,
+    }),
+
+  revokeAPIToken: async (id: string, signal?: AbortSignal): Promise<void> => {
+    const res = await fetch(
+      `${API_BASE}/api/v1/api-tokens/${encodeURIComponent(id)}`,
+      { method: "DELETE", headers: authHeaders(), signal, cache: "no-store" }
+    );
+    if (!res.ok) {
+      let body = "";
+      try { body = await res.text(); } catch {}
+      throw new ApiError(`${res.status} ${res.statusText}${body ? `: ${body}` : ""}`, res.status);
+    }
+  },
 };
 
 export { ApiError };

@@ -17,6 +17,12 @@ const nextConfig = {
       // same-origin (no CORS preflight). Same forwarding pattern as
       // /api/v1/*; auth is enforced at the cloud, not the proxy.
       { source: "/public/:path*", destination: `${AV_BRIDGE}/public/:path*` },
+      // Public integration API. Proxied through the portal origin so
+      // an operator can click through to Swagger UI at /pub/v1/docs
+      // from Settings → API tokens without a separate hostname. Auth
+      // is enforced at the cloud; the docs + spec endpoints are
+      // unauthenticated by design.
+      { source: "/pub/:path*", destination: `${AV_BRIDGE}/pub/:path*` },
     ];
   },
 };
