@@ -38,7 +38,16 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/dloomes/av-bridge-cloud/internal/commands"
 )
+
+// Default per-device command timeout for routine steps that don't
+// carry an explicit timeout_seconds. Matches the portal's send-command
+// wait window so a routine step feels no slower than a manual button
+// press. Kept small so a broken adapter doesn't hold a step open for
+// its full 5-minute step budget.
+const defaultCommandTimeout = 30 * time.Second
 
 // ExecutorConfig — the executor's tunables. DryRun mirrors the
 // scheduler's dry-run flag; when true, write-side steps (power on/off,
@@ -101,6 +110,12 @@ type RunContext struct {
 	RoomID     string
 	RoomName   string
 	RoutineID  *string // nil means no routine assigned; MaybeStart declines
+
+	// ForceRealDispatch overrides the executor's DryRun config for this
+	// run only. Used by ad-hoc "Test on a room" triggers where the
+	// operator has explicitly asked for real dispatch, even when
+	// scheduled runs are still in dry-run mode.
+	ForceRealDispatch bool
 }
 
 // MaybeStart is the executor's public entry from the scheduler. It
@@ -551,45 +566,57 @@ func (e *Executor) stepCheckMetric(ctx context.Context, run RunContext, s step) 
 	}
 }
 
-// stepPowerAction — dry-run log until command dispatch is wired. Marks
-// the step passed regardless (matches the scheduler's dry-run
-// semantics: we don't have a way to know if the physical device
-// actually powered on/off, only that we "would send" the command).
+// stepPowerAction — power on/off across the resolved device set. When
+// DryRun is on, we log and pass without dispatch; otherwise we enqueue
+// a real command per device via the commands package and wait for
+// each to reach a terminal status. Step passes only if every device's
+// command succeeded (respecting on_failure at the caller).
 func (e *Executor) stepPowerAction(ctx context.Context, run RunContext, s step, action string) stepResult {
 	started := time.Now()
 	var body struct {
-		Target map[string]any `json:"target"`
+		Target         map[string]any `json:"target"`
+		TimeoutSeconds int            `json:"timeout_seconds"`
 	}
 	_ = json.Unmarshal(s.Raw, &body)
 	devices, err := resolveTargetDevices(ctx, e.pool, run, body.Target)
 	if err != nil {
 		return failedResult(started, "resolve target: "+err.Error())
 	}
-	tag := "[dry-run]"
-	if !e.cfg.DryRun {
-		tag = "[dispatch]"
+	if e.cfg.DryRun && !run.ForceRealDispatch {
+		for _, d := range devices {
+			e.log.Info("[dry-run] step:"+action, "run", run.RunID, "device", d.id, "device_name", d.name)
+		}
+		return stepResult{
+			Passed:    true,
+			Expected:  map[string]any{"action": action, "target_devices": len(devices)},
+			Actual:    map[string]any{"dispatched": false, "devices": len(devices)},
+			StartedAt: started,
+			EndedAt:   time.Now(),
+		}
 	}
-	for _, d := range devices {
-		e.log.Info(tag+" step:"+action, "run", run.RunID, "device", d.id, "device_name", d.name)
-	}
-	// Real dispatch lives here in a follow-up slice — for now, dry-run
-	// only. Assert nothing about actual device state.
+
+	perDevice, allOK := e.dispatchAcross(ctx, run, devices, action, nil, body.TimeoutSeconds)
 	return stepResult{
-		Passed:    true,
+		Passed:    allOK,
 		Expected:  map[string]any{"action": action, "target_devices": len(devices)},
-		Actual:    map[string]any{"dispatched": !e.cfg.DryRun, "devices": len(devices)},
+		Actual:    map[string]any{"dispatched": true, "devices": len(devices), "per_device": perDevice},
 		StartedAt: started,
 		EndedAt:   time.Now(),
 	}
 }
 
-// stepDeviceCommand — dry-run log. Same rationale as stepPowerAction.
+// stepDeviceCommand — enqueues the routine's named command against the
+// resolved target device set and waits for each to reach a terminal
+// status. Dry-run branch mirrors stepPowerAction so a customer building
+// routines against a live tenant sees consistent behaviour whether or
+// not real dispatch is enabled.
 func (e *Executor) stepDeviceCommand(ctx context.Context, run RunContext, s step) stepResult {
 	started := time.Now()
 	var body struct {
-		Target     map[string]any `json:"target"`
-		Command    string         `json:"command"`
-		Parameters map[string]any `json:"parameters"`
+		Target         map[string]any `json:"target"`
+		Command        string         `json:"command"`
+		Parameters     map[string]any `json:"parameters"`
+		TimeoutSeconds int            `json:"timeout_seconds"`
 	}
 	if err := json.Unmarshal(s.Raw, &body); err != nil {
 		return failedResult(started, "step json: "+err.Error())
@@ -601,22 +628,156 @@ func (e *Executor) stepDeviceCommand(ctx context.Context, run RunContext, s step
 	if err != nil {
 		return failedResult(started, "resolve target: "+err.Error())
 	}
-	tag := "[dry-run]"
-	if !e.cfg.DryRun {
-		tag = "[dispatch]"
+	if e.cfg.DryRun && !run.ForceRealDispatch {
+		for _, d := range devices {
+			e.log.Info("[dry-run] step:device_command",
+				"run", run.RunID, "device", d.id, "device_name", d.name,
+				"command", body.Command, "params", body.Parameters)
+		}
+		return stepResult{
+			Passed:    true,
+			Expected:  map[string]any{"command": body.Command, "target_devices": len(devices)},
+			Actual:    map[string]any{"dispatched": false, "devices": len(devices)},
+			StartedAt: started,
+			EndedAt:   time.Now(),
+		}
 	}
-	for _, d := range devices {
-		e.log.Info(tag+" step:device_command",
-			"run", run.RunID, "device", d.id, "device_name", d.name,
-			"command", body.Command, "params", body.Parameters)
-	}
+
+	perDevice, allOK := e.dispatchAcross(ctx, run, devices, body.Command, body.Parameters, body.TimeoutSeconds)
 	return stepResult{
-		Passed:    true,
+		Passed:    allOK,
 		Expected:  map[string]any{"command": body.Command, "target_devices": len(devices)},
-		Actual:    map[string]any{"dispatched": !e.cfg.DryRun, "devices": len(devices)},
+		Actual:    map[string]any{"dispatched": true, "devices": len(devices), "per_device": perDevice},
 		StartedAt: started,
 		EndedAt:   time.Now(),
 	}
+}
+
+// ── Real dispatch (commands package) ─────────────────────────────────
+
+// dispatchAcross submits a command per device, waits for each to reach
+// a terminal status (bounded by step's timeout or defaultCommandTimeout),
+// and returns a per-device result summary plus a bool for whether every
+// device succeeded. Never returns an error — a failure is reflected in
+// the perDevice map so the step's `actual` payload preserves which
+// device broke and why. The bool is `false` when any device didn't
+// return `succeeded`, including timeouts and enqueue failures.
+func (e *Executor) dispatchAcross(
+	ctx context.Context,
+	run RunContext,
+	devices []resolvedDevice,
+	commandName string,
+	params map[string]any,
+	timeoutSecs int,
+) (perDevice []map[string]any, allOK bool) {
+	timeout := defaultCommandTimeout
+	if timeoutSecs > 0 {
+		timeout = time.Duration(timeoutSecs) * time.Second
+	}
+
+	// Marshal args once — every device gets the same payload for a
+	// single routine step. Empty map -> nil args on the wire.
+	var argsJSON []byte
+	if len(params) > 0 {
+		if b, err := json.Marshal(params); err == nil {
+			argsJSON = b
+		}
+	}
+
+	perDevice = make([]map[string]any, 0, len(devices))
+	allOK = true
+	for _, d := range devices {
+		res := e.dispatchOne(ctx, run, d, commandName, argsJSON, timeout)
+		perDevice = append(perDevice, res)
+		status, _ := res["status"].(string)
+		if status != string(commands.StatusSucceeded) {
+			allOK = false
+		}
+	}
+	return perDevice, allOK
+}
+
+// dispatchOne enqueues one command against one device and waits until
+// it's terminal or the timeout elapses. Errors during Submit/Get are
+// folded into the returned map (status=failed, error=...) so the
+// caller never has to distinguish "the enqueue crashed" from "the
+// bridge said the command failed".
+func (e *Executor) dispatchOne(
+	ctx context.Context,
+	run RunContext,
+	dev resolvedDevice,
+	commandName string,
+	argsJSON []byte,
+	timeout time.Duration,
+) map[string]any {
+	base := map[string]any{
+		"device_id":   dev.id,
+		"device_name": dev.name,
+		"command":     commandName,
+	}
+
+	// Submit — wrap the insert in a tx on the admin pool. Executor is
+	// admin (BYPASSRLS) so setting app.current_customer isn't strictly
+	// required, but wrapping in a tx keeps the commands package's tx
+	// contract satisfied and gives a clean rollback point on error.
+	var commandID string
+	if err := pgx.BeginFunc(ctx, e.pool, func(tx pgx.Tx) error {
+		id, err := commands.Submit(ctx, tx,
+			run.CustomerID, dev.id, commandName, argsJSON, "nightly:"+run.RunID)
+		if err != nil {
+			return err
+		}
+		commandID = id
+		return nil
+	}); err != nil {
+		e.log.Warn("nightly dispatch submit failed",
+			"run", run.RunID, "device", dev.id, "command", commandName, "error", err)
+		base["status"] = string(commands.StatusFailed)
+		base["error"] = "submit: " + err.Error()
+		return base
+	}
+	base["command_id"] = commandID
+
+	// Wait — commands.WaitForTerminal polls a fresh short tx each tick
+	// so we don't hold a DB connection across the wait window.
+	cmd, err := commands.WaitForTerminal(ctx, func(ctx context.Context) (commands.Command, error) {
+		var out commands.Command
+		txErr := pgx.BeginFunc(ctx, e.pool, func(tx pgx.Tx) error {
+			c, err := commands.Get(ctx, tx, commandID)
+			if err != nil {
+				return err
+			}
+			out = c
+			return nil
+		})
+		return out, txErr
+	}, timeout)
+
+	if err != nil {
+		base["status"] = string(commands.StatusFailed)
+		base["error"] = "poll: " + err.Error()
+		return base
+	}
+	base["status"] = string(cmd.Status)
+	// Non-terminal at deadline means the bridge hasn't picked it up (or
+	// its adapter is stuck). Report that distinctly from an adapter-
+	// returned failure so operators reading the results know where to
+	// look next.
+	if !cmd.Status.Terminal() {
+		base["status"] = string(commands.StatusFailed)
+		base["error"] = fmt.Sprintf("timeout after %s waiting for bridge", timeout)
+		return base
+	}
+	if cmd.Error != "" {
+		base["error"] = cmd.Error
+	}
+	if len(cmd.Result) > 0 {
+		var r any
+		if err := json.Unmarshal(cmd.Result, &r); err == nil {
+			base["result"] = r
+		}
+	}
+	return base
 }
 
 // ── Persistence ──────────────────────────────────────────────────────

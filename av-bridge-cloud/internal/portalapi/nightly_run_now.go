@@ -179,6 +179,11 @@ func (h *Handler) SendRoutineRunNow(w http.ResponseWriter, r *http.Request) {
 		RoomID:     roomID,
 		RoomName:   roomName,
 		RoutineID:  &routineID,
+		// Ad-hoc "Test on a room" bypasses the scheduler-wide DryRun
+		// flag — the operator has explicitly asked for real dispatch
+		// against a room they've picked, so the executor always
+		// enqueues commands regardless of scheduled-run policy.
+		ForceRealDispatch: true,
 	})
 	if err != nil {
 		h.log.Warn("nightly run-now: executor start failed",
