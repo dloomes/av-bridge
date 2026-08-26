@@ -12,7 +12,7 @@ import { useSession } from "@/hooks/useSession";
 import { api } from "@/lib/api";
 import { hasPermission } from "@/lib/session";
 import type { NightlyRoutineDetail, UpdateNightlyRoutineBody } from "@/lib/api";
-import type { AdapterInfo, DeviceSummary, NamedRow } from "@/lib/types";
+import type { AdapterInfo, BuildingRow, DeviceSummary, NamedRow } from "@/lib/types";
 import {
   RoutineBuilder,
   hydrateSteps,
@@ -58,6 +58,7 @@ export default function RoutineEditorPage() {
   const [devices, setDevices] = useState<DeviceSummary[]>([]);
   const [adapters, setAdapters] = useState<AdapterInfo[]>([]);
   const [rooms, setRooms] = useState<NamedRow[]>([]);
+  const [buildings, setBuildings] = useState<BuildingRow[]>([]);
 
   // Test-run modal state. Selected room + in-flight flag; on success
   // we navigate away to /nightly/runs/{id} so the operator watches
@@ -93,6 +94,7 @@ export default function RoutineEditorPage() {
     api.listDevices(ctrl.signal).then((d) => !ctrl.signal.aborted && setDevices(d)).catch(() => {});
     api.listAdapters(ctrl.signal).then((a) => !ctrl.signal.aborted && setAdapters(a)).catch(() => {});
     api.listRooms(ctrl.signal).then((r) => !ctrl.signal.aborted && setRooms(r)).catch(() => {});
+    api.listBuildings(ctrl.signal).then((b) => !ctrl.signal.aborted && setBuildings(b)).catch(() => {});
     return () => ctrl.abort();
   }, []);
 
@@ -196,6 +198,37 @@ export default function RoutineEditorPage() {
   };
 
   const inputsDisabled = !canManage || saving;
+
+  // Group rooms by their parent building so the test-run dropdown
+  // reads as "Building A → Room 101" rather than a flat list of room
+  // names (which collide as soon as two buildings both have a
+  // "Boardroom"). A room whose parent_id doesn't map to a known
+  // building — legacy data or a mid-move state — falls under an
+  // "Other rooms" group so it's still selectable.
+  const roomsByBuilding = useMemo(() => {
+    const byID = new Map<string, string>();
+    for (const b of buildings) byID.set(b.id, b.name);
+
+    const groups = new Map<string, { building: string; rooms: NamedRow[] }>();
+    for (const r of rooms) {
+      const buildingName = (r.parent_id && byID.get(r.parent_id)) || "Other rooms";
+      const key = buildingName;
+      const g = groups.get(key) ?? { building: buildingName, rooms: [] };
+      g.rooms.push(r);
+      groups.set(key, g);
+    }
+    return Array.from(groups.values())
+      .sort((a, b) => {
+        // Push the "Other rooms" bucket to the bottom; alphabetise the rest.
+        if (a.building === "Other rooms") return 1;
+        if (b.building === "Other rooms") return -1;
+        return a.building.localeCompare(b.building);
+      })
+      .map((g) => ({
+        ...g,
+        rooms: [...g.rooms].sort((a, b) => a.name.localeCompare(b.name)),
+      }));
+  }, [rooms, buildings]);
 
   // Test-run: fires the run-now endpoint with an explicit routine_id
   // override so the executor runs THIS routine on the picked room
@@ -448,10 +481,14 @@ export default function RoutineEditorPage() {
                             ? "Loading rooms…"
                             : "Choose a room…"}
                         </option>
-                        {rooms.map((r) => (
-                          <option key={r.id} value={r.id}>
-                            {r.name}
-                          </option>
+                        {roomsByBuilding.map((g) => (
+                          <optgroup key={g.building} label={g.building}>
+                            {g.rooms.map((r) => (
+                              <option key={r.id} value={r.id}>
+                                {g.building} · {r.name}
+                              </option>
+                            ))}
+                          </optgroup>
                         ))}
                       </select>
                       <p className="text-[11px] text-muted-foreground">
