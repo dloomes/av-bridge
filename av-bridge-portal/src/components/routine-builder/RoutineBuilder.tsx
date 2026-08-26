@@ -3,6 +3,8 @@
 import { useCallback } from "react";
 import { StepCanvas } from "./StepCanvas";
 import { StepPalette } from "./StepPalette";
+import { RoutineContextProvider } from "./RoutineContext";
+import type { AdapterInfo, DeviceSummary } from "@/lib/types";
 import {
   hydrateSteps,
   newStepOfType,
@@ -24,9 +26,20 @@ interface RoutineBuilderProps {
   steps: UIStep[];
   onStepsChange: (next: UIStep[]) => void;
   disabled?: boolean;
+  // Devices and adapters power the target + command dropdowns inside
+  // the per-step editors. Fetched once by the parent page and passed in
+  // so the builder itself stays framework-agnostic (no API calls).
+  devices?: DeviceSummary[];
+  adapters?: AdapterInfo[];
 }
 
-export function RoutineBuilder({ steps, onStepsChange, disabled }: RoutineBuilderProps) {
+export function RoutineBuilder({
+  steps,
+  onStepsChange,
+  disabled,
+  devices = [],
+  adapters = [],
+}: RoutineBuilderProps) {
   const handleAdd = useCallback(
     (type: StepType) => {
       const fresh: UIStep = {
@@ -73,17 +86,19 @@ export function RoutineBuilder({ steps, onStepsChange, disabled }: RoutineBuilde
   );
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_320px] gap-4 items-start">
-      <StepCanvas
-        steps={steps}
-        disabled={disabled}
-        onStepsChange={onStepsChange}
-        onUpdateStep={handleUpdate}
-        onRemove={handleRemove}
-        onDuplicate={handleDuplicate}
-      />
-      <StepPalette disabled={disabled} onAdd={handleAdd} />
-    </div>
+    <RoutineContextProvider devices={devices} adapters={adapters}>
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_320px] gap-4 items-start">
+        <StepCanvas
+          steps={steps}
+          disabled={disabled}
+          onStepsChange={onStepsChange}
+          onUpdateStep={handleUpdate}
+          onRemove={handleRemove}
+          onDuplicate={handleDuplicate}
+        />
+        <StepPalette disabled={disabled} onAdd={handleAdd} />
+      </div>
+    </RoutineContextProvider>
   );
 }
 

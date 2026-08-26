@@ -3,14 +3,16 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, FileCode2, Loader2 } from "lucide-react";
+import { ArrowLeft, FileCode2, Loader2, PlayCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Modal } from "@/components/modal";
 import { useToast } from "@/components/toast";
 import { useSession } from "@/hooks/useSession";
 import { api } from "@/lib/api";
 import { hasPermission } from "@/lib/session";
 import type { NightlyRoutineDetail, UpdateNightlyRoutineBody } from "@/lib/api";
+import type { AdapterInfo, DeviceSummary, NamedRow } from "@/lib/types";
 import {
   RoutineBuilder,
   hydrateSteps,
@@ -49,6 +51,22 @@ export default function RoutineEditorPage() {
   const [mode, setMode] = useState<Mode>("builder");
   const [saving, setSaving] = useState(false);
 
+  // Lookup lists for the target + command dropdowns in the builder,
+  // plus the room list for the "Test on a room" modal. Fetched once
+  // when the editor mounts. Empty fallbacks are safe — the builder
+  // renders the dropdowns with "Loading…"-style empty option.
+  const [devices, setDevices] = useState<DeviceSummary[]>([]);
+  const [adapters, setAdapters] = useState<AdapterInfo[]>([]);
+  const [rooms, setRooms] = useState<NamedRow[]>([]);
+
+  // Test-run modal state. Selected room + in-flight flag; on success
+  // we navigate away to /nightly/runs/{id} so the operator watches
+  // the run against the shared run-detail page rather than a
+  // duplicate live-view we'd have to build here.
+  const [testOpen, setTestOpen] = useState(false);
+  const [testRoomID, setTestRoomID] = useState("");
+  const [testRunning, setTestRunning] = useState(false);
+
   useEffect(() => {
     const ctrl = new AbortController();
     api
@@ -66,6 +84,17 @@ export default function RoutineEditorPage() {
       });
     return () => ctrl.abort();
   }, [routineID]);
+
+  // Fetch the lookup lists in parallel. Non-blocking — if any of them
+  // fail the builder falls back to empty dropdowns with an explanatory
+  // placeholder rather than breaking the page.
+  useEffect(() => {
+    const ctrl = new AbortController();
+    api.listDevices(ctrl.signal).then((d) => !ctrl.signal.aborted && setDevices(d)).catch(() => {});
+    api.listAdapters(ctrl.signal).then((a) => !ctrl.signal.aborted && setAdapters(a)).catch(() => {});
+    api.listRooms(ctrl.signal).then((r) => !ctrl.signal.aborted && setRooms(r)).catch(() => {});
+    return () => ctrl.abort();
+  }, []);
 
   // Builder is the source of truth by default. When the user switches
   // to Advanced JSON we serialize the current builder state into the
@@ -167,6 +196,36 @@ export default function RoutineEditorPage() {
   };
 
   const inputsDisabled = !canManage || saving;
+
+  // Test-run: fires the run-now endpoint with an explicit routine_id
+  // override so the executor runs THIS routine on the picked room
+  // rather than whatever's assigned to it. Redirects to the run detail
+  // page on success — the shared /nightly/runs/{id} page already
+  // renders the step-by-step results as they land.
+  const startTestRun = async () => {
+    if (!testRoomID) return;
+    if (dirty) {
+      toast({
+        title: "Save the routine first",
+        description: "Your unsaved changes wouldn't be picked up by the test run.",
+        variant: "destructive",
+      });
+      return;
+    }
+    setTestRunning(true);
+    try {
+      const res = await api.runRoutineNow(testRoomID, routineID);
+      setTestOpen(false);
+      router.push(`/nightly/runs/${res.run_id}`);
+    } catch (e) {
+      toast({
+        title: "Couldn't start test run",
+        description: (e as Error).message,
+        variant: "destructive",
+      });
+      setTestRunning(false);
+    }
+  };
 
   return (
     <div className="flex flex-col h-screen">
@@ -274,6 +333,8 @@ export default function RoutineEditorPage() {
                   steps={uiSteps}
                   onStepsChange={setUISteps}
                   disabled={inputsDisabled}
+                  devices={devices}
+                  adapters={adapters}
                 />
               ) : (
                 <Card>
@@ -320,6 +381,20 @@ export default function RoutineEditorPage() {
                     <Button
                       variant="outline"
                       size="sm"
+                      onClick={() => setTestOpen(true)}
+                      disabled={saving || dirty}
+                      title={
+                        dirty
+                          ? "Save your changes before running a test"
+                          : "Run this routine against one of your rooms"
+                      }
+                    >
+                      <PlayCircle aria-hidden="true" className="h-3.5 w-3.5" />
+                      Test on a room
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
                       onClick={() => router.push("/nightly/routines")}
                       disabled={saving}
                     >
@@ -342,6 +417,72 @@ export default function RoutineEditorPage() {
                     </Button>
                   </div>
                 </div>
+              )}
+
+              {testOpen && (
+                <Modal
+                  open
+                  onClose={() => (testRunning ? undefined : setTestOpen(false))}
+                  title="Test this routine on a room"
+                >
+                  <div className="flex flex-col gap-4 text-sm">
+                    <p className="text-muted-foreground">
+                      Runs <span className="font-medium text-foreground">{loaded.name}</span>{" "}
+                      against the room you pick — ignoring whichever routine is
+                      normally assigned to it. You&rsquo;ll be taken to the run
+                      page so you can watch step-by-step results appear.
+                    </p>
+                    <div className="space-y-1.5">
+                      <label htmlFor="test-room" className="text-xs font-medium text-muted-foreground">
+                        Room
+                      </label>
+                      <select
+                        id="test-room"
+                        value={testRoomID}
+                        onChange={(e) => setTestRoomID(e.target.value)}
+                        disabled={testRunning || rooms.length === 0}
+                        className="w-full rounded-md border bg-background px-3 py-2 text-sm disabled:opacity-50"
+                      >
+                        <option value="">
+                          {rooms.length === 0
+                            ? "Loading rooms…"
+                            : "Choose a room…"}
+                        </option>
+                        {rooms.map((r) => (
+                          <option key={r.id} value={r.id}>
+                            {r.name}
+                          </option>
+                        ))}
+                      </select>
+                      <p className="text-[11px] text-muted-foreground">
+                        The test dispatches real device commands to the room —
+                        pick a room you&rsquo;re happy to interrupt.
+                      </p>
+                    </div>
+                    <div className="flex items-center justify-end gap-2 pt-2 border-t">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setTestOpen(false)}
+                        disabled={testRunning}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        size="sm"
+                        onClick={startTestRun}
+                        disabled={testRunning || !testRoomID}
+                      >
+                        {testRunning ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <PlayCircle className="h-3.5 w-3.5" />
+                        )}
+                        Run against this room
+                      </Button>
+                    </div>
+                  </div>
+                </Modal>
               )}
 
               {!canManage && (

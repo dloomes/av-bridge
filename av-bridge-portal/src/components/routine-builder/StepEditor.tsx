@@ -1,6 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import {
+  DEVICE_TYPE_OPTIONS,
+  commandsForDevice,
+  commandsForDeviceType,
+  useRoutineContext,
+} from "./RoutineContext";
 import {
   ON_FAILURE_OPTIONS,
   targetKind,
@@ -16,6 +22,7 @@ import {
   type TargetKind,
   type WaitStep,
 } from "./step-types";
+import { buildingFor, roomFor } from "@/lib/utils";
 
 // StepEditor — renders the per-type config form inside an expanded
 // step card. Kept in one file so future step types are a single edit
@@ -109,12 +116,35 @@ function TargetField({
   onChange: (t: Target) => void;
   disabled?: boolean;
 }) {
+  const { devices } = useRoutineContext();
   const kind = targetKind(target);
   const setKind = (k: TargetKind) => {
     if (k === "room") onChange({ scope: "room" });
     else if (k === "device_type") onChange({ device_type: "" });
     else onChange({ device_id: "" });
   };
+
+  // Group devices for the specific-device select by Building / Room so
+  // an operator can find "the TV in Boardroom" rather than parsing a
+  // flat name list. Devices with no room bucket under "Unassigned".
+  const grouped = useMemo(() => {
+    const map = new Map<string, typeof devices>();
+    for (const d of devices) {
+      const b = buildingFor(d);
+      const r = roomFor(d);
+      const key = b ? `${b} · ${r}` : r || "Unassigned";
+      const arr = map.get(key) ?? [];
+      arr.push(d);
+      map.set(key, arr);
+    }
+    return Array.from(map.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([label, list]) => ({
+        label,
+        devices: [...list].sort((a, b) => a.name.localeCompare(b.name)),
+      }));
+  }, [devices]);
+
   return (
     <>
       <Field label="Target">
@@ -131,26 +161,40 @@ function TargetField({
       </Field>
       {kind === "device_type" && (
         <Field label="Device type">
-          <input
-            type="text"
+          <select
             value={"device_type" in target ? target.device_type : ""}
-            placeholder="e.g. display, vc, dsp"
             onChange={(e) => onChange({ device_type: e.target.value })}
             disabled={disabled}
             className={inputCls}
-          />
+          >
+            <option value="">Choose a type…</option>
+            {DEVICE_TYPE_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
         </Field>
       )}
       {kind === "device_id" && (
-        <Field label="Device ID">
-          <input
-            type="text"
+        <Field label="Device">
+          <select
             value={"device_id" in target ? target.device_id : ""}
-            placeholder="uuid"
             onChange={(e) => onChange({ device_id: e.target.value })}
             disabled={disabled}
             className={inputCls}
-          />
+          >
+            <option value="">Choose a device…</option>
+            {grouped.map((g) => (
+              <optgroup key={g.label} label={g.label}>
+                {g.devices.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.name} · {d.type}
+                  </option>
+                ))}
+              </optgroup>
+            ))}
+          </select>
         </Field>
       )}
     </>
@@ -394,6 +438,36 @@ function DeviceCommandFields({
   onChange: (s: Step) => void;
   disabled?: boolean;
 }) {
+  const { devices, adapters } = useRoutineContext();
+
+  // Sourcing rules for the command dropdown, in priority order:
+  //   * specific device → its own capabilities (or its adapter's catalogue
+  //     entry if capabilities aren't reported yet).
+  //   * device type     → union of commands across every adapter that
+  //     serves that type.
+  //   * whole room      → union across every adapter, since a room step
+  //     can hit any device type at once.
+  const commandOptions = useMemo<string[]>(() => {
+    const t = step.target;
+    if ("device_id" in t && t.device_id) {
+      const dev = devices.find((d) => d.id === t.device_id);
+      if (dev) return commandsForDevice(dev, adapters);
+      return [];
+    }
+    if ("device_type" in t && t.device_type) {
+      return commandsForDeviceType(t.device_type, adapters);
+    }
+    // Whole-room fallback: dedup across every adapter.
+    const set = new Set<string>();
+    for (const a of adapters) for (const c of a.commands ?? []) set.add(c);
+    return Array.from(set).sort();
+  }, [step.target, devices, adapters]);
+
+  // If the current command isn't in the option list (legacy step, or
+  // switched target after picking), keep it in the dropdown so it's not
+  // silently wiped — it renders as an italic "custom" entry.
+  const commandInList = commandOptions.includes(step.command);
+
   return (
     <Grid>
       <TargetField
@@ -401,15 +475,30 @@ function DeviceCommandFields({
         onChange={(target) => onChange({ ...step, target })}
         disabled={disabled}
       />
-      <Field label="Command" hint="Must match an adapter-declared command.">
-        <input
-          type="text"
+      <Field
+        label="Command"
+        hint={
+          commandOptions.length === 0
+            ? "No adapter-declared commands for this target — pick one or use JSON mode for a raw command."
+            : "From the target device's adapter catalogue."
+        }
+      >
+        <select
           value={step.command}
-          placeholder="e.g. dial, power_on, recall_preset"
           onChange={(e) => onChange({ ...step, command: e.target.value })}
           disabled={disabled}
           className={inputCls}
-        />
+        >
+          {!step.command && <option value="">Choose a command…</option>}
+          {!commandInList && step.command && (
+            <option value={step.command}>{step.command} (custom)</option>
+          )}
+          {commandOptions.map((c) => (
+            <option key={c} value={c}>
+              {c}
+            </option>
+          ))}
+        </select>
       </Field>
       <Field label="Parameters (JSON)" full hint="Optional. Passed to the adapter verbatim.">
         <JsonField
