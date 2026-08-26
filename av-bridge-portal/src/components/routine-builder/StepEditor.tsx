@@ -117,11 +117,24 @@ function TargetField({
   disabled?: boolean;
 }) {
   const { devices } = useRoutineContext();
-  const kind = targetKind(target);
+  // Track the picker choice locally so switching to "By device type"
+  // still shows the type dropdown even before a value is chosen.
+  // targetKind() alone would collapse a partially-set target (e.g.
+  // {device_type: ""}) back to "room" because it treats empty strings
+  // as falsy, which used to flip the dropdown right back after
+  // clicking — that was the original "can't select anything other
+  // than Whole room" bug.
+  const [kind, setLocalKind] = useState<TargetKind>(targetKind(target));
+
   const setKind = (k: TargetKind) => {
+    setLocalKind(k);
+    // Only the "room" choice has enough information to write straight
+    // through; the other two branches leave the target unchanged
+    // until the user actually picks a value in the sub-field below.
+    // Saving with an unset value simply keeps whatever was there
+    // before — never lands a `{device_type: ""}` or `{device_id: ""}`
+    // that would fail validation on the executor side.
     if (k === "room") onChange({ scope: "room" });
-    else if (k === "device_type") onChange({ device_type: "" });
-    else onChange({ device_id: "" });
   };
 
   // Group devices for the specific-device select by Building / Room so
