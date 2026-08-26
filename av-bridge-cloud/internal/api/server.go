@@ -154,8 +154,15 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 		// landing_page. Same auth stance as whoami.
 		mux.Handle("PATCH /api/v1/me/preferences", wrap(portal.Portal.UpdateMyPreferences))
 
-		// Vendor-only cross-tenant endpoints — RequireVendor stays because
-		// vendor is a Principal flag orthogonal to the customer RBAC.
+		// Vendor cross-tenant endpoints. Two tiers:
+		//   * RequireVendor       — any vendor role (admin/operator/viewer).
+		//                          Reads only: helpdesk customer list, overview,
+		//                          helpdesk user list.
+		//   * RequireVendorAdmin  — vendor role must be admin. Writes only:
+		//                          customer CRUD, helpdesk user edit/delete,
+		//                          magic-link mint.
+		// Rationale: an operator or viewer helpdesk user can browse the
+		// helpdesk surface but can't reshape it — that stays admin-only.
 		mux.Handle("GET /api/v1/helpdesk/customers",
 			portalauth.Middleware(portal.Resolver,
 				portalauth.RequireVendor(http.HandlerFunc(portal.Portal.HelpdeskListCustomers))))
@@ -164,27 +171,29 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 				portalauth.RequireVendor(http.HandlerFunc(portal.Portal.HelpdeskOverview))))
 		mux.Handle("POST /api/v1/helpdesk/customers",
 			portalauth.Middleware(portal.Resolver,
-				portalauth.RequireVendor(http.HandlerFunc(portal.Portal.HelpdeskCreateCustomer))))
+				portalauth.RequireVendorAdmin(http.HandlerFunc(portal.Portal.HelpdeskCreateCustomer))))
 		mux.Handle("PATCH /api/v1/helpdesk/customers/{id}",
 			portalauth.Middleware(portal.Resolver,
-				portalauth.RequireVendor(http.HandlerFunc(portal.Portal.HelpdeskUpdateCustomer))))
+				portalauth.RequireVendorAdmin(http.HandlerFunc(portal.Portal.HelpdeskUpdateCustomer))))
 
 		// Vendor-tenant user management (M3.1). Same-shape endpoints as
 		// the customer /users CRUD but scoped to the single vendor
-		// tenant and RequireVendor'd. No POST — new vendor users are
-		// only provisioned via Entra JIT (see entra.go).
+		// tenant. No POST — new vendor users are only provisioned via
+		// Entra JIT (see entra.go). Reads are RequireVendor; writes are
+		// RequireVendorAdmin so an operator can see helpdesk users but
+		// not promote/demote/delete them.
 		mux.Handle("GET /api/v1/helpdesk/users",
 			portalauth.Middleware(portal.Resolver,
 				portalauth.RequireVendor(http.HandlerFunc(portal.Portal.HelpdeskListUsers))))
 		mux.Handle("PATCH /api/v1/helpdesk/users/{id}",
 			portalauth.Middleware(portal.Resolver,
-				portalauth.RequireVendor(http.HandlerFunc(portal.Portal.HelpdeskUpdateUser))))
+				portalauth.RequireVendorAdmin(http.HandlerFunc(portal.Portal.HelpdeskUpdateUser))))
 		mux.Handle("DELETE /api/v1/helpdesk/users/{id}",
 			portalauth.Middleware(portal.Resolver,
-				portalauth.RequireVendor(http.HandlerFunc(portal.Portal.HelpdeskDeleteUser))))
+				portalauth.RequireVendorAdmin(http.HandlerFunc(portal.Portal.HelpdeskDeleteUser))))
 		mux.Handle("POST /api/v1/helpdesk/users/{id}/magic-link",
 			portalauth.Middleware(portal.Resolver,
-				portalauth.RequireVendor(http.HandlerFunc(portal.Portal.IssueVendorMagicLink))))
+				portalauth.RequireVendorAdmin(http.HandlerFunc(portal.Portal.IssueVendorMagicLink))))
 
 		// Dashboard-level reads. view.dashboard covers the shape of the
 		// portal's main pages: fleet status, device list + detail + live
@@ -239,21 +248,23 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 		mux.Handle("PATCH /api/v1/role-mappings/{id}", wrapPerm(portalauth.PermRoleMappingManage, portal.Portal.UpdateCustomerRoleMapping))
 		mux.Handle("DELETE /api/v1/role-mappings/{id}", wrapPerm(portalauth.PermRoleMappingManage, portal.Portal.DeleteCustomerRoleMapping))
 
-		// Vendor-scoped role mappings — RequireVendor since the vendor
-		// tenant has no per-tenant roles table and only the helpdesk
-		// itself needs to configure them (there's one vendor tenant today).
+		// Vendor-scoped role mappings — the vendor tenant has no
+		// per-tenant roles table so only the helpdesk configures these.
+		// List is any vendor role (so operators/viewers can see who's
+		// mapped to what); writes are admin-only because they change
+		// who gets what role at next Entra sign-in.
 		mux.Handle("GET /api/v1/vendor-role-mappings",
 			portalauth.Middleware(portal.Resolver,
 				portalauth.RequireVendor(http.HandlerFunc(portal.Portal.ListVendorRoleMappings))))
 		mux.Handle("POST /api/v1/vendor-role-mappings",
 			portalauth.Middleware(portal.Resolver,
-				portalauth.RequireVendor(http.HandlerFunc(portal.Portal.CreateVendorRoleMapping))))
+				portalauth.RequireVendorAdmin(http.HandlerFunc(portal.Portal.CreateVendorRoleMapping))))
 		mux.Handle("PATCH /api/v1/vendor-role-mappings/{id}",
 			portalauth.Middleware(portal.Resolver,
-				portalauth.RequireVendor(http.HandlerFunc(portal.Portal.UpdateVendorRoleMapping))))
+				portalauth.RequireVendorAdmin(http.HandlerFunc(portal.Portal.UpdateVendorRoleMapping))))
 		mux.Handle("DELETE /api/v1/vendor-role-mappings/{id}",
 			portalauth.Middleware(portal.Resolver,
-				portalauth.RequireVendor(http.HandlerFunc(portal.Portal.DeleteVendorRoleMapping))))
+				portalauth.RequireVendorAdmin(http.HandlerFunc(portal.Portal.DeleteVendorRoleMapping))))
 
 		// Tenant branding — reads are open to any authed user (the portal
 		// needs the logo/colours for the current tenant to render), writes

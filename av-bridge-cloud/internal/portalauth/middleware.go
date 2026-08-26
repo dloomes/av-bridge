@@ -57,7 +57,11 @@ type Principal struct {
 // place.
 func (p Principal) HasPermission(perm string) bool {
 	if p.IsVendor {
-		return true
+		// Historic behaviour was "vendor bypasses everything". Now the
+		// vendor's role gates cross-tenant access too: admin keeps the
+		// full bypass, operator/viewer get a fixed reduced set.
+		// Unknown vendor roles fall back to viewer (fail-closed).
+		return VendorRoleHasPermission(p.Role, perm)
 	}
 	if p.Permissions == nil {
 		return false
@@ -199,6 +203,31 @@ func RequireVendor(next http.Handler) http.Handler {
 		}
 		if !p.IsVendor {
 			writeErr(w, http.StatusForbidden, "vendor access required")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// RequireVendorAdmin gates a handler to vendor callers whose role is
+// specifically "admin". The rest of the vendor-role model (operator,
+// viewer) still passes RequireVendor for read-only helpdesk endpoints;
+// this middleware is for the write / management surface — customer
+// CRUD, helpdesk user edits, magic links, vendor-scope role mappings —
+// where an operator or viewer should be blocked.
+func RequireVendorAdmin(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p, ok := From(r.Context())
+		if !ok {
+			writeErr(w, http.StatusUnauthorized, "no principal in context")
+			return
+		}
+		if !p.IsVendor {
+			writeErr(w, http.StatusForbidden, "vendor access required")
+			return
+		}
+		if p.Role != "admin" {
+			writeErr(w, http.StatusForbidden, "vendor admin role required")
 			return
 		}
 		next.ServeHTTP(w, r)

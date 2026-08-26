@@ -1025,14 +1025,23 @@ func (h *Handler) Whoami(w http.ResponseWriter, r *http.Request) {
 		BuildingScopeIDs []string `json:"building_scope_ids"`
 		LandingPage      string   `json:"landing_page"`
 	}
-	// Portal uses this list to gate UI (show/hide buttons) — vendor bypass
-	// still applies server-side, but for the UI we surface the effective
-	// permission set including "all" for vendor calls so the portal
-	// doesn't have to encode the bypass rule twice.
+	// Portal uses this list to gate UI (show/hide buttons). For vendor
+	// callers we now expand to whatever the vendor role permits —
+	// admin still gets everything (bypass), operator/viewer get their
+	// fixed reduced set. Non-vendor callers get their per-tenant role
+	// permissions verbatim.
 	perms := make([]string, 0, len(p.Permissions))
 	if p.IsVendor {
-		for k := range portalauth.KnownPermissions {
-			perms = append(perms, k)
+		if portalauth.VendorRoleBypasses(p.Role) {
+			for k := range portalauth.KnownPermissions {
+				perms = append(perms, k)
+			}
+		} else {
+			for k := range portalauth.KnownPermissions {
+				if portalauth.VendorRoleHasPermission(p.Role, k) {
+					perms = append(perms, k)
+				}
+			}
 		}
 	} else {
 		for k := range p.Permissions {

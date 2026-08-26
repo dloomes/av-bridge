@@ -140,3 +140,76 @@ func IsKnownPermission(p string) bool {
 	_, ok := KnownPermissions[p]
 	return ok
 }
+
+// VendorRolePermissions holds the fixed permission set for each vendor
+// role. Vendors have historically been a single "admin bypasses
+// everything" tier; this map introduces role-based restrictions so a
+// helpdesk operator or viewer sees a limited surface even though they
+// still act cross-tenant via X-Customer-Scope.
+//
+// Structure:
+//   - "admin": nil — signals "bypass all checks", identical to the
+//     pre-role-aware behaviour so existing seed data keeps working.
+//   - "operator": read + operational writes (commands, alert lifecycle,
+//     notification test-sends). No structural CRUD, no user or role
+//     management, no branding, no magic links.
+//   - "viewer": read-only. All view.* + nightly.view. No writes.
+//
+// A vendor row with a role not in this map (e.g. a stale value from an
+// old install) falls back to viewer — fail-closed rather than fall
+// through to admin.
+var VendorRolePermissions = map[string]map[string]struct{}{
+	// nil = bypass (see HasPermission). Represented as a distinct nil
+	// entry so the presence check tells apart "unknown role" from
+	// "known admin".
+	"admin": nil,
+	"operator": {
+		PermViewDashboard:     {},
+		PermViewAudit:         {},
+		PermViewReports:       {},
+		PermViewFirmware:      {},
+		PermViewNotifications: {},
+		PermViewUsers:         {},
+		PermViewAssets:        {},
+		PermCommandDevice:     {},
+		PermCommandBulk:       {},
+		PermReconnectDevice:   {},
+		PermAlertAcknowledge:  {},
+		PermAlertResolve:      {},
+		PermNotificationTest:  {},
+		PermNightlyView:       {},
+	},
+	"viewer": {
+		PermViewDashboard:     {},
+		PermViewAudit:         {},
+		PermViewReports:       {},
+		PermViewFirmware:      {},
+		PermViewNotifications: {},
+		PermViewUsers:         {},
+		PermViewAssets:        {},
+		PermNightlyView:       {},
+	},
+}
+
+// VendorRoleBypasses reports whether a vendor role should short-circuit
+// every permission check to allowed. Only "admin" does. Kept as a
+// helper so callers don't have to open-code the nil check.
+func VendorRoleBypasses(role string) bool {
+	set, ok := VendorRolePermissions[role]
+	return ok && set == nil
+}
+
+// VendorRoleHasPermission checks whether a vendor role's fixed
+// permission set includes perm. "admin" always returns true (bypass);
+// unknown roles fall back to the viewer set for fail-closed safety.
+func VendorRoleHasPermission(role, perm string) bool {
+	set, ok := VendorRolePermissions[role]
+	if !ok {
+		set = VendorRolePermissions["viewer"]
+	}
+	if set == nil { // admin bypass
+		return true
+	}
+	_, ok = set[perm]
+	return ok
+}
