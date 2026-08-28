@@ -82,7 +82,7 @@ func (h *Handler) ListAlerts(w http.ResponseWriter, r *http.Request) {
 		sql += ", $" + itoa(len(args)) + ")"
 	}
 	args = append(args, limit+1)
-	sql += " ORDER BY a.opened_at DESC, a.id::text DESC LIMIT " + next()
+	sql += " ORDER BY a.opened_at DESC, a.id::text DESC LIMIT " + next() + "::int"
 
 	out := []publicAlert{}
 	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {

@@ -7,7 +7,7 @@
     "description": "Read-only integration API for the av-bridge monitoring platform. Use it to sync device inventory into a CMDB, mirror alerts into an incident tool, or feed dashboards with live fleet state. Every route is scoped to the token's tenant — one token, one customer's data.\n\nRate limits are per-token; polling intervals of once per minute are ample for most use cases. Cursor-based pagination keeps list endpoints stable under concurrent inserts."
   },
   "servers": [
-    { "url": "https://{host}", "description": "Cloud environment", "variables": { "host": { "default": "cloud.example.com", "description": "Your av-bridge cloud host — replace with the value your operator gave you." } } }
+    { "url": "/", "description": "This deployment — Swagger UI's Try It Out calls back to whichever host is serving these docs, so no cross-origin dance is needed." }
   ],
   "security": [{ "bearerAuth": [] }],
   "tags": [

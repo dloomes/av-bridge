@@ -414,11 +414,32 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 	// Ping is unscoped (any valid token) so an integrator can smoke-
 	// test auth without knowing which scopes their token holds.
 	if pubAPI != nil && pubAPI.Resolver != nil && pubAPI.Handler != nil {
+		// CORS on every /pub/v1 response so browser-based tooling
+		// (Swagger UI, integrator dashboards, third-party SPAs)
+		// can call the API from any origin. Authorization is a
+		// bearer token in a request header, not a cookie, so
+		// Access-Control-Allow-Origin: * is safe — the browser
+		// doesn't send credentials automatically with `*`, but a
+		// bearer token added by the caller isn't a "credential"
+		// under the fetch spec, so it flows either way.
+		cors := func(h http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Access-Control-Allow-Origin", "*")
+				w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+				w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+				w.Header().Set("Access-Control-Max-Age", "600")
+				if r.Method == http.MethodOptions {
+					w.WriteHeader(http.StatusNoContent)
+					return
+				}
+				h.ServeHTTP(w, r)
+			})
+		}
 		pubWrap := func(h http.HandlerFunc) http.Handler {
-			return pubAPI.Resolver.Middleware(h)
+			return cors(pubAPI.Resolver.Middleware(h))
 		}
 		pubWrapScope := func(scope string, h http.HandlerFunc) http.Handler {
-			return pubAPI.Resolver.Middleware(pubapi.RequireScope(scope)(h))
+			return cors(pubAPI.Resolver.Middleware(pubapi.RequireScope(scope)(h)))
 		}
 		mux.Handle("GET /pub/v1/ping", pubWrap(pubAPI.Handler.Ping))
 
@@ -428,8 +449,35 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 		// header. Nothing is actually callable from Swagger UI's "Try
 		// it out" without pasting a real token in the Authorize
 		// dialog, so leaving these open changes no risk surface.
-		mux.Handle("GET /pub/v1/openapi.json", http.HandlerFunc(pubAPI.Handler.OpenAPISpec))
-		mux.Handle("GET /pub/v1/docs", http.HandlerFunc(pubAPI.Handler.SwaggerUI))
+		mux.Handle("GET /pub/v1/openapi.json", cors(http.HandlerFunc(pubAPI.Handler.OpenAPISpec)))
+		mux.Handle("GET /pub/v1/docs", cors(http.HandlerFunc(pubAPI.Handler.SwaggerUI)))
+
+		// Every path also needs an OPTIONS handler so browser
+		// preflight against Authorization: Bearer succeeds. Register
+		// against the same paths — the cors wrapper short-circuits
+		// on OPTIONS before the auth middleware runs, so the
+		// preflight returns 204 without needing a token.
+		optionsPreflight := cors(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			// Not reached — cors() handles OPTIONS above. This body
+			// only fires if a non-OPTIONS request hits this route,
+			// which the mux prevents by method matching.
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}))
+		for _, p := range []string{
+			"/pub/v1/ping",
+			"/pub/v1/openapi.json",
+			"/pub/v1/docs",
+			"/pub/v1/devices",
+			"/pub/v1/devices/{id}",
+			"/pub/v1/devices/{id}/telemetry",
+			"/pub/v1/devices/{id}/events",
+			"/pub/v1/buildings",
+			"/pub/v1/rooms",
+			"/pub/v1/alerts",
+			"/pub/v1/events",
+		} {
+			mux.Handle("OPTIONS "+p, optionsPreflight)
+		}
 
 		// Devices — list + detail + telemetry + per-device events.
 		mux.Handle("GET /pub/v1/devices",

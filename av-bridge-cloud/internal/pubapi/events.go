@@ -98,7 +98,7 @@ func (h *Handler) ListEvents(w http.ResponseWriter, r *http.Request) {
 		sql += ", $" + itoa(len(args)) + ")"
 	}
 	args = append(args, limit+1)
-	sql += " ORDER BY e.ts DESC, e.id::text DESC LIMIT " + next()
+	sql += " ORDER BY e.ts DESC, e.id::text DESC LIMIT " + next() + "::int"
 
 	out, nextCursor, ok := listPublicEvents(h, w, r, sql, args, limit)
 	if !ok {

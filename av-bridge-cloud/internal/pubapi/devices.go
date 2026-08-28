@@ -150,7 +150,10 @@ func (h *Handler) ListDevices(w http.ResponseWriter, r *http.Request) {
 		sql += ", $" + itoa(len(args)) + ")"
 	}
 	args = append(args, limit+1) // fetch one extra to know if there's a next page
-	sql += " ORDER BY COALESCE(d.last_seen_at, '-infinity'::timestamptz) DESC, d.id::text DESC LIMIT " + next()
+	// Explicit ::int cast — without it, Postgres refuses type inference on
+	// this parameter in the constructed query context (SQLSTATE 42P18).
+	// See the same cast on every other pubapi paginated endpoint.
+	sql += " ORDER BY COALESCE(d.last_seen_at, '-infinity'::timestamptz) DESC, d.id::text DESC LIMIT " + next() + "::int"
 
 	out, nextCursor, ok := listPublicDevices(h, w, r, sql, args, limit)
 	if !ok {
@@ -337,7 +340,7 @@ func (h *Handler) GetDeviceEvents(w http.ResponseWriter, r *http.Request) {
 		sql += ", $" + itoa(len(args)) + ")"
 	}
 	args = append(args, limit+1)
-	sql += " ORDER BY e.ts DESC, e.id::text DESC LIMIT " + next()
+	sql += " ORDER BY e.ts DESC, e.id::text DESC LIMIT " + next() + "::int"
 
 	out, nextCursor, ok := listPublicEvents(h, w, r, sql, args, limit)
 	if !ok {
