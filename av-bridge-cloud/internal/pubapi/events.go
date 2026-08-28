@@ -87,18 +87,19 @@ func (h *Handler) ListEvents(w http.ResponseWriter, r *http.Request) {
 		  JOIN devices d ON d.id = e.device_id
 		 WHERE d.deleted_at IS NULL`
 	args := []any{}
-	next := func() string { return "$" + itoa(len(args)+1) }
+	arg := func(v any) string {
+		args = append(args, v)
+		return "$" + itoa(len(args))
+	}
 	if deviceFilter != "" {
-		args = append(args, deviceFilter)
-		sql += " AND e.device_id::text = " + next()
+		sql += " AND e.device_id::text = " + arg(deviceFilter)
 	}
 	if cursor.TS != nil {
-		args = append(args, *cursor.TS, cursor.ID)
-		sql += " AND (e.ts, e.id::text) < (" + next()
-		sql += ", $" + itoa(len(args)) + ")"
+		tsP := arg(*cursor.TS)
+		idP := arg(cursor.ID)
+		sql += " AND (e.ts, e.id::text) < (" + tsP + ", " + idP + ")"
 	}
-	args = append(args, limit+1)
-	sql += " ORDER BY e.ts DESC, e.id::text DESC LIMIT " + next() + "::int"
+	sql += " ORDER BY e.ts DESC, e.id::text DESC LIMIT " + arg(limit+1) + "::int"
 
 	out, nextCursor, ok := listPublicEvents(h, w, r, sql, args, limit)
 	if !ok {

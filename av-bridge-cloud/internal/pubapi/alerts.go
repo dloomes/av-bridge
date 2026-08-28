@@ -66,23 +66,23 @@ func (h *Handler) ListAlerts(w http.ResponseWriter, r *http.Request) {
 		  LEFT JOIN collectors c ON c.id = a.collector_id
 		 WHERE 1=1`
 	args := []any{}
-	next := func() string { return "$" + itoa(len(args)+1) }
+	arg := func(v any) string {
+		args = append(args, v)
+		return "$" + itoa(len(args))
+	}
 
 	if statusFilter != "" {
-		args = append(args, statusFilter)
-		sql += " AND a.status = " + next()
+		sql += " AND a.status = " + arg(statusFilter)
 	}
 	if sevFilter != "" {
-		args = append(args, sevFilter)
-		sql += " AND a.severity = " + next()
+		sql += " AND a.severity = " + arg(sevFilter)
 	}
 	if cursor.TS != nil {
-		args = append(args, *cursor.TS, cursor.ID)
-		sql += " AND (a.opened_at, a.id::text) < (" + next()
-		sql += ", $" + itoa(len(args)) + ")"
+		tsP := arg(*cursor.TS)
+		idP := arg(cursor.ID)
+		sql += " AND (a.opened_at, a.id::text) < (" + tsP + ", " + idP + ")"
 	}
-	args = append(args, limit+1)
-	sql += " ORDER BY a.opened_at DESC, a.id::text DESC LIMIT " + next() + "::int"
+	sql += " ORDER BY a.opened_at DESC, a.id::text DESC LIMIT " + arg(limit+1) + "::int"
 
 	out := []publicAlert{}
 	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {

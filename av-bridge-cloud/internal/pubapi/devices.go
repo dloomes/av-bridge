@@ -125,35 +125,40 @@ func (h *Handler) ListDevices(w http.ResponseWriter, r *http.Request) {
 
 	sql := publicDeviceBaseSelect + " WHERE d.deleted_at IS NULL"
 	args := []any{}
-	next := func() string { return "$" + itoa(len(args)+1) }
+	// arg appends v and returns its 1-based placeholder token.
+	// Kept as an atomic append+placeholder pair so the placeholder
+	// number never drifts from the parameter index Postgres binds
+	// positionally. The old separate next() closure was called AFTER
+	// the append and returned len+1, which put the SQL one ahead of
+	// the arg list — Postgres saw a "$1" it couldn't type-infer and
+	// blew up with SQLSTATE 42P18 on every paginated route.
+	arg := func(v any) string {
+		args = append(args, v)
+		return "$" + itoa(len(args))
+	}
 
 	if buildingFilter != "" {
-		args = append(args, buildingFilter)
-		sql += " AND r.building_id::text = " + next()
+		sql += " AND r.building_id::text = " + arg(buildingFilter)
 	}
 	if roomFilter != "" {
-		args = append(args, roomFilter)
-		sql += " AND d.room_id::text = " + next()
+		sql += " AND d.room_id::text = " + arg(roomFilter)
 	}
 	if statusFilter != "" {
 		// Filter on effective status so an integrator asking for
 		// status=online never sees a stale-on-offline-collector row.
-		args = append(args, statusFilter)
-		sql += " AND (" + devicestatus.EffectiveStatusSQL + ") = " + next()
+		sql += " AND (" + devicestatus.EffectiveStatusSQL + ") = " + arg(statusFilter)
 	}
 	// Cursor: page forward from wherever the previous response left
 	// off. Compare on (COALESCE(last_seen_at,'-infinity'), id) so nulls
 	// sort last consistently and the tuple comparison stays strict.
 	if cursor.TS != nil {
-		args = append(args, *cursor.TS, cursor.ID)
-		sql += " AND (COALESCE(d.last_seen_at, '-infinity'::timestamptz), d.id::text) < (" + next()
-		sql += ", $" + itoa(len(args)) + ")"
+		tsP := arg(*cursor.TS)
+		idP := arg(cursor.ID)
+		sql += " AND (COALESCE(d.last_seen_at, '-infinity'::timestamptz), d.id::text) < (" + tsP + ", " + idP + ")"
 	}
-	args = append(args, limit+1) // fetch one extra to know if there's a next page
-	// Explicit ::int cast — without it, Postgres refuses type inference on
-	// this parameter in the constructed query context (SQLSTATE 42P18).
-	// See the same cast on every other pubapi paginated endpoint.
-	sql += " ORDER BY COALESCE(d.last_seen_at, '-infinity'::timestamptz) DESC, d.id::text DESC LIMIT " + next() + "::int"
+	// Explicit ::int cast keeps LIMIT's type inference boringly stable
+	// against pgx's parse-with-inference path.
+	sql += " ORDER BY COALESCE(d.last_seen_at, '-infinity'::timestamptz) DESC, d.id::text DESC LIMIT " + arg(limit+1) + "::int"
 
 	out, nextCursor, ok := listPublicDevices(h, w, r, sql, args, limit)
 	if !ok {
@@ -333,14 +338,16 @@ func (h *Handler) GetDeviceEvents(w http.ResponseWriter, r *http.Request) {
 		 WHERE e.device_id = $1
 		   AND d.deleted_at IS NULL`
 	args := []any{id}
-	next := func() string { return "$" + itoa(len(args)+1) }
-	if cursor.TS != nil {
-		args = append(args, *cursor.TS, cursor.ID)
-		sql += " AND (e.ts, e.id::text) < (" + next()
-		sql += ", $" + itoa(len(args)) + ")"
+	arg := func(v any) string {
+		args = append(args, v)
+		return "$" + itoa(len(args))
 	}
-	args = append(args, limit+1)
-	sql += " ORDER BY e.ts DESC, e.id::text DESC LIMIT " + next() + "::int"
+	if cursor.TS != nil {
+		tsP := arg(*cursor.TS)
+		idP := arg(cursor.ID)
+		sql += " AND (e.ts, e.id::text) < (" + tsP + ", " + idP + ")"
+	}
+	sql += " ORDER BY e.ts DESC, e.id::text DESC LIMIT " + arg(limit+1) + "::int"
 
 	out, nextCursor, ok := listPublicEvents(h, w, r, sql, args, limit)
 	if !ok {
