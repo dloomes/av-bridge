@@ -42,9 +42,15 @@ func notifySystemd(state string) {
 	_, _ = conn.Write([]byte(state))
 }
 
+// version + buildTime are stamped in via -ldflags at build time. Empty
+// defaults are deliberate: an unstamped local `go build` leaves
+// buildTime blank, which the cloud's collector-touch UPDATEs treat as
+// NULL (see internal/db/db.go). Anything non-empty is expected to be
+// a real RFC3339 timestamp — the Dockerfile captures one at build
+// time when a --build-arg BRIDGE_BUILD_TIME=... isn't supplied.
 var (
 	version   = "dev"
-	buildTime = "unknown"
+	buildTime = ""
 )
 
 // defaultConfigPath returns the platform-appropriate config path when the
@@ -87,7 +93,11 @@ func main() {
 	flag.Parse()
 
 	if *showVersion {
-		fmt.Printf("av-bridge version %s (built %s)\n", version, buildTime)
+		if buildTime != "" {
+			fmt.Printf("av-bridge version %s (built %s)\n", version, buildTime)
+		} else {
+			fmt.Printf("av-bridge version %s\n", version)
+		}
 		return
 	}
 

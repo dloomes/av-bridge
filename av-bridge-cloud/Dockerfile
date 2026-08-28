@@ -18,17 +18,27 @@
 # release builds will override via ldflags in a follow-up.
 FROM golang:1.25-alpine AS bridge-build
 # Build args stamp the version + build time into the binary via ldflags.
-# Default to "dev"/"unknown" so a plain `docker build` still succeeds;
+# Version defaults to "dev" so a plain `docker build` still succeeds;
 # the deploy script passes --build-arg BRIDGE_VERSION=$(git describe …)
-# and --build-arg BRIDGE_BUILD_TIME=<utc-timestamp> so a published
-# collector shows a real tag on the /collectors page instead of "dev".
+# for a real tag.
+#
+# BRIDGE_BUILD_TIME defaults to empty; when not supplied, the RUN step
+# captures the current UTC time via `date`. The layer-cache tradeoff
+# is intentional: rebuilds with unchanged bridge source reuse the
+# cached layer AND its baked-in timestamp — the binary is byte-for-byte
+# the same, so its "build time" is the first build where that content
+# was produced. A source change invalidates the cache and captures a
+# fresh timestamp. Previously this was the literal string "unknown",
+# which blew up the cloud's timestamptz cast (see MarkCollectorSeen /
+# TouchCollectorConfigPull in internal/db/db.go).
 ARG BRIDGE_VERSION=dev
-ARG BRIDGE_BUILD_TIME=unknown
+ARG BRIDGE_BUILD_TIME=
 WORKDIR /src
 COPY av-bridge/go.mod av-bridge/go.sum ./
 RUN go mod download
 COPY av-bridge/ .
-RUN LDFLAGS="-s -w -X main.version=${BRIDGE_VERSION} -X main.buildTime=${BRIDGE_BUILD_TIME}" \
+RUN BUILD_TIME="${BRIDGE_BUILD_TIME:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}" \
+ && LDFLAGS="-s -w -X main.version=${BRIDGE_VERSION} -X main.buildTime=${BUILD_TIME}" \
  && CGO_ENABLED=0 GOOS=windows GOARCH=amd64 \
     go build -ldflags "$LDFLAGS" -o /out/av-bridge-windows-amd64.exe ./cmd/av-bridge \
  && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
