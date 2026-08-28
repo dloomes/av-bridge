@@ -124,12 +124,21 @@ func (s *Store) TouchCollector(ctx context.Context, id string) error {
 // when supplied. Empty inputs are preserved via COALESCE(NULLIF(...), …)
 // so a pre-Tier-1 bridge that doesn't report these fields doesn't wipe
 // values that a later build set.
+//
+// The nested NULLIF on build_time also treats the literal string
+// "unknown" as null. The bridge's compile-time default is
+// buildTime="unknown" (see av-bridge/cmd/av-bridge/main.go), which
+// used to blow up the timestamptz cast — aborting the whole UPDATE
+// and preventing last_seen_at from being stamped. Bridges built
+// without a real -X main.buildTime=... ldflag would silently break
+// their own health signal; guarding both boundary values here means
+// old and future bridge builds converge on the same behaviour.
 func (s *Store) MarkCollectorSeen(ctx context.Context, id, version, buildTime string) error {
 	_, err := s.admin.Exec(ctx, `
 		UPDATE collectors
 		   SET last_seen_at       = now(),
-		       bridge_version     = COALESCE(NULLIF($2, ''), bridge_version),
-		       bridge_build_time  = COALESCE(NULLIF($3, '')::timestamptz, bridge_build_time)
+		       bridge_version     = COALESCE(NULLIF(NULLIF($2, ''), 'unknown'), bridge_version),
+		       bridge_build_time  = COALESCE(NULLIF(NULLIF($3, ''), 'unknown')::timestamptz, bridge_build_time)
 		 WHERE id = $1`, id, version, buildTime)
 	return err
 }
@@ -140,12 +149,18 @@ func (s *Store) MarkCollectorSeen(ctx context.Context, id, version, buildTime st
 // from "bridge is fully healthy". Also refreshes bridge_version /
 // bridge_build_time when supplied so silent collectors (no devices → no
 // /ingest push) still report their version in the portal.
+//
+// Same "unknown"-safe NULLIF nesting as MarkCollectorSeen — see that
+// comment for the rationale. Without it, a dev-tagged bridge sending
+// buildTime="unknown" errors the cast, aborts the UPDATE, and leaves
+// last_config_pull_at frozen, which surfaces as a spurious "stale"
+// config-sync badge on the /collectors page.
 func (s *Store) TouchCollectorConfigPull(ctx context.Context, id, version, buildTime string) error {
 	_, err := s.admin.Exec(ctx, `
 		UPDATE collectors
 		   SET last_config_pull_at = now(),
-		       bridge_version      = COALESCE(NULLIF($2, ''), bridge_version),
-		       bridge_build_time   = COALESCE(NULLIF($3, '')::timestamptz, bridge_build_time)
+		       bridge_version      = COALESCE(NULLIF(NULLIF($2, ''), 'unknown'), bridge_version),
+		       bridge_build_time   = COALESCE(NULLIF(NULLIF($3, ''), 'unknown')::timestamptz, bridge_build_time)
 		 WHERE id = $1`, id, version, buildTime)
 	return err
 }
