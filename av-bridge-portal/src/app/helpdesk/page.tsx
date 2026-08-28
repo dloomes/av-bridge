@@ -7,6 +7,7 @@ import {
   ArrowRight,
   Bell,
   Building2,
+  CircleHelp,
   CircleSlash,
   Link as LinkIcon,
   Pencil,
@@ -180,15 +181,18 @@ function CustomerCard({
 }) {
   const hasCritical = c.alerts_critical > 0;
   const hasOffline = c.devices_offline > 0;
+  const hasUnknown = c.devices_unknown > 0;
   const stale = c.last_bridge_seen
     ? Date.now() - new Date(c.last_bridge_seen).getTime() > 5 * 60_000
     : false;
 
   // Border accent reflects the worst signal so the helpdesk eye is drawn to
-  // troubled tenants first.
+  // troubled tenants first. Unknown devices (collector offline) get the
+  // same amber tint as offline devices — either way there's something
+  // for the operator to look at.
   const tone = hasCritical
     ? "border-red-500/40 bg-red-500/5"
-    : hasOffline || stale
+    : hasOffline || hasUnknown || stale
     ? "border-amber-500/40 bg-amber-500/5"
     : "";
 
@@ -233,6 +237,12 @@ function CustomerCard({
             value={c.devices_offline}
             icon={CircleSlash}
             tone={c.devices_offline > 0 ? "warn" : undefined}
+          />
+          <Stat
+            label="Unknown"
+            value={c.devices_unknown}
+            icon={CircleHelp}
+            tone={c.devices_unknown > 0 ? "warn" : undefined}
           />
           <Stat
             label="Critical"

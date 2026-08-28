@@ -17,6 +17,7 @@ import (
 
 	"github.com/dloomes/av-bridge-cloud/internal/audit"
 	"github.com/dloomes/av-bridge-cloud/internal/db"
+	"github.com/dloomes/av-bridge-cloud/internal/devicestatus"
 	"github.com/dloomes/av-bridge-cloud/internal/nightly"
 	"github.com/dloomes/av-bridge-cloud/internal/notify"
 	"github.com/dloomes/av-bridge-cloud/internal/portalauth"
@@ -128,24 +129,37 @@ func queryInt(r *http.Request, key string, def, max int) int {
 // ---- handlers ----------------------------------------------------------------
 
 // Status — GET /api/v1/status
+//
+// Counts use effective status (devicestatus.EffectiveStatusSQL): a
+// device whose collector hasn't checked in within OfflineAfter is
+// bucketed as 'unknown', regardless of what its stored latest_status
+// column says. Prevents a downed collector from showing 20 devices
+// as 'online' indefinitely.
 func (h *Handler) Status(w http.ResponseWriter, r *http.Request) {
 	type out struct {
 		Total    int    `json:"total"`
 		Online   int    `json:"online"`
 		Offline  int    `json:"offline"`
 		Degraded int    `json:"degraded"`
+		Unknown  int    `json:"unknown"`
 		Time     string `json:"time"`
 	}
 	var o out
 	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `
+			WITH eff AS (
+			  SELECT `+devicestatus.EffectiveStatusSQL+` AS status
+			    FROM devices d
+			    LEFT JOIN collectors c ON c.id = d.collector_id
+			   WHERE d.deleted_at IS NULL
+			)
 			SELECT
 			  count(*),
-			  count(*) FILTER (WHERE latest_status = 'online'),
-			  count(*) FILTER (WHERE latest_status = 'offline'),
-			  count(*) FILTER (WHERE latest_status = 'degraded')
-			FROM devices
-			WHERE deleted_at IS NULL`).Scan(&o.Total, &o.Online, &o.Offline, &o.Degraded)
+			  count(*) FILTER (WHERE status = 'online'),
+			  count(*) FILTER (WHERE status = 'offline'),
+			  count(*) FILTER (WHERE status = 'degraded'),
+			  count(*) FILTER (WHERE status = 'unknown')
+			FROM eff`).Scan(&o.Total, &o.Online, &o.Offline, &o.Degraded, &o.Unknown)
 	})
 	if !ok {
 		return
@@ -330,7 +344,7 @@ func (h *Handler) ListDevices(w http.ResponseWriter, r *http.Request) {
 			       d.room_id::text,
 			       d.collector_id::text,
 			       COALESCE(d.ip_address, ''),
-			       COALESCE(d.latest_status, 'unknown'),
+			       ` + devicestatus.EffectiveStatusSQL + `,
 			       d.tags,
 			       d.capabilities
 			  FROM devices d
@@ -338,6 +352,7 @@ func (h *Handler) ListDevices(w http.ResponseWriter, r *http.Request) {
 			  LEFT JOIN buildings b  ON b.id   = r.building_id
 			  LEFT JOIN locations loc ON loc.id = b.location_id
 			  LEFT JOIN regions reg  ON reg.id = loc.region_id
+			  LEFT JOIN collectors c ON c.id   = d.collector_id
 			 WHERE d.deleted_at IS NULL`
 		args := []any{}
 		if collectorFilter != "" {
@@ -462,11 +477,12 @@ func (h *Handler) GetDevice(w http.ResponseWriter, r *http.Request) {
 			       COALESCE(d.ip_address, ''),
 			       d.baud_rate,
 			       d.poll_rate_seconds,
-			       COALESCE(d.latest_status, 'unknown'),
+			       ` + devicestatus.EffectiveStatusSQL + `,
 			       d.tags, d.commands, d.subscriptions, d.capabilities
 			  FROM devices d
 			  LEFT JOIN rooms r ON r.id = d.room_id
 			  LEFT JOIN buildings b ON b.id = r.building_id
+			  LEFT JOIN collectors c ON c.id = d.collector_id
 			 WHERE d.id = $1 AND d.deleted_at IS NULL`, id).
 			Scan(&o.ID, &o.CollectorID, &roomID, &o.AssetID, &o.ReportedID,
 				&o.Name, &o.Type, &o.Protocol, &o.Location,
@@ -592,11 +608,12 @@ func (h *Handler) GetTelemetry(w http.ResponseWriter, r *http.Request) {
 			         WHEN r.name IS NOT NULL THEN r.name
 			         ELSE ''
 			       END,
-			       COALESCE(d.latest_status, 'unknown'),
+			       ` + devicestatus.EffectiveStatusSQL + `,
 			       d.last_seen_at, d.latest_metrics, d.tags
 			  FROM devices d
 			  LEFT JOIN rooms r ON r.id = d.room_id
 			  LEFT JOIN buildings b ON b.id = r.building_id
+			  LEFT JOIN collectors c ON c.id = d.collector_id
 			 WHERE d.id = $1 AND d.deleted_at IS NULL`, id).
 			Scan(&o.DeviceID, &o.DeviceName, &o.DeviceType, &o.Protocol, &o.Location, &o.Status, &o.Timestamp, &o.Metrics, &o.Tags)
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -1137,6 +1154,7 @@ func (h *Handler) HelpdeskOverview(w http.ResponseWriter, r *http.Request) {
 		DevicesOnline   int        `json:"devices_online"`
 		DevicesOffline  int        `json:"devices_offline"`
 		DevicesDegraded int        `json:"devices_degraded"`
+		DevicesUnknown  int        `json:"devices_unknown"`
 		AlertsOpen      int        `json:"alerts_open"`
 		AlertsCritical  int        `json:"alerts_critical"`
 		CollectorsTotal int        `json:"collectors_total"`
@@ -1144,6 +1162,9 @@ func (h *Handler) HelpdeskOverview(w http.ResponseWriter, r *http.Request) {
 	}
 	out := []item{}
 
+	// Device buckets use effective status — a device whose collector
+	// hasn't checked in within OfflineAfter is 'unknown', not whatever
+	// its stale latest_status column happens to hold.
 	rows, err := h.store.AdminPool().Query(r.Context(), `
 		SELECT
 		  c.id::text,
@@ -1154,18 +1175,31 @@ func (h *Handler) HelpdeskOverview(w http.ResponseWriter, r *http.Request) {
 		  COALESCE(d.online, 0),
 		  COALESCE(d.offline, 0),
 		  COALESCE(d.degraded, 0),
+		  COALESCE(d.unknown, 0),
 		  COALESCE(a.open, 0),
 		  COALESCE(a.critical, 0),
 		  COALESCE(col.total, 0),
 		  col.last_seen
 		FROM customers c
 		LEFT JOIN (
-		  SELECT customer_id,
+		  SELECT dv.customer_id,
 		    COUNT(*)::int AS total,
-		    COUNT(*) FILTER (WHERE latest_status = 'online')::int AS online,
-		    COUNT(*) FILTER (WHERE latest_status = 'offline')::int AS offline,
-		    COUNT(*) FILTER (WHERE latest_status = 'degraded')::int AS degraded
-		  FROM devices WHERE deleted_at IS NULL GROUP BY customer_id
+		    COUNT(*) FILTER (WHERE eff.status = 'online')::int AS online,
+		    COUNT(*) FILTER (WHERE eff.status = 'offline')::int AS offline,
+		    COUNT(*) FILTER (WHERE eff.status = 'degraded')::int AS degraded,
+		    COUNT(*) FILTER (WHERE eff.status = 'unknown')::int AS unknown
+		  FROM devices dv
+		  LEFT JOIN collectors dc ON dc.id = dv.collector_id
+		  CROSS JOIN LATERAL (
+		    SELECT CASE
+		      WHEN dc.last_seen_at IS NULL
+		        OR dc.last_seen_at < now() - interval '5 minutes'
+		        THEN 'unknown'
+		      ELSE COALESCE(dv.latest_status, 'unknown')
+		    END AS status
+		  ) eff
+		  WHERE dv.deleted_at IS NULL
+		  GROUP BY dv.customer_id
 		) d ON d.customer_id = c.id
 		LEFT JOIN (
 		  SELECT customer_id,
@@ -1189,7 +1223,7 @@ func (h *Handler) HelpdeskOverview(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var it item
 		if err := rows.Scan(&it.ID, &it.Name, &it.EntraTenantID, &it.Slug,
-			&it.DevicesTotal, &it.DevicesOnline, &it.DevicesOffline, &it.DevicesDegraded,
+			&it.DevicesTotal, &it.DevicesOnline, &it.DevicesOffline, &it.DevicesDegraded, &it.DevicesUnknown,
 			&it.AlertsOpen, &it.AlertsCritical,
 			&it.CollectorsTotal, &it.LastBridgeSeen); err != nil {
 			h.log.Error("helpdesk overview scan", "error", err)

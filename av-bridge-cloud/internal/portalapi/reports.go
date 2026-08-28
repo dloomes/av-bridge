@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/dloomes/av-bridge-cloud/internal/devicestatus"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -85,14 +86,15 @@ func (h *Handler) DeviceUptimeReport(w http.ResponseWriter, r *http.Request) {
 			  CASE WHEN COUNT(t.*) > 0
 			    THEN ROUND(100.0 * COUNT(t.*) FILTER (WHERE t.status = 'online') / COUNT(t.*), 2)
 			    ELSE NULL END AS uptime_pct,
-			  COALESCE(d.latest_status, 'unknown') AS dev_current_status,
+			  ` + devicestatus.EffectiveStatusSQL + ` AS dev_current_status,
 			  d.last_seen_at
 			FROM devices d
 			LEFT JOIN rooms r ON r.id = d.room_id
 			LEFT JOIN buildings b ON b.id = r.building_id
+			LEFT JOIN collectors c ON c.id = d.collector_id
 			LEFT JOIN telemetry t ON t.device_id = d.id AND t.ts >= (SELECT since FROM win)
 			WHERE d.deleted_at IS NULL
-			GROUP BY d.id, d.name, d.reported_id, r.name, b.name, d.latest_status, d.last_seen_at
+			GROUP BY d.id, d.name, d.reported_id, r.name, b.name, d.latest_status, d.last_seen_at, c.last_seen_at
 			ORDER BY uptime_pct ASC NULLS LAST, dev_name`, days))
 		if err != nil {
 			return err

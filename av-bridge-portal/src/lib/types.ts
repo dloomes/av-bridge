@@ -277,6 +277,7 @@ export interface FleetStatus {
   online: number;
   offline: number;
   degraded: number;
+  unknown: number;
   time: string;
 }
 

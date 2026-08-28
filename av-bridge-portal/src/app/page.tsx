@@ -7,6 +7,7 @@ import {
   AlertTriangle,
   Bell,
   Building2,
+  CircleHelp,
   CircleSlash,
   DoorOpen,
   MapPin,
@@ -267,10 +268,15 @@ export default function DashboardPage() {
             <section className="space-y-4">
               <h2 className="sr-only">Fleet summary</h2>
               {/* Row 1 — device rollup. Fleet endpoint is fast + independent
-                  of devices/collectors so this row lights up first. */}
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                  of devices/collectors so this row lights up first.
+                  "Unknown" surfaces devices whose collector is offline
+                  and whose real state we can't confirm — distinct from
+                  "Offline" (device itself reported unreachable) so the
+                  operator knows to check the collector, not the device. */}
+              <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
                 {isLoading ? (
                   <>
+                    <Skeleton className="h-[88px]" />
                     <Skeleton className="h-[88px]" />
                     <Skeleton className="h-[88px]" />
                     <Skeleton className="h-[88px]" />
@@ -304,6 +310,15 @@ export default function DashboardPage() {
                       icon={AlertTriangle}
                       tone="warning"
                       href="/devices?status=degraded"
+                    />
+                    <StatCard
+                      label="Unknown"
+                      value={fleet.data?.unknown ?? 0}
+                      icon={CircleHelp}
+                      tone={
+                        (fleet.data?.unknown ?? 0) > 0 ? "warning" : undefined
+                      }
+                      href="/devices?status=unknown"
                     />
                   </>
                 )}

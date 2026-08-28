@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dloomes/av-bridge-cloud/internal/devicestatus"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -52,12 +53,14 @@ type publicDevice struct {
 //
 // Order matters: explicit columns win over tags, tags win over
 // live-reported metrics (so a portal-authored override sticks).
-const publicDeviceBaseSelect = `
+// status uses the effective projection so a stale latest_status on an
+// offline-collector device doesn't leak out through the public API.
+var publicDeviceBaseSelect = `
 	SELECT d.id::text,
 	       COALESCE(d.name, d.reported_id, ''),
 	       COALESCE(d.type, ''),
 	       COALESCE(d.protocol, ''),
-	       COALESCE(d.latest_status, 'unknown'),
+	       ` + devicestatus.EffectiveStatusSQL + `,
 	       COALESCE(d.ip_address, ''),
 	       COALESCE(NULLIF(d.make,''), NULLIF(d.tags->>'make',''), COALESCE(d.latest_metrics->>'make','')) AS make,
 	       COALESCE(NULLIF(d.model,''), NULLIF(d.tags->>'model',''), COALESCE(d.latest_metrics->>'model','')) AS model,
@@ -72,7 +75,8 @@ const publicDeviceBaseSelect = `
 	       d.tags
 	  FROM devices d
 	  LEFT JOIN rooms r     ON r.id = d.room_id
-	  LEFT JOIN buildings b ON b.id = r.building_id`
+	  LEFT JOIN buildings b ON b.id = r.building_id
+	  LEFT JOIN collectors c ON c.id = d.collector_id`
 
 // scanDevice reads a single publicDevice off the pgx.Row. Kept as a
 // method-free helper so both single-row (QueryRow.Scan) and multi-row
@@ -132,8 +136,10 @@ func (h *Handler) ListDevices(w http.ResponseWriter, r *http.Request) {
 		sql += " AND d.room_id::text = " + next()
 	}
 	if statusFilter != "" {
+		// Filter on effective status so an integrator asking for
+		// status=online never sees a stale-on-offline-collector row.
 		args = append(args, statusFilter)
-		sql += " AND d.latest_status = " + next()
+		sql += " AND (" + devicestatus.EffectiveStatusSQL + ") = " + next()
 	}
 	// Cursor: page forward from wherever the previous response left
 	// off. Compare on (COALESCE(last_seen_at,'-infinity'), id) so nulls
@@ -270,10 +276,11 @@ func (h *Handler) GetDeviceTelemetry(w http.ResponseWriter, r *http.Request) {
 	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
 		err := tx.QueryRow(ctx, `
 			SELECT d.id::text,
-			       COALESCE(d.latest_status,'unknown'),
+			       `+devicestatus.EffectiveStatusSQL+`,
 			       d.last_seen_at,
 			       d.latest_metrics
 			  FROM devices d
+			  LEFT JOIN collectors c ON c.id = d.collector_id
 			 WHERE d.id = $1 AND d.deleted_at IS NULL`, id,
 		).Scan(&o.DeviceID, &o.Status, &o.Timestamp, &o.Metrics)
 		if errors.Is(err, pgx.ErrNoRows) {

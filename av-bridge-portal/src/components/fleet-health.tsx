@@ -5,6 +5,7 @@ import {
   AlertTriangle,
   CheckCircle2,
   ChevronRight,
+  CircleHelp,
   CircleSlash,
   ShieldAlert,
 } from "lucide-react";
@@ -35,7 +36,7 @@ interface RowMeta {
   bar: string;
 }
 
-const STATUS_META: Record<"offline" | "degraded", RowMeta> = {
+const STATUS_META: Record<"offline" | "degraded" | "unknown", RowMeta> = {
   offline: {
     label: "Offline",
     icon: CircleSlash,
@@ -50,12 +51,26 @@ const STATUS_META: Record<"offline" | "degraded", RowMeta> = {
     border: "border-warning/25",
     bar: "border-l-warning",
   },
+  // Unknown ≡ collector offline — real device state is not visible to us
+  // right now. Muted styling: attention-worthy but not the same alarm
+  // level as a device the bridge actively reported as down.
+  unknown: {
+    label: "Unknown",
+    icon: CircleHelp,
+    color: "text-muted-foreground",
+    border: "border-muted-foreground/25",
+    bar: "border-l-muted-foreground/60",
+  },
 };
 
 export function FleetHealth({ devices, loading }: Props) {
+  // Attention order: real reported failures first (offline, degraded),
+  // then can't-see-them (unknown) so operators triage what they can act
+  // on directly before chasing collector issues.
   const offline = (devices ?? []).filter((d) => d.status === "offline");
   const degraded = (devices ?? []).filter((d) => d.status === "degraded");
-  const problems = [...offline, ...degraded];
+  const unknown = (devices ?? []).filter((d) => d.status === "unknown");
+  const problems = [...offline, ...degraded, ...unknown];
   const attentionCount = problems.length;
 
   return (
@@ -126,7 +141,10 @@ function AllHealthy() {
 // ── Row ────────────────────────────────────────────────────────────────────
 
 function FleetHealthRow({ device }: { device: DeviceSummary }) {
-  const status = device.status === "offline" ? "offline" : "degraded";
+  const status =
+    device.status === "offline" || device.status === "degraded" || device.status === "unknown"
+      ? device.status
+      : "degraded";
   const meta = STATUS_META[status];
   const Icon = meta.icon;
   const locationParts = [device.building, device.location_name].filter(Boolean);

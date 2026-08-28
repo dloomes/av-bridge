@@ -180,16 +180,17 @@ export default function DevicesPage() {
   }, [data, search, statusFilter, typeFilter, buildingFilter, roomFilter]);
 
   const counts = useMemo(() => {
-    if (!data) return { total: 0, online: 0, offline: 0, degraded: 0 };
+    if (!data) return { total: 0, online: 0, offline: 0, degraded: 0, unknown: 0 };
     return data.reduce(
       (acc, d) => {
         acc.total += 1;
         if (d.status === "online") acc.online += 1;
         else if (d.status === "offline") acc.offline += 1;
         else if (d.status === "degraded") acc.degraded += 1;
+        else if (d.status === "unknown") acc.unknown += 1;
         return acc;
       },
-      { total: 0, online: 0, offline: 0, degraded: 0 }
+      { total: 0, online: 0, offline: 0, degraded: 0, unknown: 0 }
     );
   }, [data]);
 
@@ -211,6 +212,7 @@ export default function DevicesPage() {
               <p className="text-sm text-muted-foreground leading-tight">
                 {counts.total} total · {counts.online} online · {counts.offline} offline
                 {counts.degraded > 0 && ` · ${counts.degraded} degraded`}
+                {counts.unknown > 0 && ` · ${counts.unknown} unknown`}
               </p>
             </div>
           </div>
