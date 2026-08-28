@@ -14,6 +14,7 @@
     { "name": "Meta", "description": "Health and identity of the calling token." },
     { "name": "Devices", "description": "AV endpoints under management — displays, cameras, DSPs, control processors." },
     { "name": "Hierarchy", "description": "Physical structure: buildings and rooms." },
+    { "name": "Assets", "description": "The CMDB inventory — every physical thing the tenant owns, monitored or not. Broader than Devices: includes mounts, cables, spares, retired gear." },
     { "name": "Alerts", "description": "Open + historical incidents raised on devices and collectors." },
     { "name": "Events", "description": "Device-emitted events — state changes, adapter messages, telemetry deltas." }
   ],
@@ -176,6 +177,59 @@
         }
       }
     },
+    "/pub/v1/assets": {
+      "get": {
+        "tags": ["Assets"],
+        "summary": "List assets",
+        "description": "Every asset in the tenant's CMDB. Broader than /devices — an asset may or may not be monitored. Use the `monitored` filter to slice one way or the other; combined with the `device_id` field on each row, an integrator can sync inventory into a CMDB and cross-reference the live device state without a second call.",
+        "parameters": [
+          { "$ref": "#/components/parameters/BuildingID" },
+          { "$ref": "#/components/parameters/RoomID" },
+          { "name": "category", "in": "query", "description": "Exact match (display, camera, audio, mount, cable, remote, …).", "schema": { "type": "string" } },
+          { "name": "status", "in": "query", "description": "Exact match.", "schema": { "type": "string", "enum": ["in_service", "in_storage", "retired", "in_repair"] } },
+          { "name": "monitored", "in": "query", "description": "true → only assets linked to a monitored device row; false → only unmonitored inventory. Omit to see everything.", "schema": { "type": "string", "enum": ["true", "false"] } },
+          { "$ref": "#/components/parameters/Limit" },
+          { "$ref": "#/components/parameters/Cursor" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Page of assets.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    { "$ref": "#/components/schemas/Page" },
+                    { "type": "object", "properties": { "data": { "type": "array", "items": { "$ref": "#/components/schemas/Asset" } } } }
+                  ]
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+    "/pub/v1/assets/{id}": {
+      "get": {
+        "tags": ["Assets"],
+        "summary": "Get one asset",
+        "description": "Single asset by id. Same shape as the list entry — no additional fields on the detail view.",
+        "parameters": [
+          { "$ref": "#/components/parameters/AssetID" }
+        ],
+        "responses": {
+          "200": {
+            "description": "The asset.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Asset" } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
     "/pub/v1/alerts": {
       "get": {
         "tags": ["Alerts"],
@@ -283,6 +337,13 @@
         "in": "path",
         "required": true,
         "description": "Device id (UUID).",
+        "schema": { "type": "string", "format": "uuid" }
+      },
+      "AssetID": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "description": "Asset id (UUID).",
         "schema": { "type": "string", "format": "uuid" }
       }
     },
@@ -424,6 +485,31 @@
           "name": { "type": "string" },
           "building_id": { "type": "string", "format": "uuid" },
           "building": { "type": "string" }
+        }
+      },
+      "Asset": {
+        "type": "object",
+        "required": ["id", "name", "category", "status", "monitored"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "name": { "type": "string" },
+          "category": { "type": "string", "description": "Free-text with an application-layer allowlist (display, camera, audio, conferencing, control_panel, touch_panel, cable, mount, rack, remote, microphone, speaker, projector, screen, computer, furniture, storage, other)." },
+          "status": { "type": "string", "enum": ["in_service", "in_storage", "retired", "in_repair"] },
+          "asset_tag": { "type": "string", "description": "Customer-assigned inventory tag (e.g. `AV-042`)." },
+          "manufacturer": { "type": "string" },
+          "model": { "type": "string" },
+          "serial_number": { "type": "string" },
+          "purchase_date": { "type": "string", "description": "ISO date, `YYYY-MM-DD`." },
+          "warranty_end_date": { "type": "string", "description": "ISO date, `YYYY-MM-DD`." },
+          "notes": { "type": "string" },
+          "room_id": { "type": "string", "format": "uuid", "description": "Absent when the asset is unplaced (in-storage / decommissioned)." },
+          "room": { "type": "string" },
+          "building_id": { "type": "string", "format": "uuid" },
+          "building": { "type": "string" },
+          "monitored": { "type": "boolean", "description": "True when a monitored device row is linked to this asset. See `device_id` for the pairing." },
+          "device_id": { "type": "string", "format": "uuid", "description": "The paired device id when `monitored` is true — use it against /pub/v1/devices/{id} for live telemetry." },
+          "created_at": { "type": "string", "format": "date-time" },
+          "updated_at": { "type": "string", "format": "date-time" }
         }
       },
       "Alert": {

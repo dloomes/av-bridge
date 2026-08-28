@@ -132,7 +132,7 @@ type createAPITokenResp struct {
 // changes independently of the tenant-side RBAC.
 var v1PublicAPIAllowedScopes = map[string]struct{}{
 	portalauth.PermViewDashboard:     {},
-	portalauth.PermViewAssets:        {},
+	portalauth.PermViewAssets:        {}, // gates /pub/v1/assets + /pub/v1/assets/{id}
 	portalauth.PermViewFirmware:      {},
 	portalauth.PermViewNotifications: {},
 	portalauth.PermViewAudit:         {},

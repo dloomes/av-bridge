@@ -473,6 +473,8 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 			"/pub/v1/devices/{id}/events",
 			"/pub/v1/buildings",
 			"/pub/v1/rooms",
+			"/pub/v1/assets",
+			"/pub/v1/assets/{id}",
 			"/pub/v1/alerts",
 			"/pub/v1/events",
 		} {
@@ -494,6 +496,17 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 			pubWrapScope(portalauth.PermViewDashboard, pubAPI.Handler.ListBuildings))
 		mux.Handle("GET /pub/v1/rooms",
 			pubWrapScope(portalauth.PermViewDashboard, pubAPI.Handler.ListRooms))
+
+		// Assets — CMDB list + detail. Distinct from devices: an asset row
+		// can exist without a monitored device (mount, cable, spare
+		// remote), so this is what integrators sync into their inventory
+		// system. Gated on view.assets — separate from view.dashboard so
+		// a customer can mint a read-CMDB-only token without exposing
+		// device telemetry.
+		mux.Handle("GET /pub/v1/assets",
+			pubWrapScope(portalauth.PermViewAssets, pubAPI.Handler.ListAssets))
+		mux.Handle("GET /pub/v1/assets/{id}",
+			pubWrapScope(portalauth.PermViewAssets, pubAPI.Handler.GetAsset))
 
 		// Cross-cutting reads.
 		mux.Handle("GET /pub/v1/alerts",

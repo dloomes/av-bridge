@@ -34,6 +34,8 @@ func TestOpenAPISpecShape(t *testing.T) {
 		"/pub/v1/devices/{id}/events",
 		"/pub/v1/buildings",
 		"/pub/v1/rooms",
+		"/pub/v1/assets",
+		"/pub/v1/assets/{id}",
 		"/pub/v1/alerts",
 		"/pub/v1/events",
 	}
