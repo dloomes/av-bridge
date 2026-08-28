@@ -12,7 +12,21 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/dloomes/av-bridge-cloud/internal/db"
 	"github.com/jackc/pgx/v5"
+)
+
+// Postgres LISTEN/NOTIFY channels used to wake long-polling waiters instead
+// of polling the DB on a tick. Both are pub/sub broadcast channels so any
+// listening cloud task wakes; SKIP LOCKED on the follow-up claim ensures
+// only one bridge poll wins any given row.
+//
+//	ChannelPending — payload = collector_id. Emitted from Submit and from
+//	                 the sweeper's requeue step.
+//	ChannelDone    — payload = command_id. Emitted from Complete.
+const (
+	ChannelPending = "cmd_pending"
+	ChannelDone    = "cmd_done"
 )
 
 // Status values mirror the CHECK constraint in 0003_commands.sql.
@@ -68,7 +82,19 @@ func Submit(ctx context.Context, tx pgx.Tx, customerID, deviceID, name string, a
 		RETURNING id::text`,
 		customerID, collectorID, deviceID, name, argsParam, submittedBy,
 	).Scan(&id)
-	return id, err
+	if err != nil {
+		return "", err
+	}
+	// NOTIFY inside the same tx — Postgres holds the notify until COMMIT,
+	// so a listener only wakes for rows a subsequent SELECT can actually
+	// see. pg_notify() takes params (raw NOTIFY doesn't). Failure here is
+	// non-fatal: the row is committed either way and the sweeper +
+	// fallback poll pace would still deliver the command; but we surface
+	// the error so a mis-configured pool doesn't silently degrade.
+	if _, err := tx.Exec(ctx, `SELECT pg_notify($1, $2)`, ChannelPending, collectorID); err != nil {
+		return "", fmt.Errorf("notify %s: %w", ChannelPending, err)
+	}
+	return id, nil
 }
 
 // Get returns one command by id (tenant-scoped via RLS). Returns pgx.ErrNoRows
@@ -112,6 +138,89 @@ func WaitForTerminal(ctx context.Context, get func(context.Context) (Command, er
 		case <-ctx.Done():
 			return last, ctx.Err()
 		case <-time.After(200 * time.Millisecond):
+		}
+	}
+}
+
+// WaitForTerminalNotified is the LISTEN/NOTIFY version of WaitForTerminal.
+// The caller opens a Listener on ChannelDone BEFORE the initial get() — that
+// order closes the missed-signal window between the first DB check and the
+// wait. Behaviour on timeout matches WaitForTerminal: return the last-seen
+// command (not an error) so callers can respond 202.
+//
+// Payload filter: cmd_done carries the completed command's id; a payload
+// that doesn't match commandID is another tenant's completion and we loop
+// back to waiting. A single Listener could theoretically be shared across
+// many waiters if we wanted to (one conn per cloud task instead of one
+// per request), but the code is simpler with one Listener per waiter and
+// the pool budget covers it at current scale.
+func WaitForTerminalNotified(ctx context.Context, l *db.Listener, get func(context.Context) (Command, error), commandID string, timeout time.Duration) (Command, error) {
+	waitCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	// Initial check — after LISTEN is already open, so a NOTIFY that
+	// fires between here and Wait() is buffered by pgx and returned by
+	// the next Wait call.
+	c, err := get(waitCtx)
+	if err != nil {
+		return c, err
+	}
+	if c.Status.Terminal() {
+		return c, nil
+	}
+
+	for {
+		payload, werr := l.Wait(waitCtx)
+		if werr != nil {
+			// Distinguish our internal timeout from an outer cancel or a
+			// listener-side failure. On internal timeout return the last
+			// seen state (no error) so the caller responds 202.
+			if waitCtx.Err() != nil && ctx.Err() == nil {
+				return c, nil
+			}
+			if ctx.Err() != nil {
+				return c, ctx.Err()
+			}
+			return c, werr
+		}
+		if payload != commandID {
+			// Someone else's completion — keep waiting.
+			continue
+		}
+		// Our command finished; re-fetch to pick up the result blob.
+		c2, err := get(ctx)
+		if err != nil {
+			return c2, err
+		}
+		return c2, nil
+	}
+}
+
+// WaitForPending is the bridge-side counterpart: blocks up to maxHold for
+// a cmd_pending NOTIFY whose payload matches collectorID. Returns nil when
+// either a matching NOTIFY arrives or the internal deadline passes — the
+// caller then re-runs ClaimPending. A non-matching payload (another
+// collector's row) is ignored and we keep waiting. The listener MUST have
+// been opened BEFORE the caller's most-recent ClaimPending so no signal
+// is missed between "empty claim" and "start waiting".
+func WaitForPending(ctx context.Context, l *db.Listener, collectorID string, maxHold time.Duration) error {
+	waitCtx, cancel := context.WithTimeout(ctx, maxHold)
+	defer cancel()
+	for {
+		payload, err := l.Wait(waitCtx)
+		if err != nil {
+			// Internal timeout is expected and non-error; outer ctx cancel
+			// is the caller's problem to surface.
+			if waitCtx.Err() != nil && ctx.Err() == nil {
+				return nil
+			}
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return err
+		}
+		if payload == collectorID {
+			return nil
 		}
 	}
 }
@@ -184,6 +293,11 @@ func Complete(ctx context.Context, tx pgx.Tx, commandID, collectorID string, res
 	}
 	if tag.RowsAffected() == 0 {
 		return errors.New("command not in_progress for this collector (already completed, stolen, or not yours)")
+	}
+	// Wake any submitAndWait / nightly executor blocked on this command.
+	// Same tx as the UPDATE so the notification only fires after commit.
+	if _, err := tx.Exec(ctx, `SELECT pg_notify($1, $2)`, ChannelDone, commandID); err != nil {
+		return fmt.Errorf("notify %s: %w", ChannelDone, err)
 	}
 	return nil
 }

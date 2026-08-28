@@ -54,9 +54,17 @@ type CloudConfig struct {
 	// cloud DB. When empty, outbound HMAC signing is skipped and the command
 	// poller is disabled.
 	HMACSecret string `yaml:"hmac_secret"`
-	// CommandPollInterval is how often the bridge polls the cloud for pending
-	// commands. Defaults to 5s.
+	// CommandPollInterval is the backoff delay after a poll error before
+	// re-attempting. With server-side long-poll (LISTEN cmd_pending), a
+	// healthy poll blocks up to ~25s server-side then returns — no
+	// client-side pacing is needed. This value only paces reconnects
+	// after transport failures. Defaults to 1s.
 	CommandPollInterval time.Duration `yaml:"command_poll_interval"`
+	// CommandLongPollTimeout is the HTTP client timeout for /bridge/poll.
+	// Must be greater than the server's max hold (see cloud
+	// BRIDGE_POLL_MAX_HOLD, default 25s) so the client never times out
+	// on a healthy hold. Defaults to 35s.
+	CommandLongPollTimeout time.Duration `yaml:"command_long_poll_timeout"`
 	// CommandMaxBatch caps how many commands the bridge claims per poll.
 	// Defaults to 10.
 	CommandMaxBatch int `yaml:"command_max_batch"`
@@ -157,7 +165,10 @@ func applyDefaults(cfg *Config) {
 		cfg.Cloud.RetryDelay = 5 * time.Second
 	}
 	if cfg.Cloud.CommandPollInterval == 0 {
-		cfg.Cloud.CommandPollInterval = 5 * time.Second
+		cfg.Cloud.CommandPollInterval = 1 * time.Second
+	}
+	if cfg.Cloud.CommandLongPollTimeout == 0 {
+		cfg.Cloud.CommandLongPollTimeout = 35 * time.Second
 	}
 	if cfg.Cloud.CommandMaxBatch == 0 {
 		cfg.Cloud.CommandMaxBatch = 10

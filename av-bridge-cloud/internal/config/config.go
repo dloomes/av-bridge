@@ -53,6 +53,13 @@ type Config struct {
 	CommandMaxClaims     int
 	CommandSweepInterval time.Duration
 
+	// BridgePollMaxHold is how long /bridge/poll blocks waiting for a
+	// cmd_pending NOTIFY before returning an empty response. Long-poll
+	// with LISTEN cmd_pending replaces the bridge's old 5-second ticker;
+	// this value is the upper bound on wasted latency for a fresh command
+	// arriving mid-hold (bounded by the ALB idle timeout, default 60s).
+	BridgePollMaxHold time.Duration
+
 	// Session cleanup — deletes user_sessions rows that have been
 	// non-functional (expired or revoked) for longer than the retention
 	// window. Cheap DELETE on an indexed column; hourly by default is
@@ -171,6 +178,13 @@ func FromEnv() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	// 25s hold sits comfortably under the AWS ALB default 60s idle
+	// timeout — a healthy long-poll never trips it. Override for
+	// non-ALB deployments or aggressive local reload cadences.
+	bridgePollMaxHold, err := getenvDuration("BRIDGE_POLL_MAX_HOLD", 25*time.Second)
+	if err != nil {
+		return Config{}, err
+	}
 	sessionCleanupInterval, err := getenvDuration("SESSION_CLEANUP_INTERVAL", 1*time.Hour)
 	if err != nil {
 		return Config{}, err
@@ -237,6 +251,7 @@ func FromEnv() (Config, error) {
 		CommandStaleAfter:       staleAfter,
 		CommandMaxClaims:        maxClaims,
 		CommandSweepInterval:    sweepInterval,
+		BridgePollMaxHold:       bridgePollMaxHold,
 		SessionCleanupInterval:  sessionCleanupInterval,
 		SessionCleanupRetention: sessionCleanupRetention,
 		CollectorHealthInterval:     collectorHealthInterval,

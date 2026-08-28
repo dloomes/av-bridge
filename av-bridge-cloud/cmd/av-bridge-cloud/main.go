@@ -253,7 +253,7 @@ func main() {
 		log.Warn("POC_PORTAL_TOKEN not set — portal read API disabled")
 	}
 
-	bridgeCmds := commands.NewBridgeHandler(store, cipher, log)
+	bridgeCmds := commands.NewBridgeHandler(store, cipher, cfg.BridgePollMaxHold, log)
 	bridgeRoutes := api.BridgeCommandRoutes{
 		Poll:   bridgeCmds.Poll,
 		Result: bridgeCmds.PostResult,

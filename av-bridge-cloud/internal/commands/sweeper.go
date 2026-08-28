@@ -77,19 +77,50 @@ func (s *Sweeper) Sweep(ctx context.Context) {
 			"count", n, "max_claims", s.maxClaims)
 	}
 
-	requeued, err := s.pool.Exec(ctx, `
+	// RETURNING collector_id so we can NOTIFY per-collector once the
+	// implicit tx commits. Without this, a requeued row would sit until
+	// the next unrelated cmd_pending wake or the bridge's fallback
+	// re-poll — reintroducing the very latency the long-poll removes.
+	rows, err := s.pool.Query(ctx, `
 		UPDATE commands
 		   SET status = 'pending',
 		       claimed_at = NULL
 		 WHERE status = 'in_progress'
 		   AND claimed_at < now() - make_interval(secs => $1)
-		   AND claim_count < $2`,
+		   AND claim_count < $2
+		RETURNING collector_id::text`,
 		staleSecs, s.maxClaims)
 	if err != nil {
 		s.log.Warn("sweeper requeue-step error", "error", err)
 		return
 	}
-	if n := requeued.RowsAffected(); n > 0 {
-		s.log.Info("sweeper requeued stale in-progress commands", "count", n)
+	rowCount := 0
+	collectors := make(map[string]struct{})
+	for rows.Next() {
+		var cid string
+		if err := rows.Scan(&cid); err != nil {
+			rows.Close()
+			s.log.Warn("sweeper requeue scan error", "error", err)
+			return
+		}
+		collectors[cid] = struct{}{}
+		rowCount++
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		s.log.Warn("sweeper requeue iterate error", "error", err)
+		return
+	}
+	if rowCount > 0 {
+		// One NOTIFY per affected collector — dedupes duplicate wake-ups
+		// when a sweep requeues multiple rows for the same bridge.
+		// Failure to notify is warn-only: the sweep already committed,
+		// and the bridge's fallback pace still picks them up eventually.
+		for cid := range collectors {
+			if _, err := s.pool.Exec(ctx, `SELECT pg_notify($1, $2)`, ChannelPending, cid); err != nil {
+				s.log.Warn("sweeper notify error", "collector", cid, "error", err)
+			}
+		}
+		s.log.Info("sweeper requeued stale in-progress commands", "count", rowCount)
 	}
 }

@@ -40,6 +40,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/dloomes/av-bridge-cloud/internal/commands"
+	"github.com/dloomes/av-bridge-cloud/internal/db"
 )
 
 // Default per-device command timeout for routine steps that don't
@@ -738,9 +739,11 @@ func (e *Executor) dispatchOne(
 	}
 	base["command_id"] = commandID
 
-	// Wait — commands.WaitForTerminal polls a fresh short tx each tick
-	// so we don't hold a DB connection across the wait window.
-	cmd, err := commands.WaitForTerminal(ctx, func(ctx context.Context) (commands.Command, error) {
+	// Wait — prefer LISTEN cmd_done + one-shot re-fetch. On listener open
+	// failure fall back to the polling wait so a degraded DB (e.g. pool
+	// starvation) still lets the routine complete; the pace is slower but
+	// correctness is unchanged.
+	getter := func(ctx context.Context) (commands.Command, error) {
 		var out commands.Command
 		txErr := pgx.BeginFunc(ctx, e.pool, func(tx pgx.Tx) error {
 			c, err := commands.Get(ctx, tx, commandID)
@@ -751,7 +754,20 @@ func (e *Executor) dispatchOne(
 			return nil
 		})
 		return out, txErr
-	}, timeout)
+	}
+	var (
+		cmd commands.Command
+		err error
+	)
+	listener, listenErr := db.Listen(ctx, e.pool, commands.ChannelDone)
+	if listenErr != nil {
+		e.log.Warn("nightly cmd_done listen failed, falling back to poll",
+			"run", run.RunID, "command_id", commandID, "error", listenErr)
+		cmd, err = commands.WaitForTerminal(ctx, getter, timeout)
+	} else {
+		cmd, err = commands.WaitForTerminalNotified(ctx, listener, getter, commandID, timeout)
+		listener.Close()
+	}
 
 	if err != nil {
 		base["status"] = string(commands.StatusFailed)

@@ -167,8 +167,25 @@ func (h *Handler) GetCommand(w http.ResponseWriter, r *http.Request) {
 
 // submitAndWait is the shared body of SubmitCommand and SubmitReconnect:
 // insert pending row → wait up to portalCommandWait for terminal → respond.
+//
+// Wait shape: open a LISTEN cmd_done BEFORE Submit so any pg_notify the
+// Complete tx emits later is buffered by pgx and delivered to our next
+// Wait call. Falls back to a re-fetch on internal timeout — the caller
+// gets a 202 with the command_id if the device is slower than the
+// portalCommandWait budget.
 func (h *Handler) submitAndWait(w http.ResponseWriter, r *http.Request, deviceID, name string, args []byte) {
 	p, _ := portalauth.From(r.Context())
+
+	// Listener MUST be opened before Submit so the between-write-and-wait
+	// window doesn't drop a signal. Degrade gracefully on LISTEN failure:
+	// still submit; caller receives 202 and can poll GET.
+	listener, listenErr := h.store.Listen(r.Context(), commands.ChannelDone)
+	if listenErr != nil {
+		h.log.Warn("open cmd_done listener failed", "error", listenErr)
+	}
+	if listener != nil {
+		defer listener.Close()
+	}
 
 	var cmdID string
 	notFound := false
@@ -205,8 +222,9 @@ func (h *Handler) submitAndWait(w http.ResponseWriter, r *http.Request, deviceID
 		return
 	}
 
-	// Each poll opens a fresh short tx so we don't hold a connection across the wait.
-	final, err := commands.WaitForTerminal(r.Context(), func(ctx context.Context) (commands.Command, error) {
+	// Getter opens a fresh short tx per call — we never hold a data
+	// connection across the wait window (the listener has its own conn).
+	getter := func(ctx context.Context) (commands.Command, error) {
 		var c commands.Command
 		txErr := h.store.WithTenantScoped(ctx, p.CustomerID, principalScope(p), func(tx pgx.Tx) error {
 			cc, e := commands.Get(ctx, tx, cmdID)
@@ -214,7 +232,17 @@ func (h *Handler) submitAndWait(w http.ResponseWriter, r *http.Request, deviceID
 			return e
 		})
 		return c, txErr
-	}, portalCommandWait)
+	}
+
+	var (
+		final commands.Command
+		err   error
+	)
+	if listener != nil {
+		final, err = commands.WaitForTerminalNotified(r.Context(), listener, getter, cmdID, portalCommandWait)
+	} else {
+		final, err = commands.WaitForTerminal(r.Context(), getter, portalCommandWait)
+	}
 	if err != nil {
 		h.log.Error("wait-for-command failed", "command_id", cmdID, "error", err)
 		writeErr(w, http.StatusInternalServerError, "internal error")

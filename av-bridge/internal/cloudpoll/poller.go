@@ -2,6 +2,13 @@
 // outside the `cloud` package because it needs to dispatch through the hub,
 // and `hub` already imports `cloud` — putting the poller in `cloud` would
 // create an import cycle.
+//
+// Poll shape: long-poll. The cloud's /bridge/poll handler blocks up to
+// ~25s waiting for a cmd_pending NOTIFY, so the bridge just loops tight:
+// a successful poll returns immediately when work exists, or after the
+// server's hold window when there's nothing to do — no client-side
+// ticker required. CommandPollInterval only paces reconnects after
+// transport-level failures.
 package cloudpoll
 
 import (
@@ -46,33 +53,51 @@ func NewPoller(cfg config.CloudConfig, collectorID string, h *hub.Hub) *Poller {
 	transport := &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: cfg.TLSSkipVerify},
 	}
+	// HTTP client timeout must exceed the server's max hold window so a
+	// healthy long-poll never trips it — see CommandLongPollTimeout doc.
+	timeout := cfg.CommandLongPollTimeout
+	if timeout <= 0 {
+		timeout = 35 * time.Second
+	}
 	return &Poller{
 		cfg:         cfg,
 		collectorID: collectorID,
 		hub:         h,
 		baseURL:     base,
-		http:        &http.Client{Timeout: 15 * time.Second, Transport: transport},
+		http:        &http.Client{Timeout: timeout, Transport: transport},
 	}
 }
 
 // Run blocks until ctx is cancelled. No-ops if portal_api or hmac_secret are
 // unset — both are required for the bridge to authenticate against the cloud.
+//
+// Loop shape: long-poll, no client ticker. pollOnce returns immediately
+// with work when work exists, or after the server's max hold when it
+// doesn't — either way we re-poll straight away. On transport error we
+// back off by CommandPollInterval so a wedged upstream doesn't get
+// hammered.
 func (p *Poller) Run(ctx context.Context) {
 	if p.baseURL == "" || p.cfg.HMACSecret == "" {
 		slog.Warn("command poller disabled (cloud.portal_api or cloud.hmac_secret missing)")
 		return
 	}
-	ticker := time.NewTicker(p.cfg.CommandPollInterval)
-	defer ticker.Stop()
-	slog.Info("command poller started",
-		"interval", p.cfg.CommandPollInterval, "base_url", p.baseURL, "collector_id", p.collectorID)
+	slog.Info("command poller started (long-poll)",
+		"reconnect_backoff", p.cfg.CommandPollInterval,
+		"long_poll_timeout", p.cfg.CommandLongPollTimeout,
+		"base_url", p.baseURL, "collector_id", p.collectorID)
 
 	for {
-		select {
-		case <-ctx.Done():
+		if ctx.Err() != nil {
 			return
-		case <-ticker.C:
-			p.pollOnce(ctx)
+		}
+		if ok := p.pollOnce(ctx); !ok {
+			// Transport / decode failure — back off before retrying so
+			// a hard-down cloud doesn't get retried in a tight loop.
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(p.cfg.CommandPollInterval):
+			}
 		}
 	}
 }
@@ -89,30 +114,38 @@ type pollResp struct {
 	Commands []bridgeCommand `json:"commands"`
 }
 
-func (p *Poller) pollOnce(ctx context.Context) {
+// pollOnce returns true on any successful round-trip (including an empty
+// commands list after a long-hold), false on transport/decode/HTTP-error
+// failure. The caller uses the false result to trigger reconnect backoff.
+func (p *Poller) pollOnce(ctx context.Context) bool {
 	body, _ := json.Marshal(map[string]any{
 		"collector_id": p.collectorID,
 		"max":          p.cfg.CommandMaxBatch,
 	})
 	resp, err := p.signedPost(ctx, "/bridge/poll", body)
 	if err != nil {
-		slog.Warn("command poll request failed", "error", err)
-		return
+		// ctx cancels aren't a "real" error — the shutdown path handles
+		// that. Everything else is worth logging.
+		if ctx.Err() == nil {
+			slog.Warn("command poll request failed", "error", err)
+		}
+		return false
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		slog.Warn("command poll rejected", "status", resp.StatusCode, "body", string(b))
-		return
+		return false
 	}
 	var out pollResp
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		slog.Warn("command poll decode failed", "error", err)
-		return
+		return false
 	}
 	for _, c := range out.Commands {
 		p.execute(ctx, c)
 	}
+	return true
 }
 
 // execute dispatches one command through the hub and reports the result back.
