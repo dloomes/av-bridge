@@ -206,6 +206,13 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 			portalauth.Middleware(portal.Resolver,
 				portalauth.RequireVendorAdmin(http.HandlerFunc(portal.Portal.IssueVendorMagicLink))))
 
+		// Vendor-side toggle for the Business Unit feature flag on a
+		// customer. See portalapi.SetCustomerBusinessUnitsEnabled for
+		// the semantics — disable is safe (data preserved).
+		mux.Handle("POST /api/v1/admin/customers/{id}/business-units-enabled",
+			portalauth.Middleware(portal.Resolver,
+				portalauth.RequireVendorAdmin(http.HandlerFunc(portal.Portal.SetCustomerBusinessUnitsEnabled))))
+
 		// Dashboard-level reads. view.dashboard covers the shape of the
 		// portal's main pages: fleet status, device list + detail + live
 		// telemetry, event stream, alerts feed, and the physical-hierarchy
@@ -373,6 +380,16 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 		mux.Handle("DELETE /api/v1/locations/{id}", wrapPerm(portalauth.PermHierarchyCRUD, portal.Portal.DeleteLocation))
 		mux.Handle("DELETE /api/v1/buildings/{id}", wrapPerm(portalauth.PermHierarchyCRUD, portal.Portal.DeleteBuilding))
 		mux.Handle("DELETE /api/v1/rooms/{id}", wrapPerm(portalauth.PermHierarchyCRUD, portal.Portal.DeleteRoom))
+
+		// Business Unit tier — the optional top-of-hierarchy layer.
+		// List is open to any authenticated user (sidebar tree needs it);
+		// mutations gate on business_unit.crud AND the tenant flag
+		// (portalapi.CreateBusinessUnit rejects with 400 when the flag
+		// is off).
+		mux.Handle("GET /api/v1/business-units", wrapPerm(portalauth.PermViewDashboard, portal.Portal.ListBusinessUnits))
+		mux.Handle("POST /api/v1/business-units", wrapPerm(portalauth.PermBusinessUnitCRUD, portal.Portal.CreateBusinessUnit))
+		mux.Handle("PATCH /api/v1/business-units/{id}", wrapPerm(portalauth.PermBusinessUnitCRUD, portal.Portal.UpdateBusinessUnit))
+		mux.Handle("DELETE /api/v1/business-units/{id}", wrapPerm(portalauth.PermBusinessUnitCRUD, portal.Portal.DeleteBusinessUnit))
 
 		// Command channel. Split single-device, reconnect, and bulk so a
 		// role can be defined as e.g. "can reconnect but not send arbitrary

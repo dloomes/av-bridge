@@ -56,15 +56,16 @@ func (h *Handler) withTenant(w http.ResponseWriter, r *http.Request, fn func(con
 	// Vendor callers bypass physical scope by design — they act as
 	// unscoped admins inside whichever customer they're currently
 	// acting-as. Non-vendor callers honour their user's building
-	// restriction: empty slice = full tenant, non-empty = only rows
-	// hanging off those buildings (enforced by migration 0019's
-	// RESTRICTIVE RLS policies on devices/telemetry/events/alerts/
-	// commands).
+	// restriction (migration 0019) AND their business-unit restriction
+	// (migration 0043): both empty = full tenant, either non-empty =
+	// only rows hanging off those buildings / BUs.
 	scope := p.BuildingScopeIDs
+	buScope := p.BusinessUnitScopeIDs
 	if p.IsVendor {
 		scope = nil
+		buScope = nil
 	}
-	err := h.store.WithTenantScoped(r.Context(), p.CustomerID, scope, func(tx pgx.Tx) error {
+	err := h.store.WithTenantFullyScoped(r.Context(), p.CustomerID, scope, buScope, func(tx pgx.Tx) error {
 		return fn(r.Context(), tx)
 	})
 	if err != nil {
@@ -85,6 +86,17 @@ func principalScope(p portalauth.Principal) []string {
 		return nil
 	}
 	return p.BuildingScopeIDs
+}
+
+// principalBUScope is the BU-scope counterpart to principalScope —
+// nil (unscoped) for vendor callers, the user's business_unit_scope_ids
+// otherwise. Use alongside principalScope when calling
+// Store.WithTenantFullyScoped directly.
+func principalBUScope(p portalauth.Principal) []string {
+	if p.IsVendor {
+		return nil
+	}
+	return p.BusinessUnitScopeIDs
 }
 
 // stampActor fills the actor-context fields on an audit.Entry from the

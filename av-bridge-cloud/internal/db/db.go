@@ -82,6 +82,24 @@ func (s *Store) WithTenant(ctx context.Context, customerID string, fn func(pgx.T
 // building_scope_ids without validating them against the caller's tenant
 // — an escape by planting foreign UUIDs would defeat the whole point.
 func (s *Store) WithTenantScoped(ctx context.Context, customerID string, buildingScope []string, fn func(pgx.Tx) error) error {
+	return s.WithTenantFullyScoped(ctx, customerID, buildingScope, nil, fn)
+}
+
+// WithTenantFullyScoped extends WithTenantScoped with an additional
+// businessUnitScope filter. When non-empty, migration 0043's RESTRICTIVE
+// policies on regions / locations / buildings / rooms limit the caller
+// to rows whose BU is in the scope; downstream tables (devices,
+// telemetry, alerts, etc.) reach through rooms transitively via the
+// existing building_scope policies' EXISTS clauses.
+//
+// Both scopes AND together — a caller restricted to Business Unit X and
+// buildings [A, B] sees only rooms in {A, B} that also sit under BU X.
+// Either or both may be empty; empty is "unscoped at that level".
+//
+// Same escape-hatch caveat as WithTenantScoped: never pass user-
+// controlled business_unit_scope_ids without validating them against the
+// caller's tenant.
+func (s *Store) WithTenantFullyScoped(ctx context.Context, customerID string, buildingScope []string, businessUnitScope []string, fn func(pgx.Tx) error) error {
 	tx, err := s.tenant.Begin(ctx)
 	if err != nil {
 		return err
@@ -95,6 +113,9 @@ func (s *Store) WithTenantScoped(ctx context.Context, customerID string, buildin
 	// Empty string in the RLS policy short-circuits to "unscoped".
 	if _, err := tx.Exec(ctx, "SELECT set_config('app.building_scope', $1, true)", strings.Join(buildingScope, ",")); err != nil {
 		return fmt.Errorf("set building scope: %w", err)
+	}
+	if _, err := tx.Exec(ctx, "SELECT set_config('app.business_unit_scope', $1, true)", strings.Join(businessUnitScope, ",")); err != nil {
+		return fmt.Errorf("set business unit scope: %w", err)
 	}
 	if err := fn(tx); err != nil {
 		return err

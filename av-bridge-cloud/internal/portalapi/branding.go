@@ -79,6 +79,11 @@ func (h *Handler) GetBranding(w http.ResponseWriter, r *http.Request) {
 		// toggle behind "customer has Entra configured". Omitted when
 		// unset so the payload stays compact for unbranded tenants.
 		EntraTenantID string `json:"entra_tenant_id,omitempty"`
+		// business_units_enabled controls whether the portal surfaces
+		// the Business Unit tier (management page, tree column, user-
+		// scope picker). Non-omitempty — a missing field would ambiguously
+		// mean "off" or "not sent", and the portal needs to know both.
+		BusinessUnitsEnabled bool `json:"business_units_enabled"`
 	}
 	var o out
 	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
@@ -94,6 +99,7 @@ func (h *Handler) GetBranding(w http.ResponseWriter, r *http.Request) {
 			hero           []byte
 			ssoRequired    bool
 			entraTenantID  *string
+			buEnabled      bool
 		)
 		p, _ := portalauth.From(r.Context())
 		if err := tx.QueryRow(ctx, `
@@ -101,11 +107,12 @@ func (h *Handler) GetBranding(w http.ResponseWriter, r *http.Request) {
 			       sign_in_message, support_contact, sso_button_label,
 			       sign_in_hero_content_type, sign_in_hero,
 			       COALESCE(sso_required, false),
-			       entra_tenant_id
+			       entra_tenant_id,
+			       business_units_enabled
 			  FROM customers WHERE id = $1`, p.CustomerID,
 		).Scan(&displayName, &accentColor, &logoType, &logo,
 			&signInMessage, &supportContact, &ssoButtonLabel,
-			&heroType, &hero, &ssoRequired, &entraTenantID); err != nil {
+			&heroType, &hero, &ssoRequired, &entraTenantID, &buEnabled); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				// No customer row visible under RLS — treat as unbranded so
 				// the sign-in page still renders. Shouldn't happen for a
@@ -141,6 +148,7 @@ func (h *Handler) GetBranding(w http.ResponseWriter, r *http.Request) {
 		if entraTenantID != nil {
 			o.EntraTenantID = *entraTenantID
 		}
+		o.BusinessUnitsEnabled = buEnabled
 		return nil
 	})
 	if !ok {

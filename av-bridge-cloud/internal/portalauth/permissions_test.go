@@ -2,6 +2,19 @@ package portalauth
 
 import "testing"
 
+// TestPermBusinessUnitCRUD_InKnownCatalogue asserts the BU permission
+// is present in the closed catalogue. Absence would let role.crud reject
+// any custom role that referenced it, breaking custom RBAC compositions.
+func TestPermBusinessUnitCRUD_InKnownCatalogue(t *testing.T) {
+	if PermBusinessUnitCRUD != "business_unit.crud" {
+		t.Fatalf("PermBusinessUnitCRUD = %q, want %q — stable value; migrations reference the string",
+			PermBusinessUnitCRUD, "business_unit.crud")
+	}
+	if _, ok := KnownPermissions[PermBusinessUnitCRUD]; !ok {
+		t.Fatalf("PermBusinessUnitCRUD missing from KnownPermissions")
+	}
+}
+
 // TestPermNightlyDefer_InKnownCatalogue guards against removing the
 // permission constant from KnownPermissions — the role-CRUD handler
 // uses KnownPermissions as its closed-set allowlist and would reject a

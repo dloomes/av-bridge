@@ -74,11 +74,13 @@ func (l *LocalResolver) Resolve(token string) (Principal, bool) {
 	// assigned yet gets an empty array too, which is safer than granting
 	// anything by accident. building_scope_ids comes along for the ride so
 	// Store.WithTenantScoped can honour physical scope in one round-trip.
+	var buScopeIDs []string
 	err := l.pool.QueryRow(ctx, `
 		SELECT u.id::text, u.email, u.full_name, COALESCE(u.role, ''),
 		       u.customer_id::text, u.vendor_tenant_id::text, u.disabled_at,
 		       COALESCE(array_agg(DISTINCT rp.permission) FILTER (WHERE rp.permission IS NOT NULL), '{}') AS perms,
-		       COALESCE(u.building_scope_ids::text[], '{}') AS scope_ids
+		       COALESCE(u.building_scope_ids::text[], '{}') AS scope_ids,
+		       COALESCE(u.business_unit_scope_ids::text[], '{}') AS bu_scope_ids
 		  FROM user_sessions s
 		  JOIN users u ON u.id = s.user_id
 		  LEFT JOIN user_roles ur         ON ur.user_id = u.id
@@ -88,7 +90,7 @@ func (l *LocalResolver) Resolve(token string) (Principal, bool) {
 		   AND s.expires_at > now()
 		 GROUP BY u.id`,
 		HashToken(token)).
-		Scan(&userID, &email, &fullName, &role, &customerID, &vendorTenant, &disabledAt, &perms, &scopeIDs)
+		Scan(&userID, &email, &fullName, &role, &customerID, &vendorTenant, &disabledAt, &perms, &scopeIDs, &buScopeIDs)
 	if err != nil {
 		return Principal{}, false
 	}
@@ -97,11 +99,12 @@ func (l *LocalResolver) Resolve(token string) (Principal, bool) {
 	}
 
 	p := Principal{
-		UserID:           userID,
-		Email:            email,
-		Role:             role,
-		Permissions:      toPermSet(perms),
-		BuildingScopeIDs: scopeIDs,
+		UserID:               userID,
+		Email:                email,
+		Role:                 role,
+		Permissions:          toPermSet(perms),
+		BuildingScopeIDs:     scopeIDs,
+		BusinessUnitScopeIDs: buScopeIDs,
 	}
 	if fullName != nil {
 		p.Name = *fullName

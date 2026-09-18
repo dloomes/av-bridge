@@ -48,6 +48,14 @@ type Principal struct {
 	// Store.WithTenantScoped. Vendor principals ignore this — they act as
 	// unscoped admins inside whichever customer they scope to.
 	BuildingScopeIDs []string
+	// BusinessUnitScopeIDs restricts the caller to a subset of their
+	// tenant's business units. Empty = unscoped at BU level. Enforced
+	// by the RLS policies added in migration 0043 through
+	// Store.WithTenantFullyScoped. Orthogonal to BuildingScopeIDs — both
+	// AND together. Vendor principals ignore this the same way they
+	// ignore BuildingScopeIDs. Populated from users.business_unit_scope_ids
+	// only for tenants where customers.business_units_enabled is true.
+	BusinessUnitScopeIDs []string
 }
 
 // HasPermission returns true if the principal holds the given capability.

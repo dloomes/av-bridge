@@ -103,6 +103,12 @@ const (
 	PermNightlyManage = "nightly.manage"
 )
 
+// Business Units — top-of-hierarchy tier gated on customers.business_units_enabled.
+// A single CRUD permission covers the create / update / delete surface;
+// list is available to any authenticated user in the tenant (the sidebar
+// tree needs it to render). Admin-only by seed.
+const PermBusinessUnitCRUD = "business_unit.crud"
+
 // Public API tokens — programmatic access. view lets a role see the
 // token list + last-used timestamps (useful for compliance / audit
 // dashboards); manage lets an admin mint, name, and revoke tokens.
@@ -147,6 +153,7 @@ var KnownPermissions = map[string]struct{}{
 	PermNightlyView:        {},
 	PermNightlyDefer:       {},
 	PermNightlyManage:      {},
+	PermBusinessUnitCRUD:   {},
 	PermAPITokenView:       {},
 	PermAPITokenManage:     {},
 }

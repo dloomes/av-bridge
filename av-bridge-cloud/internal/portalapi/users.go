@@ -42,16 +42,17 @@ func (h *Handler) requireCustomerScope(w http.ResponseWriter, r *http.Request) (
 }
 
 type userRow struct {
-	ID               string     `json:"id"`
-	Email            string     `json:"email"`
-	FullName         string     `json:"full_name,omitempty"`
-	Role             string     `json:"role"` // legacy — derived primary role for display
-	RoleIDs          []string   `json:"role_ids"`
-	RoleNames        []string   `json:"role_names"`
-	BuildingScopeIDs []string   `json:"building_scope_ids"`
-	Disabled         bool       `json:"disabled"`
-	CreatedAt        *time.Time `json:"created_at,omitempty"`
-	LastLoginAt      *time.Time `json:"last_login_at,omitempty"`
+	ID                   string     `json:"id"`
+	Email                string     `json:"email"`
+	FullName             string     `json:"full_name,omitempty"`
+	Role                 string     `json:"role"` // legacy — derived primary role for display
+	RoleIDs              []string   `json:"role_ids"`
+	RoleNames            []string   `json:"role_names"`
+	BuildingScopeIDs     []string   `json:"building_scope_ids"`
+	BusinessUnitScopeIDs []string   `json:"business_unit_scope_ids"`
+	Disabled             bool       `json:"disabled"`
+	CreatedAt            *time.Time `json:"created_at,omitempty"`
+	LastLoginAt          *time.Time `json:"last_login_at,omitempty"`
 }
 
 // ListUsers — GET /api/v1/users
@@ -68,7 +69,8 @@ func (h *Handler) ListUsers(w http.ResponseWriter, r *http.Request) {
 		       COALESCE(u.role, ''),
 		       COALESCE(array_agg(DISTINCT r.id::text) FILTER (WHERE r.id IS NOT NULL), '{}'),
 		       COALESCE(array_agg(DISTINCT r.name)     FILTER (WHERE r.name IS NOT NULL), '{}'),
-		       COALESCE(u.building_scope_ids::text[], '{}')
+		       COALESCE(u.building_scope_ids::text[], '{}'),
+		       COALESCE(u.business_unit_scope_ids::text[], '{}')
 		  FROM users u
 		  LEFT JOIN user_roles ur ON ur.user_id = u.id
 		  LEFT JOIN roles r        ON r.id = ur.role_id
@@ -87,7 +89,8 @@ func (h *Handler) ListUsers(w http.ResponseWriter, r *http.Request) {
 		var u userRow
 		if err := rows.Scan(&u.ID, &u.Email, &u.FullName, &u.Disabled,
 			&u.CreatedAt, &u.LastLoginAt, &u.Role,
-			&u.RoleIDs, &u.RoleNames, &u.BuildingScopeIDs); err != nil {
+			&u.RoleIDs, &u.RoleNames, &u.BuildingScopeIDs,
+			&u.BusinessUnitScopeIDs); err != nil {
 			h.log.Error("list users scan", "error", err)
 			writeErr(w, http.StatusInternalServerError, "internal error")
 			return
@@ -98,11 +101,12 @@ func (h *Handler) ListUsers(w http.ResponseWriter, r *http.Request) {
 }
 
 type createUserReq struct {
-	Email            string   `json:"email"`
-	Password         string   `json:"password"`
-	FullName         string   `json:"full_name,omitempty"`
-	RoleIDs          []string `json:"role_ids"`
-	BuildingScopeIDs []string `json:"building_scope_ids,omitempty"`
+	Email                string   `json:"email"`
+	Password             string   `json:"password"`
+	FullName             string   `json:"full_name,omitempty"`
+	RoleIDs              []string `json:"role_ids"`
+	BuildingScopeIDs     []string `json:"building_scope_ids,omitempty"`
+	BusinessUnitScopeIDs []string `json:"business_unit_scope_ids,omitempty"`
 }
 
 // CreateUser — POST /api/v1/users  (needs user.create)
@@ -164,6 +168,10 @@ func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if err := h.validateBusinessUnitIDsInTenant(ctx, p.CustomerID, req.BusinessUnitScopeIDs); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	primaryRole, err := h.derivePrimaryRoleName(ctx, p.CustomerID, req.RoleIDs)
 	if err != nil {
 		h.log.Error("derive primary role", "error", err)
@@ -180,10 +188,10 @@ func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
 
 	var id string
 	if err := tx.QueryRow(ctx, `
-		INSERT INTO users (email, password_hash, full_name, role, customer_id, building_scope_ids)
-		VALUES ($1, $2, NULLIF($3,''), NULLIF($4,''), $5, NULLIF($6::uuid[], '{}'::uuid[]))
+		INSERT INTO users (email, password_hash, full_name, role, customer_id, building_scope_ids, business_unit_scope_ids)
+		VALUES ($1, $2, NULLIF($3,''), NULLIF($4,''), $5, NULLIF($6::uuid[], '{}'::uuid[]), NULLIF($7::uuid[], '{}'::uuid[]))
 		RETURNING id::text`,
-		req.Email, string(hash), req.FullName, primaryRole, p.CustomerID, req.BuildingScopeIDs).Scan(&id); err != nil {
+		req.Email, string(hash), req.FullName, primaryRole, p.CustomerID, req.BuildingScopeIDs, req.BusinessUnitScopeIDs).Scan(&id); err != nil {
 		if strings.Contains(err.Error(), "SQLSTATE 23505") {
 			writeErr(w, http.StatusConflict, "a user with that email already exists in this tenant")
 			return
@@ -208,10 +216,11 @@ func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
 			Action: "user.create",
 			TargetKind: "user", TargetID: id,
 			After: mustJSON(map[string]any{
-				"email":              req.Email,
-				"role_ids":           req.RoleIDs,
-				"building_scope_ids": req.BuildingScopeIDs,
-				"full_name":          req.FullName,
+				"email":                    req.Email,
+				"role_ids":                 req.RoleIDs,
+				"building_scope_ids":       req.BuildingScopeIDs,
+				"business_unit_scope_ids":  req.BusinessUnitScopeIDs,
+				"full_name":                req.FullName,
 			}),
 		}))
 	})
@@ -219,10 +228,11 @@ func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
 }
 
 type updateUserReq struct {
-	FullName         *string   `json:"full_name,omitempty"`
-	RoleIDs          *[]string `json:"role_ids,omitempty"`
-	BuildingScopeIDs *[]string `json:"building_scope_ids,omitempty"`
-	Disabled         *bool     `json:"disabled,omitempty"`
+	FullName             *string   `json:"full_name,omitempty"`
+	RoleIDs              *[]string `json:"role_ids,omitempty"`
+	BuildingScopeIDs     *[]string `json:"building_scope_ids,omitempty"`
+	BusinessUnitScopeIDs *[]string `json:"business_unit_scope_ids,omitempty"`
+	Disabled             *bool     `json:"disabled,omitempty"`
 }
 
 // UpdateUser — PATCH /api/v1/users/{id}  (needs user.update)
@@ -254,11 +264,13 @@ func (h *Handler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 	if err := h.store.AdminPool().QueryRow(ctx, `
 		SELECT id::text, email, COALESCE(full_name,''), COALESCE(role,''),
 		       (disabled_at IS NOT NULL),
-		       COALESCE(building_scope_ids::text[], '{}')
+		       COALESCE(building_scope_ids::text[], '{}'),
+		       COALESCE(business_unit_scope_ids::text[], '{}')
 		  FROM users
 		 WHERE id = $1 AND customer_id = $2`,
 		id, p.CustomerID).Scan(&before.ID, &before.Email, &before.FullName,
-		&before.Role, &before.Disabled, &before.BuildingScopeIDs); err != nil {
+		&before.Role, &before.Disabled, &before.BuildingScopeIDs,
+		&before.BusinessUnitScopeIDs); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeErr(w, http.StatusNotFound, "user not found")
 			return
@@ -279,11 +291,18 @@ func (h *Handler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if req.BusinessUnitScopeIDs != nil {
+		if err := h.validateBusinessUnitIDsInTenant(ctx, p.CustomerID, *req.BusinessUnitScopeIDs); err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
 
 	// Compute target state so the write is single-shot.
 	targetFullName := before.FullName
 	targetDisabled := before.Disabled
 	targetScope := before.BuildingScopeIDs
+	targetBUScope := before.BusinessUnitScopeIDs
 	targetPrimaryRole := before.Role
 	if req.FullName != nil {
 		targetFullName = *req.FullName
@@ -293,6 +312,9 @@ func (h *Handler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.BuildingScopeIDs != nil {
 		targetScope = *req.BuildingScopeIDs
+	}
+	if req.BusinessUnitScopeIDs != nil {
+		targetBUScope = *req.BusinessUnitScopeIDs
 	}
 	if req.RoleIDs != nil {
 		derived, err := h.derivePrimaryRoleName(ctx, p.CustomerID, *req.RoleIDs)
@@ -313,12 +335,13 @@ func (h *Handler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 
 	if _, err := tx.Exec(ctx, `
 		UPDATE users SET
-		  full_name          = NULLIF($3,''),
-		  role               = NULLIF($4,''),
-		  disabled_at        = CASE WHEN $5::bool THEN COALESCE(disabled_at, now()) ELSE NULL END,
-		  building_scope_ids = NULLIF($6::uuid[], '{}'::uuid[])
+		  full_name                = NULLIF($3,''),
+		  role                     = NULLIF($4,''),
+		  disabled_at              = CASE WHEN $5::bool THEN COALESCE(disabled_at, now()) ELSE NULL END,
+		  building_scope_ids       = NULLIF($6::uuid[], '{}'::uuid[]),
+		  business_unit_scope_ids  = NULLIF($7::uuid[], '{}'::uuid[])
 		WHERE id = $1 AND customer_id = $2`,
-		id, p.CustomerID, targetFullName, targetPrimaryRole, targetDisabled, targetScope); err != nil {
+		id, p.CustomerID, targetFullName, targetPrimaryRole, targetDisabled, targetScope, targetBUScope); err != nil {
 		h.log.Error("update user", "error", err)
 		writeErr(w, http.StatusInternalServerError, "internal error")
 		return
@@ -351,9 +374,10 @@ func (h *Handler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	auditPayload := map[string]any{
-		"full_name":          targetFullName,
-		"disabled":           targetDisabled,
-		"building_scope_ids": targetScope,
+		"full_name":                targetFullName,
+		"disabled":                 targetDisabled,
+		"building_scope_ids":       targetScope,
+		"business_unit_scope_ids":  targetBUScope,
 	}
 	if req.RoleIDs != nil {
 		auditPayload["role_ids"] = *req.RoleIDs
@@ -519,6 +543,36 @@ func (h *Handler) validateBuildingIDsInTenant(ctx context.Context, customerID st
 	}
 	if count != len(ids) {
 		return errors.New("one or more building_scope_ids don't belong to this tenant")
+	}
+	return nil
+}
+
+// validateBusinessUnitIDsInTenant confirms every id belongs to the caller's
+// tenant. Empty input is a no-op — unscoped at BU level is the default.
+// Also gates on the tenant flag: a caller cannot assign BU scope to a user
+// while business_units_enabled is off (the RLS policies would still work
+// but the intent is meaningless).
+func (h *Handler) validateBusinessUnitIDsInTenant(ctx context.Context, customerID string, ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	var enabled bool
+	if err := h.store.AdminPool().QueryRow(ctx,
+		`SELECT business_units_enabled FROM customers WHERE id = $1`, customerID,
+	).Scan(&enabled); err != nil {
+		return errors.New("could not validate business units")
+	}
+	if !enabled {
+		return errors.New("business units are not enabled for this tenant")
+	}
+	var count int
+	if err := h.store.AdminPool().QueryRow(ctx,
+		`SELECT count(*)::int FROM business_units WHERE customer_id = $1 AND id = ANY($2::uuid[])`,
+		customerID, ids).Scan(&count); err != nil {
+		return errors.New("could not validate business units")
+	}
+	if count != len(ids) {
+		return errors.New("one or more business_unit_scope_ids don't belong to this tenant")
 	}
 	return nil
 }

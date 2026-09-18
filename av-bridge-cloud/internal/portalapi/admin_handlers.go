@@ -25,6 +25,12 @@ import (
 
 type createRegionReq struct {
 	Name string `json:"name"`
+	// BusinessUnitID is optional. When the tenant has business_units_enabled
+	// AND a BU with this id exists in the tenant, the region is created
+	// under that BU. Otherwise it is created unassigned (visible to
+	// unscoped callers only when BUs are in play). Empty string / omission
+	// means unassigned.
+	BusinessUnitID string `json:"business_unit_id,omitempty"`
 }
 type createLocationReq struct {
 	RegionID string `json:"region_id"`
@@ -51,11 +57,33 @@ func (h *Handler) CreateRegion(w http.ResponseWriter, r *http.Request) {
 	}
 	p, _ := portalauth.From(r.Context())
 
-	var id string
+	var (
+		id                string
+		badBU             bool
+	)
 	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
+		// If a BU is specified, verify it exists in this tenant. RLS
+		// hides other tenants' rows, so a bad or foreign UUID looks like
+		// "not found" — we surface that as a 400 rather than silently
+		// creating an unassigned region.
+		var buArg any
+		if req.BusinessUnitID != "" {
+			var exists bool
+			if err := tx.QueryRow(ctx,
+				`SELECT EXISTS(SELECT 1 FROM business_units WHERE id = $1)`,
+				req.BusinessUnitID).Scan(&exists); err != nil {
+				return err
+			}
+			if !exists {
+				badBU = true
+				return nil
+			}
+			buArg = req.BusinessUnitID
+		}
 		if err := tx.QueryRow(ctx,
-			`INSERT INTO regions (customer_id, name) VALUES ($1, $2) RETURNING id::text`,
-			p.CustomerID, req.Name).Scan(&id); err != nil {
+			`INSERT INTO regions (customer_id, name, business_unit_id)
+			 VALUES ($1, $2, $3) RETURNING id::text`,
+			p.CustomerID, req.Name, buArg).Scan(&id); err != nil {
 			return err
 		}
 		after, err := audit.SnapshotByTable(ctx, tx, "regions", id)
@@ -67,6 +95,10 @@ func (h *Handler) CreateRegion(w http.ResponseWriter, r *http.Request) {
 		}))
 	})
 	if !ok {
+		return
+	}
+	if badBU {
+		writeErr(w, http.StatusBadRequest, "business_unit_id not found in this customer")
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]string{"id": id, "name": req.Name})
@@ -235,7 +267,12 @@ func (h *Handler) listSimple(w http.ResponseWriter, r *http.Request, sql string)
 }
 
 func (h *Handler) ListRegions(w http.ResponseWriter, r *http.Request) {
-	h.listSimple(w, r, `SELECT id::text, name, '' FROM regions ORDER BY name`)
+	// parent_id is the region's business_unit_id (nullable — empty when
+	// unassigned). Frontends that don't render the BU tier see it as an
+	// empty parent_id and behave exactly as before.
+	h.listSimple(w, r,
+		`SELECT id::text, name, COALESCE(business_unit_id::text, '')
+		   FROM regions ORDER BY name`)
 }
 func (h *Handler) ListLocations(w http.ResponseWriter, r *http.Request) {
 	h.listSimple(w, r, `SELECT id::text, name, region_id::text FROM locations ORDER BY name`)
@@ -371,8 +408,126 @@ func (h *Handler) updateSimpleNamed(w http.ResponseWriter, r *http.Request, tabl
 	writeJSON(w, http.StatusOK, map[string]string{"id": id, "name": *req.Name})
 }
 
+// updateRegionReq allows renaming the region and/or reassigning it to a
+// different BU. business_unit_id honours three states via json.RawMessage:
+// absent (leave alone), explicit null (clear the assignment — orphaned
+// region), value (set to that BU). Consistent with the pointer-per-field
+// pattern used elsewhere but this field needs the null-vs-absent distinction
+// that a bare *string can't provide.
+type updateRegionReq struct {
+	Name           *string         `json:"name,omitempty"`
+	BusinessUnitID json.RawMessage `json:"business_unit_id"`
+}
+
 func (h *Handler) UpdateRegion(w http.ResponseWriter, r *http.Request) {
-	h.updateSimpleNamed(w, r, "regions", "region")
+	id := r.PathValue("id")
+	if id == "" {
+		writeErr(w, http.StatusBadRequest, "region id required")
+		return
+	}
+	var req updateRegionReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if req.Name != nil && *req.Name == "" {
+		writeErr(w, http.StatusBadRequest, "name cannot be empty")
+		return
+	}
+
+	// Parse the BU three-state.
+	var (
+		buSet   bool
+		buClear bool
+		buID    string
+	)
+	if len(req.BusinessUnitID) > 0 {
+		buSet = true
+		if string(req.BusinessUnitID) == "null" {
+			buClear = true
+		} else {
+			if err := json.Unmarshal(req.BusinessUnitID, &buID); err != nil {
+				writeErr(w, http.StatusBadRequest, "business_unit_id must be a UUID string or null")
+				return
+			}
+			if buID == "" {
+				buClear = true
+			}
+		}
+	}
+
+	if req.Name == nil && !buSet {
+		writeErr(w, http.StatusBadRequest, "nothing to update")
+		return
+	}
+
+	p, _ := portalauth.From(r.Context())
+	var (
+		notFound bool
+		badBU    bool
+	)
+	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
+		before, err := audit.SnapshotByTable(ctx, tx, "regions", id)
+		if err != nil {
+			return err
+		}
+		if before == nil {
+			notFound = true
+			return nil
+		}
+		if buSet && !buClear {
+			var exists bool
+			if err := tx.QueryRow(ctx,
+				`SELECT EXISTS(SELECT 1 FROM business_units WHERE id = $1)`,
+				buID).Scan(&exists); err != nil {
+				return err
+			}
+			if !exists {
+				badBU = true
+				return nil
+			}
+		}
+		set := []string{}
+		args := []any{id}
+		add := func(col string, v any) {
+			args = append(args, v)
+			set = append(set, col+" = $"+strconv.Itoa(len(args)))
+		}
+		if req.Name != nil {
+			add("name", *req.Name)
+		}
+		if buSet {
+			if buClear {
+				add("business_unit_id", nil)
+			} else {
+				add("business_unit_id", buID)
+			}
+		}
+		sql := "UPDATE regions SET " + strings.Join(set, ", ") + " WHERE id = $1"
+		if _, err := tx.Exec(ctx, sql, args...); err != nil {
+			return err
+		}
+		after, err := audit.SnapshotByTable(ctx, tx, "regions", id)
+		if err != nil {
+			return err
+		}
+		return audit.Record(ctx, tx, p.CustomerID, stampActor(p, audit.Entry{
+			Action: "region.update", TargetKind: "region", TargetID: id,
+			Before: before, After: after,
+		}))
+	})
+	if !ok {
+		return
+	}
+	if notFound {
+		writeErr(w, http.StatusNotFound, "region not found")
+		return
+	}
+	if badBU {
+		writeErr(w, http.StatusBadRequest, "business_unit_id not found in this customer")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 func (h *Handler) UpdateLocation(w http.ResponseWriter, r *http.Request) {
 	h.updateSimpleNamed(w, r, "locations", "location")
