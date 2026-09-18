@@ -439,4 +439,38 @@ var catalogue = []Info{
   address: 192.168.80.10
   poll_rate: 60s`,
 	},
+
+	{
+		ID:          "fake",
+		Name:        "Fake device (load test)",
+		Kind:        KindProbe,
+		Description: "Synthetic device for load testing and capacity benchmarking. Does no network I/O — every poll returns generated telemetry with configurable latency, jitter, flap probability, and event rate. Use to spin up hundreds or thousands of devices against a single Collector to measure real throughput. Not intended for production fleets.",
+		DeviceTypes: []string{"display", "conferencing", "audio", "camera", "control"},
+		Power:       PowerCapability{On: false, Off: false},
+		Commands:    []string{"noop", "set_status"},
+		Metrics: []string{
+			"fake", "response_ms",
+			"metric_1", "metric_2", "metric_3", "metric_4", "metric_5",
+		},
+		ConfigSchema: []ConfigField{
+			{Name: "address", Required: false, Description: "Opaque — the fake adapter does no I/O. Any string is fine; leave blank if unused.", Example: "fake-01"},
+			{Name: "poll_rate", Required: false, Description: "How often the hub calls Poll. 30s matches real vendor adapters.", Example: "30s"},
+			{Name: "tags.fake_status", Required: false, Description: "Pinned status: online | offline | degraded | unknown. Default online.", Example: "online"},
+			{Name: "tags.fake_latency_ms", Required: false, Description: "Synthetic per-poll sleep in ms. Simulates a slow WAN link.", Example: "50"},
+			{Name: "tags.fake_jitter_ms", Required: false, Description: "Random extra sleep 0..jitter added to latency, in ms.", Example: "20"},
+			{Name: "tags.fake_flap_pct", Required: false, Description: "0..100. Chance each poll of flipping status to exercise the alert engine.", Example: "5"},
+			{Name: "tags.fake_error_pct", Required: false, Description: "0..100. Chance each poll of returning an error.", Example: "1"},
+			{Name: "tags.fake_metrics_count", Required: false, Description: "Number of synthetic metric_N fields to emit. Default 5.", Example: "20"},
+			{Name: "tags.fake_events_per_min", Required: false, Description: "Synthetic events per minute. 0 disables events.", Example: "6"},
+		},
+		ExampleConfig: `- id: fake-01
+  name: Fake Device 01
+  type: display
+  protocol: fake
+  poll_rate: 30s
+  tags:
+    fake_status: online
+    fake_latency_ms: "50"
+    fake_metrics_count: "10"`,
+	},
 }

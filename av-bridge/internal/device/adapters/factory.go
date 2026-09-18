@@ -67,8 +67,12 @@ func New(cfg config.DeviceConfig, deps Deps) (device.Device, error) {
 	case "ping":
 		// ICMP reachability probe for devices with no vendor API
 		return NewPingAdapter(cfg), nil
+	case "fake":
+		// Synthetic device for load testing / capacity benchmarking.
+		// Does no I/O — see fake.go for the tunable behaviour.
+		return NewFakeAdapter(cfg), nil
 
 	default:
-		return nil, fmt.Errorf("unsupported protocol: %q (supported: rest, websocket, telnet, serial, visca_over_ip, tesira, sony_bravia, poly_videoos, aurora_rxt, aurora_vpx, aten_pdu, ping)", cfg.Protocol)
+		return nil, fmt.Errorf("unsupported protocol: %q (supported: rest, websocket, telnet, serial, visca_over_ip, tesira, sony_bravia, poly_videoos, aurora_rxt, aurora_vpx, aten_pdu, ping, fake)", cfg.Protocol)
 	}
 }
