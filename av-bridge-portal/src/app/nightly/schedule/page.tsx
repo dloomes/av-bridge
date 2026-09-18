@@ -5,6 +5,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   CalendarOff,
+  ChevronDown,
+  ChevronRight,
   CircleSlash,
   FileCode2,
   Loader2,
@@ -367,12 +369,19 @@ export default function NightlySchedulePage() {
     if (!rooms) return [];
     const map = new Map<
       string,
-      { region: string; location: string; building: string; rows: NightlyRoomRow[] }
+      {
+        key: string;
+        region: string;
+        location: string;
+        building: string;
+        rows: NightlyRoomRow[];
+      }
     >();
     for (const r of rooms) {
       const key = `${r.region_name ?? ""}|${r.location_name ?? ""}|${r.building_id}`;
       if (!map.has(key)) {
         map.set(key, {
+          key,
           region: r.region_name ?? "",
           location: r.location_name ?? "",
           building: r.building_name,
@@ -383,6 +392,32 @@ export default function NightlySchedulePage() {
     }
     return Array.from(map.values());
   }, [rooms]);
+
+  // Per-building collapsed state — keyed by the same group key the memo
+  // above emits. Set semantics (present = collapsed, absent = expanded)
+  // means new buildings default to expanded on first load, matching the
+  // pre-collapsible behaviour. State is in-memory only; refreshing the
+  // page resets to all-expanded, which is the safe default for a long list.
+  const [collapsedBuildings, setCollapsedBuildings] = useState<Set<string>>(
+    new Set()
+  );
+  const toggleBuilding = useCallback((key: string) => {
+    setCollapsedBuildings((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
+  const collapseAll = useCallback(() => {
+    setCollapsedBuildings(new Set(roomGroups.map((g) => g.key)));
+  }, [roomGroups]);
+  const expandAll = useCallback(() => {
+    setCollapsedBuildings(new Set());
+  }, []);
+  const allCollapsed =
+    roomGroups.length > 0 &&
+    roomGroups.every((g) => collapsedBuildings.has(g.key));
 
   return (
     <div className="flex flex-col h-screen">
@@ -730,6 +765,32 @@ export default function NightlySchedulePage() {
                         (for a fit-out, refurb, or bank holiday closure).
                       </p>
                     </div>
+                    {roomGroups.length > 1 && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={allCollapsed ? expandAll : collapseAll}
+                        className="shrink-0 h-7 text-xs"
+                      >
+                        {allCollapsed ? (
+                          <>
+                            <ChevronDown
+                              aria-hidden="true"
+                              className="h-3.5 w-3.5"
+                            />
+                            Expand all
+                          </>
+                        ) : (
+                          <>
+                            <ChevronRight
+                              aria-hidden="true"
+                              className="h-3.5 w-3.5"
+                            />
+                            Collapse all
+                          </>
+                        )}
+                      </Button>
+                    )}
                   </div>
 
                   {roomsError && (
@@ -753,20 +814,77 @@ export default function NightlySchedulePage() {
 
                   {roomGroups.length > 0 && (
                     <div className="space-y-4">
-                      {roomGroups.map((g) => (
-                        <div key={`${g.region}|${g.location}|${g.building}`}>
-                          <div className="mb-1 flex items-baseline gap-1.5 text-xs text-muted-foreground">
-                            {(g.region || g.location) && (
-                              <span className="uppercase tracking-wide text-[10px]">
-                                {[g.region, g.location].filter(Boolean).join(" · ")}
-                              </span>
-                            )}
-                            <span className="font-medium text-foreground">
-                              {g.building}
-                            </span>
-                          </div>
-                          <div className="overflow-x-auto rounded-md border">
-                            <table className="w-full min-w-[560px] text-sm">
+                      {roomGroups.map((g) => {
+                        const collapsed = collapsedBuildings.has(g.key);
+                        // Room-level summary so the collapsed header still
+                        // conveys what's inside — total rooms, active
+                        // exclusions, and customised rooms. Excluded rows
+                        // are the most operationally-relevant hint.
+                        const excludedCount = g.rows.filter(
+                          (r) => r.excluded_until && isFutureDate(r.excluded_until)
+                        ).length;
+                        const customisedCount = g.rows.filter(
+                          (r) =>
+                            r.has_override &&
+                            !(r.excluded_until && isFutureDate(r.excluded_until))
+                        ).length;
+                        const groupId = `room-group-${g.key.replace(/[^a-zA-Z0-9]/g, "-")}`;
+                        return (
+                          <div key={g.key}>
+                            <button
+                              type="button"
+                              onClick={() => toggleBuilding(g.key)}
+                              aria-expanded={!collapsed}
+                              aria-controls={groupId}
+                              className="mb-1 flex w-full items-center gap-2 rounded-md px-1 py-1 text-left hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            >
+                              {collapsed ? (
+                                <ChevronRight
+                                  aria-hidden="true"
+                                  className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
+                                />
+                              ) : (
+                                <ChevronDown
+                                  aria-hidden="true"
+                                  className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
+                                />
+                              )}
+                              <div className="flex flex-1 items-baseline gap-1.5 text-xs text-muted-foreground">
+                                {(g.region || g.location) && (
+                                  <span className="uppercase tracking-wide text-[10px]">
+                                    {[g.region, g.location]
+                                      .filter(Boolean)
+                                      .join(" · ")}
+                                  </span>
+                                )}
+                                <span className="font-medium text-foreground">
+                                  {g.building}
+                                </span>
+                                <span className="text-[10px]">
+                                  · {g.rows.length}{" "}
+                                  {g.rows.length === 1 ? "room" : "rooms"}
+                                </span>
+                                {excludedCount > 0 && (
+                                  <Badge variant="warning" className="text-[10px]">
+                                    {excludedCount} excluded
+                                  </Badge>
+                                )}
+                                {customisedCount > 0 && (
+                                  <Badge
+                                    variant="secondary"
+                                    className="text-[10px]"
+                                  >
+                                    {customisedCount} customised
+                                  </Badge>
+                                )}
+                              </div>
+                            </button>
+                            {!collapsed && (
+                              <div
+                                id={groupId}
+                                className="overflow-x-auto rounded-md border"
+                              >
+                                <table className="w-full min-w-[560px] text-sm">
                               <thead>
                                 <tr className="border-b bg-muted/40 text-left text-[10px] uppercase tracking-wide text-muted-foreground">
                                   <th scope="col" className="px-3 py-2 font-medium">
@@ -941,9 +1059,11 @@ export default function NightlySchedulePage() {
                                 })}
                               </tbody>
                             </table>
+                              </div>
+                            )}
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
                 </CardContent>
