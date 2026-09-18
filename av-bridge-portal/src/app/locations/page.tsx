@@ -48,7 +48,13 @@ interface DeleteState {
 export default function LocationsPage() {
   const session = useSession();
   const admin = hasPermission(session.user, "hierarchy.crud");
-  const canManageBU = hasPermission(session.user, "business_unit.crud");
+  // Vendor admins bypass tenant RBAC on the backend; mirror that on the
+  // portal so a vendor scoped into a customer sees the manage controls
+  // even when their cached whoami hasn't picked up a newly-added
+  // permission key yet.
+  const canManageBU =
+    !!session.user?.is_vendor ||
+    hasPermission(session.user, "business_unit.crud");
   const [regions, setRegions] = useState<NamedRow[] | null>(null);
   const [locations, setLocations] = useState<NamedRow[] | null>(null);
   const [buildings, setBuildings] = useState<BuildingRow[] | null>(null);
