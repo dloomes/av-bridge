@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
+  CalendarOff,
   CircleSlash,
   FileCode2,
   Loader2,
@@ -21,12 +22,14 @@ import { useSession } from "@/hooks/useSession";
 import { api } from "@/lib/api";
 import { hasPermission } from "@/lib/session";
 import type {
+  ExclusionReason,
   NightlyRoutineRow,
   NightlyRoomRow,
   NightlySchedule,
   UpdateNightlyScheduleBody,
   UpdateRoomOverrideBody,
 } from "@/lib/api";
+import { EXCLUSION_REASON_LABELS } from "@/lib/api";
 
 // Room Readiness — customer-level schedule editor + per-room overrides.
 //
@@ -96,6 +99,9 @@ function isFutureDate(iso: string): boolean {
 export default function NightlySchedulePage() {
   const session = useSession();
   const canManage = hasPermission(session.user, "nightly.manage");
+  // nightly.defer lets operators skip tonight's power-down for a specific
+  // room without holding the full nightly.manage grant. Admins hold it too.
+  const canDefer = hasPermission(session.user, "nightly.defer") || canManage;
   const { toast } = useToast();
 
   // ── Customer default state ─────────────────────────────────────────────
@@ -296,6 +302,32 @@ export default function NightlySchedulePage() {
     // Deliberately don't clear runningRoomID on success — the router
     // push unmounts the page anyway, and clearing early would let the
     // user re-click during navigation.
+  };
+
+  // "Defer tonight" — quick action for "this room is in use tonight, skip
+  // the scheduled power-down". Calls POST /defer-tonight which sets
+  // excluded_until to today in the tenant timezone with reason 'in_use'.
+  // Available to any user holding nightly.defer (operators + admins).
+  const [deferringRoomID, setDeferringRoomID] = useState<string | null>(null);
+  const handleDeferTonight = async (row: NightlyRoomRow) => {
+    setDeferringRoomID(row.room_id);
+    try {
+      const res = await api.deferRoomTonight(row.room_id);
+      await loadRooms();
+      toast({
+        title: `"${row.room_name}" will stay on tonight`,
+        description: `Excluded until ${res.excluded_until} — reverts automatically tomorrow.`,
+        variant: "success",
+      });
+    } catch (e) {
+      toast({
+        title: "Could not defer tonight",
+        description: (e as Error).message,
+        variant: "destructive",
+      });
+    } finally {
+      setDeferringRoomID(null);
+    }
   };
 
   // Room override — reset via DELETE. Idempotent, so no confirmation prompt.
@@ -778,10 +810,28 @@ export default function NightlySchedulePage() {
                                       </td>
                                       <td className="px-3 py-2.5">
                                         {excluded ? (
-                                          <Badge variant="warning">
-                                            Excluded until{" "}
-                                            {r.excluded_until}
-                                          </Badge>
+                                          <div className="flex flex-wrap items-center gap-1.5">
+                                            <Badge variant="warning">
+                                              Excluded until {r.excluded_until}
+                                            </Badge>
+                                            {r.excluded_reason && (
+                                              <Badge
+                                                variant="outline"
+                                                title={
+                                                  r.excluded_note ??
+                                                  EXCLUSION_REASON_LABELS[
+                                                    r.excluded_reason
+                                                  ]
+                                                }
+                                              >
+                                                {
+                                                  EXCLUSION_REASON_LABELS[
+                                                    r.excluded_reason
+                                                  ]
+                                                }
+                                              </Badge>
+                                            )}
+                                          </div>
                                         ) : r.has_override ? (
                                           <Badge variant="secondary">
                                             Customised
@@ -794,6 +844,30 @@ export default function NightlySchedulePage() {
                                       </td>
                                       <td className="px-3 py-2.5">
                                         <div className="flex items-center justify-end gap-1">
+                                          {canDefer && !excluded && (
+                                            <Button
+                                              variant="ghost"
+                                              size="sm"
+                                              className="h-8"
+                                              disabled={deferringRoomID === r.room_id}
+                                              onClick={() => handleDeferTonight(r)}
+                                              aria-label={`Defer tonight's power-down for ${r.room_name}`}
+                                              title="Room in use tonight — skip the scheduled power-down (auto-reverts tomorrow)"
+                                            >
+                                              {deferringRoomID === r.room_id ? (
+                                                <Loader2
+                                                  aria-hidden="true"
+                                                  className="h-3.5 w-3.5 animate-spin"
+                                                />
+                                              ) : (
+                                                <CalendarOff
+                                                  aria-hidden="true"
+                                                  className="h-3.5 w-3.5"
+                                                />
+                                              )}
+                                              Defer tonight
+                                            </Button>
+                                          )}
                                           {canManage && (
                                             <>
                                               <Button
@@ -1005,8 +1079,18 @@ function RoomOverrideModal({
   const [excludedUntil, setExcludedUntil] = useState(
     room.excluded_until ?? ""
   );
+  const [excludedReason, setExcludedReason] = useState<ExclusionReason | "">(
+    room.excluded_reason ?? ""
+  );
+  const [excludedNote, setExcludedNote] = useState(room.excluded_note ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Data-quality guard: server-side CHECK constraint requires a reason
+  // only when a date is set (never the reverse). If the operator picks
+  // a reason but no date the API returns 400 — surface that up front.
+  const missingDateForReason =
+    excludedReason !== "" && excludedUntil.trim() === "";
 
   const toggleDay = (iso: number) => {
     setDays((prev) =>
@@ -1021,6 +1105,8 @@ function RoomOverrideModal({
   const handleSave = async () => {
     setSaving(true);
     setError(null);
+    const hasExclusion = excludedUntil.trim() !== "";
+    const trimmedNote = excludedNote.trim();
     const body: UpdateRoomOverrideBody = {
       // Explicit null = clear the override, inherit customer default. Value
       // = set the override. Every field is always in the payload so the
@@ -1028,7 +1114,14 @@ function RoomOverrideModal({
       power_off_time: customPowerOff ? powerOff : null,
       power_on_time: customPowerOn ? powerOn : null,
       days_of_week: customDays ? days : null,
-      excluded_until: excludedUntil.trim() === "" ? null : excludedUntil,
+      excluded_until: hasExclusion ? excludedUntil : null,
+      // Reason + note piggy-back the exclusion state: no date → no reason
+      // → no note. Server CHECK constraint enforces "reason implies date"
+      // but sending null explicitly here keeps the row clean.
+      excluded_reason:
+        hasExclusion && excludedReason !== "" ? excludedReason : null,
+      excluded_note:
+        hasExclusion && trimmedNote !== "" ? trimmedNote : null,
     };
     try {
       await api.updateRoomOverride(room.room_id, body);
@@ -1150,13 +1243,81 @@ function RoomOverrideModal({
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => setExcludedUntil("")}
+                onClick={() => {
+                  setExcludedUntil("");
+                  setExcludedReason("");
+                  setExcludedNote("");
+                }}
                 disabled={saving}
               >
                 Clear
               </Button>
             )}
           </div>
+          {/* Reason + note — visible only while an exclusion is set. */}
+          {excludedUntil && (
+            <div className="space-y-2 pt-1">
+              <div>
+                <label
+                  htmlFor="excluded-reason"
+                  className="mb-1 block text-xs font-medium"
+                >
+                  Reason
+                </label>
+                <select
+                  id="excluded-reason"
+                  value={excludedReason}
+                  onChange={(e) =>
+                    setExcludedReason(e.target.value as ExclusionReason | "")
+                  }
+                  disabled={saving}
+                  className="w-full rounded-md border bg-background px-3 py-2 text-sm disabled:opacity-50"
+                >
+                  <option value="">Select a reason…</option>
+                  <option value="in_use">
+                    {EXCLUSION_REASON_LABELS.in_use}
+                  </option>
+                  <option value="active_incident">
+                    {EXCLUSION_REASON_LABELS.active_incident}
+                  </option>
+                  <option value="awaiting_replacement">
+                    {EXCLUSION_REASON_LABELS.awaiting_replacement}
+                  </option>
+                  <option value="planned_maintenance">
+                    {EXCLUSION_REASON_LABELS.planned_maintenance}
+                  </option>
+                  <option value="other">
+                    {EXCLUSION_REASON_LABELS.other}
+                  </option>
+                </select>
+              </div>
+              <div>
+                <label
+                  htmlFor="excluded-note"
+                  className="mb-1 block text-xs font-medium"
+                >
+                  Note{" "}
+                  <span className="font-normal text-muted-foreground">
+                    (optional)
+                  </span>
+                </label>
+                <textarea
+                  id="excluded-note"
+                  value={excludedNote}
+                  onChange={(e) => setExcludedNote(e.target.value)}
+                  disabled={saving}
+                  rows={2}
+                  placeholder="e.g. projector swap Wednesday morning"
+                  className="w-full resize-y rounded-md border bg-background px-3 py-2 text-sm disabled:opacity-50"
+                />
+              </div>
+            </div>
+          )}
+          {missingDateForReason && (
+            <div className="text-xs [color:hsl(var(--destructive))]">
+              A reason needs a date — set an "excluded until" date above, or clear the reason.
+            </div>
+          )}
         </div>
 
         {error && (
@@ -1169,7 +1330,11 @@ function RoomOverrideModal({
           <Button variant="outline" size="sm" onClick={onClose} disabled={saving}>
             Cancel
           </Button>
-          <Button size="sm" onClick={handleSave} disabled={saving}>
+          <Button
+            size="sm"
+            onClick={handleSave}
+            disabled={saving || missingDateForReason}
+          >
             {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
             Save override
           </Button>

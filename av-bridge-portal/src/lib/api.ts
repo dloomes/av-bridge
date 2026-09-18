@@ -363,7 +363,29 @@ export interface NightlyRoomRow {
   override_power_on_time?: string;
   override_days_of_week?: number[];
   excluded_until?: string;            // YYYY-MM-DD, if excluded through a date
+  excluded_reason?: ExclusionReason;
+  excluded_note?: string;
 }
+
+// ExclusionReason mirrors the CHECK constraint on
+// room_nightly_config.excluded_reason (migration 0042). Any change here
+// must be paired with a matching change to the backend allowlist.
+export type ExclusionReason =
+  | "in_use"
+  | "active_incident"
+  | "awaiting_replacement"
+  | "planned_maintenance"
+  | "other";
+
+// Human-readable label for each reason, used everywhere we render an
+// exclusion chip or dropdown option.
+export const EXCLUSION_REASON_LABELS: Record<ExclusionReason, string> = {
+  in_use: "In use",
+  active_incident: "Active incident",
+  awaiting_replacement: "Awaiting replacement",
+  planned_maintenance: "Planned maintenance",
+  other: "Other",
+};
 
 // UpdateRoomOverrideBody — three-state fields.
 //   - undefined  → field omitted from request; server leaves stored value alone
@@ -376,7 +398,23 @@ export interface UpdateRoomOverrideBody {
   power_off_time?: string | null;
   power_on_time?: string | null;
   days_of_week?: number[] | null;
-  excluded_until?: string | null;    // YYYY-MM-DD
+  excluded_until?: string | null;              // YYYY-MM-DD
+  excluded_reason?: ExclusionReason | null;
+  excluded_note?: string | null;
+}
+
+// DeferTonightBody — optional operator-supplied note explaining why the
+// room is in use tonight. Absent body or empty string both treat the
+// note as unset.
+export interface DeferTonightBody {
+  note?: string;
+}
+
+// DeferTonightResponse — what /defer-tonight returns after success.
+export interface DeferTonightResponse {
+  room_id: string;
+  excluded_until: string;   // YYYY-MM-DD in tenant timezone
+  excluded_reason: "in_use";
 }
 
 // Nightly test routine — reusable step sequence executed after power-on.
@@ -626,6 +664,18 @@ export const api = {
     request<void>(`/api/v1/nightly/rooms/${encodeURIComponent(roomID)}`, {
       method: "DELETE",
     }),
+
+  // Quick "room in use tonight" override — sets excluded_until to today
+  // in the tenant timezone with reason "in_use". Gated on nightly.defer
+  // (operators + admins), not nightly.manage.
+  deferRoomTonight: (roomID: string, body?: DeferTonightBody) =>
+    request<DeferTonightResponse>(
+      `/api/v1/nightly/rooms/${encodeURIComponent(roomID)}/defer-tonight`,
+      {
+        method: "POST",
+        body: JSON.stringify(body ?? {}),
+      }
+    ),
 
   listNightlyRoutines: (signal?: AbortSignal) =>
     request<NightlyRoutineRow[]>("/api/v1/nightly/routines", { signal }),

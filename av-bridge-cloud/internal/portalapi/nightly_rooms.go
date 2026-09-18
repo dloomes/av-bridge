@@ -24,9 +24,12 @@ import (
 // everything.
 //
 // Endpoints:
-//   GET    /api/v1/nightly/rooms          list rooms + effective schedule
-//   PATCH  /api/v1/nightly/rooms/{id}     upsert an override
-//   DELETE /api/v1/nightly/rooms/{id}     clear the override (revert to inherit)
+//   GET    /api/v1/nightly/rooms                       list rooms + effective schedule
+//   PATCH  /api/v1/nightly/rooms/{id}                  upsert an override
+//   DELETE /api/v1/nightly/rooms/{id}                  clear the override (revert to inherit)
+//   POST   /api/v1/nightly/rooms/{id}/defer-tonight    quick "room in use tonight" override
+//                                                      — sets excluded_until = today in the
+//                                                      tenant's timezone with reason 'in_use'.
 
 // roomOverrideRow is the wire shape for the list response. Effective values
 // resolve NULL-in-override → customer default, so the portal can render a
@@ -47,6 +50,19 @@ type roomOverrideRow struct {
 	OverridePowerOn     *string `json:"override_power_on_time,omitempty"`
 	OverrideDays        *[]int  `json:"override_days_of_week,omitempty"`
 	ExcludedUntil       *string `json:"excluded_until,omitempty"` // YYYY-MM-DD
+	ExcludedReason      *string `json:"excluded_reason,omitempty"`
+	ExcludedNote        *string `json:"excluded_note,omitempty"`
+}
+
+// validExclusionReasons enumerates the allowed values for
+// room_nightly_config.excluded_reason. Kept in sync with the CHECK
+// constraint in migration 0042_room_exclusion_reason.sql.
+var validExclusionReasons = map[string]struct{}{
+	"in_use":               {},
+	"active_incident":      {},
+	"awaiting_replacement": {},
+	"planned_maintenance":  {},
+	"other":                {},
 }
 
 // ListNightlyRooms — GET /api/v1/nightly/rooms
@@ -89,7 +105,9 @@ func (h *Handler) ListNightlyRooms(w http.ResponseWriter, r *http.Request) {
 			  rnc.power_off_time,
 			  rnc.power_on_time,
 			  rnc.days_of_week,
-			  rnc.excluded_until
+			  rnc.excluded_until,
+			  rnc.excluded_reason,
+			  rnc.excluded_note
 			FROM rooms r
 			LEFT JOIN buildings b               ON b.id = r.building_id
 			LEFT JOIN locations loc             ON loc.id = b.location_id
@@ -107,13 +125,14 @@ func (h *Handler) ListNightlyRooms(w http.ResponseWriter, r *http.Request) {
 		defer rows.Close()
 		for rows.Next() {
 			var (
-				row               roomOverrideRow
-				loc, reg          *string
-				effOff, effOn     time.Time
-				effDays           []int32
-				overOff, overOn   *time.Time
-				overDays          []int32
-				excludedUntil     *time.Time
+				row                       roomOverrideRow
+				loc, reg                  *string
+				effOff, effOn             time.Time
+				effDays                   []int32
+				overOff, overOn           *time.Time
+				overDays                  []int32
+				excludedUntil             *time.Time
+				excludedReason, excNote   *string
 			)
 			if err := rows.Scan(
 				&row.RoomID, &row.RoomName,
@@ -123,9 +142,12 @@ func (h *Handler) ListNightlyRooms(w http.ResponseWriter, r *http.Request) {
 				&row.HasOverride,
 				&overOff, &overOn, &overDays,
 				&excludedUntil,
+				&excludedReason, &excNote,
 			); err != nil {
 				return err
 			}
+			row.ExcludedReason = excludedReason
+			row.ExcludedNote = excNote
 			if loc != nil {
 				row.LocationName = *loc
 			}
@@ -172,10 +194,12 @@ func (h *Handler) ListNightlyRooms(w http.ResponseWriter, r *http.Request) {
 // A *json.RawMessage collapses both absent-and-null to a nil pointer, so
 // we can't use the pointer form for this behaviour.
 type updateRoomOverrideReq struct {
-	PowerOffTime  json.RawMessage `json:"power_off_time"`
-	PowerOnTime   json.RawMessage `json:"power_on_time"`
-	DaysOfWeek    json.RawMessage `json:"days_of_week"`
-	ExcludedUntil json.RawMessage `json:"excluded_until"`
+	PowerOffTime   json.RawMessage `json:"power_off_time"`
+	PowerOnTime    json.RawMessage `json:"power_on_time"`
+	DaysOfWeek     json.RawMessage `json:"days_of_week"`
+	ExcludedUntil  json.RawMessage `json:"excluded_until"`
+	ExcludedReason json.RawMessage `json:"excluded_reason"`
+	ExcludedNote   json.RawMessage `json:"excluded_note"`
 }
 
 // UpdateRoomOverride — PATCH /api/v1/nightly/rooms/{id}
@@ -275,6 +299,45 @@ func (h *Handler) UpdateRoomOverride(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "excluded_until "+err.Error())
 		return
 	}
+	parseReason := func(raw json.RawMessage) (patch, error) {
+		if len(raw) == 0 {
+			return patch{}, nil
+		}
+		if string(raw) == "null" {
+			return patch{set: true, clear: true}, nil
+		}
+		var s string
+		if err := json.Unmarshal(raw, &s); err != nil {
+			return patch{}, errors.New("must be string or null")
+		}
+		if _, ok := validExclusionReasons[s]; !ok {
+			return patch{}, errors.New("must be one of in_use, active_incident, awaiting_replacement, planned_maintenance, other")
+		}
+		return patch{set: true, v: s}, nil
+	}
+	parseNote := func(raw json.RawMessage) (patch, error) {
+		if len(raw) == 0 {
+			return patch{}, nil
+		}
+		if string(raw) == "null" {
+			return patch{set: true, clear: true}, nil
+		}
+		var s string
+		if err := json.Unmarshal(raw, &s); err != nil {
+			return patch{}, errors.New("must be string or null")
+		}
+		return patch{set: true, v: s}, nil
+	}
+	reason, err := parseReason(req.ExcludedReason)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "excluded_reason "+err.Error())
+		return
+	}
+	note, err := parseNote(req.ExcludedNote)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "excluded_note "+err.Error())
+		return
+	}
 	// If both times end up set (either via override or would-be-clear +
 	// existing stored value), we can't check off != on here without a DB
 	// round-trip. The migration's CHECK handles same-value; we fall back
@@ -340,6 +403,12 @@ func (h *Handler) UpdateRoomOverride(w http.ResponseWriter, r *http.Request) {
 			if excluded.set && !excluded.clear {
 				addCol("excluded_until", excluded.v)
 			}
+			if reason.set && !reason.clear {
+				addCol("excluded_reason", reason.v)
+			}
+			if note.set && !note.clear {
+				addCol("excluded_note", note.v)
+			}
 			sql := fmt.Sprintf(
 				"INSERT INTO room_nightly_config (%s) VALUES (%s)",
 				strings.Join(cols, ", "),
@@ -387,6 +456,20 @@ func (h *Handler) UpdateRoomOverride(w http.ResponseWriter, r *http.Request) {
 					add("excluded_until", excluded.v)
 				}
 			}
+			if reason.set {
+				if reason.clear {
+					add("excluded_reason", nil)
+				} else {
+					add("excluded_reason", reason.v)
+				}
+			}
+			if note.set {
+				if note.clear {
+					add("excluded_note", nil)
+				} else {
+					add("excluded_note", note.v)
+				}
+			}
 			if len(set) == 0 {
 				return nil
 			}
@@ -425,6 +508,20 @@ func (h *Handler) UpdateRoomOverride(w http.ResponseWriter, r *http.Request) {
 				payload["excluded_until"] = nil
 			} else {
 				payload["excluded_until"] = excluded.v.(time.Time).Format("2006-01-02")
+			}
+		}
+		if reason.set {
+			if reason.clear {
+				payload["excluded_reason"] = nil
+			} else {
+				payload["excluded_reason"] = reason.v
+			}
+		}
+		if note.set {
+			if note.clear {
+				payload["excluded_note"] = nil
+			} else {
+				payload["excluded_note"] = note.v
 			}
 		}
 		return audit.Record(ctx, tx, p.CustomerID, stampActor(p, audit.Entry{
@@ -488,6 +585,139 @@ func (h *Handler) DeleteRoomOverride(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// deferTonightReq is the optional body for POST /defer-tonight — a short
+// operator-supplied note explaining why the room is in use. Absent body,
+// missing field, or empty string all treat the note as unset.
+type deferTonightReq struct {
+	Note string `json:"note"`
+}
+
+// DeferTonight — POST /api/v1/nightly/rooms/{id}/defer-tonight
+//
+// Short-form action for "this room is in use tonight — skip the scheduled
+// power-down". Sets excluded_until to today's date in the tenant's
+// timezone, excluded_reason to 'in_use', and excluded_note to any supplied
+// text. Schedule fields (power_off_time / power_on_time / days_of_week)
+// are left untouched, so the room continues to inherit them.
+//
+// Because excluded_until is inclusive of "today", the scheduler skips
+// tonight's power-off event; the next day's power-on is unaffected as
+// today's date is then in the past. The room therefore returns to its
+// normal schedule automatically the following day.
+//
+// Gated on nightly.defer, not nightly.manage, so operators can use this
+// without full schedule-management authority.
+func (h *Handler) DeferTonight(w http.ResponseWriter, r *http.Request) {
+	roomID := r.PathValue("id")
+	if roomID == "" {
+		writeErr(w, http.StatusBadRequest, "room id required")
+		return
+	}
+
+	var req deferTonightReq
+	// Body is optional. Ignore JSON decode error on empty body.
+	if r.ContentLength > 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid JSON")
+			return
+		}
+	}
+	note := strings.TrimSpace(req.Note)
+
+	p, _ := portalauth.From(r.Context())
+
+	var (
+		notFound   bool
+		excludedTo string // for the audit payload
+	)
+	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
+		// Room visibility check — same pattern as UpdateRoomOverride.
+		var customerID string
+		err := tx.QueryRow(ctx,
+			`SELECT customer_id::text FROM rooms WHERE id = $1`, roomID,
+		).Scan(&customerID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			notFound = true
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+
+		// Auto-provision the customer schedule row if it doesn't exist yet,
+		// so the timezone lookup below always has a value to use.
+		if _, err := loadSchedule(ctx, tx); errors.Is(err, pgx.ErrNoRows) {
+			if err := insertDefaultSchedule(ctx, tx); err != nil {
+				return err
+			}
+		} else if err != nil {
+			return err
+		}
+
+		// Upsert the exclusion — one statement, no round-trip to compute
+		// today's date in Go. The subquery resolves the tenant's timezone
+		// (guaranteed to exist after the auto-provision above).
+		//
+		// A note of "" is stored as NULL rather than the empty string, so
+		// downstream renderers can rely on IS NULL to mean "no note".
+		var noteArg any
+		if note == "" {
+			noteArg = nil
+		} else {
+			noteArg = note
+		}
+		var excludedUntil time.Time
+		err = tx.QueryRow(ctx, `
+			INSERT INTO room_nightly_config (
+			    customer_id, room_id,
+			    excluded_until, excluded_reason, excluded_note
+			)
+			VALUES (
+			    $1,
+			    $2,
+			    (now() AT TIME ZONE (SELECT timezone FROM nightly_schedule WHERE customer_id = $1))::date,
+			    'in_use',
+			    $3
+			)
+			ON CONFLICT (room_id) DO UPDATE
+			   SET excluded_until  = EXCLUDED.excluded_until,
+			       excluded_reason = EXCLUDED.excluded_reason,
+			       excluded_note   = EXCLUDED.excluded_note
+			RETURNING excluded_until
+		`, customerID, roomID, noteArg).Scan(&excludedUntil)
+		if err != nil {
+			return err
+		}
+		excludedTo = excludedUntil.Format("2006-01-02")
+
+		auditPayload := map[string]any{
+			"room_id":         roomID,
+			"excluded_until":  excludedTo,
+			"excluded_reason": "in_use",
+		}
+		if note != "" {
+			auditPayload["excluded_note"] = note
+		}
+		return audit.Record(ctx, tx, p.CustomerID, stampActor(p, audit.Entry{
+			Action:     "nightly.room.defer_tonight",
+			TargetKind: "room", TargetID: roomID,
+			After: mustJSON(auditPayload),
+		}))
+	})
+	if !ok {
+		return
+	}
+	if notFound {
+		writeErr(w, http.StatusNotFound, "room not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"room_id":         roomID,
+		"excluded_until":  excludedTo,
+		"excluded_reason": "in_use",
+	})
 }
 
 func int32sToInts(in []int32) []int {

@@ -93,9 +93,13 @@ const PermBrandingUpdate = "branding.update"
 
 // Nightly lifecycle (Room Readiness). view lets a user see schedules,
 // routines, and run history; manage lets an admin edit schedules, author
-// routines, set per-room overrides. Operators + viewers get view only.
+// routines, set long-duration per-room exclusions. defer sits between the
+// two: it lets an operator override tonight's scheduled events for a room
+// that remains in use, without granting full schedule management.
+// Operators + viewers get view; operators additionally get defer.
 const (
 	PermNightlyView   = "nightly.view"
+	PermNightlyDefer  = "nightly.defer"
 	PermNightlyManage = "nightly.manage"
 )
 
@@ -141,6 +145,7 @@ var KnownPermissions = map[string]struct{}{
 	PermViewAssets:         {},
 	PermAssetCRUD:          {},
 	PermNightlyView:        {},
+	PermNightlyDefer:       {},
 	PermNightlyManage:      {},
 	PermAPITokenView:       {},
 	PermAPITokenManage:     {},
@@ -190,6 +195,7 @@ var VendorRolePermissions = map[string]map[string]struct{}{
 		PermAlertResolve:      {},
 		PermNotificationTest:  {},
 		PermNightlyView:       {},
+		PermNightlyDefer:      {},
 	},
 	"viewer": {
 		PermViewDashboard:     {},
