@@ -405,6 +405,10 @@ export interface UserRow {
   role_ids: string[];
   role_names: string[];
   building_scope_ids: string[];
+  // business_unit_scope_ids: empty = unscoped at BU level. Only ever
+  // populated when the tenant has business_units_enabled; the backend
+  // rejects writes that set this while the flag is off.
+  business_unit_scope_ids: string[];
   disabled: boolean;
   created_at?: string;
   last_login_at?: string;
@@ -412,13 +416,15 @@ export interface UserRow {
 
 // CreateUserBody — role_ids is required and must be non-empty. Password
 // is required on create only; reset flow is separate. building_scope_ids
-// empty/omitted = unscoped (full tenant).
+// empty/omitted = unscoped (full tenant). business_unit_scope_ids has the
+// same "empty = unscoped" semantics, orthogonal to building scope.
 export interface CreateUserBody {
   email: string;
   password: string;
   full_name?: string;
   role_ids: string[];
   building_scope_ids?: string[];
+  business_unit_scope_ids?: string[];
 }
 
 // UpdateUserBody — every field optional; PATCH semantics on the cloud
@@ -429,6 +435,7 @@ export interface UpdateUserBody {
   full_name?: string;
   role_ids?: string[];
   building_scope_ids?: string[];
+  business_unit_scope_ids?: string[];
   disabled?: boolean;
 }
 

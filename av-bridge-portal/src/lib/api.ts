@@ -297,6 +297,32 @@ export interface Branding {
   // can gate the SSO-only toggle behind "customer has an Entra tenant
   // set". Present on GET /api/v1/branding.
   entra_tenant_id?: string;
+  // Vendor-toggled feature flag. When true the portal renders the
+  // Business Unit tier (management on the hierarchy page, tree column,
+  // scope picker in user admin). When false the tier is invisible even
+  // if the tenant somehow has BU rows in the database.
+  business_units_enabled?: boolean;
+}
+
+// Business Unit — optional top-of-hierarchy tier. Only usable when the
+// tenant's Branding.business_units_enabled is true. See migration 0043
+// on the backend for the schema.
+export interface BusinessUnit {
+  id: string;
+  name: string;
+  description?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateBusinessUnitBody {
+  name: string;
+  description?: string;
+}
+
+export interface UpdateBusinessUnitBody {
+  name?: string;
+  description?: string;
 }
 
 export interface UpdateBrandingBody {
@@ -979,10 +1005,19 @@ export const api = {
     return res.json();
   },
 
-  createRegion: (name: string, signal?: AbortSignal) =>
+  createRegion: (
+    name: string,
+    opts?: { business_unit_id?: string },
+    signal?: AbortSignal
+  ) =>
     request<{ id: string; name: string }>("/api/v1/regions", {
       method: "POST",
-      body: JSON.stringify({ name }),
+      body: JSON.stringify({
+        name,
+        ...(opts?.business_unit_id
+          ? { business_unit_id: opts.business_unit_id }
+          : {}),
+      }),
       signal,
     }),
 
@@ -1017,10 +1052,14 @@ export const api = {
       signal,
     }),
 
-  updateRegion: (id: string, name: string, signal?: AbortSignal) =>
+  updateRegion: (
+    id: string,
+    body: { name?: string; business_unit_id?: string | null },
+    signal?: AbortSignal
+  ) =>
     request<{ id: string; name: string }>(
       `/api/v1/regions/${encodeURIComponent(id)}`,
-      { method: "PATCH", body: JSON.stringify({ name }), signal }
+      { method: "PATCH", body: JSON.stringify(body), signal }
     ),
 
   updateLocation: (id: string, name: string, signal?: AbortSignal) =>
@@ -1051,6 +1090,36 @@ export const api = {
     request<{ id: string; name: string }>(
       `/api/v1/rooms/${encodeURIComponent(id)}`,
       { method: "PATCH", body: JSON.stringify({ name }), signal }
+    ),
+
+  // Business Unit CRUD — optional top-of-hierarchy tier. Gated backend-
+  // side on business_unit.crud AND the tenant flag; the portal only
+  // surfaces these controls when Branding.business_units_enabled is true.
+  listBusinessUnits: (signal?: AbortSignal) =>
+    request<BusinessUnit[]>("/api/v1/business-units", { signal }),
+
+  createBusinessUnit: (body: CreateBusinessUnitBody, signal?: AbortSignal) =>
+    request<{ id: string; name: string }>("/api/v1/business-units", {
+      method: "POST",
+      body: JSON.stringify(body),
+      signal,
+    }),
+
+  updateBusinessUnit: (
+    id: string,
+    body: UpdateBusinessUnitBody,
+    signal?: AbortSignal
+  ) =>
+    request<void>(`/api/v1/business-units/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+      signal,
+    }),
+
+  deleteBusinessUnit: (id: string, signal?: AbortSignal) =>
+    request<{ id: string; regions_orphaned: number }>(
+      `/api/v1/business-units/${encodeURIComponent(id)}`,
+      { method: "DELETE", signal }
     ),
 
   // Hierarchy deletes — cascade down (region → location → building → room),

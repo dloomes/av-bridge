@@ -2,10 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  Briefcase,
   Building2,
   ChevronRight,
   DoorOpen,
   Globe,
+  Loader2,
   MapPin,
   Pencil,
   Plus,
@@ -24,6 +26,7 @@ import {
 import { ConfirmDelete, type ImpactCounts } from "@/components/confirm-delete";
 import { useSession } from "@/hooks/useSession";
 import { api } from "@/lib/api";
+import type { Branding, BusinessUnit } from "@/lib/api";
 import { hasPermission } from "@/lib/session";
 import type { BuildingRow, DeviceSummary, NamedRow } from "@/lib/types";
 
@@ -45,24 +48,37 @@ interface DeleteState {
 export default function LocationsPage() {
   const session = useSession();
   const admin = hasPermission(session.user, "hierarchy.crud");
+  const canManageBU = hasPermission(session.user, "business_unit.crud");
   const [regions, setRegions] = useState<NamedRow[] | null>(null);
   const [locations, setLocations] = useState<NamedRow[] | null>(null);
   const [buildings, setBuildings] = useState<BuildingRow[] | null>(null);
   const [rooms, setRooms] = useState<NamedRow[] | null>(null);
   const [devices, setDevices] = useState<DeviceSummary[] | null>(null);
+  const [businessUnits, setBusinessUnits] = useState<BusinessUnit[] | null>(null);
+  const [buFlagOn, setBUFlagOn] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [modal, setModal] = useState<ModalState | null>(null);
+  const [buModal, setBUModal] = useState<{ mode: "create" | "edit"; unit?: BusinessUnit } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<DeleteState | null>(null);
+  const [deleteBU, setDeleteBU] = useState<BusinessUnit | null>(null);
+  const [deletingBU, setDeletingBU] = useState(false);
 
   const load = useCallback(async (signal?: AbortSignal) => {
     try {
-      const [rg, lc, bd, rm, dv] = await Promise.all([
+      // BU tier + flag come from branding (business_units_enabled) and
+      // /business-units — the endpoint returns [] when the tenant has
+      // none, so a failure to load is treated as "no BUs" rather than
+      // a hard error (keeps the page working for the 99% of tenants that
+      // never enable the feature).
+      const [rg, lc, bd, rm, dv, br, bus] = await Promise.all([
         api.listRegions(signal),
         api.listLocations(signal),
         api.listBuildings(signal),
         api.listRooms(signal),
         api.listDevices(signal),
+        api.getBranding(signal).catch(() => ({} as Branding)),
+        api.listBusinessUnits(signal).catch(() => [] as BusinessUnit[]),
       ]);
       if (signal?.aborted) return;
       setRegions(rg);
@@ -70,6 +86,8 @@ export default function LocationsPage() {
       setBuildings(bd);
       setRooms(rm);
       setDevices(dv);
+      setBUFlagOn(Boolean(br.business_units_enabled));
+      setBusinessUnits(bus);
       setLoadError(null);
     } catch (e) {
       if (!signal?.aborted) setLoadError((e as Error).message);
@@ -228,9 +246,77 @@ export default function LocationsPage() {
             initial={modal.initial}
             parentId={modal.parentId}
             parentLabel={modal.parentLabel}
+            businessUnits={buFlagOn ? businessUnits : null}
             onCancel={() => setModal(null)}
             onSuccess={handleSuccess}
           />
+        </Modal>
+      )}
+
+      {buModal && (
+        <Modal
+          open
+          onClose={() => setBUModal(null)}
+          title={`${buModal.mode === "edit" ? "Edit" : "New"} business unit`}
+          wide={false}
+        >
+          <BusinessUnitForm
+            mode={buModal.mode}
+            initial={buModal.unit}
+            onCancel={() => setBUModal(null)}
+            onSaved={async () => {
+              setBUModal(null);
+              await load();
+            }}
+          />
+        </Modal>
+      )}
+
+      {deleteBU && (
+        <Modal
+          open
+          onClose={() => (deletingBU ? undefined : setDeleteBU(null))}
+          title={`Delete business unit`}
+          wide={false}
+        >
+          <div className="space-y-3">
+            <p className="text-sm">
+              Delete <span className="font-medium">{deleteBU.name}</span>?
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Regions assigned to this business unit will be reverted to
+              unassigned. No regions, locations, buildings, rooms, or
+              devices are deleted.
+            </p>
+            <div className="flex items-center justify-end gap-2 pt-2 border-t">
+              <Button
+                variant="ghost"
+                onClick={() => setDeleteBU(null)}
+                disabled={deletingBU}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                disabled={deletingBU}
+                onClick={async () => {
+                  setDeletingBU(true);
+                  try {
+                    await api.deleteBusinessUnit(deleteBU.id);
+                    setDeleteBU(null);
+                    await load();
+                  } catch (e) {
+                    alert((e as Error).message);
+                  } finally {
+                    setDeletingBU(false);
+                  }
+                }}
+              >
+                {deletingBU && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                Delete
+              </Button>
+            </div>
+          </div>
         </Modal>
       )}
 
@@ -256,6 +342,86 @@ export default function LocationsPage() {
           <Card className="mb-4 border-destructive/30 bg-destructive/5">
             <CardContent className="p-4 text-sm [color:hsl(var(--destructive))]">
               Failed to load locations: {loadError}
+            </CardContent>
+          </Card>
+        )}
+
+        {/*
+          Business Units section — only rendered when the tenant has the
+          business_units_enabled flag on. Sits above the regions list because
+          BUs are the parent tier. Even when the flag is on, the section can
+          be empty (no BUs created yet) and shows an inline hint.
+        */}
+        {buFlagOn && (
+          <Card className="mb-4">
+            <CardContent className="p-3 space-y-2">
+              <div className="flex items-center gap-2">
+                <Briefcase className="h-4 w-4 text-muted-foreground" />
+                <span className="font-semibold">Business units</span>
+                <span className="text-[11px] text-muted-foreground/70">
+                  · {businessUnits?.length ?? 0}
+                </span>
+                <div className="ml-auto">
+                  {canManageBU && (
+                    <Button
+                      size="sm"
+                      onClick={() => setBUModal({ mode: "create" })}
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      New business unit
+                    </Button>
+                  )}
+                </div>
+              </div>
+              {businessUnits && businessUnits.length > 0 ? (
+                <div className="rounded-md border divide-y">
+                  {businessUnits.map((bu) => {
+                    const regionCount =
+                      regions?.filter((r) => r.parent_id === bu.id).length ?? 0;
+                    return (
+                      <div
+                        key={bu.id}
+                        className="flex items-center gap-2 px-3 py-2 text-sm"
+                      >
+                        <span className="font-medium">{bu.name}</span>
+                        {bu.description && (
+                          <span className="text-muted-foreground text-xs">
+                            {bu.description}
+                          </span>
+                        )}
+                        <span className="ml-auto text-[11px] text-muted-foreground/70">
+                          {regionCount} region{regionCount === 1 ? "" : "s"}
+                        </span>
+                        {canManageBU && (
+                          <>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              aria-label="Edit business unit"
+                              onClick={() => setBUModal({ mode: "edit", unit: bu })}
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              aria-label="Delete business unit"
+                              onClick={() => setDeleteBU(bu)}
+                            >
+                              <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                            </Button>
+                          </>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground italic">
+                  No business units yet. Create one to group regions by
+                  organisation, service line, or agency.
+                </p>
+              )}
             </CardContent>
           </Card>
         )}
@@ -303,7 +469,15 @@ export default function LocationsPage() {
                               setModal({
                                 kind: "region",
                                 mode: "edit",
-                                initial: { id: region.id, name: region.name },
+                                initial: {
+                                  id: region.id,
+                                  name: region.name,
+                                  // parent_id is the region's BU when
+                                  // one is assigned (backend maps it in
+                                  // the list response). Empty string ⇒
+                                  // unassigned.
+                                  business_unit_id: region.parent_id || undefined,
+                                },
                               })
                             }
                           >
@@ -621,5 +795,94 @@ export default function LocationsPage() {
         )}
       </div>
     </div>
+  );
+}
+
+
+function BusinessUnitForm({
+  mode,
+  initial,
+  onCancel,
+  onSaved,
+}: {
+  mode: "create" | "edit";
+  initial?: BusinessUnit;
+  onCancel: () => void;
+  onSaved: () => Promise<void> | void;
+}) {
+  const [name, setName] = useState(initial?.name ?? "");
+  const [description, setDescription] = useState(initial?.description ?? "");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!name.trim()) {
+      setError("Name is required.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      if (mode === "create") {
+        await api.createBusinessUnit({
+          name: name.trim(),
+          description: description.trim() || undefined,
+        });
+      } else if (initial) {
+        await api.updateBusinessUnit(initial.id, {
+          name: name.trim(),
+          description: description.trim(),
+        });
+      }
+      await onSaved();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <form onSubmit={submit} className="space-y-4">
+      {error && (
+        <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm [color:hsl(var(--destructive))]">
+          {error}
+        </div>
+      )}
+      <div>
+        <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+          Name
+        </label>
+        <input
+          className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          autoFocus
+          required
+        />
+      </div>
+      <div>
+        <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+          Description (optional)
+        </label>
+        <textarea
+          className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+          rows={2}
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          placeholder="e.g. Courts and tribunals"
+        />
+      </div>
+      <div className="flex items-center justify-end gap-2 pt-2 border-t">
+        <Button type="button" variant="ghost" onClick={onCancel} disabled={busy}>
+          Cancel
+        </Button>
+        <Button type="submit" disabled={busy}>
+          {busy && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+          {mode === "create" ? "Create" : "Save"}
+        </Button>
+      </div>
+    </form>
   );
 }

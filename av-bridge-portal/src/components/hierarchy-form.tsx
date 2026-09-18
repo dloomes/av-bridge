@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Loader2, MapPin } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
+import type { BusinessUnit } from "@/lib/api";
 import type { NamedRow } from "@/lib/types";
 
 export type HierarchyKind = "region" | "location" | "building" | "room";
@@ -11,7 +12,8 @@ export type HierarchyMode = "create" | "edit";
 
 // Initial values used in edit mode. Building entries can also carry
 // address, timezone, and optional coords; the form ignores those fields
-// for other kinds.
+// for other kinds. Region entries can also carry a business_unit_id
+// pre-selection.
 export interface HierarchyEditInitial {
   id: string;
   name: string;
@@ -19,6 +21,7 @@ export interface HierarchyEditInitial {
   timezone?: string;
   latitude?: number;
   longitude?: number;
+  business_unit_id?: string;
 }
 
 const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN ?? "";
@@ -32,6 +35,10 @@ interface HierarchyFormProps {
   // passes it pre-filled so the operator never picks the wrong parent.
   parentId?: string;
   parentLabel?: string;
+  // Optional list of Business Units for the region picker. When null /
+  // undefined the picker is hidden — used to keep the BU tier invisible
+  // for tenants where the feature flag is off.
+  businessUnits?: BusinessUnit[] | null;
   onCancel: () => void;
   onSuccess: (saved: NamedRow) => void;
 }
@@ -47,12 +54,21 @@ export function HierarchyForm({
   initial,
   parentId,
   parentLabel,
+  businessUnits,
   onCancel,
   onSuccess,
 }: HierarchyFormProps) {
   const [name, setName] = useState(initial?.name ?? "");
   const [address, setAddress] = useState(initial?.address ?? "");
   const [timezone, setTimezone] = useState(initial?.timezone ?? "");
+  // Region BU picker — always defined, but only rendered when a BU list
+  // is supplied AND kind === "region". Empty string = unassigned. Send
+  // as null on the wire in edit mode to explicitly clear the assignment.
+  const [businessUnitID, setBusinessUnitID] = useState(
+    initial?.business_unit_id ?? ""
+  );
+  const showBUPicker =
+    kind === "region" && businessUnits && businessUnits.length > 0;
   // Coords are strings in the form so the user can clear them independently
   // and so partially-typed input (e.g. a lone minus sign) doesn't fight
   // React's controlled number inputs. Parsed to floats on submit.
@@ -166,9 +182,20 @@ export function HierarchyForm({
       if (isEdit) {
         if (!initial) throw new Error("missing initial value for edit");
         switch (kind) {
-          case "region":
-            saved = await api.updateRegion(initial.id, name.trim());
+          case "region": {
+            const body: { name?: string; business_unit_id?: string | null } = {
+              name: name.trim(),
+            };
+            // Only send business_unit_id when the picker is on-screen —
+            // otherwise the tenant's flag might be off and the field
+            // would be a meaningless payload. Empty string clears; a
+            // real value sets.
+            if (showBUPicker) {
+              body.business_unit_id = businessUnitID === "" ? null : businessUnitID;
+            }
+            saved = await api.updateRegion(initial.id, body);
             break;
+          }
           case "location":
             saved = await api.updateLocation(initial.id, name.trim());
             break;
@@ -212,7 +239,12 @@ export function HierarchyForm({
       } else {
         switch (kind) {
           case "region":
-            saved = await api.createRegion(name.trim());
+            saved = await api.createRegion(
+              name.trim(),
+              showBUPicker && businessUnitID !== ""
+                ? { business_unit_id: businessUnitID }
+                : undefined
+            );
             break;
           case "location":
             saved = await api.createLocation(parentId!, name.trim());
@@ -269,6 +301,32 @@ export function HierarchyForm({
           required
         />
       </div>
+
+      {showBUPicker && (
+        <div>
+          <label className={labelClass}>Business unit (optional)</label>
+          <select
+            className={inputClass}
+            value={businessUnitID}
+            onChange={(e) => setBusinessUnitID(e.target.value)}
+            disabled={submitting}
+          >
+            <option value="">— Unassigned —</option>
+            {businessUnits!
+              .slice()
+              .sort((a, b) => a.name.localeCompare(b.name))
+              .map((bu) => (
+                <option key={bu.id} value={bu.id}>
+                  {bu.name}
+                </option>
+              ))}
+          </select>
+          <p className="mt-1 text-[11px] text-muted-foreground">
+            Assign this region to a business unit. Unassigned regions
+            remain visible to unscoped users only.
+          </p>
+        </div>
+      )}
 
       {kind === "building" && (
         <>

@@ -19,6 +19,7 @@ import { UserMenu } from "@/components/user-menu";
 import { MagicLinkModal, MagicLinkTrigger } from "@/components/magic-link-modal";
 import { useSession } from "@/hooks/useSession";
 import { api } from "@/lib/api";
+import type { Branding, BusinessUnit } from "@/lib/api";
 import { hasPermission } from "@/lib/session";
 import { formatRelative } from "@/lib/utils";
 import type {
@@ -48,6 +49,8 @@ export default function UsersPage() {
   const [users, setUsers] = useState<UserRow[] | null>(null);
   const [roles, setRoles] = useState<RoleRow[] | null>(null);
   const [buildings, setBuildings] = useState<BuildingRow[] | null>(null);
+  const [businessUnits, setBusinessUnits] = useState<BusinessUnit[]>([]);
+  const [buFlagOn, setBUFlagOn] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [editing, setEditing] = useState<{ mode: "create" | "edit"; existing?: UserRow } | null>(null);
   const [resetting, setResetting] = useState<UserRow | null>(null);
@@ -62,16 +65,22 @@ export default function UsersPage() {
   const load = useCallback(async (signal?: AbortSignal) => {
     try {
       // Fetch everything the page + form needs in parallel so the modal
-      // has its role + building lists ready as soon as it opens.
-      const [us, rs, bs] = await Promise.all([
+      // has its role + building + BU lists ready as soon as it opens.
+      // Branding gives us the business_units_enabled flag; BU list is
+      // best-effort (empty on failure keeps the page working).
+      const [us, rs, bs, br, bus] = await Promise.all([
         api.listUsers(signal),
         api.listRoles(signal),
         api.listBuildings(signal),
+        api.getBranding(signal).catch(() => ({} as Branding)),
+        api.listBusinessUnits(signal).catch(() => [] as BusinessUnit[]),
       ]);
       if (signal?.aborted) return;
       setUsers(us);
       setRoles(rs);
       setBuildings(bs);
+      setBUFlagOn(Boolean(br.business_units_enabled));
+      setBusinessUnits(bus);
       setLoadError(null);
     } catch (e) {
       if (!signal?.aborted) setLoadError((e as Error).message);
@@ -168,6 +177,7 @@ export default function UsersPage() {
               existing={editing.existing}
               roles={roles}
               buildings={buildings}
+              businessUnits={buFlagOn ? businessUnits : []}
               onCancel={() => setEditing(null)}
               onSaved={async () => {
                 setEditing(null);
@@ -362,6 +372,7 @@ function UserForm({
   existing,
   roles,
   buildings,
+  businessUnits,
   onCancel,
   onSaved,
 }: {
@@ -369,6 +380,10 @@ function UserForm({
   existing?: UserRow;
   roles: RoleRow[];
   buildings: BuildingRow[];
+  // Empty array = hide the BU scope picker entirely (either the flag is
+  // off for this tenant, or the tenant has no BUs). Non-empty = render
+  // the picker alongside the building picker.
+  businessUnits: BusinessUnit[];
   onCancel: () => void;
   onSaved: () => Promise<void> | void;
 }) {
@@ -379,6 +394,9 @@ function UserForm({
   );
   const [selectedBuildings, setSelectedBuildings] = useState<Set<string>>(
     () => new Set(existing?.building_scope_ids ?? [])
+  );
+  const [selectedBUs, setSelectedBUs] = useState<Set<string>>(
+    () => new Set(existing?.business_unit_scope_ids ?? [])
   );
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
@@ -395,6 +413,15 @@ function UserForm({
 
   const toggleBuilding = (id: string) => {
     setSelectedBuildings((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleBU = (id: string) => {
+    setSelectedBUs((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
@@ -419,6 +446,8 @@ function UserForm({
           role_ids: Array.from(selectedRoles),
           building_scope_ids:
             selectedBuildings.size > 0 ? Array.from(selectedBuildings) : undefined,
+          business_unit_scope_ids:
+            selectedBUs.size > 0 ? Array.from(selectedBUs) : undefined,
         };
         await api.createUser(body);
       } else if (existing) {
@@ -426,6 +455,7 @@ function UserForm({
           full_name: fullName.trim(),
           role_ids: Array.from(selectedRoles),
           building_scope_ids: Array.from(selectedBuildings),
+          business_unit_scope_ids: Array.from(selectedBUs),
         };
         await api.updateUser(existing.id, body);
       }
@@ -601,6 +631,45 @@ function UserForm({
           but not yet filtered in queries.
         </p>
       </div>
+
+      {businessUnits.length > 0 && (
+        <div className="space-y-1">
+          <label className="text-xs font-medium text-muted-foreground flex items-center gap-1">
+            <MapPin className="h-3 w-3" /> Business unit scope
+          </label>
+          <div className="max-h-40 overflow-y-auto rounded-md border divide-y">
+            {businessUnits.map((bu) => {
+              const on = selectedBUs.has(bu.id);
+              return (
+                <label
+                  key={bu.id}
+                  className="flex items-center gap-2 p-2 cursor-pointer hover:bg-accent/30 text-sm"
+                >
+                  <input
+                    type="checkbox"
+                    checked={on}
+                    onChange={() => toggleBU(bu.id)}
+                    disabled={busy}
+                  />
+                  <span className="flex-1 min-w-0">
+                    <span className="block truncate">{bu.name}</span>
+                    {bu.description && (
+                      <span className="block text-[11px] text-muted-foreground truncate">
+                        {bu.description}
+                      </span>
+                    )}
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            Leave empty for unscoped access at BU level. Selecting business
+            units restricts the user to regions (and everything beneath) that
+            belong to those BUs — combines with the building scope above.
+          </p>
+        </div>
+      )}
 
       {mode === "create" && (
         <div className="space-y-1">
