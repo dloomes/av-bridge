@@ -57,6 +57,11 @@ export default function BrandingPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  // Business Units toggle — vendor-only, saves via a dedicated admin
+  // endpoint rather than the branding PATCH. Kept out of the shared
+  // "dirty" tracker so it doesn't affect the main Save button.
+  const [buSaving, setBUSaving] = useState(false);
+  const [buError, setBUError] = useState<string | null>(null);
 
   // Reset the draft when the underlying branding changes (post-save or
   // scope switch for a vendor).
@@ -500,6 +505,84 @@ export default function BrandingPage() {
               </label>
             </CardContent>
           </Card>
+
+          {/*
+            Business Units feature flag — vendor-only.
+            Rendered only when a vendor is scoped into a customer. Tenant
+            admins never see this card; a self-serve toggle would go here
+            behind a permission check if we ever expose it.
+          */}
+          {editingCustomerAsVendor && (
+            <Card>
+              <CardContent className="space-y-4 p-6">
+                <div>
+                  <h2 className="text-sm font-semibold">Business units</h2>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Optional top-of-hierarchy tier (BU → Region → Location →
+                    Building → Room). Vendor-only toggle. Disable is safe —
+                    existing BU rows and region assignments persist; only
+                    visibility and write access change.
+                  </p>
+                </div>
+
+                {buError && (
+                  <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm [color:hsl(var(--destructive))]">
+                    {buError}
+                  </div>
+                )}
+
+                <label className="flex items-start gap-3 rounded-md border p-3 border-input">
+                  <input
+                    type="checkbox"
+                    className="mt-1 h-4 w-4"
+                    checked={!!branding.business_units_enabled}
+                    disabled={buSaving}
+                    onChange={async (e) => {
+                      const want = e.target.checked;
+                      // Session.scope holds the customer id the vendor is
+                      // acting-as. Both editingCustomerAsVendor and the
+                      // outer render gate guarantee it's non-null here,
+                      // but keep the guard for defence-in-depth.
+                      const customerID = session.scope;
+                      if (!customerID) return;
+                      setBUSaving(true);
+                      setBUError(null);
+                      try {
+                        await api.setCustomerBusinessUnitsEnabled(customerID, want);
+                        await refresh();
+                      } catch (err) {
+                        setBUError((err as Error).message);
+                      } finally {
+                        setBUSaving(false);
+                      }
+                    }}
+                  />
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium flex items-center gap-2">
+                      Enable Business Units for this tenant
+                      {buSaving && (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                      )}
+                    </div>
+                    <div className="text-xs text-muted-foreground mt-0.5">
+                      {branding.business_units_enabled ? (
+                        <>
+                          On — the tenant&rsquo;s Locations page shows the
+                          Business Units section, regions can be assigned to
+                          a BU, and users can be scoped to specific BUs.
+                        </>
+                      ) : (
+                        <>
+                          Off — BU concept is invisible in the tenant&rsquo;s
+                          portal even if BU rows exist in the database.
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </label>
+              </CardContent>
+            </Card>
+          )}
 
           {(error || (saved && !error && !dirty)) && (
             <div className="text-sm">

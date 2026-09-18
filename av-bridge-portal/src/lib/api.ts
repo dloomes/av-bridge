@@ -1122,6 +1122,24 @@ export const api = {
       { method: "DELETE", signal }
     ),
 
+  // Vendor-only admin toggle for the tenant BU flag. Callable only by
+  // vendor admins acting scoped into the customer (RequireVendorAdmin +
+  // withTenant on the backend). Returns the applied state so the caller
+  // can update local UI without a re-fetch.
+  setCustomerBusinessUnitsEnabled: (
+    customerID: string,
+    enabled: boolean,
+    signal?: AbortSignal
+  ) =>
+    request<{ customer_id: string; business_units_enabled: boolean }>(
+      `/api/v1/admin/customers/${encodeURIComponent(customerID)}/business-units-enabled`,
+      {
+        method: "POST",
+        body: JSON.stringify({ enabled }),
+        signal,
+      }
+    ),
+
   // Hierarchy deletes — cascade down (region → location → building → room),
   // devices in affected rooms are orphaned (room_id set to NULL, device row
   // preserved). The cloud's audit metadata captures the cascade counts.
