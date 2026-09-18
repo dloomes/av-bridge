@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/dloomes/av-bridge-cloud/internal/audit"
 	"github.com/dloomes/av-bridge-cloud/internal/portalauth"
@@ -63,15 +64,15 @@ func (h *Handler) ListBusinessUnits(w http.ResponseWriter, r *http.Request) {
 		defer rows.Close()
 		for rows.Next() {
 			var (
-				row      businessUnitRow
-				created  string
-				updated  string
+				row     businessUnitRow
+				created time.Time
+				updated time.Time
 			)
 			if err := rows.Scan(&row.ID, &row.Name, &row.Description, &created, &updated); err != nil {
 				return err
 			}
-			row.CreatedAt = created
-			row.UpdatedAt = updated
+			row.CreatedAt = created.UTC().Format(time.RFC3339)
+			row.UpdatedAt = updated.UTC().Format(time.RFC3339)
 			out = append(out, row)
 		}
 		return rows.Err()
