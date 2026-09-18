@@ -396,11 +396,40 @@ export default function NightlySchedulePage() {
   // Per-building collapsed state — keyed by the same group key the memo
   // above emits. Set semantics (present = collapsed, absent = expanded)
   // means new buildings default to expanded on first load, matching the
-  // pre-collapsible behaviour. State is in-memory only; refreshing the
-  // page resets to all-expanded, which is the safe default for a long list.
+  // pre-collapsible behaviour.
+  //
+  // State is persisted to localStorage so a refresh remembers what the
+  // operator had open. Keys that reference buildings the user no longer
+  // has access to are simply ignored on next render — no cleanup needed.
+  // Storage failures (private mode, blocked cookies, quota) fall back to
+  // in-memory state without breaking the page.
+  const COLLAPSED_STORAGE_KEY = "av-bridge:nightly:collapsed-buildings";
   const [collapsedBuildings, setCollapsedBuildings] = useState<Set<string>>(
-    new Set()
+    () => {
+      if (typeof window === "undefined") return new Set();
+      try {
+        const raw = window.localStorage.getItem(COLLAPSED_STORAGE_KEY);
+        if (!raw) return new Set();
+        const arr = JSON.parse(raw);
+        if (!Array.isArray(arr)) return new Set();
+        return new Set(arr.filter((v): v is string => typeof v === "string"));
+      } catch {
+        return new Set();
+      }
+    }
   );
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(
+        COLLAPSED_STORAGE_KEY,
+        JSON.stringify(Array.from(collapsedBuildings))
+      );
+    } catch {
+      // Ignore — localStorage may be unavailable (private mode, quota,
+      // blocked by policy). In-memory state still works.
+    }
+  }, [collapsedBuildings]);
   const toggleBuilding = useCallback((key: string) => {
     setCollapsedBuildings((prev) => {
       const next = new Set(prev);

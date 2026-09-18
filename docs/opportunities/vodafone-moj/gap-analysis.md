@@ -2,7 +2,7 @@
 title: AV Bridge vs MoJ AVRMM Requirements — Gap Analysis
 description: Assessment of AV Bridge against the accepted V1.0 AVRMM requirements shared by Vodafone / MoJ, with strategic gaps and proposal-posture recommendations.
 audience: Involve product + commercial; Vodafone technical + commercial (once sanitised)
-status: Internal draft · working document for proposal preparation
+status: Internal working document · updated 2026-09-18 (FR39 + FR40 shipped)
 source: docs/AV RMM Requirements - Vodafone - MoJ Shared v1.0.xlsx
 companion: C:\Users\DLoomes\Documents\AV-Bridge-vs-MoJ-AVRMM-Gap-Analysis.xlsx
 ---
@@ -13,16 +13,26 @@ Assessed against the V1.0 requirements accepted by MoJ (August 2026). 22 NFRs + 
 
 Full per-requirement assessment lives in the companion Excel workbook at `C:\Users\DLoomes\Documents\AV-Bridge-vs-MoJ-AVRMM-Gap-Analysis.xlsx`. This document is the strategic overview.
 
+## Shipped since last review
+
+**2026-09-18** — FR39 and FR40 shipped to UAT (image tag `ab32651`):
+
+- **FR39** (defer scheduled power-down for a room in use) — new `POST /api/v1/nightly/rooms/{id}/defer-tonight`, a portal "Defer tonight" button per room row, gated on a new `nightly.defer` permission that operators hold by default. The exclusion self-clears the next day.
+- **FR40** (exclude a room from scheduled health-checks for a documented reason) — migration `0042` added `excluded_reason` (CHECK enum: `in_use`, `active_incident`, `awaiting_replacement`, `planned_maintenance`, `other`) and `excluded_note`. Portal room-override modal exposes both; row status column shows the reason chip with the operator note as tooltip.
+- **FR41** was already MET — the reverse of FR40, unchanged.
+
+Both requirements move from **PARTIAL → MET** in the counts below.
+
 ## Headline
 
 | Bucket | Count | Interpretation |
 |---|---|---|
-| **MET** | ~33 | Feature shipped and demonstrable today. |
-| **PARTIAL** | ~24 | Substantially met — small enhancement, per-adapter dependency, or configuration. |
+| **MET** | ~35 | Feature shipped and demonstrable today. |
+| **PARTIAL** | ~22 | Substantially met — small enhancement, per-adapter dependency, or configuration. |
 | **GAP** | ~2 | Material capability missing. |
 | **N/A** | ~7 | Commercial / supplier-delivery scope, not a platform capability. |
 
-Of the platform-facing requirements (~59), roughly **57% MET, 40% PARTIAL, 3% material GAP**. That's a strong starting position, but the partials are heavily concentrated in vendor coverage and hierarchy — both known and closable.
+Of the platform-facing requirements (~59), roughly **59% MET, 37% PARTIAL, 3% material GAP**. That's a strong starting position, and the remaining partials are heavily concentrated in vendor coverage and hierarchy — both known and closable.
 
 ## Top strategic gaps
 
@@ -93,7 +103,7 @@ MoJ wants **PoE port up/down control from the network switch itself**, not only 
 
 ## Recommended proposal posture
 
-1. **Lead with the ~33 MET requirements** — the shipped surface is broad, and the tooling to demonstrate it exists (portal, API, adapter catalogue, security whitepaper).
+1. **Lead with the ~35 MET requirements** — the shipped surface is broad, and the tooling to demonstrate it exists (portal, API, adapter catalogue, security whitepaper).
 2. **Frame the Crestron adapter as a scoped pilot deliverable** — well-documented protocols, achievable timeline, dependency on Vodafone confirming exact inventory.
 3. **Ask early about AWS vs GCP** — it's the largest strategic gap and has commercial implications. Get MoJ / Vodafone position before committing.
 4. **Commit to the BU / Region hierarchy extension** — small schema + UI change, unlocks half the RBAC requirements at their preferred altitude.
