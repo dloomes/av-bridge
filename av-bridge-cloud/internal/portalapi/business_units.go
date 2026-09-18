@@ -349,32 +349,35 @@ func (h *Handler) SetCustomerBusinessUnitsEnabled(w http.ResponseWriter, r *http
 
 	// Vendor callers act cross-tenant; use WithTenant scoped to the
 	// target customer so the audit row lands in that tenant's log.
+	//
+	// Audit records the flag delta only — the full customers row carries
+	// unrelated fields (branding secrets, entra config) that don't belong
+	// in this audit context, so we do not use SnapshotByTable here.
 	var notFound bool
 	ctx := r.Context()
 	err := h.store.WithTenant(ctx, customerID, func(tx pgx.Tx) error {
-		before, snapErr := audit.SnapshotByTable(ctx, tx, "customers", customerID)
-		if snapErr != nil {
-			return snapErr
-		}
-		if before == nil {
+		var prevEnabled bool
+		err := tx.QueryRow(ctx,
+			`SELECT business_units_enabled FROM customers WHERE id = $1`,
+			customerID).Scan(&prevEnabled)
+		if errors.Is(err, pgx.ErrNoRows) {
 			notFound = true
 			return nil
+		}
+		if err != nil {
+			return err
 		}
 		if _, err := tx.Exec(ctx,
 			`UPDATE customers SET business_units_enabled = $2 WHERE id = $1`,
 			customerID, req.Enabled); err != nil {
 			return err
 		}
-		after, err := audit.SnapshotByTable(ctx, tx, "customers", customerID)
-		if err != nil {
-			return err
-		}
 		return audit.Record(ctx, tx, customerID, stampActor(p, audit.Entry{
 			Action:     "customer.business_units_enabled",
 			TargetKind: "customer",
 			TargetID:   customerID,
-			Before:     before,
-			After:      after,
+			Before:     mustJSON(map[string]any{"business_units_enabled": prevEnabled}),
+			After:      mustJSON(map[string]any{"business_units_enabled": req.Enabled}),
 		}))
 	})
 	if err != nil {
