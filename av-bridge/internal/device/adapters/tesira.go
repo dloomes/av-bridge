@@ -4,9 +4,11 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -134,6 +136,16 @@ type TesiraAdapter struct {
 	stateMu    sync.RWMutex
 	lastMetrics map[string]any
 
+	// Cached device identity — queried once at Connect and reapplied on
+	// every telemetry payload. TTP identity attributes don't change
+	// mid-session, so this avoids re-querying them each poll.
+	identityMu       sync.RWMutex
+	partNumber       string
+	softwareVersion  string
+	hostname         string
+	ipAddress        string
+	macAddress       string
+
 	// Pending command response — single-request-at-a-time model matches TTP
 	respCh chan string
 }
@@ -222,10 +234,55 @@ func (a *TesiraAdapter) Connect(ctx context.Context) error {
 		log.Info("tesira probe response", "resp", resp)
 	}
 
+	// Query and cache device identity — these attributes don't change
+	// mid-session, so we pay the cost once at Connect and reapply the
+	// cached values on every telemetry payload. Best-effort: any
+	// individual failure just leaves that field empty (older firmwares
+	// may not expose all of these).
+	a.fetchIdentity(ctx)
+
 	a.sendSubscriptions(ctx)
 
 	log.Info("tesira connected")
 	return nil
+}
+
+// fetchIdentity queries the static TTP attributes we care about (model,
+// firmware, hostname, network coords) and caches them on the adapter.
+// Called once from Connect; the poll path reads the cached values.
+func (a *TesiraAdapter) fetchIdentity(ctx context.Context) {
+	log := slog.With("device", a.Cfg.ID)
+
+	getStr := func(attr string) string {
+		resp, err := a.sendAndReceive(ctx, "DEVICE get "+attr, 3*time.Second)
+		if err != nil || !strings.HasPrefix(resp, "+OK") {
+			log.Debug("tesira identity fetch failed", "attr", attr, "err", err, "resp", resp)
+			return ""
+		}
+		return parseTTPValue(resp)
+	}
+
+	partNumber := getStr("partNumber")
+	software := getStr("softwareVersion")
+	hostname := getStr("hostname")
+	netStatus := getStr("networkStatus")
+
+	ip, mac := parseTesiraNetworkStatus(netStatus)
+
+	a.identityMu.Lock()
+	a.partNumber = partNumber
+	a.softwareVersion = software
+	a.hostname = hostname
+	a.ipAddress = ip
+	a.macAddress = mac
+	a.identityMu.Unlock()
+
+	log.Info("tesira identity",
+		"part_number", partNumber,
+		"software_version", software,
+		"hostname", hostname,
+		"ip", ip,
+		"mac", mac)
 }
 
 func (a *TesiraAdapter) Disconnect() error {
@@ -283,6 +340,11 @@ func (a *TesiraAdapter) sendSubscriptions(ctx context.Context) {
 		for _, s := range a.Cfg.Subscriptions {
 			if s.Tag == "" || s.Attribute == "" {
 				log.Warn("tesira subscription spec missing tag or attribute", "spec", s)
+				continue
+			}
+			// mode=poll entries are queried during Poll() rather than
+			// subscribed to. Skip here; the read loop never sees them.
+			if s.Mode == "poll" {
 				continue
 			}
 			subscribe(s.Label, s.Tag, s.Attribute, s.Channel, s.Rate)
@@ -424,6 +486,9 @@ func (a *TesiraAdapter) Heartbeat(ctx context.Context) error {
 
 // only needs to confirm the session is still alive.
 func (a *TesiraAdapter) Poll(ctx context.Context) (*device.Telemetry, error) {
+	// Serial number as the reachability probe — same TTP round-trip
+	// we've always used. If this fails, everything below is skipped
+	// and we flip offline.
 	resp, err := a.sendAndReceive(ctx, "DEVICE get serialNumber", 3*time.Second)
 
 	t := a.BaseTelemetry()
@@ -439,25 +504,126 @@ func (a *TesiraAdapter) Poll(ctx context.Context) (*device.Telemetry, error) {
 		a.SetStatus(device.StatusOffline)
 		t.Error = err.Error()
 		metrics["poll_error"] = err.Error()
-	} else {
-		switch {
-		case strings.HasPrefix(resp, "+OK"):
-			if val := parseTTPValue(resp); val != "" {
-				metrics["serial_number"] = val
-			}
-			a.SetStatus(device.StatusOnline)
-		case strings.HasPrefix(resp, "-ERR"):
-			// Device responded with a protocol error — session isn't
-			// clean. Report offline; the ttp_error is on telemetry.
-			a.SetStatus(device.StatusOffline)
-			metrics["ttp_error"] = resp
-		}
-		metrics["last_poll"] = time.Now().UTC().Format(time.RFC3339)
+		t.Metrics = metrics
+		t.Status = a.Status()
+		return t, nil
 	}
 
+	if strings.HasPrefix(resp, "-ERR") {
+		// Device responded with a protocol error — session isn't
+		// clean. Report offline; the ttp_error is on telemetry.
+		a.SetStatus(device.StatusOffline)
+		metrics["ttp_error"] = resp
+		t.Metrics = metrics
+		t.Status = a.Status()
+		return t, nil
+	}
+
+	if val := parseTTPValue(resp); val != "" {
+		metrics["serial_number"] = val
+	}
+	a.SetStatus(device.StatusOnline)
+
+	// Re-apply cached identity fields on every telemetry payload so
+	// the portal always has model / firmware / hostname / IP / MAC
+	// visible, even in poll cycles where no subscription pushed
+	// anything.
+	a.applyIdentity(metrics)
+
+	// Active fault list — the big health signal. Empty response
+	// means all clear. On failure (older firmware, restricted role)
+	// we silently omit — status probe already succeeded so we know
+	// the device is talking to us.
+	if resp, err := a.sendAndReceive(ctx, "DEVICE get faultList", 3*time.Second); err == nil && strings.HasPrefix(resp, "+OK") {
+		raw := parseTTPValue(resp)
+		count, faults := parseTesiraFaultList(raw)
+		metrics["fault_count"] = count
+		if len(faults) > 0 {
+			metrics["faults"] = faults
+		}
+	}
+
+	// DSP load percentage — only supported on some Tesira models. Best-
+	// effort: -ERR "not supported" from certain firmwares is expected.
+	if resp, err := a.sendAndReceive(ctx, "DEVICE get dspLoadPct", 3*time.Second); err == nil && strings.HasPrefix(resp, "+OK") {
+		if v := parseTTPValue(resp); v != "" {
+			if f, err := strconv.ParseFloat(strings.TrimSpace(v), 64); err == nil {
+				metrics["dsp_load_pct"] = f
+			} else {
+				metrics["dsp_load_pct"] = v
+			}
+		}
+	}
+
+	// Active preset — the currently loaded scene, if the operator has
+	// wired presets. Cheap query; skips silently on unsupported firmware.
+	if resp, err := a.sendAndReceive(ctx, "DEVICE get activePresetId", 3*time.Second); err == nil && strings.HasPrefix(resp, "+OK") {
+		if v := parseTTPValue(resp); v != "" {
+			metrics["active_preset_id"] = v
+		}
+	}
+
+	// Polled subscription entries — snapshot arbitrary DSP block values
+	// on each poll cycle. Complements the push subscriptions for cases
+	// where the operator wants a periodic sample rather than realtime.
+	a.runPolledSubscriptions(ctx, metrics)
+
+	metrics["last_poll"] = time.Now().UTC().Format(time.RFC3339)
 	t.Metrics = metrics
 	t.Status = a.Status()
 	return t, nil
+}
+
+// applyIdentity copies the cached identity fields into the metrics map.
+// Zero-value fields are omitted so downstream doesn't see empty strings.
+func (a *TesiraAdapter) applyIdentity(m map[string]any) {
+	a.identityMu.RLock()
+	defer a.identityMu.RUnlock()
+	if a.partNumber != "" {
+		m["part_number"] = a.partNumber
+	}
+	if a.softwareVersion != "" {
+		m["software_version"] = a.softwareVersion
+	}
+	if a.hostname != "" {
+		m["hostname"] = a.hostname
+	}
+	if a.ipAddress != "" {
+		m["ip_address"] = a.ipAddress
+	}
+	if a.macAddress != "" {
+		m["mac_address"] = a.macAddress
+	}
+}
+
+// runPolledSubscriptions queries every mode=poll SubscriptionSpec on
+// this device and merges the results into metrics under the configured
+// Label. Failures per entry are logged at debug level and don't fail
+// the poll — a single bad block shouldn't blank the whole payload.
+func (a *TesiraAdapter) runPolledSubscriptions(ctx context.Context, metrics map[string]any) {
+	for _, s := range a.Cfg.Subscriptions {
+		if s.Mode != "poll" || s.Tag == "" || s.Attribute == "" {
+			continue
+		}
+		label := s.Label
+		if label == "" {
+			label = fmt.Sprintf("%s_%s", s.Tag, s.Attribute)
+		}
+		channel := s.Channel
+		if channel <= 0 {
+			channel = 1
+		}
+		cmd := fmt.Sprintf("%s get %s %d", s.Tag, s.Attribute, channel)
+		resp, err := a.sendAndReceive(ctx, cmd, 3*time.Second)
+		if err != nil || !strings.HasPrefix(resp, "+OK") {
+			slog.Debug("tesira polled sub failed",
+				"device", a.Cfg.ID, "label", label, "err", err, "resp", resp)
+			continue
+		}
+		if v := parseTTPValue(resp); v != "" {
+			metrics[label] = v
+		}
+	}
 }
 
 // ── SendCommand ───────────────────────────────────────────────────────────────
@@ -691,6 +857,98 @@ func parseTTPValue(resp string) string {
 		val = strings.TrimSpace(val[idx+1:])
 	}
 	return strings.Trim(val, "\"")
+}
+
+// parseTesiraNetworkStatus extracts the primary IP and MAC from a
+// Tesira `networkStatus` TTP response. The response shape varies by
+// firmware — this function walks a decoded JSON tree defensively and
+// returns the first non-empty (address, macAddress) pair it finds.
+// Returns empty strings if nothing parseable is present.
+//
+// Common shapes observed in the field:
+//
+//	{"interfaces":[{"interfaceName":"Control","addresses":[
+//	    {"address":"192.168.1.100","macAddress":"AA:BB:CC:DD:EE:FF"}]}]}
+//	{"interfaces":[{"interfaceName":"Control",
+//	    "networkAddresses":[{"address":"192.168.1.100"}],
+//	    "macAddress":"AA:BB:CC:DD:EE:FF"}]}
+func parseTesiraNetworkStatus(raw string) (ip, mac string) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || !strings.HasPrefix(raw, "{") {
+		return "", ""
+	}
+	var v any
+	if err := json.Unmarshal([]byte(raw), &v); err != nil {
+		return "", ""
+	}
+	// Recursive walk collecting the first address + macAddress pair
+	// we encounter — Tesira firmware nests these under interfaces /
+	// addresses / networkAddresses inconsistently between versions.
+	var walk func(any)
+	walk = func(node any) {
+		if ip != "" && mac != "" {
+			return
+		}
+		switch x := node.(type) {
+		case map[string]any:
+			if ip == "" {
+				if s, ok := x["address"].(string); ok && s != "" && looksLikeIP(s) {
+					ip = s
+				}
+			}
+			if mac == "" {
+				if s, ok := x["macAddress"].(string); ok && s != "" {
+					mac = s
+				}
+			}
+			for _, child := range x {
+				walk(child)
+			}
+		case []any:
+			for _, child := range x {
+				walk(child)
+			}
+		}
+	}
+	walk(v)
+	return ip, mac
+}
+
+// looksLikeIP is a lightweight sanity check so we don't accidentally
+// pick up a MAC or gateway string as the primary IP. Accepts IPv4;
+// IPv6 is uncommon on Tesira control interfaces and can be added if
+// needed.
+func looksLikeIP(s string) bool {
+	if net.ParseIP(s) == nil {
+		return false
+	}
+	// Filter out the unroutable 0.0.0.0 default and multicast — a
+	// well-configured Tesira should never report either as its own IP.
+	if s == "0.0.0.0" || strings.HasPrefix(s, "224.") {
+		return false
+	}
+	return true
+}
+
+// parseTesiraFaultList decodes the JSON array Tesira returns for
+// `DEVICE get faultList` and returns (count, faults). The faults value
+// is passed through as the parsed slice so the cloud can store it as
+// jsonb for querying / rendering later. On unparseable input returns
+// (0, nil) — a fault list that we can't interpret shouldn't block the
+// rest of the poll.
+func parseTesiraFaultList(raw string) (int, []any) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "[]" {
+		return 0, nil
+	}
+	if !strings.HasPrefix(raw, "[") {
+		return 0, nil
+	}
+	var faults []any
+	if err := json.Unmarshal([]byte(raw), &faults); err != nil {
+		return 0, nil
+	}
+	return len(faults), faults
 }
 
 func (a *TesiraAdapter) writeLine(s string) error {

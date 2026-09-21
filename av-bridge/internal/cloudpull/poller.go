@@ -43,6 +43,9 @@ type Subscription struct {
 	Channel   int    `json:"channel"`
 	Label     string `json:"label"`
 	Rate      int    `json:"rate,omitempty"`
+	// Mode: "" or "subscribe" = push (adapter registers on Connect);
+	// "poll" = adapter queries this block on every Poll() cycle.
+	Mode string `json:"mode,omitempty"`
 }
 
 // wireDevice mirrors bridgecfg.Device on the cloud side. Conversion to/from
@@ -73,7 +76,7 @@ func (w wireDevice) toConfig() config.DeviceConfig {
 		for i, s := range w.Subscriptions {
 			subs[i] = config.SubscriptionSpec{
 				Tag: s.Tag, Attribute: s.Attribute, Channel: s.Channel,
-				Label: s.Label, Rate: s.Rate,
+				Label: s.Label, Rate: s.Rate, Mode: s.Mode,
 			}
 		}
 	}
@@ -100,7 +103,7 @@ func fromConfig(c config.DeviceConfig) wireDevice {
 		for i, s := range c.Subscriptions {
 			subs[i] = Subscription{
 				Tag: s.Tag, Attribute: s.Attribute, Channel: s.Channel,
-				Label: s.Label, Rate: s.Rate,
+				Label: s.Label, Rate: s.Rate, Mode: s.Mode,
 			}
 		}
 	}

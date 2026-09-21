@@ -32,6 +32,10 @@ export interface Subscription {
   channel: number;
   label: string;
   rate?: number;
+  // Mode: "subscribe" (default, push) or "poll" (adapter queries the
+  // block on every Poll cycle). Only certain adapters honour "poll" —
+  // Tesira does; others treat it as subscribe.
+  mode?: "subscribe" | "poll";
 }
 
 // DeviceAssetInput carries the standard CMDB asset fields when the caller

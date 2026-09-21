@@ -27,6 +27,10 @@ type Subscription struct {
 	Channel   int    `json:"channel"`
 	Label     string `json:"label"`
 	Rate      int    `json:"rate,omitempty"`
+	// Mode: "" or "subscribe" = push notification (adapter registers
+	// on Connect); "poll" = adapter queries the block on every Poll().
+	// Backwards-compatible — historic rows unmarshal as "".
+	Mode string `json:"mode,omitempty"`
 }
 
 // Device is the wire shape returned to the bridge. ID is the reported_id the

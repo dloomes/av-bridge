@@ -122,6 +122,12 @@ type SubscriptionSpec struct {
 	Channel   int    `yaml:"channel"`         // 1-based channel index
 	Label     string `yaml:"label"`           // metric name surfaced in telemetry/events
 	Rate      int    `yaml:"rate,omitempty"`  // optional min update rate in ms (defaults to 500)
+	// Mode chooses between push (subscribe — default) and pull (poll)
+	// semantics. Push subscriptions cost one TTP call at Connect and
+	// update in real time; polled entries are queried on every Poll()
+	// cycle instead. Use "poll" for meters and other high-churn values
+	// where push volume is undesirable or for on-demand snapshots.
+	Mode string `yaml:"mode,omitempty"`
 }
 
 func Load(path string) (*Config, error) {
