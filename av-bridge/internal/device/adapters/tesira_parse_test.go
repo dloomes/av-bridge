@@ -88,22 +88,49 @@ func TestParseTesiraFaultList(t *testing.T) {
 		{name: "not-json", raw: "garbage", wantCount: 0, wantNil: true},
 		{name: "not-an-array", raw: `{"unexpected":true}`, wantCount: 0, wantNil: true},
 		{
-			name: "single-fault",
+			// Verbose no-fault indicator entry — the "all clear" response.
+			name: "verbose-none",
 			raw: `[{
-				"id":"Fault_NetworkLossRedundancy",
-				"name":"Network Redundancy Lost",
-				"indicator":"Minor"
+				"id":"INDICATOR_NONE_IN_DEVICE",
+				"name":"No fault in device",
+				"faults":[],
+				"serialNumber":"01842216"
+			}]`,
+			wantCount: 0,
+			wantNil:   true,
+		},
+		{
+			// Verbose with one fault under an indicator entry.
+			name: "verbose-single-fault",
+			raw: `[{
+				"id":"INDICATOR_MINOR_IN_DEVICE",
+				"name":"Minor Fault in Device",
+				"faults":[{"id":"FAULT_FAN_MALFUNCTION","name":"Cooling fan malfunction"}],
+				"serialNumber":"01842216"
 			}]`,
 			wantCount: 1,
 			wantNil:   false,
 		},
 		{
-			name: "multiple-faults",
+			// Verbose with multiple faults across two indicator entries.
+			name: "verbose-multi-device",
 			raw: `[
-				{"id":"F1","name":"Foo","indicator":"Minor"},
-				{"id":"F2","name":"Bar","indicator":"Major"},
-				{"id":"F3","name":"Baz","indicator":"Critical"}
+			  {"id":"IND1","name":"Minor","faults":[{"id":"F1","name":"Foo"}],"serialNumber":"111"},
+			  {"id":"IND2","name":"Major","faults":[{"id":"F2","name":"Bar"},{"id":"F3","name":"Baz"}],"serialNumber":"222"}
 			]`,
+			wantCount: 3,
+			wantNil:   false,
+		},
+		{
+			// Non-verbose positional: [indicator_num, description, [[fault_id, desc]], serial]
+			name:      "non-verbose-single-fault",
+			raw:       `[[2, "Minor Fault in Device", [[89, "Cooling fan malfunction"]], "02196874"]]`,
+			wantCount: 1,
+			wantNil:   false,
+		},
+		{
+			name:      "non-verbose-multiple-faults",
+			raw:       `[[3, "Major Fault", [[89, "Foo"],[101, "Bar"],[102, "Baz"]], "02196874"]]`,
 			wantCount: 3,
 			wantNil:   false,
 		},
@@ -119,6 +146,63 @@ func TestParseTesiraFaultList(t *testing.T) {
 			}
 			if !tc.wantNil && faults == nil {
 				t.Errorf("faults: expected non-nil, got nil")
+			}
+		})
+	}
+}
+
+func TestParseTesiraDeviceInfo(t *testing.T) {
+	cases := []struct {
+		name         string
+		raw          string
+		wantModel    string
+		wantFirmware string
+		wantSerial   string
+		wantIP       string
+	}{
+		{name: "empty", raw: "", wantModel: "", wantFirmware: "", wantSerial: "", wantIP: ""},
+		{name: "not-json", raw: "not-json", wantModel: "", wantFirmware: "", wantSerial: "", wantIP: ""},
+		{
+			// Canonical shape per DEVICE service reference.
+			name:         "canonical",
+			raw:          `{"model":"TESIRAFORTE-CI","revision":"A","serial":"05008305","firmware":"3.19.1.7","IP":"192.168.1.100"}`,
+			wantModel:    "TESIRAFORTE-CI",
+			wantFirmware: "3.19.1.7",
+			wantSerial:   "05008305",
+			wantIP:       "192.168.1.100",
+		},
+		{
+			// Alternate field names some firmwares emit.
+			name:         "alternate-keys",
+			raw:          `{"Model":"TESIRAFORTE-VT","softwareVersion":"4.1.0","serialNumber":"12345","ipAddress":"10.0.0.5"}`,
+			wantModel:    "TESIRAFORTE-VT",
+			wantFirmware: "4.1.0",
+			wantSerial:   "12345",
+			wantIP:       "10.0.0.5",
+		},
+		{
+			name:         "partial",
+			raw:          `{"model":"TESIRAFORTE-CI","firmware":"3.19.1.7"}`,
+			wantModel:    "TESIRAFORTE-CI",
+			wantFirmware: "3.19.1.7",
+			wantSerial:   "",
+			wantIP:       "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m, f, s, ip := parseTesiraDeviceInfo(tc.raw)
+			if m != tc.wantModel {
+				t.Errorf("model: got %q want %q", m, tc.wantModel)
+			}
+			if f != tc.wantFirmware {
+				t.Errorf("firmware: got %q want %q", f, tc.wantFirmware)
+			}
+			if s != tc.wantSerial {
+				t.Errorf("serial: got %q want %q", s, tc.wantSerial)
+			}
+			if ip != tc.wantIP {
+				t.Errorf("ip: got %q want %q", ip, tc.wantIP)
 			}
 		})
 	}

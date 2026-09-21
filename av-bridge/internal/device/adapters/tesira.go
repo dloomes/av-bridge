@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -250,6 +249,15 @@ func (a *TesiraAdapter) Connect(ctx context.Context) error {
 // fetchIdentity queries the static TTP attributes we care about (model,
 // firmware, hostname, network coords) and caches them on the adapter.
 // Called once from Connect; the poll path reads the cached values.
+//
+// Attribute names verified against the Biamp TTP DEVICE service reference:
+//
+//	https://tesira-help.biamp.com/System_Control/Tesira_Text_Protocol/Attribute_tables/Service_Addresses/Device.html
+//
+// Primary path is `deviceInfo` — a single call returning {model, revision,
+// serial, firmware, IP}. Falls back to individual attributes (`version`,
+// `serialNumber`) on firmwares that don't expose deviceInfo. `hostname`
+// and `networkStatus` (for MAC) are always queried separately.
 func (a *TesiraAdapter) fetchIdentity(ctx context.Context) {
 	log := slog.With("device", a.Cfg.ID)
 
@@ -262,12 +270,36 @@ func (a *TesiraAdapter) fetchIdentity(ctx context.Context) {
 		return parseTTPValue(resp)
 	}
 
-	partNumber := getStr("partNumber")
-	software := getStr("softwareVersion")
+	var (
+		partNumber string
+		software   string
+		ip         string
+		serial     string
+	)
+
+	// Try deviceInfo first — one round-trip, five fields.
+	if raw := getStr("deviceInfo"); raw != "" {
+		partNumber, software, serial, ip = parseTesiraDeviceInfo(raw)
+	}
+
+	// Fill any gaps with per-attribute fallbacks (older firmwares).
+	if software == "" {
+		software = getStr("version")
+	}
+	if serial == "" {
+		serial = getStr("serialNumber")
+	}
+
 	hostname := getStr("hostname")
 	netStatus := getStr("networkStatus")
 
-	ip, mac := parseTesiraNetworkStatus(netStatus)
+	// networkStatus is authoritative for MAC address; also acts as a
+	// secondary source for the primary IP when deviceInfo didn't give
+	// us one.
+	nsIP, mac := parseTesiraNetworkStatus(netStatus)
+	if ip == "" {
+		ip = nsIP
+	}
 
 	a.identityMu.Lock()
 	a.partNumber = partNumber
@@ -275,14 +307,24 @@ func (a *TesiraAdapter) fetchIdentity(ctx context.Context) {
 	a.hostname = hostname
 	a.ipAddress = ip
 	a.macAddress = mac
+	// Serial number is stored under lastMetrics via Poll's dedicated
+	// probe; if deviceInfo gave us one earlier and the poll hasn't yet
+	// run, seed it here so the operator sees it on the very first
+	// telemetry payload.
 	a.identityMu.Unlock()
+	if serial != "" {
+		a.stateMu.Lock()
+		a.lastMetrics["serial_number"] = serial
+		a.stateMu.Unlock()
+	}
 
 	log.Info("tesira identity",
 		"part_number", partNumber,
 		"software_version", software,
 		"hostname", hostname,
 		"ip", ip,
-		"mac", mac)
+		"mac", mac,
+		"serial", serial)
 }
 
 func (a *TesiraAdapter) Disconnect() error {
@@ -530,11 +572,17 @@ func (a *TesiraAdapter) Poll(ctx context.Context) (*device.Telemetry, error) {
 	// anything.
 	a.applyIdentity(metrics)
 
-	// Active fault list — the big health signal. Empty response
-	// means all clear. On failure (older firmware, restricted role)
-	// we silently omit — status probe already succeeded so we know
-	// the device is talking to us.
-	if resp, err := a.sendAndReceive(ctx, "DEVICE get faultList", 3*time.Second); err == nil && strings.HasPrefix(resp, "+OK") {
+	// activeFaultList — the big health signal. Verified attribute name
+	// per Biamp TTP DEVICE service reference and Tesira TTP Fault
+	// Responses doc:
+	//
+	//   https://support.biamp.com/Tesira/Control/Tesira_TTP_Fault_Responses
+	//
+	// Response is a nested JSON array with one entry per Tesira-Server
+	// class device (typically one for TesiraFORTE). Each carries an
+	// indicator category + a faults[] sub-array — we sum across all
+	// entries so a multi-server system rolls up cleanly.
+	if resp, err := a.sendAndReceive(ctx, "DEVICE get activeFaultList", 3*time.Second); err == nil && strings.HasPrefix(resp, "+OK") {
 		raw := parseTTPValue(resp)
 		count, faults := parseTesiraFaultList(raw)
 		metrics["fault_count"] = count
@@ -543,23 +591,52 @@ func (a *TesiraAdapter) Poll(ctx context.Context) (*device.Telemetry, error) {
 		}
 	}
 
-	// DSP load percentage — only supported on some Tesira models. Best-
-	// effort: -ERR "not supported" from certain firmwares is expected.
-	if resp, err := a.sendAndReceive(ctx, "DEVICE get dspLoadPct", 3*time.Second); err == nil && strings.HasPrefix(resp, "+OK") {
-		if v := parseTTPValue(resp); v != "" {
-			if f, err := strconv.ParseFloat(strings.TrimSpace(v), 64); err == nil {
-				metrics["dsp_load_pct"] = f
-			} else {
-				metrics["dsp_load_pct"] = v
+	// discoveredServers — JSON array of the Tesira-Server class devices
+	// this unit can see on the network. Count = quick topology check;
+	// full payload preserved for the portal to render if useful.
+	if resp, err := a.sendAndReceive(ctx, "DEVICE get discoveredServers", 3*time.Second); err == nil && strings.HasPrefix(resp, "+OK") {
+		raw := parseTTPValue(resp)
+		if strings.HasPrefix(strings.TrimSpace(raw), "[") {
+			var arr []any
+			if err := json.Unmarshal([]byte(raw), &arr); err == nil {
+				metrics["discovered_server_count"] = len(arr)
+				if len(arr) > 0 {
+					metrics["discovered_servers"] = arr
+				}
 			}
 		}
 	}
 
-	// Active preset — the currently loaded scene, if the operator has
-	// wired presets. Cheap query; skips silently on unsupported firmware.
-	if resp, err := a.sendAndReceive(ctx, "DEVICE get activePresetId", 3*time.Second); err == nil && strings.HasPrefix(resp, "+OK") {
-		if v := parseTTPValue(resp); v != "" {
-			metrics["active_preset_id"] = v
+	// PoE status — only meaningful on PoE-capable models (some
+	// TesiraFORTE variants). Silent skip on -ERR / unsupported.
+	if resp, err := a.sendAndReceive(ctx, "DEVICE get poeInfo", 3*time.Second); err == nil && strings.HasPrefix(resp, "+OK") {
+		if raw := parseTTPValue(resp); raw != "" && strings.HasPrefix(raw, "{") {
+			var obj map[string]any
+			if err := json.Unmarshal([]byte(raw), &obj); err == nil {
+				metrics["poe_info"] = obj
+			}
+		}
+	}
+
+	// PTP / clock sync — critical for AVB/Dante models. Empty array
+	// on models without PTP; not an error.
+	if resp, err := a.sendAndReceive(ctx, "DEVICE get ptpInfo", 3*time.Second); err == nil && strings.HasPrefix(resp, "+OK") {
+		if raw := parseTTPValue(resp); raw != "" && strings.HasPrefix(strings.TrimSpace(raw), "[") {
+			var arr []any
+			if err := json.Unmarshal([]byte(raw), &arr); err == nil && len(arr) > 0 {
+				metrics["ptp_info"] = arr
+			}
+		}
+	}
+
+	// Dante status — only meaningful on -DAN model variants. Silent
+	// skip on non-Dante models.
+	if resp, err := a.sendAndReceive(ctx, "DEVICE get danteInfo", 3*time.Second); err == nil && strings.HasPrefix(resp, "+OK") {
+		if raw := parseTTPValue(resp); raw != "" && strings.HasPrefix(raw, "{") {
+			var obj map[string]any
+			if err := json.Unmarshal([]byte(raw), &obj); err == nil && len(obj) > 0 {
+				metrics["dante_info"] = obj
+			}
 		}
 	}
 
@@ -930,12 +1007,59 @@ func looksLikeIP(s string) bool {
 	return true
 }
 
-// parseTesiraFaultList decodes the JSON array Tesira returns for
-// `DEVICE get faultList` and returns (count, faults). The faults value
-// is passed through as the parsed slice so the cloud can store it as
-// jsonb for querying / rendering later. On unparseable input returns
-// (0, nil) — a fault list that we can't interpret shouldn't block the
-// rest of the poll.
+// parseTesiraDeviceInfo decodes a `deviceInfo` JSON object into the
+// four fields the adapter caches. Response shape per the Biamp TTP
+// DEVICE service reference is `{model, revision, serial, firmware, IP}`
+// but field names vary case slightly by firmware, so we accept common
+// variants (model/Model, firmware/firmwareVersion/softwareVersion,
+// serial/serialNumber, IP/ipAddress).
+//
+// Any field the payload doesn't contain returns empty; caller falls
+// back to per-attribute queries on older firmwares.
+func parseTesiraDeviceInfo(raw string) (model, firmware, serial, ip string) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || !strings.HasPrefix(raw, "{") {
+		return "", "", "", ""
+	}
+	var obj map[string]any
+	if err := json.Unmarshal([]byte(raw), &obj); err != nil {
+		return "", "", "", ""
+	}
+	pick := func(keys ...string) string {
+		for _, k := range keys {
+			if v, ok := obj[k]; ok {
+				if s, ok := v.(string); ok && s != "" {
+					return s
+				}
+			}
+		}
+		return ""
+	}
+	model = pick("model", "Model", "productName")
+	firmware = pick("firmware", "firmwareVersion", "softwareVersion", "version")
+	serial = pick("serial", "serialNumber")
+	ip = pick("IP", "ipAddress", "ip")
+	return model, firmware, serial, ip
+}
+
+// parseTesiraFaultList decodes the JSON payload Tesira returns for
+// `DEVICE get activeFaultList` and returns (count, faults).
+//
+// Two response shapes per the Tesira TTP Fault Responses reference:
+//
+//  1. Verbose — outer array of one entry per Tesira-Server device:
+//
+//     [ {"id":"INDICATOR_...","name":"...","faults":[{...}, ...],
+//        "serialNumber":"..."} ]
+//
+//  2. Non-Verbose — outer array of positional arrays:
+//
+//     [[ indicator_number, indicator_description,
+//        [[fault_id, fault_description], ...], serial_number ]]
+//
+// In both shapes we sum the faults across every outer entry so a
+// multi-server system rolls up cleanly. Returns (0, nil) on
+// unparseable input.
 func parseTesiraFaultList(raw string) (int, []any) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" || raw == "[]" {
@@ -944,11 +1068,56 @@ func parseTesiraFaultList(raw string) (int, []any) {
 	if !strings.HasPrefix(raw, "[") {
 		return 0, nil
 	}
-	var faults []any
-	if err := json.Unmarshal([]byte(raw), &faults); err != nil {
+	var outer []any
+	if err := json.Unmarshal([]byte(raw), &outer); err != nil {
 		return 0, nil
 	}
-	return len(faults), faults
+	if len(outer) == 0 {
+		return 0, nil
+	}
+	// Detect shape by inspecting the first outer entry.
+	switch first := outer[0].(type) {
+	case map[string]any:
+		// Verbose: sum len(faults) across outer entries. Preserve the
+		// full outer payload so downstream can render the categorised
+		// view (indicator + serial + faults per device).
+		total := 0
+		for _, entry := range outer {
+			m, ok := entry.(map[string]any)
+			if !ok {
+				continue
+			}
+			if faults, ok := m["faults"].([]any); ok {
+				total += len(faults)
+			}
+		}
+		if total == 0 {
+			return 0, nil
+		}
+		return total, outer
+	case []any:
+		// Non-Verbose: inner arrays are positional. Index 2 is a nested
+		// list of [fault_id, fault_description]. Count those.
+		_ = first
+		total := 0
+		for _, entry := range outer {
+			arr, ok := entry.([]any)
+			if !ok || len(arr) < 3 {
+				continue
+			}
+			if faults, ok := arr[2].([]any); ok {
+				total += len(faults)
+			}
+		}
+		if total == 0 {
+			return 0, nil
+		}
+		return total, outer
+	default:
+		// Unrecognised shape — return the raw outer so operators can
+		// still see something in the portal payload.
+		return 0, outer
+	}
 }
 
 func (a *TesiraAdapter) writeLine(s string) error {
