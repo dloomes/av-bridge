@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -598,7 +599,7 @@ func (a *TesiraAdapter) Poll(ctx context.Context) (*device.Telemetry, error) {
 		raw := parseTTPValue(resp)
 		if strings.HasPrefix(strings.TrimSpace(raw), "[") {
 			var arr []any
-			if err := json.Unmarshal([]byte(raw), &arr); err == nil {
+			if err := tesiraUnmarshal(raw, &arr); err == nil {
 				metrics["discovered_server_count"] = len(arr)
 				if len(arr) > 0 {
 					metrics["discovered_servers"] = arr
@@ -612,7 +613,7 @@ func (a *TesiraAdapter) Poll(ctx context.Context) (*device.Telemetry, error) {
 	if resp, err := a.sendAndReceive(ctx, "DEVICE get poeInfo", 3*time.Second); err == nil && strings.HasPrefix(resp, "+OK") {
 		if raw := parseTTPValue(resp); raw != "" && strings.HasPrefix(raw, "{") {
 			var obj map[string]any
-			if err := json.Unmarshal([]byte(raw), &obj); err == nil {
+			if err := tesiraUnmarshal(raw, &obj); err == nil {
 				metrics["poe_info"] = obj
 			}
 		}
@@ -623,7 +624,7 @@ func (a *TesiraAdapter) Poll(ctx context.Context) (*device.Telemetry, error) {
 	if resp, err := a.sendAndReceive(ctx, "DEVICE get ptpInfo", 3*time.Second); err == nil && strings.HasPrefix(resp, "+OK") {
 		if raw := parseTTPValue(resp); raw != "" && strings.HasPrefix(strings.TrimSpace(raw), "[") {
 			var arr []any
-			if err := json.Unmarshal([]byte(raw), &arr); err == nil && len(arr) > 0 {
+			if err := tesiraUnmarshal(raw, &arr); err == nil && len(arr) > 0 {
 				metrics["ptp_info"] = arr
 			}
 		}
@@ -634,7 +635,7 @@ func (a *TesiraAdapter) Poll(ctx context.Context) (*device.Telemetry, error) {
 	if resp, err := a.sendAndReceive(ctx, "DEVICE get danteInfo", 3*time.Second); err == nil && strings.HasPrefix(resp, "+OK") {
 		if raw := parseTTPValue(resp); raw != "" && strings.HasPrefix(raw, "{") {
 			var obj map[string]any
-			if err := json.Unmarshal([]byte(raw), &obj); err == nil && len(obj) > 0 {
+			if err := tesiraUnmarshal(raw, &obj); err == nil && len(obj) > 0 {
 				metrics["dante_info"] = obj
 			}
 		}
@@ -937,30 +938,68 @@ func parseTTPValue(resp string) string {
 }
 
 // parseTesiraNetworkStatus extracts the primary IP and MAC from a
-// Tesira `networkStatus` TTP response. The response shape varies by
-// firmware — this function walks a decoded JSON tree defensively and
-// returns the first non-empty (address, macAddress) pair it finds.
-// Returns empty strings if nothing parseable is present.
+// Tesira `networkStatus` TTP response.
 //
-// Common shapes observed in the field:
+// TesiraFORTÉ AVB CI firmware 5.7 emits the shape:
 //
-//	{"interfaces":[{"interfaceName":"Control","addresses":[
-//	    {"address":"192.168.1.100","macAddress":"AA:BB:CC:DD:EE:FF"}]}]}
-//	{"interfaces":[{"interfaceName":"Control",
-//	    "networkAddresses":[{"address":"192.168.1.100"}],
-//	    "macAddress":"AA:BB:CC:DD:EE:FF"}]}
+//	{"schemaVersion":2 "hostname":"..." "defaultGatewayStatus":"0.0.0.0"
+//	 "networkInterfaceStatusWithName":[
+//	   {"interfaceId":"control" "networkInterfaceStatus":{
+//	     "macAddress":"..." "linkStatus":LINK_1_GB "addressSource":STATIC
+//	     "ip":"192.168.0.28" "netmask":"..." "gateway":"..."
+//	   }}
+//	   {"interfaceId":"media_avb_0" "networkInterfaceStatus":{...}}
+//	 ] ...}
+//
+// AVB models expose two interfaces — the AVB media port typically has
+// a link-local (169.254.x) fallback address that we deliberately skip
+// so the returned IP is always the routable control-plane address.
+//
+// The walker is tolerant of the older `addresses[].address` shape too
+// so this function stays backwards-compatible.
 func parseTesiraNetworkStatus(raw string) (ip, mac string) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" || !strings.HasPrefix(raw, "{") {
 		return "", ""
 	}
 	var v any
-	if err := json.Unmarshal([]byte(raw), &v); err != nil {
+	if err := tesiraUnmarshal(raw, &v); err != nil {
 		return "", ""
 	}
-	// Recursive walk collecting the first address + macAddress pair
-	// we encounter — Tesira firmware nests these under interfaces /
-	// addresses / networkAddresses inconsistently between versions.
+	// Preferred path: pick the interface with id "control" so multi-
+	// interface AVB / Dante models return the right IP deterministically
+	// (map iteration is randomised).
+	if root, ok := v.(map[string]any); ok {
+		if list, ok := root["networkInterfaceStatusWithName"].([]any); ok {
+			for _, entry := range list {
+				m, ok := entry.(map[string]any)
+				if !ok {
+					continue
+				}
+				id, _ := m["interfaceId"].(string)
+				if !strings.EqualFold(id, "control") {
+					continue
+				}
+				status, ok := m["networkInterfaceStatus"].(map[string]any)
+				if !ok {
+					continue
+				}
+				if s, ok := status["ip"].(string); ok && looksLikeIP(s) {
+					ip = s
+				}
+				if s, ok := status["macAddress"].(string); ok && s != "" {
+					mac = s
+				}
+				if ip != "" && mac != "" {
+					return ip, mac
+				}
+			}
+		}
+	}
+
+	// Fallback: recursive walk collecting the first (routable) IP +
+	// MAC pair we find. Handles firmware variants and single-interface
+	// models where the id lookup didn't hit.
 	var walk func(any)
 	walk = func(node any) {
 		if ip != "" && mac != "" {
@@ -969,8 +1008,11 @@ func parseTesiraNetworkStatus(raw string) (ip, mac string) {
 		switch x := node.(type) {
 		case map[string]any:
 			if ip == "" {
-				if s, ok := x["address"].(string); ok && s != "" && looksLikeIP(s) {
-					ip = s
+				for _, k := range []string{"ip", "address", "ipAddress"} {
+					if s, ok := x[k].(string); ok && looksLikeIP(s) {
+						ip = s
+						break
+					}
 				}
 			}
 			if mac == "" {
@@ -991,38 +1033,178 @@ func parseTesiraNetworkStatus(raw string) (ip, mac string) {
 	return ip, mac
 }
 
-// looksLikeIP is a lightweight sanity check so we don't accidentally
-// pick up a MAC or gateway string as the primary IP. Accepts IPv4;
-// IPv6 is uncommon on Tesira control interfaces and can be added if
-// needed.
+// looksLikeIP filters address strings so we don't accidentally pick up
+// a MAC, gateway placeholder, or an APIPA fallback as the primary IP.
+// Rejects 0.0.0.0, multicast, and 169.254.0.0/16 (link-local — Tesira
+// AVB media interfaces use these as a fallback when no DHCP lease is
+// present, and they're never what the operator wants surfaced).
 func looksLikeIP(s string) bool {
-	if net.ParseIP(s) == nil {
+	if s == "" {
 		return false
 	}
-	// Filter out the unroutable 0.0.0.0 default and multicast — a
-	// well-configured Tesira should never report either as its own IP.
-	if s == "0.0.0.0" || strings.HasPrefix(s, "224.") {
+	parsed := net.ParseIP(s)
+	if parsed == nil {
+		return false
+	}
+	if s == "0.0.0.0" || strings.HasPrefix(s, "224.") || strings.HasPrefix(s, "169.254.") {
 		return false
 	}
 	return true
 }
 
-// parseTesiraDeviceInfo decodes a `deviceInfo` JSON object into the
-// four fields the adapter caches. Response shape per the Biamp TTP
-// DEVICE service reference is `{model, revision, serial, firmware, IP}`
-// but field names vary case slightly by firmware, so we accept common
-// variants (model/Model, firmware/firmwareVersion/softwareVersion,
-// serial/serialNumber, IP/ipAddress).
+// ttpToJSON rewrites Tesira's "TTP JSON" into standard JSON so
+// encoding/json can parse it. TTP JSON differs from strict JSON in
+// two ways observed on Tesira firmware ≥ 5.x:
 //
-// Any field the payload doesn't contain returns empty; caller falls
-// back to per-attribute queries on older firmwares.
+//  1. Key/value pairs are separated by whitespace, not commas.
+//  2. Enum values are emitted as bare tokens (LINK_1_GB, STATIC,
+//     AUDIO_SERVER, PORT_MODE_SEPARATE) rather than quoted strings.
+//
+// The transformer walks the input once, tracking whether we're inside
+// a quoted string (with escape awareness). Outside strings it inserts
+// a comma where one is needed between two values and quotes any bare
+// identifier that isn't a JSON literal (true / false / null / number).
+//
+// Example:
+//
+//	{"deviceModel":"TesiraFORTÉ AVB CI" "deviceRevision":"Rev. B" "serialNumber":"05008305"}
+//
+// becomes
+//
+//	{"deviceModel":"TesiraFORTÉ AVB CI","deviceRevision":"Rev. B","serialNumber":"05008305"}
+func ttpToJSON(raw string) string {
+	var out strings.Builder
+	out.Grow(len(raw) + len(raw)/8)
+
+	n := len(raw)
+	lastWasValue := false // true once a complete key OR value has been emitted
+
+	for i := 0; i < n; {
+		c := raw[i]
+		switch {
+		case c == '{' || c == '[':
+			out.WriteByte(c)
+			i++
+			lastWasValue = false
+		case c == '}' || c == ']':
+			out.WriteByte(c)
+			i++
+			lastWasValue = true
+		case c == ':':
+			out.WriteByte(c)
+			i++
+			lastWasValue = false
+		case c == ',':
+			out.WriteByte(c)
+			i++
+			lastWasValue = false
+		case c == ' ' || c == '\t' || c == '\n' || c == '\r':
+			// Whitespace between two tokens inside an object/array
+			// stands in for a comma in TTP JSON. Peek at the next
+			// non-whitespace char to decide.
+			j := i + 1
+			for j < n {
+				b := raw[j]
+				if b == ' ' || b == '\t' || b == '\n' || b == '\r' {
+					j++
+					continue
+				}
+				break
+			}
+			if lastWasValue && j < n && raw[j] != '}' && raw[j] != ']' && raw[j] != ',' {
+				out.WriteByte(',')
+				lastWasValue = false
+			}
+			i = j
+		case c == '"':
+			// Quoted string — copy through preserving escape sequences.
+			out.WriteByte(c)
+			i++
+			for i < n {
+				if raw[i] == '\\' && i+1 < n {
+					out.WriteByte(raw[i])
+					out.WriteByte(raw[i+1])
+					i += 2
+					continue
+				}
+				out.WriteByte(raw[i])
+				if raw[i] == '"' {
+					i++
+					break
+				}
+				i++
+			}
+			lastWasValue = true
+		default:
+			// Bare token — could be a JSON literal, a number, or a
+			// Tesira enum. Consume until we hit a delimiter.
+			start := i
+			for i < n && !isTTPDelim(raw[i]) {
+				i++
+			}
+			token := raw[start:i]
+			if isJSONBareLiteral(token) {
+				out.WriteString(token)
+			} else {
+				out.WriteByte('"')
+				out.WriteString(token)
+				out.WriteByte('"')
+			}
+			lastWasValue = true
+		}
+	}
+	return out.String()
+}
+
+// isTTPDelim identifies bytes that end a bare token in TTP output.
+func isTTPDelim(b byte) bool {
+	switch b {
+	case ' ', '\t', '\n', '\r', ',', ':', '{', '}', '[', ']', '"':
+		return true
+	}
+	return false
+}
+
+// isJSONBareLiteral reports whether a bare (unquoted) token is a
+// legal JSON value already — true, false, null, or a number.
+func isJSONBareLiteral(s string) bool {
+	if s == "true" || s == "false" || s == "null" {
+		return true
+	}
+	// Numeric — including negatives and decimals. json.Number covers
+	// the shape without allocating.
+	if _, err := strconv.ParseFloat(s, 64); err == nil {
+		return true
+	}
+	return false
+}
+
+// tesiraUnmarshal transforms Tesira TTP JSON into standard JSON and
+// decodes into v. Returns encoding/json's error if the transformed
+// output is still unparseable — helpful signal that the shape has
+// changed again and the transformer needs updating.
+func tesiraUnmarshal(raw string, v any) error {
+	return json.Unmarshal([]byte(ttpToJSON(raw)), v)
+}
+
+// parseTesiraDeviceInfo decodes a `deviceInfo` JSON object into the
+// four fields the adapter caches. Response shape verified against
+// TesiraFORTÉ AVB CI firmware 5.7.0.12:
+//
+//	{"deviceModel":"TesiraFORTÉ AVB CI" "deviceRevision":"Rev. B"
+//	 "serialNumber":"05008305" "firmwareVersion":"5.7.0.12"
+//	 "ipAddress":"192.168.0.28"}
+//
+// Older firmwares emit different field names — the pick list covers
+// both dialects. Any field the payload doesn't contain returns empty
+// and the caller falls back to per-attribute queries.
 func parseTesiraDeviceInfo(raw string) (model, firmware, serial, ip string) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" || !strings.HasPrefix(raw, "{") {
 		return "", "", "", ""
 	}
 	var obj map[string]any
-	if err := json.Unmarshal([]byte(raw), &obj); err != nil {
+	if err := tesiraUnmarshal(raw, &obj); err != nil {
 		return "", "", "", ""
 	}
 	pick := func(keys ...string) string {
@@ -1035,10 +1217,10 @@ func parseTesiraDeviceInfo(raw string) (model, firmware, serial, ip string) {
 		}
 		return ""
 	}
-	model = pick("model", "Model", "productName")
-	firmware = pick("firmware", "firmwareVersion", "softwareVersion", "version")
-	serial = pick("serial", "serialNumber")
-	ip = pick("IP", "ipAddress", "ip")
+	model = pick("deviceModel", "model", "Model", "productName")
+	firmware = pick("firmwareVersion", "firmware", "softwareVersion", "version")
+	serial = pick("serialNumber", "serial")
+	ip = pick("ipAddress", "IP", "ip")
 	return model, firmware, serial, ip
 }
 
@@ -1069,7 +1251,7 @@ func parseTesiraFaultList(raw string) (int, []any) {
 		return 0, nil
 	}
 	var outer []any
-	if err := json.Unmarshal([]byte(raw), &outer); err != nil {
+	if err := tesiraUnmarshal(raw, &outer); err != nil {
 		return 0, nil
 	}
 	if len(outer) == 0 {

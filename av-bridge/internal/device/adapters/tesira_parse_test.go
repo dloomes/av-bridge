@@ -1,6 +1,73 @@
 package adapters
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
+
+func TestTTPToJSON(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "space-separated-pairs",
+			in:   `{"a":"foo" "b":"bar"}`,
+			want: `{"a":"foo","b":"bar"}`,
+		},
+		{
+			name: "bare-enum-quoted",
+			in:   `{"linkStatus":LINK_1_GB "addressSource":STATIC}`,
+			want: `{"linkStatus":"LINK_1_GB","addressSource":"STATIC"}`,
+		},
+		{
+			name: "bool-and-number-passthrough",
+			in:   `{"sleeping":false "count":20}`,
+			want: `{"sleeping":false,"count":20}`,
+		},
+		{
+			name: "array-of-objects",
+			in:   `[{"ip":"192.168.0.28" "hostname":"foo"} {"ip":"10.0.0.1" "hostname":"bar"}]`,
+			want: `[{"ip":"192.168.0.28","hostname":"foo"},{"ip":"10.0.0.1","hostname":"bar"}]`,
+		},
+		{
+			name: "nested-object",
+			in:   `{"outer":{"inner":"val" "flag":true} "sibling":"ok"}`,
+			want: `{"outer":{"inner":"val","flag":true},"sibling":"ok"}`,
+		},
+		{
+			name: "escaped-slash-preserved",
+			in:   `{"date":"N\/A"}`,
+			want: `{"date":"N\/A"}`,
+		},
+		{
+			name: "already-standard-json",
+			in:   `{"a":"b","c":42}`,
+			want: `{"a":"b","c":42}`,
+		},
+		{
+			// Full networkStatus fragment from a real TesiraFORTÉ AVB CI.
+			name: "real-network-fragment",
+			in:   `{"interfaceId":"control" "networkInterfaceStatus":{"macAddress":"78:45:01:12:d4:7f" "linkStatus":LINK_1_GB "addressSource":STATIC "ip":"192.168.0.28"}}`,
+			want: `{"interfaceId":"control","networkInterfaceStatus":{"macAddress":"78:45:01:12:d4:7f","linkStatus":"LINK_1_GB","addressSource":"STATIC","ip":"192.168.0.28"}}`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ttpToJSON(tc.in)
+			if got != tc.want {
+				t.Errorf("\ngot:  %s\nwant: %s", got, tc.want)
+			}
+			// Round-trip through encoding/json to confirm the output is
+			// actually valid — the string match alone doesn't guarantee it.
+			var v any
+			if err := json.Unmarshal([]byte(got), &v); err != nil {
+				t.Errorf("output failed to Unmarshal: %v (output: %s)", err, got)
+			}
+		})
+	}
+}
 
 func TestParseTesiraNetworkStatus(t *testing.T) {
 	cases := []struct {
@@ -61,6 +128,20 @@ func TestParseTesiraNetworkStatus(t *testing.T) {
 			}]}`,
 			wantIP:  "192.168.1.100",
 			wantMAC: "",
+		},
+		{
+			// Real TesiraFORTÉ AVB CI 5.7 networkStatus response:
+			// TTP JSON (space-separated pairs, bare enums), two
+			// interfaces where media_avb_0 has a 169.254 link-local
+			// address that MUST be rejected in favour of the control
+			// interface's routable IP.
+			name: "real-forte-avb-two-interfaces",
+			raw: `{"schemaVersion":2 "hostname":"TesiraForteCT1" "defaultGatewayStatus":"0.0.0.0" "networkInterfaceStatusWithName":[` +
+				`{"interfaceId":"control" "networkInterfaceStatus":{"macAddress":"78:45:01:12:d4:7f" "linkStatus":LINK_1_GB "addressSource":STATIC "ip":"192.168.0.28" "netmask":"255.255.255.0" "gateway":"192.168.0.1"}}` +
+				` {"interfaceId":"media_avb_0" "networkInterfaceStatus":{"macAddress":"78:45:01:12:d4:80" "linkStatus":LINK_1_GB "addressSource":DHCP "ip":"169.254.251.129" "netmask":"255.255.0.0" "gateway":"0.0.0.0"}}` +
+				`]}`,
+			wantIP:  "192.168.0.28",
+			wantMAC: "78:45:01:12:d4:7f",
 		},
 	}
 	for _, tc := range cases {
@@ -163,8 +244,18 @@ func TestParseTesiraDeviceInfo(t *testing.T) {
 		{name: "empty", raw: "", wantModel: "", wantFirmware: "", wantSerial: "", wantIP: ""},
 		{name: "not-json", raw: "not-json", wantModel: "", wantFirmware: "", wantSerial: "", wantIP: ""},
 		{
-			// Canonical shape per DEVICE service reference.
-			name:         "canonical",
+			// Real-world shape observed on TesiraFORTÉ AVB CI firmware 5.7.0.12.
+			// Note: space-separated pairs, deviceModel key, ipAddress key.
+			name:         "real-forte-avb-ci-5-7",
+			raw:          `{"deviceModel":"TesiraFORTÉ AVB CI" "deviceRevision":"Rev. B" "serialNumber":"05008305" "firmwareVersion":"5.7.0.12" "ipAddress":"192.168.0.28"}`,
+			wantModel:    "TesiraFORTÉ AVB CI",
+			wantFirmware: "5.7.0.12",
+			wantSerial:   "05008305",
+			wantIP:       "192.168.0.28",
+		},
+		{
+			// Older-firmware shape per v5.3 DEVICE service reference.
+			name:         "canonical-legacy",
 			raw:          `{"model":"TESIRAFORTE-CI","revision":"A","serial":"05008305","firmware":"3.19.1.7","IP":"192.168.1.100"}`,
 			wantModel:    "TESIRAFORTE-CI",
 			wantFirmware: "3.19.1.7",
