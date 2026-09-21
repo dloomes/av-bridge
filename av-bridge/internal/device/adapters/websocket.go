@@ -78,6 +78,24 @@ func (a *WebSocketAdapter) Disconnect() error {
 	return nil
 }
 
+// Heartbeat implements device.Heartbeater. Sends a WebSocket ping frame
+// (standard protocol keepalive) so intermediate proxies / NATs don't
+// drop the socket during quiet periods. Uses WriteControl so it doesn't
+// interfere with in-flight message writes.
+func (a *WebSocketAdapter) Heartbeat(ctx context.Context) error {
+	a.connMu.Lock()
+	conn := a.conn
+	a.connMu.Unlock()
+	if conn == nil {
+		return fmt.Errorf("ws heartbeat: not connected")
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
+		deadline = d
+	}
+	return conn.WriteControl(websocket.PingMessage, nil, deadline)
+}
+
 func (a *WebSocketAdapter) readLoop(ctx context.Context) {
 	for {
 		select {

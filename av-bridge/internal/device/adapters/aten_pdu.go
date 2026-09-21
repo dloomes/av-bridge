@@ -108,6 +108,15 @@ func (a *ATENPDUAdapter) Disconnect() error {
 
 // ── Poll ──────────────────────────────────────────────────────────────────────
 
+// Heartbeat implements device.Heartbeater. Sends the same cheap
+// "read dev info" query used at Connect to keep the persistent TCP
+// session warm between polls so a command doesn't have to reconnect
+// after a NAT idle timeout.
+func (a *ATENPDUAdapter) Heartbeat(ctx context.Context) error {
+	_, err := a.exec(ctx, "read dev info")
+	return err
+}
+
 // Poll samples per-outlet state + power draw and device-level voltage and
 // total power. Each query is best-effort: a parse miss on one outlet leaves
 // that metric absent rather than failing the whole poll.

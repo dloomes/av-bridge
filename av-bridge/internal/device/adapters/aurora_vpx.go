@@ -126,6 +126,16 @@ func (a *AuroraVPXAdapter) Disconnect() error {
 	return nil
 }
 
+// Heartbeat implements device.Heartbeater. Sends the same "get status"
+// probe the poll uses first, but doesn't fold the result into telemetry.
+// Purpose is purely to keep the persistent TCP connection warm between
+// polls so a command doesn't have to reconnect on a first-touch after
+// idle NAT timeouts.
+func (a *AuroraVPXAdapter) Heartbeat(ctx context.Context) error {
+	_, err := a.request(ctx, "get status")
+	return err
+}
+
 // ── Poll ──────────────────────────────────────────────────────────────────────
 
 func (a *AuroraVPXAdapter) Poll(ctx context.Context) (*device.Telemetry, error) {

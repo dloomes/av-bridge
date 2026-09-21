@@ -413,6 +413,15 @@ func (a *TesiraAdapter) HandleSubscriptionNotification(line string) {
 // Poll sends a TTP probe command and merges the response with any cached
 // subscription state. Subscription-based attributes (mute, gain, call state)
 // are served from the cached state updated by the read loop, so the probe
+// Heartbeat implements device.Heartbeater. Sends the cheapest TTP query
+// on the persistent telnet session to prove the socket + session are
+// still alive. Runs between polls so cold-path reconnect never surprises
+// a user issuing a command.
+func (a *TesiraAdapter) Heartbeat(ctx context.Context) error {
+	_, err := a.sendAndReceive(ctx, "DEVICE get serialNumber", 3*time.Second)
+	return err
+}
+
 // only needs to confirm the session is still alive.
 func (a *TesiraAdapter) Poll(ctx context.Context) (*device.Telemetry, error) {
 	resp, err := a.sendAndReceive(ctx, "DEVICE get serialNumber", 3*time.Second)

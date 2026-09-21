@@ -7,6 +7,7 @@ import type {
   AuditEntry,
   BuildingRow,
   BulkCommandResponse,
+  Command,
   CollectorSummary,
   CommandRequest,
   CreateCollectorBody,
@@ -548,6 +549,60 @@ export interface ListRunsOpts {
   limit?: number;
 }
 
+// pollCommandUntilTerminal polls GET /api/v1/commands/{id} until the row
+// reaches a terminal state (succeeded / failed / cancelled) or the caller's
+// signal aborts or we hit the client-side ceiling. Ceiling is deliberately
+// generous — some vendor commands (reboot, cold-session recovery) legitimately
+// take 30-60 seconds and the operator would rather see a slow spinner than a
+// spurious error. On success returns the stored CommandResponse from the
+// row's `result` field. On failure throws with the device's error message
+// so upstream toast rendering just works.
+const COMMAND_POLL_INTERVAL_MS = 750;
+const COMMAND_POLL_CEILING_MS = 90_000;
+
+async function pollCommandUntilTerminal(
+  commandId: string,
+  signal?: AbortSignal
+): Promise<CommandResponse> {
+  const started = Date.now();
+  const url = `${API_BASE}/api/v1/commands/${encodeURIComponent(commandId)}`;
+  while (Date.now() - started < COMMAND_POLL_CEILING_MS) {
+    if (signal?.aborted) {
+      throw new DOMException("Aborted", "AbortError");
+    }
+    const res = await fetchWithRetry(url, {
+      headers: authHeaders(),
+      cache: "no-store",
+      signal,
+    });
+    if (!res.ok) {
+      if (res.status === 401) handle401IfSessionDeath(url);
+      const body = await res.text().catch(() => "");
+      throw new ApiError(
+        `poll command ${commandId}: ${res.status} ${res.statusText}${body ? `: ${body}` : ""}`,
+        res.status
+      );
+    }
+    const cmd = (await res.json()) as Command;
+    if (cmd.status === "succeeded") {
+      return (
+        cmd.result ?? { raw: "", latency_ms: 0 }
+      );
+    }
+    if (cmd.status === "failed" || cmd.status === "cancelled") {
+      throw new ApiError(
+        cmd.error || `command ${cmd.status}`,
+        cmd.status === "cancelled" ? 499 : 500
+      );
+    }
+    await sleep(COMMAND_POLL_INTERVAL_MS, signal);
+  }
+  throw new ApiError(
+    `command ${commandId} still ${"pending"} after ${COMMAND_POLL_CEILING_MS / 1000}s`,
+    504
+  );
+}
+
 export const api = {
   // -- auth --------------------------------------------------------------------
   //
@@ -807,11 +862,45 @@ export const api = {
       { signal }
     ),
 
-  sendCommand: (id: string, body: CommandRequest, signal?: AbortSignal) =>
-    request<CommandResponse>(
-      `/api/v1/devices/${encodeURIComponent(id)}/command`,
-      { method: "POST", body: JSON.stringify(body), signal }
-    ),
+  // sendCommand posts a device command. Most commands complete synchronously
+  // and the cloud returns 200 with a CommandResponse. Slow commands (cold Poly
+  // session, chatty vendor protocol) can exceed the cloud's synchronous wait
+  // ceiling (portalCommandWait, currently 30s), in which case the cloud returns
+  // 202 with a {command_id} and expects the caller to poll GET /commands/{id}.
+  // This handles both transparently so callers get a CommandResponse either
+  // way — the promise just takes longer for a 202 path.
+  sendCommand: async (
+    id: string,
+    body: CommandRequest,
+    signal?: AbortSignal
+  ): Promise<CommandResponse> => {
+    const res = await fetchWithRetry(
+      `${API_BASE}/api/v1/devices/${encodeURIComponent(id)}/command`,
+      {
+        method: "POST",
+        body: JSON.stringify(body),
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        cache: "no-store",
+        signal,
+      }
+    );
+    if (res.status === 200) {
+      return (await res.json()) as CommandResponse;
+    }
+    if (res.status === 202) {
+      const queued = (await res.json()) as { command_id: string };
+      return pollCommandUntilTerminal(queued.command_id, signal);
+    }
+    if (res.status === 401) handle401IfSessionDeath("/api/v1/devices/command");
+    const errText = await res.text().catch(() => "");
+    throw new ApiError(
+      `${res.status} ${res.statusText}${errText ? `: ${errText}` : ""}`,
+      res.status
+    );
+  },
+
+  getCommand: (id: string, signal?: AbortSignal) =>
+    request<Command>(`/api/v1/commands/${encodeURIComponent(id)}`, { signal }),
 
   sendBulkCommand: (
     body: { device_ids: string[]; name: string; args?: Record<string, unknown> },

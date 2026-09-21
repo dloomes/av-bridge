@@ -278,6 +278,33 @@ export interface CommandResponse {
   latency_ms: number;
 }
 
+// CommandStatus mirrors commands.Status in the cloud queue package.
+// "Terminal" states (succeeded / failed / cancelled) stop polling.
+export type CommandStatus =
+  | "pending"
+  | "in_progress"
+  | "succeeded"
+  | "failed"
+  | "cancelled";
+
+// Command row as returned by GET /api/v1/commands/{id}. Used by the
+// portal's poll-until-terminal path when the initial dispatch returns
+// 202 because the device is taking longer than the cloud's synchronous
+// wait ceiling.
+export interface Command {
+  id: string;
+  device_id: string;
+  reported_id: string;
+  name: string;
+  args?: Record<string, unknown>;
+  status: CommandStatus;
+  result?: CommandResponse;
+  error?: string;
+  submitted_at: string;
+  claimed_at?: string;
+  completed_at?: string;
+}
+
 export interface FleetStatus {
   total: number;
   online: number;

@@ -556,10 +556,14 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 	}
 
 	return &http.Server{
-		Addr:         addr,
-		Handler:      logging(log, mux),
+		Addr:    addr,
+		Handler: logging(log, mux),
+		// WriteTimeout must exceed portalCommandWait (30s) so a slow
+		// command still returns 200 with a real result rather than
+		// having the connection killed mid-write. 45s gives headroom
+		// for the response marshal + network flush on top of the wait.
 		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
+		WriteTimeout: 45 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}
 }

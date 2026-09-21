@@ -134,6 +134,18 @@ func (a *PolyVideoOSAdapter) Disconnect() error {
 	return nil
 }
 
+// Heartbeat implements device.Heartbeater. Hits /rest/system on the
+// existing session so the session cookie + TCP + TLS stay warm between
+// polls. Cheap: returns a small JSON blob with softwareVersion +
+// serialNumber. Uses the reauth wrapper so if the session HAS timed
+// out we re-auth once and the next command benefits from the warm
+// session — either way, the fleet-wide "first command is slow" cold
+// path goes away for Poly.
+func (a *PolyVideoOSAdapter) Heartbeat(ctx context.Context) error {
+	_, err := a.getWithReauth(ctx, "/rest/system")
+	return err
+}
+
 func (a *PolyVideoOSAdapter) login(ctx context.Context) error {
 	a.sessionMu.Lock()
 	defer a.sessionMu.Unlock()

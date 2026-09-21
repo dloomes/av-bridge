@@ -16,7 +16,10 @@ import (
 // portalCommandWait is how long the portal-submit handler waits for a result
 // before returning 202 + command_id so the portal can poll. Tuned for "feels
 // synchronous for normal commands but doesn't block forever on a slow device."
-const portalCommandWait = 15 * time.Second
+// Bumped from 15s to 30s so cold-session Poly commands (re-auth + TLS + the
+// actual command) resolve synchronously instead of hitting the ceiling and
+// returning 202. Must stay < the HTTP server's WriteTimeout (see api/server.go).
+const portalCommandWait = 30 * time.Second
 
 // CommandReconnectName is the reserved command name the bridge interprets as
 // "Disconnect + Connect this device" rather than dispatching to the adapter's

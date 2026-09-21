@@ -328,6 +328,16 @@ func (h *Hub) manageDevice(ctx context.Context, dev device.Device) {
 				} else {
 					log.Info("device reconnected")
 				}
+			} else if hb, ok := dev.(device.Heartbeater); ok {
+				// Proactive keep-alive for stateful adapters (Poly session,
+				// persistent TCP). Short deadline so a slow adapter never
+				// blocks the goroutine; failures are logged but don't flip
+				// the device to offline — Poll is the source of truth.
+				hbCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+				if err := hb.Heartbeat(hbCtx); err != nil {
+					log.Debug("heartbeat failed", "error", err)
+				}
+				cancel()
 			}
 		}
 	}

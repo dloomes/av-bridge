@@ -110,6 +110,26 @@ type Device interface {
 	Capabilities() Capabilities
 }
 
+// Heartbeater is an OPTIONAL device capability: keep the underlying
+// transport / session warm between polls. The hub calls Heartbeat() on
+// its heartbeat tick for any device that both implements this interface
+// and is currently reporting online. Failures are logged at debug level
+// and do NOT flip the device to offline — Poll remains the authoritative
+// source of truth for reachability. The hub applies a short per-call
+// timeout so a slow Heartbeat never blocks the goroutine.
+//
+// Adapters that benefit most:
+//   - HTTP+session (Poly VideoOS) — refreshes the session cookie so the
+//     next SendCommand doesn't pay the re-auth cost.
+//   - Persistent TCP (Tesira, Aurora, ATEN, Telnet, WebSocket) — proves
+//     the socket is alive if the poll rate exceeds any enterprise NAT
+//     idle timeout.
+// Stateless adapters (REST, Sony Bravia PSK, VISCA, Ping, Serial) do
+// NOT implement this — every request already stands on its own.
+type Heartbeater interface {
+	Heartbeat(ctx context.Context) error
+}
+
 // -------------------------------------------------------------------
 // Base — shared state embedded in every adapter
 // -------------------------------------------------------------------

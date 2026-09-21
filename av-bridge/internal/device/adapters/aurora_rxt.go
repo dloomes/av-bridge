@@ -188,6 +188,15 @@ func (a *AuroraAdapter) closeConn() error {
 
 // ── Poll ──────────────────────────────────────────────────────────────────────
 
+// Heartbeat implements device.Heartbeater. Fires a lightweight probe on
+// the persistent TCP session between polls so NAT idle-timeouts don't
+// silently drop the connection and force a slow reconnect on a
+// user-initiated command.
+func (a *AuroraAdapter) Heartbeat(ctx context.Context) error {
+	_, err := a.exec(ctx, "get speaker.volume", 3*time.Second)
+	return err
+}
+
 // Poll samples runtime state: built-in speaker volume/mute, LCD brightness +
 // dim timeout, ambient light + proximity sensors, auto-brightness mode, and
 // both relay output states. Each query is best-effort — failures degrade the
