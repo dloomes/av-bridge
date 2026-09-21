@@ -35,9 +35,12 @@ import type {
   NamedRow,
   NotificationChannel,
   NotificationChannelBody,
+  PowerRow,
   RoleMappingRow,
   RoleRow,
   RoomActivityRow,
+  RoomUtilisationRow,
+  WarrantyRow,
   Telemetry,
   UpdateAssetBody,
   UpdateDeviceBody,
@@ -1275,12 +1278,36 @@ export const api = {
       { signal }
     ),
 
+  warrantyReport: (signal?: AbortSignal) =>
+    request<WarrantyRow[]>(`/api/v1/reports/warranty`, { signal }),
+
+  roomUtilisationReport: (days: number, signal?: AbortSignal) =>
+    request<RoomUtilisationRow[]>(
+      `/api/v1/reports/room-utilisation?days=${days}`,
+      { signal }
+    ),
+
+  powerReport: (days: number, signal?: AbortSignal) =>
+    request<PowerRow[]>(`/api/v1/reports/power?days=${days}`, { signal }),
+
   // reportCSVUrl builds the URL for a downloadable CSV including the bearer
   // token as a query param. Used directly in <a download> so the browser
-  // handles the file save dialog.
-  reportCSVUrl: (kind: "device-uptime" | "room-activity", days: number): string => {
+  // handles the file save dialog. Warranty ignores `days` (lifetime state).
+  reportCSVUrl: (
+    kind:
+      | "device-uptime"
+      | "room-activity"
+      | "warranty"
+      | "room-utilisation"
+      | "power",
+    days: number
+  ): string => {
     const tok = currentToken();
     const auth = tok ? `&token=${encodeURIComponent(tok)}` : "";
+    // Warranty is a lifetime state — no window param.
+    if (kind === "warranty") {
+      return `${API_BASE}/api/v1/reports/warranty?format=csv${auth}`;
+    }
     return `${API_BASE}/api/v1/reports/${kind}?days=${days}&format=csv${auth}`;
   },
 

@@ -1059,6 +1059,8 @@ type createDeviceReq struct {
 	Username      string            `json:"username,omitempty"`
 	Password      string            `json:"password,omitempty"`
 	PollRate      int               `json:"poll_rate_seconds,omitempty"`
+	PowerWattsOn      *float64      `json:"power_watts_on,omitempty"`
+	PowerWattsStandby *float64      `json:"power_watts_standby,omitempty"`
 	Commands      map[string]string `json:"commands,omitempty"`
 	Tags          map[string]string `json:"tags,omitempty"`
 	Subscriptions []Subscription    `json:"subscriptions,omitempty"`
@@ -1331,12 +1333,14 @@ func (h *Handler) CreateDevice(w http.ResponseWriter, r *http.Request) {
 				customer_id, collector_id, room_id, reported_id,
 				name, type, protocol, address, baud_rate,
 				username_enc, password_enc, poll_rate_seconds,
-				commands, tags, subscriptions, asset_id
+				commands, tags, subscriptions, asset_id,
+				power_watts_on, power_watts_standby
 			) VALUES (
 				$1, $2, $3, $4,
 				NULLIF($5,''), NULLIF($6,''), NULLIF($7,''), NULLIF($8,''), $9,
 				$10, $11, $12,
-				$13::jsonb, $14::jsonb, $15::jsonb, $16
+				$13::jsonb, $14::jsonb, $15::jsonb, $16,
+				$17, $18
 			)
 			ON CONFLICT (collector_id, reported_id) DO NOTHING
 			RETURNING id::text`,
@@ -1345,6 +1349,7 @@ func (h *Handler) CreateDevice(w http.ResponseWriter, r *http.Request) {
 			userEnc, passEnc, nullIfZero(req.PollRate),
 			jsonOrNil(req.Commands), jsonOrNil(req.Tags), jsonOrNil(req.Subscriptions),
 			assetParam,
+			req.PowerWattsOn, req.PowerWattsStandby,
 		).Scan(&id)
 		if errors.Is(err, pgx.ErrNoRows) {
 			duplicate = true
@@ -1419,6 +1424,13 @@ type updateDeviceReq struct {
 	Username      *string             `json:"username,omitempty"`
 	Password      *string             `json:"password,omitempty"`
 	PollRate      *int                `json:"poll_rate_seconds,omitempty"`
+	// Power ratings. Pointer for tri-state: absent = untouched;
+	// non-nil value writes it; explicit nil-pointer-with-zero-body cannot
+	// clear (use PATCH with `{"power_watts_on": null}` via omitempty-off
+	// custom decoding if clearing is ever needed — for MVP, edit UI just
+	// re-enters a value).
+	PowerWattsOn      *float64        `json:"power_watts_on,omitempty"`
+	PowerWattsStandby *float64        `json:"power_watts_standby,omitempty"`
 	Commands      *map[string]string  `json:"commands,omitempty"`
 	Tags          *map[string]string  `json:"tags,omitempty"`
 	Subscriptions *[]Subscription     `json:"subscriptions,omitempty"`
@@ -1486,6 +1498,12 @@ func (h *Handler) UpdateDevice(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.PollRate != nil {
 		add("poll_rate_seconds", nullIfZero(*req.PollRate))
+	}
+	if req.PowerWattsOn != nil {
+		add("power_watts_on", *req.PowerWattsOn)
+	}
+	if req.PowerWattsStandby != nil {
+		add("power_watts_standby", *req.PowerWattsStandby)
 	}
 	if req.Username != nil {
 		enc, err := h.encryptOptional(*req.Username)

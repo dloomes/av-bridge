@@ -56,6 +56,8 @@ interface FormState {
   username: string;
   password: string;
   poll_rate_seconds: string;
+  power_watts_on: string;
+  power_watts_standby: string;
   room_id: string;
   asset_id: string;
   // Physical inventory section — populated from initial.asset on edit,
@@ -87,6 +89,8 @@ function emptyForm(): FormState {
     username: "",
     password: "",
     poll_rate_seconds: "60",
+    power_watts_on: "",
+    power_watts_standby: "",
     room_id: "",
     asset_id: "",
     asset_tag: "",
@@ -116,6 +120,8 @@ function formFromDetail(d: DeviceDetail): FormState {
     username: "",
     password: "",
     poll_rate_seconds: d.poll_rate_seconds ? String(d.poll_rate_seconds) : "",
+    power_watts_on: d.power_watts_on != null ? String(d.power_watts_on) : "",
+    power_watts_standby: d.power_watts_standby != null ? String(d.power_watts_standby) : "",
     room_id: d.room_id ?? "",
     asset_id: d.asset_id ?? "",
     asset_tag: d.asset?.asset_tag ?? "",
@@ -550,6 +556,12 @@ export function DeviceForm({
           poll_rate_seconds: form.poll_rate_seconds
             ? Number(form.poll_rate_seconds)
             : undefined,
+          power_watts_on: form.power_watts_on
+            ? Number(form.power_watts_on)
+            : undefined,
+          power_watts_standby: form.power_watts_standby
+            ? Number(form.power_watts_standby)
+            : undefined,
           room_id: form.room_id || undefined,
           asset_id: form.asset_id || undefined,
           asset: assetInline,
@@ -573,6 +585,12 @@ export function DeviceForm({
           poll_rate_seconds: form.poll_rate_seconds
             ? Number(form.poll_rate_seconds)
             : 0,
+          power_watts_on: form.power_watts_on
+            ? Number(form.power_watts_on)
+            : undefined,
+          power_watts_standby: form.power_watts_standby
+            ? Number(form.power_watts_standby)
+            : undefined,
           room_id: form.room_id,
           asset_id: form.asset_id,
           asset: assetInline,
@@ -789,6 +807,36 @@ export function DeviceForm({
             autoComplete="new-password"
             placeholder={isEdit ? "(leave blank to keep)" : ""}
           />
+        </div>
+        <div>
+          <label className={labelClass}>Power on (watts)</label>
+          <input
+            type="number"
+            step="0.1"
+            min={0}
+            className={inputClass}
+            value={form.power_watts_on}
+            onChange={(e) => set("power_watts_on", e.target.value)}
+            placeholder="e.g. 300"
+          />
+          <p className="mt-1 text-[11px] text-muted-foreground">
+            Nameplate consumption when the device is on. Feeds the Power report.
+          </p>
+        </div>
+        <div>
+          <label className={labelClass}>Power standby (watts)</label>
+          <input
+            type="number"
+            step="0.1"
+            min={0}
+            className={inputClass}
+            value={form.power_watts_standby}
+            onChange={(e) => set("power_watts_standby", e.target.value)}
+            placeholder="e.g. 8"
+          />
+          <p className="mt-1 text-[11px] text-muted-foreground">
+            Standby / soft-off draw. Used to calculate savings from nightly power-down.
+          </p>
         </div>
       </div>
 

@@ -64,6 +64,10 @@ export interface DeviceDetail extends DeviceSummary {
   ip_address?: string;
   baud_rate?: number;
   poll_rate_seconds?: number;
+  // Nameplate power rating. Nullable — operator populates over time. On the
+  // create/update wire both are number|undefined (undefined = leave alone).
+  power_watts_on?: number;
+  power_watts_standby?: number;
   commands?: Record<string, string>;
   subscriptions?: Subscription[];
 }
@@ -80,6 +84,8 @@ export interface CreateDeviceBody {
   username?: string;
   password?: string;
   poll_rate_seconds?: number;
+  power_watts_on?: number;
+  power_watts_standby?: number;
   commands?: Record<string, string>;
   tags?: Record<string, string>;
   subscriptions?: Subscription[];
@@ -345,6 +351,53 @@ export interface RoomActivityRow {
   device_count: number;
   event_count: number;
   last_event_at?: string;
+}
+
+// WarrantyBucket mirrors the backend's warrantyBucket() classifier in
+// portalapi/reports.go — the enum values are used to pick a chip colour.
+export type WarrantyBucket =
+  | "expired"
+  | "lt_30d"
+  | "lt_90d"
+  | "lt_365d"
+  | "later"
+  | "no_date";
+
+export interface WarrantyRow {
+  asset_id: string;
+  asset_tag?: string;
+  name: string;
+  category: string;
+  manufacturer?: string;
+  model?: string;
+  serial_number?: string;
+  status: string;
+  location?: string;
+  warranty_end?: string;
+  days_remaining?: number;
+  bucket: WarrantyBucket;
+}
+
+export interface RoomUtilisationRow {
+  room_id: string;
+  room_name: string;
+  building_name: string;
+  device_count: number;
+  active_hours: number;
+  active_days: number;
+  avg_hours_per_day: number;
+}
+
+export interface PowerRow {
+  room_id: string;
+  room_name: string;
+  building_name: string;
+  rated_devices: number;
+  unrated_devices: number;
+  consumed_kwh: number;
+  saved_kwh: number;
+  nightly_runs: number;
+  avg_off_hours: number;
 }
 
 export interface FirmwareRow {

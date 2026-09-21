@@ -6,6 +6,9 @@ import {
   Download,
   LineChart,
   RefreshCcw,
+  ShieldAlert,
+  Clock,
+  Zap,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -13,9 +16,16 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { UserMenu } from "@/components/user-menu";
 import { api } from "@/lib/api";
 import { formatRelative } from "@/lib/utils";
-import type { DeviceUptimeRow, RoomActivityRow } from "@/lib/types";
+import type {
+  DeviceUptimeRow,
+  PowerRow,
+  RoomActivityRow,
+  RoomUtilisationRow,
+  WarrantyBucket,
+  WarrantyRow,
+} from "@/lib/types";
 
-type Tab = "uptime" | "activity";
+type Tab = "uptime" | "activity" | "utilisation" | "warranty" | "power";
 type Window = 1 | 7 | 30 | 90;
 
 const WINDOWS: Window[] = [1, 7, 30, 90];
@@ -23,6 +33,26 @@ const WINDOWS: Window[] = [1, 7, 30, 90];
 const TAB_LABEL: Record<Tab, string> = {
   uptime: "Device uptime",
   activity: "Room activity",
+  utilisation: "Room utilisation",
+  warranty: "Warranty",
+  power: "Power",
+};
+
+const TAB_CSV_KIND: Record<Tab, "device-uptime" | "room-activity" | "warranty" | "room-utilisation" | "power"> = {
+  uptime: "device-uptime",
+  activity: "room-activity",
+  utilisation: "room-utilisation",
+  warranty: "warranty",
+  power: "power",
+};
+
+// Warranty is a lifetime state, not windowed — the window picker hides for it.
+const TAB_HAS_WINDOW: Record<Tab, boolean> = {
+  uptime: true,
+  activity: true,
+  utilisation: true,
+  warranty: false,
+  power: true,
 };
 
 export default function ReportsPage() {
@@ -35,7 +65,7 @@ export default function ReportsPage() {
         <div>
           <h1 className="text-xl font-semibold">Reports</h1>
           <p className="text-sm text-muted-foreground">
-            Device uptime and room activity over the selected window
+            Uptime, activity, utilisation, warranty and power over the selected window
           </p>
         </div>
         <UserMenu />
@@ -43,7 +73,7 @@ export default function ReportsPage() {
 
       <div className="flex-1 min-h-0 overflow-y-auto p-6 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex gap-1 border-b">
+          <div className="flex gap-1 border-b flex-wrap">
             {(Object.keys(TAB_LABEL) as Tab[]).map((t) => (
               <button
                 key={t}
@@ -61,24 +91,28 @@ export default function ReportsPage() {
           </div>
 
           <div className="flex items-center gap-2">
-            <span className="text-xs text-muted-foreground">Window:</span>
-            {WINDOWS.map((w) => (
-              <button
-                key={w}
-                type="button"
-                onClick={() => setDays(w)}
-                className={`rounded-md border px-2 py-1 text-xs ${
-                  days === w
-                    ? "bg-foreground text-background border-foreground"
-                    : "border-input hover:bg-accent/40"
-                }`}
-              >
-                {w === 1 ? "24h" : `${w}d`}
-              </button>
-            ))}
+            {TAB_HAS_WINDOW[tab] && (
+              <>
+                <span className="text-xs text-muted-foreground">Window:</span>
+                {WINDOWS.map((w) => (
+                  <button
+                    key={w}
+                    type="button"
+                    onClick={() => setDays(w)}
+                    className={`rounded-md border px-2 py-1 text-xs ${
+                      days === w
+                        ? "bg-foreground text-background border-foreground"
+                        : "border-input hover:bg-accent/40"
+                    }`}
+                  >
+                    {w === 1 ? "24h" : `${w}d`}
+                  </button>
+                ))}
+              </>
+            )}
             <Button asChild variant="outline" size="sm">
               <a
-                href={api.reportCSVUrl(tab === "uptime" ? "device-uptime" : "room-activity", days)}
+                href={api.reportCSVUrl(TAB_CSV_KIND[tab], days)}
                 download
               >
                 <Download className="h-3.5 w-3.5" />
@@ -88,11 +122,11 @@ export default function ReportsPage() {
           </div>
         </div>
 
-        {tab === "uptime" ? (
-          <UptimeReport days={days} />
-        ) : (
-          <ActivityReport days={days} />
-        )}
+        {tab === "uptime" && <UptimeReport days={days} />}
+        {tab === "activity" && <ActivityReport days={days} />}
+        {tab === "utilisation" && <UtilisationReport days={days} />}
+        {tab === "warranty" && <WarrantyReport />}
+        {tab === "power" && <PowerReport days={days} />}
       </div>
     </div>
   );
@@ -244,8 +278,6 @@ function ActivityReport({ days }: { days: Window }) {
     return () => ctrl.abort();
   }, [load]);
 
-  // Top-events bar width scaled to the busiest room — gives an instant
-  // visual ranking without pulling in a chart library.
   const maxEvents = useMemo(() => {
     if (!rows || rows.length === 0) return 1;
     return Math.max(1, ...rows.map((r) => r.event_count));
@@ -324,6 +356,392 @@ function ActivityReport({ days }: { days: Window }) {
           </table>
         </CardContent>
       </Card>
+    </div>
+  );
+}
+
+// --- Room utilisation ------------------------------------------------------
+
+function UtilisationReport({ days }: { days: Window }) {
+  const [rows, setRows] = useState<RoomUtilisationRow[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async (signal?: AbortSignal) => {
+    try {
+      const data = await api.roomUtilisationReport(days, signal);
+      if (signal?.aborted) return;
+      setRows(data);
+      setError(null);
+    } catch (e) {
+      if (!signal?.aborted) setError((e as Error).message);
+    }
+  }, [days]);
+
+  useEffect(() => {
+    setRows(null);
+    const ctrl = new AbortController();
+    void load(ctrl.signal);
+    return () => ctrl.abort();
+  }, [load]);
+
+  const maxHours = useMemo(() => {
+    if (!rows || rows.length === 0) return 1;
+    return Math.max(1, ...rows.map((r) => r.avg_hours_per_day));
+  }, [rows]);
+
+  if (error) {
+    return (
+      <Card className="border-destructive/30 bg-destructive/5">
+        <CardContent className="p-4 text-sm [color:hsl(var(--destructive))]">
+          {error}
+          <Button size="sm" variant="ghost" onClick={() => load()}>
+            <RefreshCcw className="h-3 w-3" />
+            Retry
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (rows === null) return <Skeleton className="h-96 w-full" />;
+
+  const active = rows.filter((r) => r.active_hours > 0);
+  const totalActiveHours = active.reduce((n, r) => n + r.active_hours, 0);
+  const busiest = rows[0];
+
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+        <SummaryCard label="Rooms with activity" value={`${active.length} / ${rows.length}`} />
+        <SummaryCard label="Total active hours" value={totalActiveHours} />
+        <SummaryCard
+          label="Avg hours/day (busiest)"
+          value={busiest ? busiest.avg_hours_per_day.toFixed(2) : "—"}
+          tone="ok"
+        />
+        <SummaryCard
+          label="Idle rooms"
+          value={rows.length - active.length}
+          tone={rows.length - active.length > 0 ? "warn" : undefined}
+        />
+      </div>
+
+      <Card>
+        <CardContent className="p-0 overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="border-b bg-muted/30 text-xs uppercase tracking-wide text-muted-foreground">
+              <tr>
+                <th className="text-left px-3 py-2 font-medium">Room</th>
+                <th className="text-left px-3 py-2 font-medium">Building</th>
+                <th className="text-right px-3 py-2 font-medium">Devices</th>
+                <th className="text-right px-3 py-2 font-medium">Active hours</th>
+                <th className="text-right px-3 py-2 font-medium">Active days</th>
+                <th className="text-right px-3 py-2 font-medium">Avg hrs/day</th>
+                <th className="px-3 py-2 font-medium w-1/4">Utilisation</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.room_id} className="border-b last:border-b-0 hover:bg-accent/20">
+                  <td className="px-3 py-2 font-medium">{r.room_name}</td>
+                  <td className="px-3 py-2 text-muted-foreground">{r.building_name || "—"}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{r.device_count}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{r.active_hours}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{r.active_days}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{r.avg_hours_per_day.toFixed(2)}</td>
+                  <td className="px-3 py-2">
+                    <div className="h-2 w-full rounded bg-muted overflow-hidden">
+                      <div
+                        className="h-full bg-foreground/80"
+                        style={{ width: `${(r.avg_hours_per_day / maxHours) * 100}%` }}
+                      />
+                    </div>
+                  </td>
+                </tr>
+              ))}
+              {rows.length === 0 && (
+                <tr>
+                  <td colSpan={7} className="px-3 py-8 text-center text-muted-foreground text-sm">
+                    No rooms yet.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </CardContent>
+      </Card>
+
+      <p className="text-[11px] text-muted-foreground flex items-center gap-1">
+        <Clock className="h-3 w-3" />
+        Active hour = at least one device event in the room during that clock hour.
+        Averaged over the window to give a comparable hours-per-day figure.
+      </p>
+    </div>
+  );
+}
+
+// --- Warranty --------------------------------------------------------------
+
+const BUCKET_LABEL: Record<WarrantyBucket, string> = {
+  expired: "Expired",
+  lt_30d: "≤ 30 days",
+  lt_90d: "≤ 90 days",
+  lt_365d: "≤ 365 days",
+  later: "Later",
+  no_date: "No date",
+};
+
+function bucketToneClass(b: WarrantyBucket): string {
+  switch (b) {
+    case "expired": return "bg-red-500/15 text-red-600 border-red-500/30";
+    case "lt_30d":  return "bg-red-500/10 text-red-600 border-red-500/25";
+    case "lt_90d":  return "bg-amber-500/15 text-amber-700 border-amber-500/30";
+    case "lt_365d": return "bg-amber-500/5 text-amber-700/80 border-amber-500/20";
+    case "no_date": return "bg-muted text-muted-foreground border-muted";
+    default:        return "bg-emerald-500/10 text-emerald-700 border-emerald-500/25";
+  }
+}
+
+function WarrantyReport() {
+  const [rows, setRows] = useState<WarrantyRow[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async (signal?: AbortSignal) => {
+    try {
+      const data = await api.warrantyReport(signal);
+      if (signal?.aborted) return;
+      setRows(data);
+      setError(null);
+    } catch (e) {
+      if (!signal?.aborted) setError((e as Error).message);
+    }
+  }, []);
+
+  useEffect(() => {
+    setRows(null);
+    const ctrl = new AbortController();
+    void load(ctrl.signal);
+    return () => ctrl.abort();
+  }, [load]);
+
+  const buckets = useMemo(() => {
+    const b: Record<WarrantyBucket, number> = {
+      expired: 0, lt_30d: 0, lt_90d: 0, lt_365d: 0, later: 0, no_date: 0,
+    };
+    if (!rows) return b;
+    for (const r of rows) b[r.bucket]++;
+    return b;
+  }, [rows]);
+
+  if (error) {
+    return (
+      <Card className="border-destructive/30 bg-destructive/5">
+        <CardContent className="p-4 text-sm [color:hsl(var(--destructive))]">
+          {error}
+          <Button size="sm" variant="ghost" onClick={() => load()}>
+            <RefreshCcw className="h-3 w-3" />
+            Retry
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (rows === null) return <Skeleton className="h-96 w-full" />;
+
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 md:grid-cols-6 gap-2">
+        <SummaryCard label="Expired" value={buckets.expired} tone={buckets.expired > 0 ? "bad" : undefined} />
+        <SummaryCard label="≤ 30 days" value={buckets.lt_30d} tone={buckets.lt_30d > 0 ? "bad" : undefined} />
+        <SummaryCard label="≤ 90 days" value={buckets.lt_90d} tone={buckets.lt_90d > 0 ? "warn" : undefined} />
+        <SummaryCard label="≤ 365 days" value={buckets.lt_365d} />
+        <SummaryCard label="Later" value={buckets.later} tone="ok" />
+        <SummaryCard label="No date" value={buckets.no_date} />
+      </div>
+
+      <Card>
+        <CardContent className="p-0 overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="border-b bg-muted/30 text-xs uppercase tracking-wide text-muted-foreground">
+              <tr>
+                <th className="text-left px-3 py-2 font-medium">Asset</th>
+                <th className="text-left px-3 py-2 font-medium">Category</th>
+                <th className="text-left px-3 py-2 font-medium">Make / model</th>
+                <th className="text-left px-3 py-2 font-medium">Location</th>
+                <th className="text-left px-3 py-2 font-medium">Warranty end</th>
+                <th className="text-right px-3 py-2 font-medium">Days left</th>
+                <th className="text-left px-3 py-2 font-medium">Bucket</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => {
+                const makeModel = [r.manufacturer, r.model].filter(Boolean).join(" / ") || "—";
+                return (
+                  <tr key={r.asset_id} className="border-b last:border-b-0 hover:bg-accent/20">
+                    <td className="px-3 py-2">
+                      <Link
+                        href={`/assets/${encodeURIComponent(r.asset_id)}`}
+                        className="font-medium hover:underline"
+                      >
+                        {r.name}
+                      </Link>
+                      {r.asset_tag && (
+                        <span className="ml-2 text-xs text-muted-foreground">{r.asset_tag}</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2 text-muted-foreground">{r.category}</td>
+                    <td className="px-3 py-2 text-muted-foreground">{makeModel}</td>
+                    <td className="px-3 py-2 text-muted-foreground">{r.location || "—"}</td>
+                    <td className="px-3 py-2 text-muted-foreground">{r.warranty_end || "—"}</td>
+                    <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
+                      {r.days_remaining ?? "—"}
+                    </td>
+                    <td className="px-3 py-2">
+                      <span className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[11px] ${bucketToneClass(r.bucket)}`}>
+                        {BUCKET_LABEL[r.bucket]}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
+              {rows.length === 0 && (
+                <tr>
+                  <td colSpan={7} className="px-3 py-8 text-center text-muted-foreground text-sm">
+                    No assets in the catalogue.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </CardContent>
+      </Card>
+
+      <p className="text-[11px] text-muted-foreground flex items-center gap-1">
+        <ShieldAlert className="h-3 w-3" />
+        Retired assets are excluded. Populate warranty dates via the Assets page or the CSV import.
+      </p>
+    </div>
+  );
+}
+
+// --- Power -----------------------------------------------------------------
+
+function PowerReport({ days }: { days: Window }) {
+  const [rows, setRows] = useState<PowerRow[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async (signal?: AbortSignal) => {
+    try {
+      const data = await api.powerReport(days, signal);
+      if (signal?.aborted) return;
+      setRows(data);
+      setError(null);
+    } catch (e) {
+      if (!signal?.aborted) setError((e as Error).message);
+    }
+  }, [days]);
+
+  useEffect(() => {
+    setRows(null);
+    const ctrl = new AbortController();
+    void load(ctrl.signal);
+    return () => ctrl.abort();
+  }, [load]);
+
+  if (error) {
+    return (
+      <Card className="border-destructive/30 bg-destructive/5">
+        <CardContent className="p-4 text-sm [color:hsl(var(--destructive))]">
+          {error}
+          <Button size="sm" variant="ghost" onClick={() => load()}>
+            <RefreshCcw className="h-3 w-3" />
+            Retry
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (rows === null) return <Skeleton className="h-96 w-full" />;
+
+  const totalConsumed = rows.reduce((n, r) => n + r.consumed_kwh, 0);
+  const totalSaved = rows.reduce((n, r) => n + r.saved_kwh, 0);
+  const totalRated = rows.reduce((n, r) => n + r.rated_devices, 0);
+  const totalUnrated = rows.reduce((n, r) => n + r.unrated_devices, 0);
+
+  const maxConsumed = Math.max(1, ...rows.map((r) => r.consumed_kwh));
+
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+        <SummaryCard label="Consumed (kWh)" value={totalConsumed.toFixed(1)} />
+        <SummaryCard label="Saved via nightly (kWh)" value={totalSaved.toFixed(1)} tone="ok" />
+        <SummaryCard label="Rated devices" value={totalRated} />
+        <SummaryCard
+          label="Unrated devices"
+          value={totalUnrated}
+          tone={totalUnrated > 0 ? "warn" : undefined}
+        />
+      </div>
+
+      <Card>
+        <CardContent className="p-0 overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="border-b bg-muted/30 text-xs uppercase tracking-wide text-muted-foreground">
+              <tr>
+                <th className="text-left px-3 py-2 font-medium">Room</th>
+                <th className="text-left px-3 py-2 font-medium">Building</th>
+                <th className="text-right px-3 py-2 font-medium">Rated</th>
+                <th className="text-right px-3 py-2 font-medium">Unrated</th>
+                <th className="text-right px-3 py-2 font-medium">Consumed (kWh)</th>
+                <th className="text-right px-3 py-2 font-medium">Saved (kWh)</th>
+                <th className="text-right px-3 py-2 font-medium">Nightly runs</th>
+                <th className="px-3 py-2 font-medium w-1/4">Consumed</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.room_id} className="border-b last:border-b-0 hover:bg-accent/20">
+                  <td className="px-3 py-2 font-medium">{r.room_name}</td>
+                  <td className="px-3 py-2 text-muted-foreground">{r.building_name || "—"}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{r.rated_devices}</td>
+                  <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
+                    {r.unrated_devices}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums">{r.consumed_kwh.toFixed(2)}</td>
+                  <td className="px-3 py-2 text-right tabular-nums text-emerald-600">
+                    {r.saved_kwh > 0 ? r.saved_kwh.toFixed(2) : "—"}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
+                    {r.nightly_runs}
+                  </td>
+                  <td className="px-3 py-2">
+                    <div className="h-2 w-full rounded bg-muted overflow-hidden">
+                      <div
+                        className="h-full bg-foreground/80"
+                        style={{ width: `${(r.consumed_kwh / maxConsumed) * 100}%` }}
+                      />
+                    </div>
+                  </td>
+                </tr>
+              ))}
+              {rows.length === 0 && (
+                <tr>
+                  <td colSpan={8} className="px-3 py-8 text-center text-muted-foreground text-sm">
+                    No rooms yet.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </CardContent>
+      </Card>
+
+      <p className="text-[11px] text-muted-foreground flex items-center gap-1">
+        <Zap className="h-3 w-3" />
+        Consumed = uptime × on-watts + downtime × standby-watts (kWh). Saved = successful nightly runs × avg off-hours × (on − standby). Only devices with a nameplate power rating contribute; unrated devices are shown so you can populate them via the device edit form.
+      </p>
     </div>
   );
 }

@@ -110,7 +110,8 @@ func SnapshotDevice(ctx context.Context, tx pgx.Tx, id string) (json.RawMessage,
 		SELECT row_to_json(t) FROM (
 			SELECT id::text, collector_id::text, room_id::text, reported_id,
 			       name, type, protocol, address, baud_rate,
-			       poll_rate_seconds, commands, tags, subscriptions
+			       poll_rate_seconds, commands, tags, subscriptions,
+			       power_watts_on, power_watts_standby
 			  FROM devices WHERE id = $1
 		) t`, id).Scan(&snap)
 	if err == pgx.ErrNoRows {

@@ -2,7 +2,7 @@
 title: AV Bridge vs MoJ AVRMM Requirements — Gap Analysis
 description: Assessment of AV Bridge against the accepted V1.0 AVRMM requirements shared by Vodafone / MoJ, with strategic gaps and proposal-posture recommendations.
 audience: Involve product + commercial; Vodafone technical + commercial (once sanitised)
-status: Internal working document · updated 2026-09-18 (NFR13/14/16/17 + FR42 shipped)
+status: Internal working document · updated 2026-09-21 (FR25 reporting library expanded — Warranty, Utilisation, Power)
 source: docs/AV RMM Requirements - Vodafone - MoJ Shared v1.0.xlsx
 companion: C:\Users\DLoomes\Documents\AV-Bridge-vs-MoJ-AVRMM-Gap-Analysis.xlsx
 ---
@@ -14,6 +14,16 @@ Assessed against the V1.0 requirements accepted by MoJ (August 2026). 22 NFRs + 
 Full per-requirement assessment lives in the companion Excel workbook at `C:\Users\DLoomes\Documents\AV-Bridge-vs-MoJ-AVRMM-Gap-Analysis.xlsx`. This document is the strategic overview.
 
 ## Shipped since last review
+
+**2026-09-21** — Reporting library expanded (FR25 closed):
+
+- **Warranty report** — `GET /api/v1/reports/warranty` returning assets grouped into expiry buckets (`expired`, `≤30d`, `≤90d`, `≤365d`, `later`, `no_date`). Portal tab with severity chips + CSV export. Retired assets excluded. Warranty date already a first-class asset field since 0022; this report exposes it as a proactive management surface.
+- **Room utilisation report** — `GET /api/v1/reports/room-utilisation?days=N` returning distinct active-hours per room over the window plus derived hours-per-day average. No per-tenant business-hours config needed. Portal tab with utilisation bar + CSV export.
+- **Power report** — `GET /api/v1/reports/power?days=N` returning per-room kWh consumed (from uptime × nameplate watts) and kWh saved by nightly power-down (successful nightly runs × avg off-hours × on-minus-standby). Portal tab with summary cards + CSV export.
+
+Migration `0044_devices_power.sql` adds nullable `power_watts_on` and `power_watts_standby` on devices with sanity CHECKs. Device create/update handlers accept the fields; edit form has a "Power on / standby (watts)" section next to the poll-rate input. Devices without a rating are counted in `unrated_devices` on the report so the operator can see where the data gap is.
+
+Two requirements moved from **PARTIAL → MET**: FR25 (reporting library) and any residual concern on warranty as a first-class attribute.
 
 **2026-09-18 (afternoon)** — Business Unit hierarchy tier shipped to UAT (image tag `b507165`), closing five requirements:
 
@@ -84,7 +94,7 @@ MoJ wants **PoE port up/down control from the network switch itself**, not only 
 - **Recovery state machine + ITSM webhook (NFR07, FR36, FR37)** — routines + alerts + ITSM cookbook work today. Chained 'if X fails try Y' recovery and direct webhook to the Supplier's incident system are enhancements — v2 routine builder + webhook alert channel.
 - **Dashboard customisation (FR23)** — saved filter views are the current answer; widget-based user-composed dashboards are roadmap.
 - **SCIM auto-provisioning (NFR21)** — Entra group-based role assignment covers most JML; SCIM is not shipped. Often accepted as equivalent, but MoJ may mandate SCIM.
-- **Reporting library — warranty and utilisation (FR25)** — nightly digest + assets + uptime today. Warranty (as first-class asset field) and utilisation report templates need adding.
+- ~~**Reporting library — warranty and utilisation (FR25)**~~ — **shipped 2026-09-21**. Warranty, utilisation and power reports now live alongside device-uptime, room-activity, nightly digest, and asset export. See "Shipped since last review".
 
 ## Genuine strengths to lead with
 

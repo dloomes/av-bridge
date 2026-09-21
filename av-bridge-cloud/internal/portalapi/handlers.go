@@ -451,6 +451,8 @@ func (h *Handler) GetDevice(w http.ResponseWriter, r *http.Request) {
 		IPAddress        string            `json:"ip_address,omitempty"`
 		BaudRate         int               `json:"baud_rate,omitempty"`
 		PollRate         int               `json:"poll_rate_seconds,omitempty"`
+		PowerWattsOn     *float64          `json:"power_watts_on,omitempty"`
+		PowerWattsStandby *float64         `json:"power_watts_standby,omitempty"`
 		Status           string            `json:"status"`
 		Tags             map[string]string `json:"tags,omitempty"`
 		Commands         map[string]string `json:"commands,omitempty"`
@@ -489,6 +491,8 @@ func (h *Handler) GetDevice(w http.ResponseWriter, r *http.Request) {
 			       COALESCE(d.ip_address, ''),
 			       d.baud_rate,
 			       d.poll_rate_seconds,
+			       d.power_watts_on::float8,
+			       d.power_watts_standby::float8,
 			       ` + devicestatus.EffectiveStatusSQL + `,
 			       d.tags, d.commands, d.subscriptions, d.capabilities
 			  FROM devices d
@@ -499,6 +503,7 @@ func (h *Handler) GetDevice(w http.ResponseWriter, r *http.Request) {
 			Scan(&o.ID, &o.CollectorID, &roomID, &o.AssetID, &o.ReportedID,
 				&o.Name, &o.Type, &o.Protocol, &o.Location,
 				&o.Address, &o.IPAddress, &baudRate, &pollRate,
+				&o.PowerWattsOn, &o.PowerWattsStandby,
 				&o.Status, &tags, &cmds, &subs, &caps)
 		if errors.Is(err, pgx.ErrNoRows) {
 			notFound = true
