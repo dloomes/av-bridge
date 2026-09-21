@@ -38,7 +38,6 @@ api:
 
 alerts:
   offline_after: 2m                     # shorter thresholds to see alerts fire during demo
-  degraded_after: 1m
   repeat_interval: 5m
 
 devices:

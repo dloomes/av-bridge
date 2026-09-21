@@ -115,7 +115,7 @@ func TestRESTAdapter_SendCommand(t *testing.T) {
 	}
 }
 
-func TestRESTAdapter_Poll_DegradedOn4xx(t *testing.T) {
+func TestRESTAdapter_Poll_OfflineOn5xx(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}))
@@ -126,8 +126,8 @@ func TestRESTAdapter_Poll_DegradedOn4xx(t *testing.T) {
 	_ = a.Connect(context.Background())
 
 	tel, _ := a.Poll(context.Background())
-	if tel.Status != device.StatusDegraded {
-		t.Errorf("expected degraded on 503, got %v", tel.Status)
+	if tel.Status != device.StatusOffline {
+		t.Errorf("expected offline on 503, got %v", tel.Status)
 	}
 }
 

@@ -34,7 +34,7 @@ cheap "always online, 5 changing metrics per poll" device.
 
 | Tag                     | Default | Meaning |
 |-------------------------|---------|---------|
-| `fake_status`           | `online` | Pinned status: `online` / `offline` / `degraded` / `unknown` |
+| `fake_status`           | `online` | Pinned status: `online` / `offline` / `unknown` |
 | `fake_latency_ms`       | `0`     | Synthetic per-poll sleep in ms (simulates slow WAN) |
 | `fake_jitter_ms`        | `0`     | Random extra `0..jitter` ms added to latency |
 | `fake_flap_pct`         | `0`     | 0-100. Chance each poll of flipping status |
@@ -42,7 +42,7 @@ cheap "always online, 5 changing metrics per poll" device.
 | `fake_metrics_count`    | `5`     | Number of synthetic `metric_N` fields |
 | `fake_events_per_min`   | `0`     | Synthetic event rate; 0 = no events |
 
-Commands: `noop`, `set_status` (args: `status=online|offline|degraded`).
+Commands: `noop`, `set_status` (args: `status=online|offline`).
 
 ## Spinning up N fakes against a UAT tenant
 

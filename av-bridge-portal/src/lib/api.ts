@@ -255,7 +255,6 @@ export interface HelpdeskOverviewItem {
   devices_total: number;
   devices_online: number;
   devices_offline: number;
-  devices_degraded: number;
   devices_unknown: number;
   alerts_open: number;
   alerts_critical: number;

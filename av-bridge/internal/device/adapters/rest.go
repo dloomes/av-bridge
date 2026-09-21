@@ -48,7 +48,9 @@ func (a *RESTAdapter) Connect(ctx context.Context) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
-		a.SetStatus(device.StatusDegraded)
+		// 4xx/5xx on the health path — device is reachable but broken.
+		// Report offline; the HTTP status is preserved in telemetry.
+		a.SetStatus(device.StatusOffline)
 		return fmt.Errorf("rest connect %s: HTTP %d", a.Cfg.ID, resp.StatusCode)
 	}
 	a.SetStatus(device.StatusOnline)
@@ -92,8 +94,8 @@ func (a *RESTAdapter) Poll(ctx context.Context) (*device.Telemetry, error) {
 	t.Metrics["response_ms"] = time.Since(start).Milliseconds()
 
 	if resp.StatusCode >= 400 {
-		a.SetStatus(device.StatusDegraded)
-		t.Status = device.StatusDegraded
+		a.SetStatus(device.StatusOffline)
+		t.Status = device.StatusOffline
 	} else {
 		a.SetStatus(device.StatusOnline)
 	}

@@ -12,10 +12,9 @@ import (
 type Status string
 
 const (
-	StatusOnline   Status = "online"
-	StatusOffline  Status = "offline"
-	StatusDegraded Status = "degraded"
-	StatusUnknown  Status = "unknown"
+	StatusOnline  Status = "online"
+	StatusOffline Status = "offline"
+	StatusUnknown Status = "unknown"
 )
 
 // Telemetry is a full snapshot of device state, pushed to the cloud.

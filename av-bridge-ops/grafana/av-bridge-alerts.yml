@@ -18,17 +18,6 @@ groups:
             has been offline for more than 5 minutes.
             Site: {{ $labels.instance }}
 
-      - alert: AVDeviceDegraded
-        expr: av_bridge_device_status == 2
-        for: 2m
-        labels:
-          severity: warning
-        annotations:
-          summary: "AV device degraded: {{ $labels.name }}"
-          description: >
-            Device "{{ $labels.name }}" ({{ $labels.type }}) at {{ $labels.location }}
-            has been in a degraded state for more than 2 minutes.
-
       - alert: AVBridgeFleetAvailabilityLow
         expr: >
           100 * sum(av_bridge_devices_online) / sum(av_bridge_devices_total) < 80

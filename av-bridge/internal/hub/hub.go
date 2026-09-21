@@ -78,7 +78,6 @@ type Hub struct {
 func New(cfg *config.Config, cloudClient *cloud.Client, lensClient *lens.Client, st *store.Store) *Hub {
 	alertRules := notify.RuleConfig{
 		OfflineAfter:   cfg.Alerts.OfflineAfter,
-		DegradedAfter:  cfg.Alerts.DegradedAfter,
 		RepeatInterval: cfg.Alerts.RepeatInterval,
 	}
 	h := &Hub{

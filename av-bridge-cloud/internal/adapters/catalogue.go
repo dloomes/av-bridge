@@ -455,7 +455,7 @@ var catalogue = []Info{
 		ConfigSchema: []ConfigField{
 			{Name: "address", Required: false, Description: "Opaque — the fake adapter does no I/O. Any string is fine; leave blank if unused.", Example: "fake-01"},
 			{Name: "poll_rate", Required: false, Description: "How often the hub calls Poll. 30s matches real vendor adapters.", Example: "30s"},
-			{Name: "tags.fake_status", Required: false, Description: "Pinned status: online | offline | degraded | unknown. Default online.", Example: "online"},
+			{Name: "tags.fake_status", Required: false, Description: "Pinned status: online | offline | unknown. Default online.", Example: "online"},
 			{Name: "tags.fake_latency_ms", Required: false, Description: "Synthetic per-poll sleep in ms. Simulates a slow WAN link.", Example: "50"},
 			{Name: "tags.fake_jitter_ms", Required: false, Description: "Random extra sleep 0..jitter added to latency, in ms.", Example: "20"},
 			{Name: "tags.fake_flap_pct", Required: false, Description: "0..100. Chance each poll of flipping status to exercise the alert engine.", Example: "5"},

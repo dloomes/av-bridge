@@ -149,12 +149,11 @@ func queryInt(r *http.Request, key string, def, max int) int {
 // as 'online' indefinitely.
 func (h *Handler) Status(w http.ResponseWriter, r *http.Request) {
 	type out struct {
-		Total    int    `json:"total"`
-		Online   int    `json:"online"`
-		Offline  int    `json:"offline"`
-		Degraded int    `json:"degraded"`
-		Unknown  int    `json:"unknown"`
-		Time     string `json:"time"`
+		Total   int    `json:"total"`
+		Online  int    `json:"online"`
+		Offline int    `json:"offline"`
+		Unknown int    `json:"unknown"`
+		Time    string `json:"time"`
 	}
 	var o out
 	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
@@ -169,9 +168,8 @@ func (h *Handler) Status(w http.ResponseWriter, r *http.Request) {
 			  count(*),
 			  count(*) FILTER (WHERE status = 'online'),
 			  count(*) FILTER (WHERE status = 'offline'),
-			  count(*) FILTER (WHERE status = 'degraded'),
 			  count(*) FILTER (WHERE status = 'unknown')
-			FROM eff`).Scan(&o.Total, &o.Online, &o.Offline, &o.Degraded, &o.Unknown)
+			FROM eff`).Scan(&o.Total, &o.Online, &o.Offline, &o.Unknown)
 	})
 	if !ok {
 		return
@@ -180,20 +178,17 @@ func (h *Handler) Status(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, o)
 }
 
-// Collector health thresholds. Bridges poll every ~30s by default, so a
-// 2-minute gap is the first signal something's off, and 5 minutes is enough
-// for a power blip or restart to recover from.
-const (
-	collectorDegradedAfter = 2 * time.Minute
-	collectorOfflineAfter  = 5 * time.Minute
-)
+// Collector health threshold. Bridges poll every ~30s by default, so
+// 5 minutes without a heartbeat is enough for a power blip or restart to
+// recover from before we call the collector offline.
+const collectorOfflineAfter = 5 * time.Minute
 
 // ListCollectors — GET /api/v1/collectors
 //
 // Returns one row per collector visible under RLS, joined against the
 // collector's building for context and with a device count so the /collectors
 // fleet page can render without a second round-trip. Ordered so ops sees the
-// broken ones first: offline → degraded → unknown → online, then by name.
+// broken ones first: offline → unknown → online, then by name.
 func (h *Handler) ListCollectors(w http.ResponseWriter, r *http.Request) {
 	type item struct {
 		ID                string     `json:"id"`
@@ -264,12 +259,10 @@ func statusPriority(status string) int {
 	switch status {
 	case "offline":
 		return 0
-	case "degraded":
-		return 1
 	case "unknown":
-		return 2
+		return 1
 	default:
-		return 3
+		return 2
 	}
 }
 
@@ -277,15 +270,10 @@ func computeCollectorStatus(lastSeen *time.Time, now time.Time) string {
 	if lastSeen == nil {
 		return "unknown"
 	}
-	age := now.Sub(*lastSeen)
-	switch {
-	case age >= collectorOfflineAfter:
+	if now.Sub(*lastSeen) >= collectorOfflineAfter {
 		return "offline"
-	case age >= collectorDegradedAfter:
-		return "degraded"
-	default:
-		return "online"
 	}
+	return "online"
 }
 
 // Config-pull freshness threshold. Bridges reconcile config on a
@@ -1170,7 +1158,6 @@ func (h *Handler) HelpdeskOverview(w http.ResponseWriter, r *http.Request) {
 		DevicesTotal    int        `json:"devices_total"`
 		DevicesOnline   int        `json:"devices_online"`
 		DevicesOffline  int        `json:"devices_offline"`
-		DevicesDegraded int        `json:"devices_degraded"`
 		DevicesUnknown  int        `json:"devices_unknown"`
 		AlertsOpen      int        `json:"alerts_open"`
 		AlertsCritical  int        `json:"alerts_critical"`
@@ -1191,7 +1178,6 @@ func (h *Handler) HelpdeskOverview(w http.ResponseWriter, r *http.Request) {
 		  COALESCE(d.total, 0),
 		  COALESCE(d.online, 0),
 		  COALESCE(d.offline, 0),
-		  COALESCE(d.degraded, 0),
 		  COALESCE(d.unknown, 0),
 		  COALESCE(a.open, 0),
 		  COALESCE(a.critical, 0),
@@ -1203,7 +1189,6 @@ func (h *Handler) HelpdeskOverview(w http.ResponseWriter, r *http.Request) {
 		    COUNT(*)::int AS total,
 		    COUNT(*) FILTER (WHERE eff.status = 'online')::int AS online,
 		    COUNT(*) FILTER (WHERE eff.status = 'offline')::int AS offline,
-		    COUNT(*) FILTER (WHERE eff.status = 'degraded')::int AS degraded,
 		    COUNT(*) FILTER (WHERE eff.status = 'unknown')::int AS unknown
 		  FROM devices dv
 		  LEFT JOIN collectors dc ON dc.id = dv.collector_id
@@ -1240,7 +1225,7 @@ func (h *Handler) HelpdeskOverview(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var it item
 		if err := rows.Scan(&it.ID, &it.Name, &it.EntraTenantID, &it.Slug,
-			&it.DevicesTotal, &it.DevicesOnline, &it.DevicesOffline, &it.DevicesDegraded, &it.DevicesUnknown,
+			&it.DevicesTotal, &it.DevicesOnline, &it.DevicesOffline, &it.DevicesUnknown,
 			&it.AlertsOpen, &it.AlertsCritical,
 			&it.CollectorsTotal, &it.LastBridgeSeen); err != nil {
 			h.log.Error("helpdesk overview scan", "error", err)

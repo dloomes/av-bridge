@@ -24,7 +24,7 @@ import (
 //
 // Configuration via device tags:
 //
-//	fake_status         string  pinned status: online|offline|degraded|unknown (default online)
+//	fake_status         string  pinned status: online|offline|unknown (default online)
 //	fake_latency_ms     int     synthetic per-poll sleep in ms (default 0)
 //	fake_jitter_ms      int     random extra sleep 0..jitter added to latency (default 0)
 //	fake_flap_pct       int     0..100, chance of flipping status this poll (default 0)
@@ -120,15 +120,15 @@ func (a *FakeAdapter) Poll(ctx context.Context) (*device.Telemetry, error) {
 	}
 
 	if a.errorPct > 0 && a.roll() < a.errorPct {
-		a.SetStatus(device.StatusDegraded)
+		a.SetStatus(device.StatusOffline)
 		return nil, fmt.Errorf("fake adapter %s: synthetic poll error", a.Cfg.ID)
 	}
 
 	status := a.pinnedStatus
 	if a.flapPct > 0 && a.roll() < a.flapPct {
-		// Flip to the "other" state — degraded if online, online if not.
+		// Flip to the "other" state — offline if online, online if not.
 		if status == device.StatusOnline {
-			status = device.StatusDegraded
+			status = device.StatusOffline
 		} else {
 			status = device.StatusOnline
 		}
@@ -159,7 +159,7 @@ func (a *FakeAdapter) SendCommand(ctx context.Context, cmd device.CommandRequest
 		}, nil
 	case "set_status":
 		// Let a load-test driver pin status on the fly to exercise the
-		// alert engine. Accepts args["status"] = "online" | "offline" | "degraded".
+		// alert engine. Accepts args["status"] = "online" | "offline".
 		if s, ok := cmd.Args["status"].(string); ok && s != "" {
 			a.pinnedStatus = device.Status(s)
 			a.SetStatus(a.pinnedStatus)

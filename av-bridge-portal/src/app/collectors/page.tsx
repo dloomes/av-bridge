@@ -34,7 +34,7 @@ import type {
 // One-glance answer to "how are my collectors doing?" Table-first, no
 // per-collector detail yet — clicking through takes you to the existing
 // devices page filtered to that collector. Sorting is server-side (ops-first:
-// offline before degraded before online) so the row that needs attention is
+// offline before unknown before online) so the row that needs attention is
 // always in the top pixels of the page.
 
 type Tone = {
@@ -45,7 +45,6 @@ type Tone = {
 
 const STATUS_TONE: Record<string, Tone> = {
   online:   { label: "Online",  variant: "success",     icon: Signal },
-  degraded: { label: "Warning", variant: "warning",     icon: CircleAlert },
   offline:  { label: "Offline", variant: "destructive", icon: CircleAlert },
   unknown:  { label: "Unknown", variant: "secondary",   icon: HelpCircle },
 };

@@ -50,13 +50,11 @@ interface BuildingStatus {
   total: number;
   online: number;
   offline: number;
-  degraded: number;
   unknown: number;
 }
 
 function tone(b: BuildingStatus): "destructive" | "warning" | "success" | "neutral" {
   if (b.offline > 0) return "destructive";
-  if (b.degraded > 0) return "warning";
   if (b.online > 0) return "success";
   return "neutral";
 }
@@ -134,11 +132,10 @@ export default function DashboardPage() {
         (acc, d) => {
           if (d.status === "online") acc.online += 1;
           else if (d.status === "offline") acc.offline += 1;
-          else if (d.status === "degraded") acc.degraded += 1;
           else acc.unknown += 1;
           return acc;
         },
-        { online: 0, offline: 0, degraded: 0, unknown: 0 }
+        { online: 0, offline: 0, unknown: 0 }
       );
       // Unassigned devices don't get a building filter link — the URL
       // param would be a literal "Unassigned" that matches nothing.
@@ -154,7 +151,6 @@ export default function DashboardPage() {
         total: all.length,
         online: counts.online,
         offline: counts.offline,
-        degraded: counts.degraded,
         unknown: counts.unknown,
       };
     });
@@ -163,8 +159,8 @@ export default function DashboardPage() {
   // Room rollup: derived from the device list rather than a separate
   // /rooms endpoint, so it stays consistent with what the building
   // tiles + Places sidebar already show. A room "has an issue" when
-  // any device in it is offline or degraded — matches the ops
-  // heuristic behind FleetHealth's original design.
+  // any device in it is offline — matches the ops heuristic behind
+  // FleetHealth's original design.
   const roomStats = useMemo(() => {
     if (!devices.data) return null;
     const groups = groupDevicesByLocation(devices.data);
@@ -173,7 +169,7 @@ export default function DashboardPage() {
     for (const g of groups) {
       for (const r of g.rooms) {
         total += 1;
-        if (r.devices.some((d) => d.status === "offline" || d.status === "degraded")) {
+        if (r.devices.some((d) => d.status === "offline")) {
           withIssue += 1;
         }
       }
@@ -305,13 +301,6 @@ export default function DashboardPage() {
                       href="/devices?status=offline"
                     />
                     <StatCard
-                      label="Degraded"
-                      value={fleet.data?.degraded ?? 0}
-                      icon={AlertTriangle}
-                      tone="warning"
-                      href="/devices?status=degraded"
-                    />
-                    <StatCard
                       label="Unknown"
                       value={fleet.data?.unknown ?? 0}
                       icon={CircleHelp}
@@ -353,10 +342,7 @@ export default function DashboardPage() {
                           ? "destructive"
                           : "neutral"
                       }
-                      // Same offline-first filter the "Offline" tile
-                      // uses. A room with only degraded devices is a
-                      // softer signal — user can still find it via the
-                      // /devices?status=degraded route.
+                      // Same offline-first filter the "Offline" tile uses.
                       href={
                         (roomStats?.withIssue ?? 0) > 0
                           ? "/devices?status=offline"
@@ -491,13 +477,10 @@ function BuildingTile({ b }: { b: BuildingStatus }) {
         <div
           className="flex h-1.5 w-full overflow-hidden rounded-full bg-muted"
           role="img"
-          aria-label={`${b.offline} offline, ${b.degraded} degraded, ${b.unknown} unknown, ${b.online} online`}
+          aria-label={`${b.offline} offline, ${b.unknown} unknown, ${b.online} online`}
         >
           {b.offline > 0 && (
             <div className="h-full bg-destructive" style={{ width: `${seg(b.offline)}%` }} />
-          )}
-          {b.degraded > 0 && (
-            <div className="h-full bg-warning" style={{ width: `${seg(b.degraded)}%` }} />
           )}
           {b.unknown > 0 && (
             <div className="h-full bg-muted-foreground/40" style={{ width: `${seg(b.unknown)}%` }} />
@@ -510,9 +493,6 @@ function BuildingTile({ b }: { b: BuildingStatus }) {
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
           {b.offline > 0 && (
             <StatusDot color="bg-destructive" label={`${b.offline} offline`} />
-          )}
-          {b.degraded > 0 && (
-            <StatusDot color="bg-warning" label={`${b.degraded} degraded`} />
           )}
           {b.unknown > 0 && (
             <StatusDot color="bg-muted-foreground/40" label={`${b.unknown} unknown`} />

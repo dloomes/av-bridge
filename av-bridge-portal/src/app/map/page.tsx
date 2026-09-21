@@ -65,7 +65,6 @@ const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN ?? "";
 // pages never disagree on which status a building shows.
 function worstOf(devices: DeviceSummary[]): DeviceStatus {
   if (devices.some((d) => d.status === "offline")) return "offline";
-  if (devices.some((d) => d.status === "degraded")) return "degraded";
   if (devices.some((d) => d.status === "unknown")) return "unknown";
   return "online";
 }
@@ -117,11 +116,10 @@ export default function MapPage() {
             acc.total += 1;
             if (d.status === "online") acc.online += 1;
             else if (d.status === "offline") acc.offline += 1;
-            else if (d.status === "degraded") acc.degraded += 1;
             else acc.unknown += 1;
             return acc;
           },
-          { total: 0, online: 0, offline: 0, degraded: 0, unknown: 0 }
+          { total: 0, online: 0, offline: 0, unknown: 0 }
         );
         return { building: b, worst: worstOf(devs), totals };
       })
@@ -150,7 +148,7 @@ export default function MapPage() {
     for (const g of groups) {
       for (const r of g.rooms) {
         total += 1;
-        if (r.devices.some((d) => d.status === "offline" || d.status === "degraded")) {
+        if (r.devices.some((d) => d.status === "offline")) {
           withIssue += 1;
         }
       }
@@ -256,7 +254,6 @@ export default function MapPage() {
                     <StatCard label="Total devices" value={fleet.data?.total ?? 0} icon={Server} href="/devices" />
                     <StatCard label="Online" value={fleet.data?.online ?? 0} icon={Wifi} tone="success" href="/devices?status=online" />
                     <StatCard label="Offline" value={fleet.data?.offline ?? 0} icon={CircleSlash} tone="destructive" href="/devices?status=offline" />
-                    <StatCard label="Degraded" value={fleet.data?.degraded ?? 0} icon={AlertTriangle} tone="warning" href="/devices?status=degraded" />
                   </>
                 )}
               </div>

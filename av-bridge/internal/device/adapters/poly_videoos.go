@@ -484,8 +484,8 @@ func (a *PolyVideoOSAdapter) Poll(ctx context.Context) (*device.Telemetry, error
 	}
 
 	if successes == 0 {
-		a.SetStatus(device.StatusDegraded)
-		t.Status = device.StatusDegraded
+		a.SetStatus(device.StatusOffline)
+		t.Status = device.StatusOffline
 		t.Error = fmt.Sprintf("all endpoints failed: %s", strings.Join(failures, ", "))
 		t.Metrics = metrics
 		return t, nil

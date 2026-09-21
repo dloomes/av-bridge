@@ -275,14 +275,17 @@ func mapVPXStatus(state string) device.Status {
 	case "s_srv_on":
 		return device.StatusOnline
 	case "s_init", "s_search", "s_attaching", "s_start_srv_lp", "s_start_srv_hp":
-		// Transient. Treat as degraded so alerts don't fire on a fresh
-		// device that's still coming up.
-		return device.StatusDegraded
+		// Transient startup states — device is reachable and coming up.
+		// Report as online so a short boot window doesn't fire alerts;
+		// a device that never leaves this state will still be caught by
+		// the operator (its telemetry payload carries the raw state).
+		return device.StatusOnline
 	case "s_stop", "s_error", "s_idle", "":
 		return device.StatusOffline
 	default:
-		// Unknown state — better to log it than to guess.
-		return device.StatusDegraded
+		// Unknown state — treat as offline; the raw state is preserved
+		// in telemetry.tags for investigation.
+		return device.StatusOffline
 	}
 }
 

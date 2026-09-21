@@ -29,13 +29,12 @@ func (s *Server) metricsHandler(w http.ResponseWriter, r *http.Request) {
 			info.ID, info.Name, info.Type, info.Location, val, now)
 	}
 
-	b.WriteString("\n# HELP av_bridge_device_status Device status as numeric (0=unknown,1=online,2=degraded,3=offline)\n")
+	b.WriteString("\n# HELP av_bridge_device_status Device status as numeric (0=unknown,1=online,3=offline)\n")
 	b.WriteString("# TYPE av_bridge_device_status gauge\n")
 	statusNum := map[device.Status]int{
-		device.StatusUnknown:  0,
-		device.StatusOnline:   1,
-		device.StatusDegraded: 2,
-		device.StatusOffline:  3,
+		device.StatusUnknown: 0,
+		device.StatusOnline:  1,
+		device.StatusOffline: 3,
 	}
 	for _, d := range devs {
 		info := d.Info()
@@ -43,15 +42,13 @@ func (s *Server) metricsHandler(w http.ResponseWriter, r *http.Request) {
 			info.ID, info.Name, info.Type, statusNum[d.Status()], now)
 	}
 
-	online, offline, degraded := 0, 0, 0
+	online, offline := 0, 0
 	for _, d := range devs {
 		switch d.Status() {
 		case device.StatusOnline:
 			online++
 		case device.StatusOffline:
 			offline++
-		case device.StatusDegraded:
-			degraded++
 		}
 	}
 
@@ -66,10 +63,6 @@ func (s *Server) metricsHandler(w http.ResponseWriter, r *http.Request) {
 	b.WriteString("\n# HELP av_bridge_devices_offline Number of devices currently offline\n")
 	b.WriteString("# TYPE av_bridge_devices_offline gauge\n")
 	fmt.Fprintf(&b, "av_bridge_devices_offline %d %d\n", offline, now)
-
-	b.WriteString("\n# HELP av_bridge_devices_degraded Number of devices in degraded state\n")
-	b.WriteString("# TYPE av_bridge_devices_degraded gauge\n")
-	fmt.Fprintf(&b, "av_bridge_devices_degraded %d %d\n", degraded, now)
 
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
 	w.WriteHeader(http.StatusOK)

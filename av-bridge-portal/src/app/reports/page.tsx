@@ -157,16 +157,15 @@ function UptimeReport({ days }: { days: Window }) {
   }, [load]);
 
   const summary = useMemo(() => {
-    if (!rows) return { observed: 0, healthy: 0, degraded: 0, down: 0 };
-    let observed = 0, healthy = 0, degraded = 0, down = 0;
+    if (!rows) return { observed: 0, healthy: 0, down: 0 };
+    let observed = 0, healthy = 0, down = 0;
     for (const r of rows) {
       if (r.uptime_pct == null) continue;
       observed++;
       if (r.uptime_pct >= 99) healthy++;
-      else if (r.uptime_pct >= 90) degraded++;
       else down++;
     }
-    return { observed, healthy, degraded, down };
+    return { observed, healthy, down };
   }, [rows]);
 
   if (error) {
@@ -189,11 +188,10 @@ function UptimeReport({ days }: { days: Window }) {
 
   return (
     <div className="space-y-3">
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
         <SummaryCard label="Devices observed" value={summary.observed} />
         <SummaryCard label="≥ 99% uptime" value={summary.healthy} tone="ok" />
-        <SummaryCard label="90–99%" value={summary.degraded} tone="warn" />
-        <SummaryCard label="< 90%" value={summary.down} tone="bad" />
+        <SummaryCard label="< 99% uptime" value={summary.down} tone="bad" />
       </div>
 
       <Card>
@@ -779,8 +777,7 @@ function SummaryCard({
 
 function UptimeBar({ pct }: { pct: number | null }) {
   if (pct == null) return <span className="text-muted-foreground">—</span>;
-  const tone =
-    pct >= 99 ? "bg-emerald-500" : pct >= 90 ? "bg-amber-500" : "bg-red-500";
+  const tone = pct >= 99 ? "bg-emerald-500" : "bg-red-500";
   return (
     <div className="flex items-center gap-2 justify-end">
       <div className="h-1.5 w-20 rounded-full bg-muted overflow-hidden">
@@ -795,7 +792,6 @@ function StatusDot({ status }: { status: string }) {
   const map: Record<string, string> = {
     online: "bg-emerald-500",
     offline: "bg-red-500",
-    degraded: "bg-amber-500",
     unknown: "bg-muted-foreground/40",
   };
   return (

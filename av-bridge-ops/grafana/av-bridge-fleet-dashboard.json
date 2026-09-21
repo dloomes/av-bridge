@@ -109,34 +109,6 @@
     },
 
     {
-      "id": 4,
-      "type": "stat",
-      "title": "Degraded",
-      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 0 },
-      "options": {
-        "reduceOptions": { "calcs": ["lastNotNull"] },
-        "colorMode": "background",
-        "graphMode": "none"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "thresholds": { "mode": "absolute", "steps": [
-            { "color": "green", "value": null },
-            { "color": "orange", "value": 1 }
-          ]},
-          "unit": "short",
-          "color": { "mode": "thresholds" }
-        }
-      },
-      "targets": [{
-        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-        "expr": "sum(av_bridge_devices_degraded)",
-        "legendFormat": "Degraded",
-        "refId": "A"
-      }]
-    },
-
-    {
       "id": 5,
       "type": "stat",
       "title": "Fleet availability",
@@ -182,9 +154,7 @@
           { "matcher": { "id": "byName", "options": "Online" },
             "properties": [{ "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }] },
           { "matcher": { "id": "byName", "options": "Offline" },
-            "properties": [{ "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }] },
-          { "matcher": { "id": "byName", "options": "Degraded" },
-            "properties": [{ "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } }] }
+            "properties": [{ "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }] }
         ]
       },
       "targets": [
@@ -195,10 +165,6 @@
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
           "expr": "sum(av_bridge_devices_offline)", "legendFormat": "Offline", "refId": "B"
-        },
-        {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "sum(av_bridge_devices_degraded)", "legendFormat": "Degraded", "refId": "C"
         }
       ]
     },
@@ -221,9 +187,7 @@
           { "matcher": { "id": "byName", "options": "Online" },
             "properties": [{ "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }] },
           { "matcher": { "id": "byName", "options": "Offline" },
-            "properties": [{ "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }] },
-          { "matcher": { "id": "byName", "options": "Degraded" },
-            "properties": [{ "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } }] }
+            "properties": [{ "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }] }
         ]
       },
       "targets": [
@@ -236,11 +200,6 @@
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
           "expr": "sum(av_bridge_devices_offline)",
           "legendFormat": "Offline", "refId": "B"
-        },
-        {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "sum(av_bridge_devices_degraded)",
-          "legendFormat": "Degraded", "refId": "C"
         }
       ]
     },
@@ -263,7 +222,6 @@
               "id": "mappings",
               "value": [
                 { "type": "value", "options": { "1": { "text": "Online",   "color": "green"  } } },
-                { "type": "value", "options": { "2": { "text": "Degraded", "color": "orange" } } },
                 { "type": "value", "options": { "3": { "text": "Offline",  "color": "red"    } } },
                 { "type": "value", "options": { "0": { "text": "Unknown",  "color": "gray"   } } }
               ]
@@ -323,7 +281,7 @@
       "id": 9,
       "type": "timeseries",
       "title": "Per-device status history",
-      "description": "1 = online, 2 = degraded, 3 = offline",
+      "description": "1 = online, 3 = offline",
       "gridPos": { "h": 8, "w": 24, "x": 0, "y": 24 },
       "options": {
         "legend": { "displayMode": "list", "placement": "right", "calcs": ["last"] },

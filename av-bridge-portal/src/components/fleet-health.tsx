@@ -19,7 +19,7 @@ import type { DeviceStatus, DeviceSummary } from "@/lib/types";
 // Fleet Health at a glance — replaces the old dashboard Live Events feed.
 // Signal density > liveness: rather than a real-time ticker that's empty
 // 95% of the time, this lists the specific devices an operator would
-// actually act on (offline first, then degraded) with a direct link
+// actually act on (offline first, then unknown) with a direct link
 // through to each device's detail page. All-healthy state is a positive
 // success message so a green panel confirms "nothing to do".
 
@@ -36,20 +36,13 @@ interface RowMeta {
   bar: string;
 }
 
-const STATUS_META: Record<"offline" | "degraded" | "unknown", RowMeta> = {
+const STATUS_META: Record<"offline" | "unknown", RowMeta> = {
   offline: {
     label: "Offline",
     icon: CircleSlash,
     color: "[color:hsl(var(--destructive))]",
     border: "border-destructive/25",
     bar: "border-l-destructive",
-  },
-  degraded: {
-    label: "Degraded",
-    icon: AlertTriangle,
-    color: "[color:hsl(var(--warning))]",
-    border: "border-warning/25",
-    bar: "border-l-warning",
   },
   // Unknown ≡ collector offline — real device state is not visible to us
   // right now. Muted styling: attention-worthy but not the same alarm
@@ -64,13 +57,12 @@ const STATUS_META: Record<"offline" | "degraded" | "unknown", RowMeta> = {
 };
 
 export function FleetHealth({ devices, loading }: Props) {
-  // Attention order: real reported failures first (offline, degraded),
-  // then can't-see-them (unknown) so operators triage what they can act
+  // Attention order: real reported failures first (offline), then
+  // can't-see-them (unknown) so operators triage what they can act
   // on directly before chasing collector issues.
   const offline = (devices ?? []).filter((d) => d.status === "offline");
-  const degraded = (devices ?? []).filter((d) => d.status === "degraded");
   const unknown = (devices ?? []).filter((d) => d.status === "unknown");
-  const problems = [...offline, ...degraded, ...unknown];
+  const problems = [...offline, ...unknown];
   const attentionCount = problems.length;
 
   return (
@@ -131,8 +123,7 @@ function AllHealthy() {
       </div>
       <p className="text-sm font-medium">All devices healthy</p>
       <p className="text-xs text-muted-foreground">
-        Nothing offline, nothing degraded. Anything that needs attention
-        will show here.
+        Nothing offline. Anything that needs attention will show here.
       </p>
     </div>
   );
@@ -142,9 +133,9 @@ function AllHealthy() {
 
 function FleetHealthRow({ device }: { device: DeviceSummary }) {
   const status =
-    device.status === "offline" || device.status === "degraded" || device.status === "unknown"
+    device.status === "offline" || device.status === "unknown"
       ? device.status
-      : "degraded";
+      : "unknown";
   const meta = STATUS_META[status];
   const Icon = meta.icon;
   const locationParts = [device.building, device.location_name].filter(Boolean);

@@ -56,15 +56,15 @@ func TestFakeAdapter_ConnectPollDisconnect(t *testing.T) {
 
 func TestFakeAdapter_PinnedStatus(t *testing.T) {
 	a := NewFakeAdapter(newFakeConfig("fake-2", map[string]string{
-		"fake_status": "degraded",
+		"fake_status": "offline",
 	}))
 	_ = a.Connect(context.Background())
 	tel, err := a.Poll(context.Background())
 	if err != nil {
 		t.Fatalf("Poll: %v", err)
 	}
-	if tel.Status != device.StatusDegraded {
-		t.Errorf("expected degraded, got %v", tel.Status)
+	if tel.Status != device.StatusOffline {
+		t.Errorf("expected offline, got %v", tel.Status)
 	}
 }
 

@@ -26,7 +26,6 @@ av_bridge_api_auth_enabled: true
 
 # --- Alerts ---
 av_bridge_alerts_offline_after: "5m"
-av_bridge_alerts_degraded_after: "2m"
 av_bridge_alerts_repeat_interval: "30m"
 
 # --- Auto-update ---

@@ -108,8 +108,11 @@ func (a *PingAdapter) Poll(ctx context.Context) (*device.Telemetry, error) {
 		a.SetStatus(device.StatusOffline)
 		t.Status = device.StatusOffline
 	case loss > 0:
-		a.SetStatus(device.StatusDegraded)
-		t.Status = device.StatusDegraded
+		// Partial packet loss — device is technically reachable but not
+		// reliably so. Report online; the loss metric is on telemetry
+		// for anyone who wants to alert on quality separately.
+		a.SetStatus(device.StatusOnline)
+		t.Status = device.StatusOnline
 	default:
 		a.SetStatus(device.StatusOnline)
 		t.Status = device.StatusOnline

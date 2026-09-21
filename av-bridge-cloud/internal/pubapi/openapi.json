@@ -48,7 +48,7 @@
         "parameters": [
           { "$ref": "#/components/parameters/BuildingID" },
           { "$ref": "#/components/parameters/RoomID" },
-          { "name": "status", "in": "query", "description": "Exact match on latest known status.", "schema": { "type": "string", "enum": ["online", "offline", "degraded", "unknown"] } },
+          { "name": "status", "in": "query", "description": "Exact match on latest known status.", "schema": { "type": "string", "enum": ["online", "offline", "unknown"] } },
           { "$ref": "#/components/parameters/Limit" },
           { "$ref": "#/components/parameters/Cursor" }
         ],
@@ -404,7 +404,7 @@
           "name": { "type": "string", "description": "The device's display name. Falls back to the adapter's reported id when no override is set in the portal." },
           "type": { "type": "string", "description": "Adapter type key — e.g. `sony-bravia`, `biamp-tesira`, `visca-over-ip`." },
           "protocol": { "type": "string", "description": "Wire protocol the adapter speaks, e.g. `tesira`, `visca`, `bravia-rest`." },
-          "status": { "type": "string", "enum": ["online", "offline", "degraded", "unknown"] },
+          "status": { "type": "string", "enum": ["online", "offline", "unknown"] },
           "ip_address": { "type": "string" },
           "make": { "type": "string" },
           "model": { "type": "string" },

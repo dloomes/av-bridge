@@ -17,7 +17,6 @@ import { DeviceIcon } from "@/components/device-icon";
 const dotColor: Record<DeviceStatus, string> = {
   online: "bg-success",
   offline: "bg-destructive",
-  degraded: "bg-warning",
   unknown: "bg-muted-foreground/40",
 };
 

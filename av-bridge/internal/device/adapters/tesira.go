@@ -427,7 +427,7 @@ func (a *TesiraAdapter) Poll(ctx context.Context) (*device.Telemetry, error) {
 	a.stateMu.RUnlock()
 
 	if err != nil {
-		a.SetStatus(device.StatusDegraded)
+		a.SetStatus(device.StatusOffline)
 		t.Error = err.Error()
 		metrics["poll_error"] = err.Error()
 	} else {
@@ -438,7 +438,9 @@ func (a *TesiraAdapter) Poll(ctx context.Context) (*device.Telemetry, error) {
 			}
 			a.SetStatus(device.StatusOnline)
 		case strings.HasPrefix(resp, "-ERR"):
-			a.SetStatus(device.StatusDegraded)
+			// Device responded with a protocol error — session isn't
+			// clean. Report offline; the ttp_error is on telemetry.
+			a.SetStatus(device.StatusOffline)
 			metrics["ttp_error"] = resp
 		}
 		metrics["last_poll"] = time.Now().UTC().Format(time.RFC3339)

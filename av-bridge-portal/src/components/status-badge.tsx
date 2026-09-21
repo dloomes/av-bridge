@@ -5,21 +5,18 @@ import { cn } from "@/lib/utils";
 const dotColors: Record<DeviceStatus, string> = {
   online: "bg-success",
   offline: "bg-destructive",
-  degraded: "bg-warning",
   unknown: "bg-muted-foreground/40",
 };
 
 const variants: Record<DeviceStatus, "success" | "warning" | "offline" | "secondary"> = {
   online: "success",
   offline: "offline",
-  degraded: "warning",
   unknown: "secondary",
 };
 
 const labels: Record<DeviceStatus, string> = {
   online: "Online",
   offline: "Offline",
-  degraded: "Degraded",
   unknown: "Unknown",
 };
 

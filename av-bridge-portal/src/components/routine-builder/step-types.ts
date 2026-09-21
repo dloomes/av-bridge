@@ -87,7 +87,7 @@ export interface SectionStep extends StepCommon {
 export interface ExpectStatusStep extends StepCommon {
   type: "expect_status";
   target: Target;
-  status: "online" | "offline" | "degraded";
+  status: "online" | "offline";
   on_failure?: OnFailure;
 }
 

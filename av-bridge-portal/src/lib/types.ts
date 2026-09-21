@@ -1,4 +1,4 @@
-export type DeviceStatus = "online" | "offline" | "degraded" | "unknown";
+export type DeviceStatus = "online" | "offline" | "unknown";
 
 export type DeviceType = "display" | "conferencing" | "audio" | "camera" | "control";
 
@@ -282,7 +282,6 @@ export interface FleetStatus {
   total: number;
   online: number;
   offline: number;
-  degraded: number;
   unknown: number;
   time: string;
 }

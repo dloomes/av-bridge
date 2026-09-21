@@ -90,7 +90,6 @@ type TLSConfig struct {
 // AlertsConfig defines thresholds for automatic alerting
 type AlertsConfig struct {
 	OfflineAfter   time.Duration `yaml:"offline_after"`   // default 5m
-	DegradedAfter  time.Duration `yaml:"degraded_after"`  // default 2m
 	RepeatInterval time.Duration `yaml:"repeat_interval"` // default 30m
 }
 
@@ -178,9 +177,6 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Alerts.OfflineAfter == 0 {
 		cfg.Alerts.OfflineAfter = 5 * time.Minute
-	}
-	if cfg.Alerts.DegradedAfter == 0 {
-		cfg.Alerts.DegradedAfter = 2 * time.Minute
 	}
 	if cfg.Alerts.RepeatInterval == 0 {
 		cfg.Alerts.RepeatInterval = 30 * time.Minute

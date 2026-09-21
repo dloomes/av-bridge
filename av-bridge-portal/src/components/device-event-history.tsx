@@ -206,8 +206,7 @@ function eventSeverity(eventType: string): Severity {
     t.includes("critical")
   )
     return "destructive";
-  if (t.includes("degraded") || t.includes("warning") || t.includes("stale"))
-    return "warning";
+  if (t.includes("warning") || t.includes("stale")) return "warning";
   return "info";
 }
 

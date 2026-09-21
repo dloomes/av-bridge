@@ -34,11 +34,6 @@ const STATUS_TINT: Record<WorstStatus, { pin: string; ring: string; label: strin
     ring: "ring-destructive/40",
     label: "Offline",
   },
-  degraded: {
-    pin: "bg-warning text-warning-foreground",
-    ring: "ring-warning/40",
-    label: "Degraded",
-  },
   unknown: {
     pin: "bg-muted text-muted-foreground",
     ring: "ring-border",
@@ -58,7 +53,6 @@ export interface BuildingsMapEntry {
     total: number;
     online: number;
     offline: number;
-    degraded: number;
     unknown: number;
   };
 }
@@ -270,11 +264,6 @@ export function BuildingsMap({ entries, mapboxToken, className }: BuildingsMapPr
                   label="Off"
                   value={openEntry.totals.offline}
                   tone={openEntry.totals.offline > 0 ? "danger" : undefined}
-                />
-                <MiniStat
-                  label="Deg"
-                  value={openEntry.totals.degraded}
-                  tone={openEntry.totals.degraded > 0 ? "warn" : undefined}
                 />
                 <MiniStat label="On" value={openEntry.totals.online} tone="ok" />
               </div>

@@ -251,23 +251,20 @@ func (s *Server) reconnectDevice(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) hubStatus(w http.ResponseWriter, r *http.Request) {
 	devs := s.hub.Devices()
-	online, offline, degraded := 0, 0, 0
+	online, offline := 0, 0
 	for _, d := range devs {
 		switch d.Status() {
 		case device.StatusOnline:
 			online++
 		case device.StatusOffline:
 			offline++
-		case device.StatusDegraded:
-			degraded++
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"total":    len(devs),
-		"online":   online,
-		"offline":  offline,
-		"degraded": degraded,
-		"time":     time.Now().UTC().Format(time.RFC3339),
+		"total":   len(devs),
+		"online":  online,
+		"offline": offline,
+		"time":    time.Now().UTC().Format(time.RFC3339),
 	})
 }
 

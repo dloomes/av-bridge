@@ -182,8 +182,8 @@ func (a *SonyBraviaAdapter) Poll(ctx context.Context) (*device.Telemetry, error)
 
 	powerResult, err := a.call(ctx, "system", "getPowerStatus", nil)
 	if err != nil {
-		a.SetStatus(device.StatusDegraded)
-		t.Status = device.StatusDegraded
+		a.SetStatus(device.StatusOffline)
+		t.Status = device.StatusOffline
 		t.Error = err.Error()
 		return t, nil
 	}

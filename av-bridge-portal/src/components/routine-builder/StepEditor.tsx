@@ -320,7 +320,6 @@ function ExpectStatusFields({
           className={inputCls}
         >
           <option value="online">online</option>
-          <option value="degraded">degraded</option>
           <option value="offline">offline</option>
         </select>
       </Field>

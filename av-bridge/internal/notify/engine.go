@@ -39,8 +39,6 @@ type Alert struct {
 type RuleConfig struct {
 	// OfflineAfter fires a critical alert if a device has been offline longer than this
 	OfflineAfter time.Duration `yaml:"offline_after"`
-	// DegradedAfter fires a warning if a device has been degraded longer than this
-	DegradedAfter time.Duration `yaml:"degraded_after"`
 	// RepeatInterval prevents alert spam — same alert won't fire again until this elapses
 	RepeatInterval time.Duration `yaml:"repeat_interval"`
 }
@@ -69,9 +67,6 @@ type EventBroadcaster interface {
 func New(rules RuleConfig, st *store.Store, cloudClient *cloud.Client, hub DeviceSource, broadcaster EventBroadcaster) *Engine {
 	if rules.OfflineAfter == 0 {
 		rules.OfflineAfter = 5 * time.Minute
-	}
-	if rules.DegradedAfter == 0 {
-		rules.DegradedAfter = 2 * time.Minute
 	}
 	if rules.RepeatInterval == 0 {
 		rules.RepeatInterval = 30 * time.Minute
@@ -139,28 +134,9 @@ func (e *Engine) evaluate(ctx context.Context) {
 				})
 			}
 
-		case device.StatusDegraded:
-			e.maybeUpdateLastSeen(state, d)
-			degradedSince := time.Since(state.LastSeen)
-			if degradedSince >= e.rules.DegradedAfter {
-				e.maybeFireAlert(ctx, Alert{
-					AlertKey:   "device_degraded",
-					DeviceID:   info.ID,
-					DeviceName: info.Name,
-					DeviceType: info.Type,
-					Severity:   SeverityWarning,
-					Message:    fmt.Sprintf("Device %q has been in degraded state for %s", info.Name, degradedSince.Round(time.Second)),
-					Timestamp:  time.Now().UTC(),
-					Metadata: map[string]any{
-						"degraded_duration_seconds": degradedSince.Seconds(),
-						"location":                  info.Location,
-					},
-				})
-			}
-
 		case device.StatusOnline:
 			// Device came back online — fire a recovery alert if it was previously offline
-			if state.LastStatus == string(device.StatusOffline) || state.LastStatus == string(device.StatusDegraded) {
+			if state.LastStatus == string(device.StatusOffline) {
 				e.maybeFireAlert(ctx, Alert{
 					AlertKey:   "device_recovered",
 					DeviceID:   info.ID,
