@@ -312,8 +312,8 @@ export function SignInForm({ branding, showVendorSSO = false, slug, appOrigin = 
   const displayName = branding.display_name?.trim() || "";
   const hasLogo = Boolean(branding.logo_data_url);
   const heroTitle = displayName
-    ? `Welcome back to ${displayName}.`
-    : "Welcome back.";
+    ? `Welcome back to ${displayName}`
+    : "Welcome back";
   const buttonLabel = submitting
     ? "Signing in…"
     : displayName
