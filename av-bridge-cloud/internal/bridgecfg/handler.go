@@ -73,6 +73,11 @@ type getReq struct {
 	CollectorID     string `json:"collector_id"`
 	BridgeVersion   string `json:"bridge_version,omitempty"`
 	BridgeBuildTime string `json:"bridge_build_time,omitempty"`
+	// BridgeOS is a compact human-readable OS+arch descriptor from the
+	// bridge's hostinfo package. Persisted on the collectors row so
+	// /collectors can render it — empty on older bridges preserves the
+	// existing value.
+	BridgeOS string `json:"bridge_os,omitempty"`
 }
 
 type getResp struct {
@@ -168,7 +173,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 	// config sync — best-effort, don't block the response on failure.
 	// Also refreshes bridge_version + bridge_build_time when the bridge
 	// supplied them.
-	if err := h.store.TouchCollectorConfigPull(r.Context(), col.ID, req.BridgeVersion, req.BridgeBuildTime); err != nil {
+	if err := h.store.TouchCollectorConfigPull(r.Context(), col.ID, req.BridgeVersion, req.BridgeBuildTime, req.BridgeOS); err != nil {
 		h.log.Warn("touch collector config pull failed", "collector", col.ID, "error", err)
 	}
 	bridgeauth.WriteJSON(w, http.StatusOK, getResp{Devices: devices})

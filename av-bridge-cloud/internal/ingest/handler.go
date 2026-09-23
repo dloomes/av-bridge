@@ -58,11 +58,13 @@ type payloadDTO struct {
 	Timestamp   time.Time      `json:"timestamp"`
 	CollectorID string         `json:"collector_id"`
 	SiteID      string         `json:"site_id"`
-	// BridgeVersion + BridgeBuildTime are what the bridge reports about its
-	// own binary — set from -ldflags at build. Empty on older bridges;
+	// BridgeVersion + BridgeBuildTime + BridgeOS are what the bridge
+	// reports about its own binary and host — set from -ldflags at
+	// build + runtime detection at startup. Empty on older bridges;
 	// MarkCollectorSeen preserves prior values when empty.
 	BridgeVersion   string         `json:"bridge_version,omitempty"`
 	BridgeBuildTime string         `json:"bridge_build_time,omitempty"`
+	BridgeOS        string         `json:"bridge_os,omitempty"`
 	Telemetry       []telemetryDTO `json:"telemetry"`
 	Events          []eventDTO     `json:"events"`
 }
@@ -123,7 +125,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnauthorized, "authentication failed")
 		return
 	}
-	if err := h.store.MarkCollectorSeen(ctx, col.ID, p.BridgeVersion, p.BridgeBuildTime); err != nil {
+	if err := h.store.MarkCollectorSeen(ctx, col.ID, p.BridgeVersion, p.BridgeBuildTime, p.BridgeOS); err != nil {
 		h.log.Warn("mark collector seen failed", "collector", col.ID, "error", err)
 	}
 

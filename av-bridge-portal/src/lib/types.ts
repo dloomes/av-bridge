@@ -124,6 +124,9 @@ export interface CollectorSummary {
   device_count: number;
   bridge_version?: string;
   bridge_build_time?: string;
+  // Human-readable OS + arch descriptor reported by the bridge (e.g.
+  // "Ubuntu 22.04.4 LTS (linux/amd64)"). Empty on pre-1.0.9 bridges.
+  bridge_os?: string;
   last_config_pull_at?: string;
   config_sync_status: "current" | "stale" | "unknown";
   // LAN-reachable base URL of the collector's bridge (e.g.

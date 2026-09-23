@@ -200,8 +200,13 @@ func (h *Handler) ListCollectors(w http.ResponseWriter, r *http.Request) {
 		DeviceCount       int        `json:"device_count"`
 		BridgeVersion     string     `json:"bridge_version,omitempty"`
 		BridgeBuildTime   *time.Time `json:"bridge_build_time,omitempty"`
-		LastConfigPullAt  *time.Time `json:"last_config_pull_at,omitempty"`
-		ConfigSyncStatus  string     `json:"config_sync_status"`
+		// BridgeOS is a human-readable OS+arch string reported by the
+		// bridge on each ingest / config-pull (e.g. "Ubuntu 22.04.4 LTS
+		// (linux/amd64)"). Empty for pre-1.0.9 bridges that don't
+		// report it.
+		BridgeOS         string     `json:"bridge_os,omitempty"`
+		LastConfigPullAt *time.Time `json:"last_config_pull_at,omitempty"`
+		ConfigSyncStatus string     `json:"config_sync_status"`
 		// LocalURL is the LAN-reachable base URL of this collector's
 		// bridge process (e.g. "http://10.0.5.10:8080"). Populated by
 		// the operator via the collectors edit form. Used by the touch
@@ -222,6 +227,7 @@ func (h *Handler) ListCollectors(w http.ResponseWriter, r *http.Request) {
 			       (SELECT count(*) FROM devices d WHERE d.collector_id = c.id AND d.deleted_at IS NULL) AS device_count,
 			       COALESCE(c.bridge_version, ''),
 			       c.bridge_build_time,
+			       COALESCE(c.bridge_os, ''),
 			       c.last_config_pull_at,
 			       COALESCE(c.local_url, '')
 			  FROM collectors c
@@ -235,8 +241,8 @@ func (h *Handler) ListCollectors(w http.ResponseWriter, r *http.Request) {
 			var c item
 			if err := rows.Scan(&c.ID, &c.BridgeCollectorID, &c.Name, &c.BuildingName,
 				&c.LastSeenAt, &c.DeviceCount,
-				&c.BridgeVersion, &c.BridgeBuildTime, &c.LastConfigPullAt,
-				&c.LocalURL,
+				&c.BridgeVersion, &c.BridgeBuildTime, &c.BridgeOS,
+				&c.LastConfigPullAt, &c.LocalURL,
 			); err != nil {
 				return err
 			}

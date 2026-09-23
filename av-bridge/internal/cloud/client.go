@@ -16,6 +16,7 @@ import (
 
 	"github.com/dloomes/av-bridge/internal/config"
 	"github.com/dloomes/av-bridge/internal/device"
+	"github.com/dloomes/av-bridge/internal/hostinfo"
 )
 
 // Payload is the envelope sent to the cloud webhook.
@@ -30,8 +31,13 @@ type Payload struct {
 	SiteID          string              `json:"site_id,omitempty"`
 	BridgeVersion   string              `json:"bridge_version,omitempty"`
 	BridgeBuildTime string              `json:"bridge_build_time,omitempty"`
-	Telemetry       []*device.Telemetry `json:"telemetry,omitempty"`
-	Events          []*device.Event     `json:"events,omitempty"`
+	// BridgeOS is a compact human-readable OS+arch descriptor for the
+	// collector host (e.g. "Ubuntu 22.04.4 LTS (linux/amd64)"). Same
+	// motivation as BridgeVersion — surfaces on the /collectors page
+	// so support can spot version-specific issues without SSH.
+	BridgeOS  string              `json:"bridge_os,omitempty"`
+	Telemetry []*device.Telemetry `json:"telemetry,omitempty"`
+	Events    []*device.Event     `json:"events,omitempty"`
 }
 
 // Client batches telemetry and events and pushes them to the cloud portal.
@@ -123,6 +129,7 @@ func (c *Client) flush(ctx context.Context) {
 		SiteID:          c.siteID,
 		BridgeVersion:   c.version,
 		BridgeBuildTime: buildTimeRFC3339(c.buildTime),
+		BridgeOS:        hostinfo.OS(),
 		Telemetry:       tel,
 		Events:          evs,
 	}

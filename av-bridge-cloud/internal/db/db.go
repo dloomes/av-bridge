@@ -154,13 +154,14 @@ func (s *Store) TouchCollector(ctx context.Context, id string) error {
 // without a real -X main.buildTime=... ldflag would silently break
 // their own health signal; guarding both boundary values here means
 // old and future bridge builds converge on the same behaviour.
-func (s *Store) MarkCollectorSeen(ctx context.Context, id, version, buildTime string) error {
+func (s *Store) MarkCollectorSeen(ctx context.Context, id, version, buildTime, os string) error {
 	_, err := s.admin.Exec(ctx, `
 		UPDATE collectors
 		   SET last_seen_at       = now(),
 		       bridge_version     = COALESCE(NULLIF(NULLIF($2, ''), 'unknown'), bridge_version),
-		       bridge_build_time  = COALESCE(NULLIF(NULLIF($3, ''), 'unknown')::timestamptz, bridge_build_time)
-		 WHERE id = $1`, id, version, buildTime)
+		       bridge_build_time  = COALESCE(NULLIF(NULLIF($3, ''), 'unknown')::timestamptz, bridge_build_time),
+		       bridge_os          = COALESCE(NULLIF($4, ''), bridge_os)
+		 WHERE id = $1`, id, version, buildTime, os)
 	return err
 }
 
@@ -176,13 +177,14 @@ func (s *Store) MarkCollectorSeen(ctx context.Context, id, version, buildTime st
 // buildTime="unknown" errors the cast, aborts the UPDATE, and leaves
 // last_config_pull_at frozen, which surfaces as a spurious "stale"
 // config-sync badge on the /collectors page.
-func (s *Store) TouchCollectorConfigPull(ctx context.Context, id, version, buildTime string) error {
+func (s *Store) TouchCollectorConfigPull(ctx context.Context, id, version, buildTime, os string) error {
 	_, err := s.admin.Exec(ctx, `
 		UPDATE collectors
 		   SET last_config_pull_at = now(),
 		       bridge_version      = COALESCE(NULLIF(NULLIF($2, ''), 'unknown'), bridge_version),
-		       bridge_build_time   = COALESCE(NULLIF(NULLIF($3, ''), 'unknown')::timestamptz, bridge_build_time)
-		 WHERE id = $1`, id, version, buildTime)
+		       bridge_build_time   = COALESCE(NULLIF(NULLIF($3, ''), 'unknown')::timestamptz, bridge_build_time),
+		       bridge_os           = COALESCE(NULLIF($4, ''), bridge_os)
+		 WHERE id = $1`, id, version, buildTime, os)
 	return err
 }
 

@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/dloomes/av-bridge/internal/config"
+	"github.com/dloomes/av-bridge/internal/hostinfo"
 	"github.com/dloomes/av-bridge/internal/hub"
 )
 
@@ -238,6 +239,7 @@ func (p *Poller) fetch(ctx context.Context) ([]wireDevice, error) {
 		"collector_id":      p.collectorID,
 		"bridge_version":    p.version,
 		"bridge_build_time": p.buildTime,
+		"bridge_os":         hostinfo.OS(),
 	})
 	resp, err := p.signedRequest(ctx, http.MethodPost, "/bridge/config", body)
 	if err != nil {

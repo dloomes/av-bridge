@@ -214,6 +214,14 @@ export default function CollectorsPage() {
                                     built {formatRelative(c.bridge_build_time)}
                                   </div>
                                 )}
+                                {c.bridge_os && (
+                                  <div
+                                    className="text-[10px] text-muted-foreground mt-0.5 max-w-[220px] truncate"
+                                    title={c.bridge_os}
+                                  >
+                                    {c.bridge_os}
+                                  </div>
+                                )}
                               </div>
                             ) : (
                               <span className="text-muted-foreground">—</span>
