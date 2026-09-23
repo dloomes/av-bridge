@@ -23,19 +23,34 @@ const labels: Record<DeviceStatus, string> = {
 interface Props {
   status: DeviceStatus;
   className?: string;
+  // Optional derived state of the device's collector. When status is
+  // "unknown" and collectorStatus is "offline", we know exactly WHY the
+  // device is unknown — the collector isn't reporting. Rendering that
+  // as its own label ("Collector offline") tells the operator to
+  // investigate the collector rather than the device.
+  collectorStatus?: "online" | "offline" | "unknown";
 }
 
-export function StatusBadge({ status, className }: Props) {
+export function StatusBadge({ status, className, collectorStatus }: Props) {
+  const isCollectorFault =
+    status === "unknown" && collectorStatus === "offline";
+  const label = isCollectorFault ? "Collector offline" : labels[status];
+  // Amber/warning tone for collector-fault so the pill visually
+  // separates from an ordinary "Unknown" and doesn't look like a
+  // healthy device.
+  const variant = isCollectorFault ? "warning" : variants[status];
+  const dot = isCollectorFault ? "bg-warning" : dotColors[status];
+
   return (
-    <Badge variant={variants[status]} className={cn("gap-1.5", className)}>
+    <Badge variant={variant} className={cn("gap-1.5", className)}>
       <span
         className={cn(
           "inline-block h-1.5 w-1.5 rounded-full",
-          dotColors[status],
+          dot,
           status === "online" && "animate-pulseDot"
         )}
       />
-      {labels[status]}
+      {label}
     </Badge>
   );
 }

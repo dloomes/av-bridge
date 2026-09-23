@@ -320,7 +320,14 @@ func (h *Handler) ListDevices(w http.ResponseWriter, r *http.Request) {
 		CollectorID  string            `json:"collector_id,omitempty"`
 		Address      string            `json:"address,omitempty"`
 		Status       string            `json:"status"`
-		Tags         map[string]string `json:"tags,omitempty"`
+		// CollectorStatus is the derived status of the device's collector
+		// (online / offline / unknown) using the same freshness threshold
+		// as Status. Included so the portal can render "Collector offline"
+		// on the device pill when a device shows unknown BECAUSE the
+		// collector isn't reporting, distinct from unknown for other
+		// reasons (never polled etc.).
+		CollectorStatus string            `json:"collector_status,omitempty"`
+		Tags            map[string]string `json:"tags,omitempty"`
 		// Capabilities is the adapter-declared shape (power/commands/metrics)
 		// stored on the devices row via the ingest handler. Included in the
 		// listing so the routine builder's palette can gate step types
@@ -345,6 +352,7 @@ func (h *Handler) ListDevices(w http.ResponseWriter, r *http.Request) {
 			       d.collector_id::text,
 			       COALESCE(d.ip_address, ''),
 			       ` + devicestatus.EffectiveStatusSQL + `,
+			       ` + devicestatus.CollectorStatusSQL + `,
 			       d.tags,
 			       d.capabilities
 			  FROM devices d
@@ -372,7 +380,8 @@ func (h *Handler) ListDevices(w http.ResponseWriter, r *http.Request) {
 			var caps []byte
 			if err := rows.Scan(&it.ID, &it.Name, &it.Type, &it.Protocol,
 				&it.Location, &it.Region, &it.LocationName, &it.Building,
-				&it.RoomID, &it.CollectorID, &it.Address, &it.Status, &tags, &caps); err != nil {
+				&it.RoomID, &it.CollectorID, &it.Address, &it.Status,
+				&it.CollectorStatus, &tags, &caps); err != nil {
 				return err
 			}
 			if len(tags) > 0 {
@@ -442,6 +451,11 @@ func (h *Handler) GetDevice(w http.ResponseWriter, r *http.Request) {
 		PowerWattsOn     *float64          `json:"power_watts_on,omitempty"`
 		PowerWattsStandby *float64         `json:"power_watts_standby,omitempty"`
 		Status           string            `json:"status"`
+		// CollectorStatus surfaces the derived state of the device's
+		// collector so the UI can distinguish "device unknown BECAUSE
+		// the collector is offline" from "device unknown for other
+		// reasons" and label the pill accordingly.
+		CollectorStatus  string            `json:"collector_status,omitempty"`
 		Tags             map[string]string `json:"tags,omitempty"`
 		Commands         map[string]string `json:"commands,omitempty"`
 		Subscriptions    []subscription    `json:"subscriptions,omitempty"`
@@ -482,6 +496,7 @@ func (h *Handler) GetDevice(w http.ResponseWriter, r *http.Request) {
 			       d.power_watts_on::float8,
 			       d.power_watts_standby::float8,
 			       ` + devicestatus.EffectiveStatusSQL + `,
+			       ` + devicestatus.CollectorStatusSQL + `,
 			       d.tags, d.commands, d.subscriptions, d.capabilities
 			  FROM devices d
 			  LEFT JOIN rooms r ON r.id = d.room_id
@@ -492,7 +507,7 @@ func (h *Handler) GetDevice(w http.ResponseWriter, r *http.Request) {
 				&o.Name, &o.Type, &o.Protocol, &o.Location,
 				&o.Address, &o.IPAddress, &baudRate, &pollRate,
 				&o.PowerWattsOn, &o.PowerWattsStandby,
-				&o.Status, &tags, &cmds, &subs, &caps)
+				&o.Status, &o.CollectorStatus, &tags, &cmds, &subs, &caps)
 		if errors.Is(err, pgx.ErrNoRows) {
 			notFound = true
 			return nil

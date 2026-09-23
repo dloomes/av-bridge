@@ -160,7 +160,10 @@ export default function DeviceDetailPage() {
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <h1 className="font-semibold truncate">{device.name}</h1>
-              <StatusBadge status={device.status} />
+              <StatusBadge
+                status={device.status}
+                collectorStatus={device.collector_status}
+              />
             </div>
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <MapPin className="h-3 w-3" />

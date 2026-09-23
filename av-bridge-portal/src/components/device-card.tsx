@@ -98,7 +98,10 @@ export function DeviceCard({ device, refreshTick }: Props) {
           </div>
         )}
 
-        <StatusBadge status={device.status} />
+        <StatusBadge
+          status={device.status}
+          collectorStatus={device.collector_status}
+        />
 
         <div className="flex items-center gap-2 ml-auto">
           <div className="text-[11px] text-muted-foreground hidden sm:block">

@@ -397,7 +397,22 @@ export default function DevicesPage() {
                       </tr>
                     )}
                     {filtered?.map((d) => {
-                      const tone = STATUS_TONE[d.status] ?? STATUS_TONE.unknown;
+                      const baseTone = STATUS_TONE[d.status] ?? STATUS_TONE.unknown;
+                      // Collector-fault override: when a device is unknown
+                      // BECAUSE its collector isn't reporting, badge it
+                      // distinctly (amber "Collector offline") so the
+                      // operator knows to investigate the collector rather
+                      // than the device itself.
+                      const isCollectorFault =
+                        d.status === "unknown" &&
+                        d.collector_status === "offline";
+                      const tone = isCollectorFault
+                        ? {
+                            label: "Collector offline",
+                            variant: "warning" as const,
+                            icon: baseTone.icon,
+                          }
+                        : baseTone;
                       const StatusIcon = tone.icon;
                       return (
                         <tr

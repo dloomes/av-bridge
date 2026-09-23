@@ -13,6 +13,12 @@ export interface DeviceSummary {
   building?: string;
   room_id?: string | null;
   collector_id?: string;
+  // Derived status of the device's collector. When status="unknown"
+  // AND collector_status="offline", the UI shows a "Collector offline"
+  // pill so the operator knows the collector is the reason we can't
+  // see the device (versus "device never polled" or "device reported
+  // unknown").
+  collector_status?: "online" | "offline" | "unknown";
   address?: string;
   status: DeviceStatus;
   tags?: Record<string, string>;

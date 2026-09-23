@@ -34,3 +34,15 @@ const EffectiveStatusSQL = `CASE
     THEN 'unknown'
   ELSE COALESCE(d.latest_status, 'unknown')
 END`
+
+// CollectorStatusSQL projects the collector's derived status (online /
+// offline / unknown) using the same 5-minute freshness threshold. Used
+// by the portal to distinguish "device is unknown because we can't see
+// its collector" from "device is unknown for some other reason", so
+// the UI can label the pill accordingly. Every calling query must
+// LEFT JOIN collectors c ON c.id = d.collector_id.
+const CollectorStatusSQL = `CASE
+  WHEN c.last_seen_at IS NULL THEN 'unknown'
+  WHEN c.last_seen_at < now() - interval '5 minutes' THEN 'offline'
+  ELSE 'online'
+END`
