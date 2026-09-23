@@ -18,20 +18,36 @@ import "time"
 // /collectors page and the derived device status agree.
 const OfflineAfter = 5 * time.Minute
 
-// EffectiveStatusSQL projects a device row's latest_status, downgraded
-// to 'unknown' when the device's collector hasn't checked in within
-// OfflineAfter. Uses "d." for the device row and "c." for the
-// collector row — every calling query must LEFT JOIN collectors c ON
-// c.id = d.collector_id (or an equivalent alias mapping).
+// EffectiveStatusSQL projects a device row's latest_status with two
+// freshness overrides:
 //
-// The 5-minute interval is inlined rather than parameterised because
-// this fragment is baked into many static queries and passing an
-// argument everywhere buys nothing at current scale. If OfflineAfter
-// changes, update both places.
+//   1. Collector unreachable — if the device's collector hasn't checked
+//      in within OfflineAfter (5min), we can't see the device at all,
+//      so it projects as 'unknown' regardless of latest_status.
+//
+//   2. Device silently stopped reporting — if the COLLECTOR is fresh
+//      but this specific DEVICE hasn't produced telemetry in
+//      DeviceStaleAfter (15min), it's genuinely offline. This catches
+//      the "adapter's Connect() keeps failing" case where the bridge
+//      hub loops on reconnect and never pushes telemetry, leaving
+//      latest_status pinned at whatever was written last (e.g. an old
+//      'online' from before the device moved networks / was
+//      unplugged).
+//
+// Uses "d." for the device row and "c." for the collector row — every
+// calling query must LEFT JOIN collectors c ON c.id = d.collector_id
+// (or an equivalent alias mapping).
+//
+// Thresholds are inlined rather than parameterised because this
+// fragment is baked into many static queries and passing arguments
+// everywhere buys nothing at current scale.
 const EffectiveStatusSQL = `CASE
   WHEN c.last_seen_at IS NULL
     OR c.last_seen_at < now() - interval '5 minutes'
     THEN 'unknown'
+  WHEN d.last_seen_at IS NOT NULL
+    AND d.last_seen_at < now() - interval '15 minutes'
+    THEN 'offline'
   ELSE COALESCE(d.latest_status, 'unknown')
 END`
 
