@@ -37,14 +37,22 @@ func (h *Handler) FirmwareSummary(w http.ResponseWriter, r *http.Request) {
 	}
 	out := []item{}
 	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
-		// Ingest populates devices.make/model from t.Tags["make"] first
-		// (see ingest/handler.go — tag-supplied make/model win over
-		// lens metrics). But a portal-only edit that adds `make`/`model`
-		// as tags never triggers ingest, so the top-level columns stay
-		// NULL until a fresh telemetry poll lands. To keep the firmware
-		// page useful right after a tag edit we also read the tags
-		// JSONB and prefer the column when it's set — same precedence
-		// as ingest, just backfilled at query time.
+		// Precedence for make/model, most-authoritative first:
+		//   1. Linked asset's manufacturer/model — operator-curated
+		//      via the device edit form's Physical Inventory (CMDB)
+		//      section or the Assets page. This is what humans typed,
+		//      so it wins over adapter-supplied strings that are often
+		//      inconsistent between vendors ("Poly" / "POLYCOM" /
+		//      "PolycomInc" etc.).
+		//   2. devices.make/model column — populated by ingest from
+		//      t.Tags["make"] on the adapter's telemetry.
+		//   3. d.tags->>'make'/'model' JSONB — legacy fallback for
+		//      portal-only edits that haven't been reingested yet.
+		//
+		// Firmware target lookup keys on the same effective values so
+		// an admin who sets a target for the asset-declared name
+		// (e.g. "Biamp") matches every device linked to that asset
+		// bundle, regardless of what the adapter tagged.
 		rows, err := tx.Query(ctx, `
 			SELECT
 			  d.id::text,
@@ -60,10 +68,21 @@ func (h *Handler) FirmwareSummary(w http.ResponseWriter, r *http.Request) {
 			  COALESCE(ft.target_version, '')  AS target_ver,
 			  COALESCE(ft.docs_url, '')        AS docs
 			FROM devices d
+			LEFT JOIN assets a ON a.id = d.asset_id
 			CROSS JOIN LATERAL (
 			    SELECT
-			      COALESCE(NULLIF(d.make, ''),  NULLIF(d.tags->>'make', ''),  '') AS make_eff,
-			      COALESCE(NULLIF(d.model, ''), NULLIF(d.tags->>'model', ''), '') AS model_eff
+			      COALESCE(
+			          NULLIF(a.manufacturer, ''),
+			          NULLIF(d.make, ''),
+			          NULLIF(d.tags->>'make', ''),
+			          ''
+			      ) AS make_eff,
+			      COALESCE(
+			          NULLIF(a.model, ''),
+			          NULLIF(d.model, ''),
+			          NULLIF(d.tags->>'model', ''),
+			          ''
+			      ) AS model_eff
 			) eff
 			LEFT JOIN rooms r     ON r.id = d.room_id
 			LEFT JOIN buildings b ON b.id = r.building_id
