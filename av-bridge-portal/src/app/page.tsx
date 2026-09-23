@@ -269,10 +269,13 @@ export default function DashboardPage() {
                   and whose real state we can't confirm — distinct from
                   "Offline" (device itself reported unreachable) so the
                   operator knows to check the collector, not the device. */}
-              <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+              {/* auto-fit grid packs cards to fill the row regardless
+                  of count — no empty slot after the `degraded` status
+                  was dropped. Cards stay ≥ 200px wide so numbers remain
+                  legible on tight layouts. */}
+              <div className="grid gap-4 grid-cols-[repeat(auto-fit,minmax(200px,1fr))]">
                 {isLoading ? (
                   <>
-                    <Skeleton className="h-[88px]" />
                     <Skeleton className="h-[88px]" />
                     <Skeleton className="h-[88px]" />
                     <Skeleton className="h-[88px]" />
@@ -318,7 +321,7 @@ export default function DashboardPage() {
                   fell off. Rooms with an issue tint red only when
                   there's actually something to act on so a healthy
                   fleet reads all-neutral. */}
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="grid gap-4 grid-cols-[repeat(auto-fit,minmax(200px,1fr))]">
                 {isRow2Loading ? (
                   <>
                     <Skeleton className="h-[88px]" />

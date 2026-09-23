@@ -47,12 +47,22 @@ import type { BuildingsMapEntry } from "@/components/buildings-map";
 // Mapbox GL touches window at import time, so the whole map component
 // has to skip SSR. This dynamic import keeps the rest of the page
 // server-rendered — the map only spins up in the browser.
+// Map height scales with viewport so a 4K panel is used properly rather
+// than showing a small map in a sea of whitespace. min-h keeps it usable
+// on very short laptop displays; the calc backs off the space taken by
+// the page header + summary tiles so the map doesn't push content below
+// the fold on standard desktops.
+const MAP_HEIGHT_CLASSES =
+  "h-[calc(100vh-360px)] min-h-[520px] max-h-[calc(100vh-140px)]";
+
 const BuildingsMap = dynamic(
   () => import("@/components/buildings-map").then((m) => m.BuildingsMap),
   {
     ssr: false,
     loading: () => (
-      <div className="flex h-[640px] lg:h-[760px] items-center justify-center rounded-lg border border-border bg-muted/20">
+      <div
+        className={`flex ${MAP_HEIGHT_CLASSES} items-center justify-center rounded-lg border border-border bg-muted/20`}
+      >
         <Skeleton className="h-full w-full" />
       </div>
     ),
@@ -222,7 +232,11 @@ export default function MapPage() {
 
       <div className="flex-1 min-h-0 overflow-y-auto">
         <div className="p-6">
-          <div className="mx-auto max-w-6xl space-y-6">
+          {/* max-w cap removed so wider displays (2K / 4K) actually
+              use the horizontal space rather than pillar-boxing the
+              map into a 1152px column. A generous ceiling keeps line
+              lengths readable on ultra-wide monitors. */}
+          <div className="mx-auto max-w-[1800px] space-y-6">
             {fleet.error && (
               <Card className="border-destructive/30 bg-destructive/5">
                 <CardContent className="p-4 text-sm flex items-start gap-2">
@@ -241,10 +255,13 @@ export default function MapPage() {
 
             <section className="space-y-4">
               <h2 className="sr-only">Fleet summary</h2>
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+              {/* auto-fit grid packs cards to fill the row regardless of
+                  count — no empty slots after removing the `degraded`
+                  status. Cards stay at least 200px wide so numbers
+                  remain readable on tight layouts. */}
+              <div className="grid gap-4 grid-cols-[repeat(auto-fit,minmax(200px,1fr))]">
                 {isLoading ? (
                   <>
-                    <Skeleton className="h-[88px]" />
                     <Skeleton className="h-[88px]" />
                     <Skeleton className="h-[88px]" />
                     <Skeleton className="h-[88px]" />
@@ -257,7 +274,7 @@ export default function MapPage() {
                   </>
                 )}
               </div>
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="grid gap-4 grid-cols-[repeat(auto-fit,minmax(200px,1fr))]">
                 {isRow2Loading ? (
                   <>
                     <Skeleton className="h-[88px]" />
@@ -313,9 +330,13 @@ export default function MapPage() {
                 )}
               </div>
               {buildings.loading && !buildings.data ? (
-                <Skeleton className="h-[640px] lg:h-[760px]" />
+                <Skeleton className={MAP_HEIGHT_CLASSES} />
               ) : (
-                <BuildingsMap entries={entries} mapboxToken={MAPBOX_TOKEN} />
+                <BuildingsMap
+                  entries={entries}
+                  mapboxToken={MAPBOX_TOKEN}
+                  className={MAP_HEIGHT_CLASSES}
+                />
               )}
             </section>
 

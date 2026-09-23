@@ -132,7 +132,11 @@ export function BuildingsMap({ entries, mapboxToken, className }: BuildingsMapPr
     return (
       <div
         className={cn(
-          "flex h-[640px] lg:h-[760px] items-center justify-center rounded-lg border border-dashed border-border bg-muted/30 px-6 text-center",
+          // Height is set by the caller via className so a single knob
+          // on the page controls the map's vertical footprint. A modest
+          // fallback keeps the empty-state readable if no className is
+          // supplied.
+          "flex min-h-[420px] items-center justify-center rounded-lg border border-dashed border-border bg-muted/30 px-6 text-center",
           className
         )}
       >
@@ -152,7 +156,7 @@ export function BuildingsMap({ entries, mapboxToken, className }: BuildingsMapPr
     return (
       <div
         className={cn(
-          "flex h-[640px] lg:h-[760px] items-center justify-center rounded-lg border border-dashed border-border bg-muted/30 px-6 text-center",
+          "flex min-h-[420px] items-center justify-center rounded-lg border border-dashed border-border bg-muted/30 px-6 text-center",
           className
         )}
       >
@@ -173,11 +177,10 @@ export function BuildingsMap({ entries, mapboxToken, className }: BuildingsMapPr
   return (
     <div
       className={cn(
-        // Tall by default so the map is the page's centre of gravity;
-        // even taller on lg where there's room. Map itself fills the
-        // wrapper via height: 100%, so tweaking these heights is the
-        // one place to change the map size going forward.
-        "relative h-[640px] lg:h-[760px] overflow-hidden rounded-lg border border-border",
+        // Height is set by the caller via className — a single knob on
+        // the page controls the map's vertical footprint. Map itself
+        // fills this wrapper via height: 100%.
+        "relative min-h-[420px] overflow-hidden rounded-lg border border-border",
         className
       )}
     >
