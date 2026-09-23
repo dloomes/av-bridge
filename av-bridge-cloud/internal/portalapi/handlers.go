@@ -202,6 +202,13 @@ func (h *Handler) ListCollectors(w http.ResponseWriter, r *http.Request) {
 		BridgeBuildTime   *time.Time `json:"bridge_build_time,omitempty"`
 		LastConfigPullAt  *time.Time `json:"last_config_pull_at,omitempty"`
 		ConfigSyncStatus  string     `json:"config_sync_status"`
+		// LocalURL is the LAN-reachable base URL of this collector's
+		// bridge process (e.g. "http://10.0.5.10:8080"). Populated by
+		// the operator via the collectors edit form. Used by the touch
+		// panel button so a browser on the same LAN as the bridge can
+		// reach panels through the bridge's on-prem proxy. Empty when
+		// unset — portal falls back to a direct-to-panel link.
+		LocalURL string `json:"local_url,omitempty"`
 	}
 	out := []item{}
 	now := time.Now()
@@ -215,7 +222,8 @@ func (h *Handler) ListCollectors(w http.ResponseWriter, r *http.Request) {
 			       (SELECT count(*) FROM devices d WHERE d.collector_id = c.id AND d.deleted_at IS NULL) AS device_count,
 			       COALESCE(c.bridge_version, ''),
 			       c.bridge_build_time,
-			       c.last_config_pull_at
+			       c.last_config_pull_at,
+			       COALESCE(c.local_url, '')
 			  FROM collectors c
 			  LEFT JOIN buildings b ON b.id = c.building_id
 			 ORDER BY c.name`)
@@ -228,6 +236,7 @@ func (h *Handler) ListCollectors(w http.ResponseWriter, r *http.Request) {
 			if err := rows.Scan(&c.ID, &c.BridgeCollectorID, &c.Name, &c.BuildingName,
 				&c.LastSeenAt, &c.DeviceCount,
 				&c.BridgeVersion, &c.BridgeBuildTime, &c.LastConfigPullAt,
+				&c.LocalURL,
 			); err != nil {
 				return err
 			}
@@ -326,8 +335,14 @@ func (h *Handler) ListDevices(w http.ResponseWriter, r *http.Request) {
 		// on the device pill when a device shows unknown BECAUSE the
 		// collector isn't reporting, distinct from unknown for other
 		// reasons (never polled etc.).
-		CollectorStatus string            `json:"collector_status,omitempty"`
-		Tags            map[string]string `json:"tags,omitempty"`
+		CollectorStatus string `json:"collector_status,omitempty"`
+		// CollectorLocalURL is the LAN base URL of the device's collector
+		// (from collectors.local_url). Present when the operator has set
+		// it — the touch-panel button uses it to route through the bridge
+		// proxy so panels on subnets the browser can't reach directly
+		// still open.
+		CollectorLocalURL string            `json:"collector_local_url,omitempty"`
+		Tags              map[string]string `json:"tags,omitempty"`
 		// Capabilities is the adapter-declared shape (power/commands/metrics)
 		// stored on the devices row via the ingest handler. Included in the
 		// listing so the routine builder's palette can gate step types
@@ -353,6 +368,7 @@ func (h *Handler) ListDevices(w http.ResponseWriter, r *http.Request) {
 			       COALESCE(d.ip_address, ''),
 			       ` + devicestatus.EffectiveStatusSQL + `,
 			       ` + devicestatus.CollectorStatusSQL + `,
+			       COALESCE(c.local_url, ''),
 			       d.tags,
 			       d.capabilities
 			  FROM devices d
@@ -381,7 +397,7 @@ func (h *Handler) ListDevices(w http.ResponseWriter, r *http.Request) {
 			if err := rows.Scan(&it.ID, &it.Name, &it.Type, &it.Protocol,
 				&it.Location, &it.Region, &it.LocationName, &it.Building,
 				&it.RoomID, &it.CollectorID, &it.Address, &it.Status,
-				&it.CollectorStatus, &tags, &caps); err != nil {
+				&it.CollectorStatus, &it.CollectorLocalURL, &tags, &caps); err != nil {
 				return err
 			}
 			if len(tags) > 0 {
@@ -456,6 +472,11 @@ func (h *Handler) GetDevice(w http.ResponseWriter, r *http.Request) {
 		// the collector is offline" from "device unknown for other
 		// reasons" and label the pill accordingly.
 		CollectorStatus  string            `json:"collector_status,omitempty"`
+		// CollectorLocalURL is collectors.local_url — the LAN base URL of
+		// the collector's bridge process, when set. Feeds the device
+		// detail's touch-panel button so panels on subnets the browser
+		// can't reach directly still open through the bridge proxy.
+		CollectorLocalURL string            `json:"collector_local_url,omitempty"`
 		Tags             map[string]string `json:"tags,omitempty"`
 		Commands         map[string]string `json:"commands,omitempty"`
 		Subscriptions    []subscription    `json:"subscriptions,omitempty"`
@@ -497,6 +518,7 @@ func (h *Handler) GetDevice(w http.ResponseWriter, r *http.Request) {
 			       d.power_watts_standby::float8,
 			       ` + devicestatus.EffectiveStatusSQL + `,
 			       ` + devicestatus.CollectorStatusSQL + `,
+			       COALESCE(c.local_url, ''),
 			       d.tags, d.commands, d.subscriptions, d.capabilities
 			  FROM devices d
 			  LEFT JOIN rooms r ON r.id = d.room_id
@@ -507,7 +529,8 @@ func (h *Handler) GetDevice(w http.ResponseWriter, r *http.Request) {
 				&o.Name, &o.Type, &o.Protocol, &o.Location,
 				&o.Address, &o.IPAddress, &baudRate, &pollRate,
 				&o.PowerWattsOn, &o.PowerWattsStandby,
-				&o.Status, &o.CollectorStatus, &tags, &cmds, &subs, &caps)
+				&o.Status, &o.CollectorStatus, &o.CollectorLocalURL,
+				&tags, &cmds, &subs, &caps)
 		if errors.Is(err, pgx.ErrNoRows) {
 			notFound = true
 			return nil

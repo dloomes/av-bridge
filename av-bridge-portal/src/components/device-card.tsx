@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/status-badge";
 import { DeviceIcon } from "@/components/device-icon";
 import type { DeviceSummary } from "@/lib/types";
-import { api } from "@/lib/api";
+import { api, currentToken } from "@/lib/api";
 import { formatRelative, formatMetricValue } from "@/lib/utils";
 
 interface Props {
@@ -49,13 +49,25 @@ export function DeviceCard({ device, refreshTick }: Props) {
   }, []);
 
   // Aurora RXT touch panels expose a built-in web UI at https://<ip>/user.
-  // Prefer the runtime-captured ip_address tag (set by captureStaticInfo on
-  // connect), fall back to the configured address with any control-API port
-  // stripped (e.g. ":6975").
-  const touchPanelHost =
-    device.protocol === "aurora_rxt"
-      ? device.tags?.ip_address ?? device.address?.split(":")[0]
-      : undefined;
+  // Two link paths:
+  //
+  //   1. Collector has a local_url set → route through the bridge's on-prem
+  //      proxy so panels on subnets the browser can't reach directly still
+  //      open. Bearer token rides as a query param for the initial GET.
+  //   2. No local_url → fall back to the direct-to-panel link. Works when
+  //      browser + panel are on the same LAN.
+  const touchPanelHref = (() => {
+    if (device.protocol !== "aurora_rxt") return null;
+    const localBase = device.collector_local_url?.replace(/\/+$/, "");
+    if (localBase) {
+      const tok = currentToken();
+      return `${localBase}/api/v1/devices/${encodeURIComponent(device.id)}/touch-panel/user${
+        tok ? `?token=${encodeURIComponent(tok)}` : ""
+      }`;
+    }
+    const host = device.tags?.ip_address ?? device.address?.split(":")[0];
+    return host ? `https://${host}/user` : null;
+  })();
 
   const wantedKeys = KEY_METRICS_BY_TYPE[device.type] ?? [];
   const shown = metrics
@@ -107,13 +119,9 @@ export function DeviceCard({ device, refreshTick }: Props) {
           <div className="text-[11px] text-muted-foreground hidden sm:block">
             {formatRelative(updatedAt)}
           </div>
-          {touchPanelHost && (
+          {touchPanelHref && (
             <Button asChild size="sm" variant="outline" className="h-7 px-2 gap-1 text-xs">
-              <a
-                href={`https://${touchPanelHost}/user`}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
+              <a href={touchPanelHref} target="_blank" rel="noopener noreferrer">
                 Touch Panel
                 <ExternalLink className="h-3 w-3" />
               </a>

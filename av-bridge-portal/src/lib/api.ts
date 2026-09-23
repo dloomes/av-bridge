@@ -44,6 +44,7 @@ import type {
   WarrantyRow,
   Telemetry,
   UpdateAssetBody,
+  UpdateCollectorBody,
   UpdateDeviceBody,
   UpdateRoleBody,
   UpdateRoleMappingBody,
@@ -966,6 +967,40 @@ export const api = {
       `/api/v1/collectors/${encodeURIComponent(id)}/enrollment-token`,
       { method: "POST", signal }
     ),
+
+  // Edit collector fields — currently local_url + name. Wire-compatible
+  // pointer semantics: absent field means "no change"; empty string on
+  // local_url clears the stored value. Returns 204.
+  updateCollector: async (
+    id: string,
+    body: UpdateCollectorBody,
+    signal?: AbortSignal
+  ): Promise<void> => {
+    const res = await fetch(
+      `${API_BASE}/api/v1/collectors/${encodeURIComponent(id)}`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify(body),
+        signal,
+        cache: "no-store",
+      }
+    );
+    if (!res.ok) {
+      let text = "";
+      try { text = await res.text(); } catch {}
+      let msg = `${res.status} ${res.statusText}`;
+      if (text) {
+        try {
+          const parsed = JSON.parse(text) as { error?: string };
+          if (parsed.error) msg = parsed.error;
+        } catch {
+          msg = text;
+        }
+      }
+      throw new ApiError(msg, res.status);
+    }
+  },
 
   // Permanently remove a collector. Refused server-side if any live
   // (non-tombstoned) devices still reference it — the schema cascades

@@ -193,18 +193,39 @@ export default function DeviceDetailPage() {
                 : null
             )}
           </span>
-          {device.protocol === "aurora_rxt" && (
-            <Button asChild variant="outline" size="sm">
-              <a
-                href={`${API_BASE}/api/v1/devices/${encodeURIComponent(device.id)}/touch-panel/user${currentToken() ? `?token=${encodeURIComponent(currentToken())}` : ""}`}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                Touch Panel
-                <ExternalLink className="h-3.5 w-3.5" />
-              </a>
-            </Button>
-          )}
+          {device.protocol === "aurora_rxt" && (() => {
+            // Two paths for reaching the panel:
+            //
+            //   1. Collector has a local_url set → route through the bridge's
+            //      on-prem proxy (`{local_url}/api/v1/devices/{id}/touch-panel/user`)
+            //      so panels on subnets the browser can't reach directly
+            //      still open. Bearer token rides as a query param — enough
+            //      for the initial GET; asset GETs are anonymous within the
+            //      panel's own session.
+            //
+            //   2. No local_url → fall back to the direct-to-panel link
+            //      (existing behaviour). Works when browser + panel are on
+            //      the same LAN.
+            const panelHost =
+              device.tags?.ip_address ?? device.address?.split(":")[0];
+            const localBase = device.collector_local_url?.replace(/\/+$/, "");
+            const href = localBase
+              ? `${localBase}/api/v1/devices/${encodeURIComponent(device.id)}/touch-panel/user${
+                  currentToken() ? `?token=${encodeURIComponent(currentToken())}` : ""
+                }`
+              : panelHost
+              ? `https://${panelHost}/user`
+              : null;
+            if (!href) return null;
+            return (
+              <Button asChild variant="outline" size="sm">
+                <a href={href} target="_blank" rel="noopener noreferrer">
+                  Touch Panel
+                  <ExternalLink className="h-3.5 w-3.5" />
+                </a>
+              </Button>
+            );
+          })()}
           <Button
             variant="outline"
             size="sm"

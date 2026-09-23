@@ -128,6 +128,7 @@ func SnapshotByTable(ctx context.Context, tx pgx.Tx, table, id string) (json.Raw
 		"regions": true, "locations": true, "buildings": true, "rooms": true,
 		"commands": true,
 		"business_units": true,
+		"collectors":     true,
 	}
 	if !allowed[table] {
 		return nil, fmt.Errorf("snapshot: table %q not in audit allowlist", table)

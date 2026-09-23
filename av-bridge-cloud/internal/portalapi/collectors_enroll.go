@@ -357,6 +357,127 @@ func (h *Handler) DeleteCollector(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// updateCollectorReq — PATCH shape. Every field optional; only fields
+// present in the payload are written. Extend with new pointers rather
+// than adding zero-vs-set flags.
+type updateCollectorReq struct {
+	// LocalURL: pass "" to clear (stored as NULL), pass a full URL
+	// (http[s]://host[:port]) to set. nil pointer = leave alone.
+	LocalURL *string `json:"local_url,omitempty"`
+	// Name: rename the collector. Empty string is rejected — a
+	// collector without a name is unusable in the fleet UI.
+	Name *string `json:"name,omitempty"`
+}
+
+// UpdateCollector — PATCH /api/v1/collectors/{id}
+//
+// Edits editable fields on an existing collector row. Currently
+// covers local_url (LAN-reachable bridge URL used by the touch-panel
+// proxy button) and name. Other fields — bridge_collector_id,
+// building_id, HMAC secret — are immutable via this path; changing
+// them would break the enrolled bridge's identity or configuration
+// and needs a re-enrolment flow instead.
+func (h *Handler) UpdateCollector(w http.ResponseWriter, r *http.Request) {
+	p, ok := h.requireCustomerScope(w, r)
+	if !ok {
+		return
+	}
+	id := r.PathValue("id")
+
+	var req updateCollectorReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+
+	// Validate local_url shape when set — empty string is allowed (means
+	// clear the value). A malformed URL slipping in here would make the
+	// portal touch-panel button silently open to nothing, so fail fast.
+	if req.LocalURL != nil && *req.LocalURL != "" {
+		trimmed := strings.TrimSpace(*req.LocalURL)
+		if !strings.HasPrefix(trimmed, "http://") && !strings.HasPrefix(trimmed, "https://") {
+			writeErr(w, http.StatusBadRequest, "local_url must start with http:// or https://")
+			return
+		}
+		if len(trimmed) > 512 {
+			writeErr(w, http.StatusBadRequest, "local_url too long (max 512 chars)")
+			return
+		}
+		// Normalise: strip trailing slash so downstream URL construction
+		// doesn't produce doubled slashes.
+		req.LocalURL = strPtr(strings.TrimRight(trimmed, "/"))
+	}
+
+	if req.Name != nil && strings.TrimSpace(*req.Name) == "" {
+		writeErr(w, http.StatusBadRequest, "name cannot be blank")
+		return
+	}
+
+	// Build the SET clause dynamically — matches the pattern used by
+	// UpdateDevice / UpdateRegion elsewhere in the file.
+	set := []string{}
+	args := []any{}
+	add := func(col string, val any) {
+		args = append(args, val)
+		set = append(set, fmt.Sprintf("%s = $%d", col, len(args)))
+	}
+	if req.LocalURL != nil {
+		add("local_url", nullIfEmpty(*req.LocalURL))
+	}
+	if req.Name != nil {
+		add("name", strings.TrimSpace(*req.Name))
+	}
+	if len(set) == 0 {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	notFound := false
+	okWith := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
+		before, err := audit.SnapshotByTable(ctx, tx, "collectors", id)
+		if err != nil {
+			// Snapshot failure is non-fatal — audit fidelity degrades but
+			// the edit itself continues. Log so we know when the allowlist
+			// needs extending.
+			h.log.Warn("collector snapshot before update failed", "error", err)
+		}
+
+		args = append(args, id)
+		sql := fmt.Sprintf(
+			"UPDATE collectors SET %s WHERE id = $%d",
+			strings.Join(set, ", "), len(args),
+		)
+		tag, err := tx.Exec(ctx, sql, args...)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			notFound = true
+			return nil
+		}
+
+		after, err := audit.SnapshotByTable(ctx, tx, "collectors", id)
+		if err != nil {
+			h.log.Warn("collector snapshot after update failed", "error", err)
+		}
+		return audit.Record(ctx, tx, p.CustomerID, stampActor(p, audit.Entry{
+			Action:     "collector.update",
+			TargetKind: "collector", TargetID: id,
+			Before: before, After: after,
+		}))
+	})
+	if !okWith {
+		return
+	}
+	if notFound {
+		writeErr(w, http.StatusNotFound, "collector not found")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func strPtr(s string) *string { return &s }
+
 // bridgeCollectorIDValid enforces the same shape defaultBridgeCollectorID
 // produces so a caller who supplies their own id can't sneak whitespace
 // or slashes through to the bridge's persistent identifier.

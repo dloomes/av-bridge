@@ -7,6 +7,7 @@ import {
   Copy,
   HelpCircle,
   Loader2,
+  Pencil,
   Plus,
   RefreshCw,
   Server,
@@ -79,6 +80,7 @@ export default function CollectorsPage() {
     | null
   >(null);
   const [deleting, setDeleting] = useState<CollectorSummary | null>(null);
+  const [editingLocalURL, setEditingLocalURL] = useState<CollectorSummary | null>(null);
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -134,6 +136,7 @@ export default function CollectorsPage() {
                       <th scope="col" className="px-4 py-3 font-medium">Status</th>
                       <th scope="col" className="px-4 py-3 font-medium">Config sync</th>
                       <th scope="col" className="px-4 py-3 font-medium">Last seen</th>
+                      <th scope="col" className="px-4 py-3 font-medium">Local URL</th>
                       {canManage && <th scope="col" className="px-4 py-3 font-medium text-right"> </th>}
                     </tr>
                   </thead>
@@ -153,7 +156,7 @@ export default function CollectorsPage() {
                     )}
                     {data && data.length === 0 && (
                       <tr>
-                        <td colSpan={8} className="px-4 py-16 text-center">
+                        <td colSpan={9} className="px-4 py-16 text-center">
                           <div className="mx-auto max-w-md space-y-3">
                             <div className="mx-auto h-10 w-10 rounded-md bg-muted flex items-center justify-center">
                               <Server aria-hidden="true" className="h-5 w-5 text-muted-foreground" />
@@ -258,9 +261,32 @@ export default function CollectorsPage() {
                               <span>never</span>
                             )}
                           </td>
+                          <td className="px-4 py-3.5 align-top text-xs">
+                            {c.local_url ? (
+                              <span
+                                className="font-mono text-muted-foreground truncate inline-block max-w-[220px]"
+                                title={c.local_url}
+                              >
+                                {c.local_url}
+                              </span>
+                            ) : (
+                              <span className="text-muted-foreground italic">
+                                not set
+                              </span>
+                            )}
+                          </td>
                           {canManage && (
                             <td className="px-4 py-3.5 align-top text-right">
                               <div className="inline-flex items-center gap-1">
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  aria-label="Edit local URL"
+                                  title="Edit local URL (LAN address the touch-panel proxy uses)"
+                                  onClick={() => setEditingLocalURL(c)}
+                                >
+                                  <Pencil className="h-3.5 w-3.5" />
+                                </Button>
                                 <ReissueTokenButton
                                   collector={c}
                                   onIssued={(token, expiresAt) =>
@@ -361,7 +387,112 @@ export default function CollectorsPage() {
           />
         )}
       </Modal>
+
+      <Modal
+        open={editingLocalURL !== null}
+        onClose={() => setEditingLocalURL(null)}
+        title="Local URL"
+        wide={false}
+      >
+        {editingLocalURL && (
+          <LocalURLForm
+            collector={editingLocalURL}
+            onCancel={() => setEditingLocalURL(null)}
+            onSaved={async () => {
+              setEditingLocalURL(null);
+              await refresh();
+            }}
+          />
+        )}
+      </Modal>
     </div>
+  );
+}
+
+// LocalURLForm — inline editor for collectors.local_url. The URL points
+// at the collector's bridge process on the LAN (e.g. "http://10.0.5.10:8080")
+// and is used by the touch-panel button on the device detail page to
+// reach panels through the bridge's on-prem proxy. Cleared by saving an
+// empty string.
+function LocalURLForm({
+  collector,
+  onCancel,
+  onSaved,
+}: {
+  collector: CollectorSummary;
+  onCancel: () => void;
+  onSaved: () => Promise<void>;
+}) {
+  const [value, setValue] = useState(collector.local_url ?? "");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setSubmitting(true);
+    try {
+      await api.updateCollector(collector.id, { local_url: value.trim() });
+      await onSaved();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <form onSubmit={submit} className="space-y-4">
+      <div>
+        <p className="text-sm text-muted-foreground">
+          LAN-reachable base URL of the collector's bridge process. When set,
+          the touch-panel button on device detail pages routes through the
+          bridge's on-prem proxy instead of hitting panels directly — useful
+          when the browser can reach the bridge but not the panel's subnet.
+        </p>
+        <p className="mt-2 text-xs text-muted-foreground">
+          Include scheme and port. Leave blank to fall back to a direct
+          browser-to-panel link.
+        </p>
+      </div>
+      <div>
+        <label
+          htmlFor="local-url"
+          className="text-xs font-medium uppercase tracking-wide text-muted-foreground"
+        >
+          Base URL
+        </label>
+        <input
+          id="local-url"
+          type="url"
+          className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm font-mono outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+          placeholder="http://10.0.5.10:8080"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          disabled={submitting}
+          autoFocus
+        />
+      </div>
+      {error && (
+        <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm [color:hsl(var(--destructive))]">
+          {error}
+        </div>
+      )}
+      <div className="flex justify-end gap-2">
+        <Button type="button" variant="outline" onClick={onCancel} disabled={submitting}>
+          Cancel
+        </Button>
+        <Button type="submit" disabled={submitting}>
+          {submitting ? (
+            <>
+              <Loader2 className="h-3.5 w-3.5 animate-spin" /> Saving…
+            </>
+          ) : (
+            "Save"
+          )}
+        </Button>
+      </div>
+    </form>
   );
 }
 
