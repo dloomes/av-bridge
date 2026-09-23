@@ -254,12 +254,23 @@ func (h *Hub) manageDevice(ctx context.Context, dev device.Device) {
 		log.Info("restored device state", "last_status", state.LastStatus, "last_seen", state.LastSeen)
 	}
 
-	// Connect with exponential backoff
+	// Connect with exponential backoff. On every failed attempt push a
+	// synthetic offline telemetry heartbeat so the cloud sees the
+	// device as offline within seconds — otherwise this goroutine loops
+	// here indefinitely and never enters the poll loop that would
+	// otherwise push telemetry, leaving devices.latest_status pinned at
+	// whatever was written last (commonly an old 'online' from before
+	// the device moved networks / was unplugged).
+	//
+	// The cloud has a 15-minute staleness safety net that would also
+	// flip the pill eventually; this fixes it in seconds and lets
+	// operators see the true state without waiting.
 	backoff := 5 * time.Second
 	for {
 		log.Info("connecting to device")
 		if err := dev.Connect(ctx); err != nil {
 			log.Warn("connection failed, retrying", "error", err, "backoff", backoff)
+			h.cloud.EnqueueTelemetry(newOfflineHeartbeat(dev, err))
 			select {
 			case <-ctx.Done():
 				return
@@ -341,4 +352,30 @@ func (h *Hub) manageDevice(ctx context.Context, dev device.Device) {
 			}
 		}
 	}
+}
+
+// newOfflineHeartbeat builds a synthetic telemetry blob marking the
+// device as offline, used when Connect() fails during the initial
+// connect-with-retry loop so the cloud can flip the pill immediately
+// rather than waiting for the 15-minute staleness safety net. Fields
+// mirror what the adapter's BaseTelemetry() would produce so the
+// ingest path stays uniform (same shape as any other telemetry push).
+func newOfflineHeartbeat(dev device.Device, cause error) *device.Telemetry {
+	info := dev.Info()
+	tel := &device.Telemetry{
+		DeviceID:   info.ID,
+		DeviceName: info.Name,
+		DeviceType: info.Type,
+		Location:   info.Location,
+		Protocol:   info.Protocol,
+		Status:     device.StatusOffline,
+		Timestamp:  time.Now().UTC(),
+		Tags:       info.Tags,
+	}
+	if cause != nil {
+		tel.Error = cause.Error()
+	}
+	caps := dev.Capabilities()
+	tel.Capabilities = &caps
+	return tel
 }
