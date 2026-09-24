@@ -402,7 +402,7 @@ Collector releases are semver-tagged. Backwards compatibility with the cloud is 
 
 ### 8.3 Backup and restore
 
-The Collector holds a small amount of local state — last-known device statuses and buffered telemetry pending push. This state is fully recoverable: on a fresh start the Collector rebuilds it from the cloud within one poll cycle.
+The Collector holds a small amount of local state — last-known device statuses and telemetry awaiting its next push. This state is fully recoverable: on a fresh start the Collector rebuilds it from the cloud within one poll cycle.
 
 **You do not need to back up the Collector.** Redeployment is safe. The one artefact worth preserving is the configuration file, because it contains the HMAC key.
 

@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>M.A.R.C.U.S. — Network Traffic Flow</title>
+<link rel="stylesheet" href="marcus-diagrams.css">
+<style>
+  @page { size: A4 portrait; margin: 10mm; }
+</style>
+</head>
+<body>
+<div class="page portrait">
+  <img class="banner" src="marcus-header-band.png" alt="M.A.R.C.U.S.">
+
+  <div class="titlebar">
+    <div>
+      <h1>Network Traffic Flow</h1>
+      <div class="sub">Firewall &amp; port reference · v1.0</div>
+    </div>
+    <div class="meta"><strong>UK-hosted · AWS London</strong>eu-west-2 · General Availability</div>
+  </div>
+
+  <div class="content">
+
+    <!-- 01 CUSTOMER SITE -->
+    <div class="zone site">
+      <div class="zone-row">
+        <div class="zone-label">
+          <div class="zone-kicker">01 · Customer site</div>
+          <span class="zone-title">On-premise LAN</span>
+          <div class="zone-desc">All device traffic stays inside the site.</div>
+        </div>
+        <div class="col-stack">
+          <div class="grid g4">
+            <div class="card"><h3><span class="badge cyan">D</span>Display</h3><p>Sony Bravia Professional</p></div>
+            <div class="card"><h3><span class="badge cyan">V</span>Video conferencing</h3><p>Poly VideoOS · G7500 / Studio X</p></div>
+            <div class="card"><h3><span class="badge cyan">A</span>Audio DSP</h3><p>Biamp Tesira</p></div>
+            <div class="card"><h3><span class="badge cyan">C</span>PTZ camera</h3><p>VISCA-over-IP</p></div>
+            <div class="card"><h3><span class="badge cyan">T</span>Touch panel</h3><p>Aurora RXT</p></div>
+            <div class="card"><h3><span class="badge cyan">X</span>AV-over-IP</h3><p>Aurora VPX</p></div>
+            <div class="card"><h3><span class="badge cyan">P</span>Power</h3><p>ATEN eco PDU</p></div>
+            <div class="card"><h3><span class="badge cyan">G</span>Other devices</h3><p>REST · WebSocket · Telnet · RS-232</p></div>
+          </div>
+          <div class="card hero">
+            <h3><span class="badge cyan">M</span>M.A.R.C.U.S. Collector<span class="tag">Linux · Windows · ARM64</span></h3>
+            <p>Polls devices on their native vendor protocols. Makes outbound HTTPS to M.A.R.C.U.S. Cloud only — nothing listens on the internet. An optional LAN-only local API (TCP 8080) serves health checks and the touch-panel proxy.</p>
+            <div class="pills">
+              <span class="pill lan"><span class="n">2</span>TCP 5678 · UDP 52381 VISCA</span>
+              <span class="pill lan"><span class="n">3</span>TCP 23 Telnet</span>
+              <span class="pill lan"><span class="n">4</span>TCP 80/443 REST · WS</span>
+              <span class="pill lan"><span class="n">5</span>ICMP</span>
+              <span class="pill lan"><span class="n">6</span>TCP 8080 local API</span>
+              <span class="pill out"><span class="n">1</span>HTTPS 443 to cloud</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="boundary"><span>Site firewall · outbound only</span></div>
+
+    <!-- 02 PUBLIC INTERNET -->
+    <div class="zone net">
+      <div class="zone-row">
+        <div class="zone-label">
+          <div class="zone-kicker">02 · Public internet</div>
+          <span class="zone-title">Users, integrators, SSO</span>
+          <div class="zone-desc">No inbound connections to the customer LAN.</div>
+        </div>
+        <div class="grid g5">
+          <div class="card"><h3><span class="badge">U</span>Portal users</h3><p>Browser access</p><div class="pills"><span class="pill out"><span class="n">7</span>HTTPS 443</span></div></div>
+          <div class="card"><h3><span class="badge">I</span>Integrator</h3><p><code>/pub/v1</code> caller</p><div class="pills"><span class="pill out"><span class="n">8</span>HTTPS 443</span></div></div>
+          <div class="card"><h3><span class="badge">E</span>Entra ID</h3><p>OIDC single sign-on</p><div class="pills"><span class="pill out"><span class="n">9</span>HTTPS 443</span></div></div>
+          <div class="card"><h3><span class="badge magenta">R</span>Email recipient</h3><p>Alerts, digests, resets</p><div class="pills"><span class="pill egr"><span class="n">10</span>SMTP 25/587</span></div></div>
+          <div class="card"><h3><span class="badge magenta">W</span>Teams / webhook</h3><p>Alert channels</p><div class="pills"><span class="pill egr"><span class="n">11</span>HTTPS 443</span></div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="boundary"><span>AWS edge</span></div>
+
+    <!-- 03 CLOUD -->
+    <div class="zone cloud">
+      <div class="zone-row">
+        <div class="zone-label">
+          <div class="zone-kicker">03 · AWS London</div>
+          <span class="zone-title">M.A.R.C.U.S. Cloud</span>
+          <div class="zone-desc">Public ingress only via the load balancer. Data plane in private subnets.</div>
+        </div>
+        <div class="col-stack">
+          <div class="card hero-cloud">
+            <h3><span class="badge">LB</span>Application Load Balancer<span class="tag">Public subnet</span></h3>
+            <p>TLS termination with an ACM certificate. Route 53 fronts <code>*.involvecloud.com</code>.</p>
+            <div class="pills">
+              <span class="pill out"><span class="n">1</span>Collector</span>
+              <span class="pill out"><span class="n">7</span>Portal</span>
+              <span class="pill out"><span class="n">8</span>Integrator</span>
+              <span class="pill out"><span class="n">9</span>SSO callback</span>
+            </div>
+          </div>
+          <div class="subpanel">
+            <div class="subpanel-label">VPC · private subnets</div>
+            <div class="grid g2">
+              <div class="card"><h3><span class="badge">CS</span>Cloud service · ECS Fargate</h3><p>Receives TCP 8080 from the load balancer. Reaches the database, email and secrets services inside the VPC.</p>
+                <div class="pills"><span class="pill int"><span class="n">12</span>TCP 8080</span><span class="pill int"><span class="n">13</span>PG 5432</span><span class="pill int"><span class="n">14</span>AWS API 443</span></div></div>
+              <div class="card"><h3><span class="badge">DB</span>RDS PostgreSQL · Multi-AZ</h3><p>Reachable only from the cloud-service security group. No public endpoint. Row-level tenant isolation.</p>
+                <div class="pills"><span class="pill int"><span class="n">13</span>TCP 5432</span></div></div>
+            </div>
+          </div>
+          <div class="grid g2">
+            <div class="card"><h3><span class="badge magenta">SE</span>Amazon SES</h3><p>Outbound email to recipient mail servers.</p></div>
+            <div class="card"><h3><span class="badge">SM</span>Secrets Manager</h3><p>Collector HMAC keys, database credentials, encryption keys.</p></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="legend">
+      <div><span class="pill out"><span class="n">↗</span></span><span><b>Outbound from customer</b> — Collector or browser dialling out on 443. No inbound site rules.</span></div>
+      <div><span class="pill lan"><span class="n">•</span></span><span><b>LAN internal</b> — Collector to AV devices. Never crosses the site firewall.</span></div>
+      <div><span class="pill egr"><span class="n">↙</span></span><span><b>Egress from cloud</b> — email and alert channels out to recipients.</span></div>
+      <div><span class="pill int"><span class="n">•</span></span><span><b>Cloud internal</b> — VPC-private traffic, UK region only.</span></div>
+    </div>
+
+    <div class="callout"><strong>One firewall rule at site.</strong> Allow the Collector host outbound TCP 443 to <code>*.involvecloud.com</code>. No inbound rules, no VPN, no port forwarding. The full port reference is on page 2.</div>
+  </div>
+
+  <div class="footer">
+    <span><span class="brand">Involve Visual Collaboration Ltd</span> · involve.vc</span>
+    <span>M.A.R.C.U.S. — Network Traffic Flow · v1.0 · Page 1 of 2</span>
+  </div>
+</div>
+
+<div class="page portrait">
+  <img class="banner" src="marcus-header-band.png" alt="M.A.R.C.U.S.">
+  <div class="titlebar">
+    <div>
+      <h1>Network Traffic Flow</h1>
+      <div class="sub">Port reference · v1.0</div>
+    </div>
+    <div class="meta"><strong>UK-hosted · AWS London</strong>eu-west-2 · General Availability</div>
+  </div>
+
+  <div class="content">
+    <!-- PORT TABLE -->
+    <table class="ref">
+      <thead><tr><th>#</th><th>Source → destination</th><th>Port</th><th>Protocol</th><th>Authentication</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td><span class="pill out"><span class="n">1</span></span></td><td><b>Collector → Cloud</b></td><td class="port">TCP 443</td><td>HTTPS (TLS 1.2+)</td><td>HMAC-SHA256 per request</td><td>Telemetry, command poll, config sync. Outbound only.</td></tr>
+        <tr><td><span class="pill lan"><span class="n">2</span></span></td><td><b>Collector → PTZ camera</b></td><td class="port">TCP 5678 · UDP 52381</td><td>VISCA</td><td>None — LAN only</td><td>Power, tally, pan / tilt state. Never crosses the site firewall.</td></tr>
+        <tr><td><span class="pill lan"><span class="n">3</span></span></td><td><b>Collector → Audio DSP</b></td><td class="port">TCP 23</td><td>Tesira TTP / Telnet</td><td>Device credentials</td><td>Subscriptions + identity / fault queries. Auto-reconnect with back-off.</td></tr>
+        <tr><td><span class="pill lan"><span class="n">4</span></span></td><td><b>Collector → REST / WS devices</b></td><td class="port">TCP 80 · 443</td><td>HTTP(S) · WebSocket</td><td>PSK / session per adapter</td><td>Sony Bravia, Poly VideoOS, ATEN PDU, Aurora.</td></tr>
+        <tr><td><span class="pill lan"><span class="n">5</span></span></td><td><b>Collector → any device</b></td><td class="port">ICMP</td><td>ICMP echo</td><td>n/a</td><td>Reachability for devices without a richer adapter.</td></tr>
+        <tr><td><span class="pill lan"><span class="n">6</span></span></td><td><b>LAN browser → Collector</b> <i>(optional)</i></td><td class="port">TCP 8080</td><td>HTTP</td><td>Portal bearer token</td><td>Health check + touch-panel proxy. LAN-only; never exposed to the internet.</td></tr>
+        <tr><td><span class="pill out"><span class="n">7</span></span></td><td><b>Portal browser → Cloud</b></td><td class="port">TCP 443</td><td>HTTPS + WebSocket</td><td>Session or Entra ID SSO</td><td>Portal application and live event stream.</td></tr>
+        <tr><td><span class="pill out"><span class="n">8</span></span></td><td><b>Integrator → Cloud</b></td><td class="port">TCP 443</td><td>HTTPS</td><td>Scoped bearer token</td><td>Public API <code>/pub/v1</code>. Token scoped to one tenant.</td></tr>
+        <tr><td><span class="pill out"><span class="n">9</span></span></td><td><b>Portal browser → Entra ID</b></td><td class="port">TCP 443</td><td>HTTPS · OIDC</td><td>Microsoft identity</td><td>Redirect + callback to the cloud.</td></tr>
+        <tr><td><span class="pill egr"><span class="n">10</span></span></td><td><b>Amazon SES → recipient</b></td><td class="port">TCP 25 · 587</td><td>SMTP</td><td>DKIM · SPF · DMARC</td><td>Alerts, digests, password resets, sign-in links.</td></tr>
+        <tr><td><span class="pill egr"><span class="n">11</span></span></td><td><b>Cloud → Teams / webhook</b></td><td class="port">TCP 443</td><td>HTTPS</td><td>Customer-configured URL</td><td>Alert notification channels.</td></tr>
+        <tr><td><span class="pill int"><span class="n">12</span></span></td><td><b>Load balancer → cloud service</b></td><td class="port">TCP 8080</td><td>HTTP</td><td>Security group only</td><td>Inside the VPC. TLS terminates at the load balancer.</td></tr>
+        <tr><td><span class="pill int"><span class="n">13</span></span></td><td><b>Cloud service → PostgreSQL</b></td><td class="port">TCP 5432</td><td>PostgreSQL</td><td>SCRAM · Secrets Manager</td><td>Private subnet only. Row-level security enforces tenant isolation.</td></tr>
+        <tr><td><span class="pill int"><span class="n">14</span></span></td><td><b>Cloud service → SES · Secrets</b></td><td class="port">TCP 443</td><td>HTTPS · AWS SDK</td><td>IAM task role</td><td>Secrets injected at start-up. Email dispatched on demand.</td></tr>
+      </tbody>
+    </table>
+
+    <div class="grid g2">
+      <div class="panel">
+        <h2>Customer firewall rules</h2>
+        <table class="ref">
+          <thead><tr><th>Direction</th><th>Port</th><th>Destination</th><th>Source</th></tr></thead>
+          <tbody>
+            <tr><td class="dir">Outbound</td><td class="port">TCP 443</td><td><code>*.involvecloud.com</code></td><td>Collector host</td></tr>
+            <tr><td class="dir">Outbound</td><td class="port">TCP 443</td><td><code>*.involvecloud.com</code></td><td>Operator browsers</td></tr>
+            <tr><td class="dir">Outbound <i>(optional)</i></td><td class="port">TCP 443</td><td><code>api.involvecloud.com</code></td><td>ITSM / CMDB / BI</td></tr>
+            <tr><td class="dir">Inbound</td><td colspan="3"><i>None. No public-facing ports at any customer location.</i></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="panel">
+        <h2>Security principles</h2>
+        <ul class="ticks">
+          <li><strong>Zero inbound firewall rules</strong> at any customer site.</li>
+          <li><strong>TLS 1.2 minimum</strong> on every connection to the cloud; TLS 1.3 preferred.</li>
+          <li><strong>HMAC-SHA256</strong> signature on every Collector request — per-Collector key.</li>
+          <li><strong>Row-level tenant isolation</strong> enforced by the database engine.</li>
+          <li><strong>UK-hosted exclusively</strong> — all data in AWS London (<code>eu-west-2</code>).</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <span><span class="brand">Involve Visual Collaboration Ltd</span> · involve.vc</span>
+    <span>M.A.R.C.U.S. — Network Traffic Flow · v1.0 · Page 2 of 2</span>
+  </div>
+</div>
+</body>
+</html>

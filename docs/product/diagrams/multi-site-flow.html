@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>M.A.R.C.U.S. — Multi-Site Network Flow</title>
+<link rel="stylesheet" href="marcus-diagrams.css">
+<style>
+  @page { size: A4 landscape; margin: 10mm; }
+
+  .ms { display: grid; grid-template-columns: 1.35fr 13mm 0.8fr 13mm 1fr 13mm 1.15fr; align-items: stretch; flex: 1; min-height: 0; }
+  .colhdr { font-size: 6.4pt; letter-spacing: 0.14em; text-transform: uppercase; font-weight: 700; color: var(--faint); margin-bottom: 1.2mm; }
+  .col { display: flex; flex-direction: column; min-height: 0; }
+  .col > .body { flex: 1; display: flex; flex-direction: column; gap: 2mm; min-height: 0; }
+
+  .gut { display: flex; flex-direction: column; justify-content: space-around; align-items: center; padding-top: 5mm; }
+  .gut svg { width: 10mm; height: 6mm; }
+  .gut .lbl { font-size: 5.2pt; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; text-align: center; line-height: 1.1; }
+  .gut.wan .lbl { color: var(--magenta); }
+  .gut.tls .lbl { color: var(--cyan-deep); }
+
+  .site { flex: 1; border: 1px solid var(--border); border-left: 3px solid var(--cyan); border-radius: 4px; background: var(--white); padding: 1.8mm 2.2mm; display: flex; flex-direction: column; gap: 1.4mm; }
+  .site.b { border-left-color: var(--indigo-2); }
+  .site.c { border-left-color: var(--magenta); }
+  .site .st { display: flex; justify-content: space-between; align-items: baseline; }
+  .site .st b { color: var(--indigo); font-size: 8.2pt; }
+  .site .st span { font-family: Consolas, monospace; font-size: 6.6pt; color: var(--faint); }
+  .dev { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1.2mm; }
+  .dev div { border: 1px solid var(--border); border-radius: 3px; padding: 0.9mm 1.3mm; font-size: 6.4pt; color: var(--muted); line-height: 1.2; }
+  .dev div b { display: block; color: var(--ink); font-size: 6.8pt; }
+  .lanlink { margin-top: auto; font-size: 6.5pt; color: var(--muted); background: var(--cyan-soft); border-left: 2px solid var(--cyan-deep); padding: 0.7mm 1.8mm; border-radius: 0 3px 3px 0; }
+  .lanlink b { color: var(--cyan-deep); }
+
+  .wanband { flex: 1; border: 1.5px dashed var(--magenta); background: var(--magenta-soft); border-radius: 6px; padding: 3mm 2.4mm; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; gap: 2mm; }
+  .wanband h3 { color: var(--indigo); font-size: 10pt; }
+  .wanband p { font-size: 7pt; color: var(--muted); }
+  .wanband .tag { background: var(--white); border: 1px solid var(--magenta); color: #A3124F; border-radius: 999px; padding: 0.4mm 2.4mm; font-size: 6pt; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; }
+  .wanband .fine { font-size: 6.8pt; color: var(--indigo); }
+
+  .coll { flex: 1; border: 1.5px solid var(--cyan-deep); background: linear-gradient(180deg, var(--cyan-soft), var(--white) 80%); border-radius: 6px; padding: 2.6mm; display: flex; flex-direction: column; gap: 1.6mm; }
+  .coll h3 { color: var(--indigo); font-size: 10pt; display: flex; align-items: center; gap: 1.6mm; }
+  .coll .csub { font-size: 7pt; color: var(--muted); }
+  .cbox { background: var(--white); border: 1px solid var(--cyan-line); border-radius: 4px; padding: 1.3mm 2mm; font-size: 6.9pt; color: var(--muted); }
+  .cbox .l { font-size: 5.8pt; letter-spacing: 0.12em; text-transform: uppercase; font-weight: 700; color: var(--cyan-deep); display: block; margin-bottom: 0.3mm; }
+
+  .cloudcol .zone { margin: 0; }
+  .mini { border: 1px solid var(--indigo); border-radius: 4px; background: var(--white); padding: 1.3mm 2mm; font-size: 6.9pt; color: var(--muted); }
+  .mini b { display: block; color: var(--indigo); font-size: 7.4pt; }
+  .mini.plain { border-color: var(--border); }
+  .cloudbox { border: 1.5px solid var(--indigo); background: var(--indigo-soft); border-radius: 6px; padding: 2.2mm; display: flex; flex-direction: column; gap: 1.4mm; }
+  .cloudbox h3, .usersbox h3 { color: var(--indigo); font-size: 9pt; }
+  .cloudbox .csub, .usersbox .csub { font-size: 6.6pt; color: var(--muted); margin-top: -0.8mm; }
+  .usersbox { flex: 1; border: 1px solid var(--border); background: var(--panel); border-radius: 6px; padding: 2.2mm; display: flex; flex-direction: column; gap: 1.4mm; }
+  .updown { display: flex; justify-content: center; align-items: center; gap: 1.4mm; font-size: 5.8pt; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--cyan-deep); }
+  .updown svg { width: 4mm; height: 5mm; }
+
+  .strip { display: grid; grid-template-columns: repeat(4, 1fr); gap: 2mm; margin-top: 2.4mm; }
+</style>
+</head>
+<body>
+
+<!-- ======================= PAGE 1 ======================= -->
+<div class="page landscape">
+  <img class="banner" src="marcus-header-band.png" alt="M.A.R.C.U.S.">
+
+  <div class="titlebar">
+    <div>
+      <h1>Multi-Site Network Flow — Central Collector</h1>
+      <div class="sub">One shared Collector serves every site over your private WAN · v1.0</div>
+    </div>
+    <div class="meta"><strong>UK-hosted · AWS London</strong>For network &amp; security review</div>
+  </div>
+
+  <div class="content" style="display:flex; flex-direction:column;">
+    <div class="ms">
+
+      <!-- SITES -->
+      <div class="col">
+        <div class="colhdr">Customer sites — private networks</div>
+        <div class="body">
+          <div class="site">
+            <div class="st"><b>Site A · Head office</b><span>example: 18 rooms</span></div>
+            <div class="dev">
+              <div><b>Codecs</b>Poly VideoOS</div>
+              <div><b>Displays</b>Sony Bravia</div>
+              <div><b>Audio</b>Biamp Tesira</div>
+              <div><b>Panels</b>Aurora RXT</div>
+            </div>
+            <div class="lanlink"><b>Devices → Collector</b> · native protocols over the WAN</div>
+          </div>
+          <div class="site b">
+            <div class="st"><b>Site B · Campus</b><span>example: 42 rooms</span></div>
+            <div class="dev">
+              <div><b>Codecs</b>Poly VideoOS</div>
+              <div><b>AV-over-IP</b>Aurora VPX</div>
+              <div><b>Cameras</b>VISCA PTZ</div>
+              <div><b>Power</b>ATEN PDUs</div>
+            </div>
+            <div class="lanlink"><b>Devices → Collector</b> · native protocols over the WAN</div>
+          </div>
+          <div class="site c">
+            <div class="st"><b>Site C · Regional offices (×6)</b><span>example: 28 rooms</span></div>
+            <div class="dev">
+              <div><b>Codecs</b>Huddle rooms</div>
+              <div><b>Displays</b>Wall screens</div>
+              <div><b>Panels</b>Aurora RXT</div>
+              <div><b>Other</b>REST · Telnet · RS-232</div>
+            </div>
+            <div class="lanlink"><b>Devices → Collector</b> · native protocols over the WAN</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="gut wan">
+        <svg viewBox="0 0 36 20"><path d="M2 10h28M24 4l7 6-7 6" fill="none" stroke="#E91E7D" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <div class="lbl">Private<br>WAN</div>
+        <svg viewBox="0 0 36 20"><path d="M2 10h28M24 4l7 6-7 6" fill="none" stroke="#E91E7D" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <div class="lbl">Private<br>WAN</div>
+        <svg viewBox="0 0 36 20"><path d="M2 10h28M24 4l7 6-7 6" fill="none" stroke="#E91E7D" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </div>
+
+      <!-- WAN -->
+      <div class="col">
+        <div class="colhdr" style="text-align:center;">Your corporate WAN</div>
+        <div class="body">
+          <div class="wanband">
+            <h3>Corporate WAN</h3>
+            <p>Your existing private network — MPLS, SD-WAN or site-to-site VPN. Gives the Collector routed reach into each site's AV VLAN.</p>
+            <span class="tag">Private · not internet</span>
+            <p>Traffic stays on RFC 1918 address space and is never exposed publicly.</p>
+            <div class="fine"><b>No AV device ever touches the internet.</b></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="gut wan">
+        <svg viewBox="0 0 36 20"><path d="M2 10h28M24 4l7 6-7 6" fill="none" stroke="#E91E7D" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <div class="lbl">Routed<br>to AV<br>VLANs</div>
+      </div>
+
+      <!-- COLLECTOR -->
+      <div class="col">
+        <div class="colhdr" style="text-align:center;">One shared Collector</div>
+        <div class="body">
+          <div class="coll">
+            <h3><span class="badge cyan">M</span>M.A.R.C.U.S. Collector</h3>
+            <div class="csub">Hosted at your head office or data centre. One host serves every site.</div>
+            <div class="cbox"><span class="l">Host</span>Linux or Windows · 2 vCPU · 4 GB RAM · small footprint</div>
+            <div class="cbox"><span class="l">Placement</span>Management VLAN with routed reach to every site's AV VLAN across your WAN</div>
+            <div class="cbox"><span class="l">Outbound</span>One HTTPS session to M.A.R.C.U.S. Cloud — long-poll for commands, telemetry push, configuration sync</div>
+            <div class="cbox"><span class="l">Adapters</span>Sony Bravia · Poly VideoOS · Biamp Tesira · VISCA PTZ · Aurora RXT / VPX · ATEN PDU · generic REST / WebSocket / Telnet / RS-232</div>
+            <div class="cbox"><span class="l">Local only</span>Status &amp; touch-panel proxy on TCP 8080 — LAN only, never internet-facing</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="gut tls">
+        <svg viewBox="0 0 36 20"><path d="M2 10h28M24 4l7 6-7 6" fill="none" stroke="#0B7FA3" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <div class="lbl">Egress<br>TLS 443</div>
+      </div>
+
+      <!-- CLOUD + USERS -->
+      <div class="col cloudcol">
+        <div class="colhdr" style="text-align:right;">M.A.R.C.U.S. Cloud &amp; users</div>
+        <div class="body">
+          <div class="cloudbox">
+            <h3>M.A.R.C.U.S. Cloud</h3>
+            <div class="csub">Operated by Involve · UK-hosted in AWS London · row-level tenant isolation</div>
+            <div class="mini"><b>Collector endpoint</b>Receives the Collector's outbound HTTPS. Command dispatch and telemetry ingest.</div>
+            <div class="mini"><b>Operator portal</b>Web application · sign-in with your Microsoft Entra ID.</div>
+            <div class="mini"><b>Public REST API</b>Optional — scoped bearer tokens for ITSM / CMDB / BI.</div>
+          </div>
+          <div class="updown">
+            <svg viewBox="0 0 16 20"><path d="M8 18V3M3 8l5-5 5 5" fill="none" stroke="#0B7FA3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Portal · API over TLS 443
+          </div>
+          <div class="usersbox">
+            <h3>Your staff &amp; systems</h3>
+            <div class="csub">Anywhere with internet · no VPN into your network</div>
+            <div class="mini plain"><b>AV operations &amp; service desk</b>Portal, Entra ID SSO, from any authorised browser</div>
+            <div class="mini plain"><b>Downstream integrations</b>ServiceNow · Jira · Power BI via the Public API</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="strip">
+      <div class="callout"><strong>One firewall rule.</strong> The Collector host needs outbound HTTPS only. No inbound rule at the Collector or any site.</div>
+      <div class="callout" style="border-left-color: var(--cyan-deep); background: var(--cyan-soft);"><strong>Traffic stays private.</strong> Collector-to-device traffic stays on your WAN; only the Collector talks to the cloud.</div>
+      <div class="callout" style="border-left-color: var(--indigo); background: var(--indigo-soft);"><strong>Signed requests.</strong> Every Collector request is HMAC-signed with its own key.</div>
+      <div class="callout" style="border-left-color: var(--faint); background: var(--panel);"><strong>Scale out.</strong> Add further Collectors per region or business unit when needed. See page 2.</div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <span><span class="brand">Involve Visual Collaboration Ltd</span> · involve.vc</span>
+    <span>M.A.R.C.U.S. — Multi-Site Network Flow · v1.0 · Page 1 of 2</span>
+  </div>
+</div>
+
+<!-- ======================= PAGE 2 ======================= -->
+<div class="page landscape">
+  <img class="banner" src="marcus-header-band.png" alt="M.A.R.C.U.S.">
+
+  <div class="titlebar">
+    <div>
+      <h1>Multi-Site — Firewall &amp; Sizing</h1>
+      <div class="sub">Central-Collector topology · v1.0</div>
+    </div>
+    <div class="meta"><strong>UK-hosted · AWS London</strong>For network &amp; security review</div>
+  </div>
+
+  <div class="content">
+    <div class="panel">
+      <h2>Firewall requirements — central-Collector topology</h2>
+      <table class="ref">
+        <thead><tr><th style="width:17%">Direction</th><th style="width:14%">Port / protocol</th><th style="width:44%">Destination</th><th>Source</th></tr></thead>
+        <tbody>
+          <tr><td class="dir">Outbound (internet)</td><td class="port">TCP 443 (HTTPS)</td><td><code>*.involvecloud.com</code></td><td>Central Collector host</td></tr>
+          <tr><td class="dir">Outbound (internet)</td><td class="port">TCP 443 (HTTPS)</td><td><code>*.involvecloud.com</code></td><td>Operator &amp; service-desk browsers</td></tr>
+          <tr><td class="dir">Outbound <i>(optional)</i></td><td class="port">TCP 443 (HTTPS)</td><td><code>*.involvecloud.com</code></td><td>Your ITSM / CMDB / BI</td></tr>
+          <tr><td class="dir">Internal (WAN)</td><td class="port">Per adapter</td><td>Site AV VLANs — e.g. ICMP, HTTP/HTTPS, WebSocket, Telnet, Tesira TTP (TCP 23), VISCA-over-IP (UDP 52381), serial-over-IP</td><td>Central Collector host</td></tr>
+          <tr><td class="dir">Internal (LAN, optional)</td><td class="port">TCP 8080</td><td>Collector host — local status &amp; touch-panel proxy</td><td>Operator workstations on your network</td></tr>
+          <tr><td class="dir">Inbound (internet)</td><td colspan="3"><i>None. No public-facing ports are required at the Collector or at any site.</i></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="grid g2" style="margin-top:3mm;">
+      <div class="panel">
+        <h2>Collector sizing — practical guidance</h2>
+        <table class="ref">
+          <thead><tr><th>Host size</th><th>Comfortable</th><th>Stretch (relaxed poll rates)</th></tr></thead>
+          <tbody>
+            <tr><td class="dir">2 vCPU · 4 GB RAM</td><td>250 – 500 devices</td><td>up to ~1,000 devices</td></tr>
+            <tr><td class="dir">4 vCPU · 8 GB RAM</td><td>500 – 1,000 devices</td><td>up to ~2,000 devices</td></tr>
+            <tr><td class="dir">Heavy codec mix</td><td>~60% of the above</td><td>~75% of the above</td></tr>
+          </tbody>
+        </table>
+        <p style="margin-top:1.6mm; font-size:7pt; color:var(--muted);">Capacity depends on poll rate, WAN latency to each site and the adapter mix. Involve confirms sizing for a specific estate during onboarding.</p>
+        <div class="callout" style="margin-top:1.6mm;"><strong>Add a second Collector</strong> when one host runs more than ~500 devices, when a remote site is more than 50&nbsp;ms away and has dozens of devices, or when you want isolation between business units.</div>
+      </div>
+      <div class="panel">
+        <h2>What holds this together</h2>
+        <ul class="ticks">
+          <li><strong>One Collector, one HTTPS session:</strong> one firewall rule, and one host to patch and monitor.</li>
+          <li><strong>HMAC-signed</strong> Collector-to-cloud requests, with identity verified on every request.</li>
+          <li><strong>Site traffic stays on your WAN</strong> in RFC 1918 space. No AV device is exposed to the internet.</li>
+          <li><strong>Entra ID SSO</strong> for every portal user, with per-tenant access and MFA set by your policy.</li>
+          <li><strong>Scoped, revocable API tokens</strong> for downstream integrations.</li>
+          <li><strong>UK-hosted exclusively:</strong> all data is stored and processed in AWS London (eu-west-2).</li>
+          <li><strong>Offline-aware:</strong> if the Collector loses its connection, every device behind it is shown as <i>Collector offline</i> rather than as a stale status.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <span><span class="brand">Involve Visual Collaboration Ltd</span> · involve.vc</span>
+    <span>M.A.R.C.U.S. — Multi-Site Network Flow · v1.0 · Page 2 of 2</span>
+  </div>
+</div>
+</body>
+</html>

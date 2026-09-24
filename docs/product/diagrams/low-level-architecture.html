@@ -1,0 +1,363 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>M.A.R.C.U.S. — Low-Level Architecture</title>
+<link rel="stylesheet" href="marcus-diagrams.css">
+<style>
+  @page { size: A4 landscape; margin: 10mm; }
+  body { font-size: 7.4pt; }
+
+  .rt { display: grid; grid-template-columns: 0.95fr 1.75fr 0.95fr; gap: 2.6mm; flex: 1; min-height: 0; }
+  .runtime { border: 1px solid var(--border); border-top: 3px solid var(--cyan); border-radius: 5px; background: var(--panel); padding: 2mm 2.2mm; display: flex; flex-direction: column; gap: 1.4mm; min-height: 0; overflow: hidden; }
+  .runtime.b { border-top-color: var(--indigo); background: var(--indigo-soft); }
+  .runtime.c { border-top-color: var(--magenta); background: #FFF7FB; }
+  .runtime .kick { font-size: 5.8pt; letter-spacing: 0.16em; text-transform: uppercase; font-weight: 700; color: var(--cyan-deep); }
+  .runtime.b .kick { color: var(--indigo); }
+  .runtime.c .kick { color: var(--magenta); }
+  .runtime h2 { font-size: 10pt; color: var(--indigo); line-height: 1.1; }
+  .runtime .rsub { font-family: Consolas, monospace; font-size: 6pt; color: var(--cyan-deep); }
+  .runtime.c .rsub { color: #A3124F; }
+
+  .grp { background: var(--white); border: 1px solid var(--border); border-radius: 4px; padding: 1.3mm 1.6mm; }
+  .grp h4 { font-size: 5.8pt; letter-spacing: 0.14em; text-transform: uppercase; color: var(--cyan-deep); font-weight: 700; margin-bottom: 0.8mm; }
+  .runtime.b .grp h4 { color: var(--indigo); }
+  .runtime.c .grp h4 { color: var(--magenta); }
+  .pk { display: grid; grid-template-columns: auto 1fr; gap: 0.5mm 1.8mm; font-size: 6.4pt; line-height: 1.25; }
+  .pk b { font-family: Consolas, monospace; color: var(--indigo); font-weight: 700; white-space: nowrap; }
+  .pk span { color: var(--muted); }
+  .pk code { font-size: 6pt; color: var(--cyan-deep); }
+  .chips { gap: 0.8mm; margin-top: 0.8mm; }
+  .chip { font-size: 5.8pt; padding: 0.2mm 1.4mm; }
+  .b2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1.4mm; }
+  .b3 { display: grid; grid-template-columns: 0.9fr 1.15fr 0.95fr; gap: 1.4mm; }
+
+  .keys { display: grid; grid-template-columns: repeat(4, 1fr); gap: 3mm; margin-top: 3mm; border-top: 1px solid var(--border); padding-top: 2mm; }
+  .keys .kh { font-size: 5.8pt; letter-spacing: 0.16em; text-transform: uppercase; font-weight: 700; color: var(--faint); margin-bottom: 0.8mm; }
+  .keys ul { list-style: none; }
+  .keys li { font-size: 6.4pt; color: var(--muted); padding-left: 2.6mm; position: relative; margin-bottom: 0.5mm; line-height: 1.3; }
+  .keys li::before { content: "▸"; position: absolute; left: 0; color: var(--magenta); font-size: 5.6pt; }
+  .keys li b { color: var(--indigo); }
+  .keys code { font-size: 6pt; color: var(--cyan-deep); }
+
+  /* page 2 */
+  .p2 { display: grid; grid-template-columns: 1fr 1fr; gap: 3mm; }
+  .p2 .panel p.lead { font-size: 7pt; color: var(--muted); margin-bottom: 1.6mm; }
+  .p2 .sk { font-size: 6pt; letter-spacing: 0.14em; text-transform: uppercase; font-weight: 700; margin: 1.6mm 0 0.8mm; }
+  .p2 .sk.rls { color: var(--cyan-deep); }
+  .p2 .sk.adm { color: #A3124F; }
+  .p2 .sk.rol { color: var(--indigo); }
+  .p2 .fine { font-size: 6.6pt; color: var(--muted); margin-top: 1mm; }
+  .p2 .steps li { font-size: 7pt; margin-bottom: 1.3mm; }
+  .p2 .steps code, .p2 .fine code { font-size: 6.4pt; color: var(--cyan-deep); }
+  .p2 .steps b { color: var(--indigo); }
+  .auth3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 3mm; margin-top: 3mm; }
+  .auth3 .ticks li { font-size: 6.9pt; }
+  .auth3 code { font-size: 6.3pt; color: var(--cyan-deep); }
+</style>
+</head>
+<body>
+
+<!-- ======================= PAGE 1 ======================= -->
+<div class="page landscape">
+  <img class="banner" src="marcus-header-band.png" alt="M.A.R.C.U.S.">
+
+  <div class="titlebar">
+    <div>
+      <h1>Low-Level Architecture</h1>
+      <div class="sub">Component view · runtime binaries · v1.0</div>
+    </div>
+    <div class="meta"><strong>Collector · Cloud service · Portal</strong>Technical reference · Page 1 of 2</div>
+  </div>
+
+  <div class="content" style="display:flex; flex-direction:column;">
+    <div class="rt">
+
+      <!-- RUNTIME A -->
+      <div class="runtime">
+        <div class="kick">Runtime A</div>
+        <h2>M.A.R.C.U.S. Collector</h2>
+        <div class="rsub">Go 1.25 binary · on-site · systemd / Windows service</div>
+
+        <div class="grp">
+          <h4>Config &amp; devices</h4>
+          <div class="pk">
+            <b>config</b><span>YAML loader, env overlay, defaults.</span>
+            <b>device</b><span>Registry, adapter factory, lifecycle.</span>
+          </div>
+          <div class="chips">
+            <span class="chip cyan">sony_bravia</span><span class="chip cyan">poly_videoos</span><span class="chip cyan">tesira</span><span class="chip cyan">visca</span><span class="chip cyan">visca_over_ip</span><span class="chip cyan">aurora_rxt</span><span class="chip cyan">aurora_vpx</span><span class="chip cyan">aten_pdu</span><span class="chip cyan">rest</span><span class="chip cyan">websocket</span><span class="chip cyan">telnet</span><span class="chip cyan">serial</span><span class="chip cyan">ping</span>
+          </div>
+        </div>
+
+        <div class="grp">
+          <h4>Runtime</h4>
+          <div class="pk">
+            <b>hub</b><span>Poll scheduler. Fans out telemetry and events, and sends heartbeats, including offline heartbeats on failed connects.</span>
+            <b>store</b><span>File-backed device state that persists across restarts.</span>
+            <b>notify</b><span>Local evaluation of alert rules.</span>
+            <b>hostinfo</b><span>Reports the host OS to the cloud.</span>
+          </div>
+        </div>
+
+        <div class="grp">
+          <h4>Local API · :8080 (LAN only)</h4>
+          <div class="pk">
+            <b>api</b><span>Status, <code>/metrics</code> and the touch-panel reverse proxy <code>/api/v1/devices/{id}/touch-panel/*</code>.</span>
+          </div>
+        </div>
+
+        <div class="grp">
+          <h4>Cloud client (HMAC-signed)</h4>
+          <div class="pk">
+            <b>cloud</b><span><code>POST /ingest</code> sends batched telemetry and events every 30 s, with retry.</span>
+            <b>cloudpoll</b><span><code>POST /bridge/poll</code> is a long-poll held for up to 25 s. Results go to <code>/bridge/commands/{id}/result</code>.</span>
+            <b>cloudpull</b><span><code>POST /bridge/config</code> reconciles the device list every 5 min.</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- RUNTIME B -->
+      <div class="runtime b">
+        <div class="kick">Runtime B</div>
+        <h2>Cloud Service</h2>
+        <div class="rsub">Go 1.22 binary · ECS Fargate · single container image</div>
+
+        <div class="b2">
+          <div class="grp">
+            <h4>HTTP surface</h4>
+            <div class="pk"><b>api</b><span>Method-aware <code>net/http</code> mux with about 150 routes.</span></div>
+            <div class="chips">
+              <span class="chip indigo">/api/v1/*</span><span class="chip indigo">/pub/v1/*</span><span class="chip indigo">/bridge/*</span><span class="chip indigo">/ingest</span><span class="chip indigo">/public/*</span><span class="chip indigo">/ws/events</span><span class="chip indigo">/healthz</span>
+            </div>
+          </div>
+          <div class="grp">
+            <h4>Auth resolvers</h4>
+            <div class="pk">
+              <b>portalauth</b><span>Resolver chain that emits a Principal and its Permissions.</span>
+              <b>auth</b><span>Entra ID OIDC code flow with just-in-time provisioning.</span>
+              <b>pubapi</b><span>Maps an <code>avb_</code> bearer to its <code>api_tokens</code> row and scopes.</span>
+              <b>bridgeauth</b><span>HMAC over the body, using the per-Collector secret.</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="b3">
+          <div class="grp">
+            <h4>Handlers</h4>
+            <div class="pk">
+              <b>portalapi</b><span>Portal read, CRUD and control.</span>
+              <b>pubapi</b><span>Public read API (v1).</span>
+              <b>publicapi</b><span>Pre-login: branding, reset, enrol, install.</span>
+              <b>bridgecfg</b><span>Serves device config to Collectors.</span>
+              <b>admin</b><span>Bootstrap and operations.</span>
+            </div>
+          </div>
+          <div class="grp">
+            <h4>Business logic</h4>
+            <div class="pk">
+              <b>ingest</b><span>RLS-scoped write path for telemetry and events.</span>
+              <b>commands</b><span>Submit, long-poll claim, <code>WaitForTerminalNotified</code> and Sweeper.</span>
+              <b>nightly</b><span>Room Readiness scheduling, execution and digest.</span>
+              <b>notify</b><span>Dispatches to email (SMTP / SES), Teams and webhook.</span>
+              <b>registration</b><span>Inserts the Collector and mints its secret.</span>
+              <b>adapters</b><span>Adapter catalogue.</span>
+            </div>
+          </div>
+          <div class="grp">
+            <h4>Cross-cutting</h4>
+            <div class="pk">
+              <b>audit</b><span>Row per mutation.</span>
+              <b>secrets</b><span>AES-GCM cipher.</span>
+              <b>wsfanout</b><span>Live WebSocket hub.</span>
+              <b>devicestatus</b><span>Effective-status SQL.</span>
+              <b>collectorhealth</b><span>Heartbeat watcher.</span>
+              <b>sessioncleanup</b><span>Reaps expired sessions.</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="grp">
+          <h4>Data access</h4>
+          <div class="b2" style="gap:2mm;">
+            <div class="pk">
+              <b>db.Store</b><span><code>pgxpool</code> wrapper with two roles: <code>app_admin</code> (BYPASSRLS) and <code>app_tenant</code> (RLS enforced).</span>
+              <b>db.Listener</b><span>Dedicated <code>LISTEN</code> connection on <code>cmd_pending</code> and <code>cmd_done</code>.</span>
+            </div>
+            <div class="pk">
+              <b>migrations</b><span>46 SQL files embedded with <code>go:embed</code> and applied at boot.</span>
+            </div>
+          </div>
+          <div class="chips"><span class="chip soft">WithTenant</span><span class="chip soft">WithTenantScoped</span><span class="chip soft">AdminPool</span></div>
+        </div>
+      </div>
+
+      <!-- RUNTIME C -->
+      <div class="runtime c">
+        <div class="kick">Runtime C</div>
+        <h2>Portal</h2>
+        <div class="rsub">Next.js 14 App Router · AWS Amplify</div>
+
+        <div class="grp">
+          <h4>Shell</h4>
+          <div class="pk">
+            <b>app-shell</b><span>Sidebar, top bar and user menu.</span>
+            <b>BrandingProvider</b><span>Applies the tenant's logo and accent CSS variables.</span>
+            <b>auth-guard</b><span>Route gating by session and permission.</span>
+          </div>
+        </div>
+
+        <div class="grp">
+          <h4>Pages</h4>
+          <div class="chips">
+            <span class="chip magenta">Overview</span><span class="chip magenta">Map</span><span class="chip magenta">Alerts</span><span class="chip magenta">Devices</span><span class="chip magenta">Collectors</span><span class="chip magenta">Locations</span><span class="chip magenta">Assets</span><span class="chip magenta">Firmware</span><span class="chip magenta">Adapters</span><span class="chip magenta">Reports</span><span class="chip magenta">Room Readiness</span><span class="chip magenta">Health</span><span class="chip magenta">Helpdesk</span><span class="chip magenta">Notifications</span><span class="chip magenta">Audit</span><span class="chip magenta">Users</span><span class="chip magenta">Roles</span><span class="chip magenta">Sign-in mappings</span><span class="chip magenta">Customers</span><span class="chip magenta">Downloads</span><span class="chip magenta">Branding</span><span class="chip magenta">API tokens</span>
+          </div>
+        </div>
+
+        <div class="grp">
+          <h4>Session &amp; client</h4>
+          <div class="pk">
+            <b>lib/session</b><span>Token and scope, plus the <code>useSession</code> hook.</span>
+            <b>lib/api</b><span>Typed fetch that attaches the bearer and <code>X-Customer-Scope</code>.</span>
+            <b>lib/permissions</b><span>Mirror of the Go permission catalogue.</span>
+          </div>
+        </div>
+
+        <div class="grp">
+          <h4>Auth entry &amp; live</h4>
+          <div class="chips"><span class="chip magenta">Entra SSO</span><span class="chip magenta">Password</span><span class="chip magenta">Magic link</span><span class="chip magenta">Reset flow</span></div>
+          <div class="pk" style="margin-top:0.8mm;">
+            <b>event-feed</b><span>Live updates over <code>/ws/events</code>.</span>
+            <b>touch panel</b><span>Opened through the Collector's <code>local_url</code> proxy.</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="footer">
+    <span><span class="brand">Involve Visual Collaboration Ltd</span> · involve.vc</span>
+    <span>M.A.R.C.U.S. — Low-Level Architecture · v1.0 · Page 1 of 2</span>
+  </div>
+</div>
+
+<!-- ======================= PAGE 2 ======================= -->
+<div class="page landscape">
+  <img class="banner" src="marcus-header-band.png" alt="M.A.R.C.U.S.">
+
+  <div class="titlebar">
+    <div>
+      <h1>Low-Level Architecture — Data, Auth &amp; Sequence</h1>
+      <div class="sub">RLS · auth chains · end-to-end command flow · v1.0</div>
+    </div>
+    <div class="meta"><strong>Collector · Cloud service · Portal</strong>Technical reference · Page 2 of 2</div>
+  </div>
+
+  <div class="content">
+    <div class="p2">
+      <div class="panel">
+        <h2>PostgreSQL schema · tenant isolation</h2>
+        <p class="lead">Tenant-scoped tables carry <code>customer_id</code> as their RLS anchor. Policies fail closed: if <code>app.current_customer</code> is not set, no rows are returned.</p>
+        <div class="sk rls">RLS-enforced · tenant-scoped</div>
+        <div class="chips">
+          <span class="chip cyan">customers</span><span class="chip cyan">regions</span><span class="chip cyan">locations</span><span class="chip cyan">buildings</span><span class="chip cyan">rooms</span><span class="chip cyan">business_units</span><span class="chip cyan">collectors</span><span class="chip cyan">devices</span><span class="chip cyan">commands</span><span class="chip cyan">telemetry</span><span class="chip cyan">events</span><span class="chip cyan">alerts</span><span class="chip cyan">audit_log</span><span class="chip cyan">notification_channels</span><span class="chip cyan">firmware_targets</span><span class="chip cyan">assets</span><span class="chip cyan">roles</span><span class="chip cyan">role_permissions</span><span class="chip cyan">nightly_schedule</span><span class="chip cyan">nightly_test_recipe</span><span class="chip cyan">nightly_run</span><span class="chip cyan">nightly_step_result</span><span class="chip cyan">room_nightly_config</span><span class="chip cyan">api_tokens</span>
+        </div>
+        <div class="sk adm">Auth surface · admin pool only, no RLS</div>
+        <div class="chips">
+          <span class="chip magenta">users</span><span class="chip magenta">user_roles</span><span class="chip magenta">user_sessions</span><span class="chip magenta">role_mappings</span><span class="chip magenta">vendor_tenants</span><span class="chip magenta">password_reset_tokens</span><span class="chip magenta">magic_link_tokens</span><span class="chip magenta">collector_enrollment_tokens</span>
+        </div>
+        <p class="fine">These tables are reached before any Principal exists. Handlers isolate them with explicit <code>WHERE customer_id = $1</code> filters.</p>
+        <div class="sk rol">Roles at DB level</div>
+        <div class="chips"><span class="chip soft">app_admin · BYPASSRLS</span><span class="chip soft">app_tenant · RLS-enforced</span></div>
+      </div>
+
+      <div class="panel">
+        <h2>Portal → Collector · command dispatch sequence</h2>
+        <p class="lead">An operator clicks “Power off” on a device. The round trip is sub-second:</p>
+        <ol class="steps">
+          <li>The portal sends <code>POST /api/v1/devices/{id}/command</code>. <b>portalauth</b> resolves the Principal, and the <code>command.device</code> permission gates the call.</li>
+          <li><b>commands.Submit</b> inserts a <code>pending</code> row, RLS-scoped to the caller's tenant, and fires <code>NOTIFY cmd_pending</code>.</li>
+          <li>The Collector's held <code>/bridge/poll</code> (LISTEN, up to 25 s) wakes. <b>bridgeauth</b> verifies the HMAC, and <b>ClaimPending</b> marks the row <code>in_progress</code>.</li>
+          <li>The Collector invokes the device adapter (<code>sony_bravia</code>, <code>tesira</code>, <code>poly_videoos</code>…) and captures the result or error.</li>
+          <li>The Collector posts to <code>/bridge/commands/{id}/result</code>. <b>commands.Complete</b> sets <code>succeeded</code> or <code>failed</code> and fires <code>NOTIFY cmd_done</code>.</li>
+          <li>The portal handler, waiting in <b>WaitForTerminalNotified</b>, wakes on the notify, with 200 ms polling as a fallback. It writes an <b>audit</b> row and responds.</li>
+          <li>If the Collector drops mid-execution, <b>commands.Sweeper</b> requeues the claim after 5 min. After 3 claims, the command fails with the reason <code>bridge_timeout</code>.</li>
+        </ol>
+      </div>
+    </div>
+
+    <div class="auth3">
+      <div class="panel">
+        <h2>Portal auth chain</h2>
+        <ul class="ticks">
+          <li><strong>Entra ID (customer):</strong> OIDC code flow, then just-in-time provisioning, then a local session is minted.</li>
+          <li><strong>Entra ID (partner):</strong> the partner's tenant gives a partner Principal, which uses <code>X-Customer-Scope</code> to act for a customer.</li>
+          <li><strong>Local:</strong> a bcrypt password creates a <code>user_sessions</code> row and an <code>av_</code> token.</li>
+          <li><strong>Magic link:</strong> helpdesk-issued, single use, stored as SHA-256.</li>
+        </ul>
+      </div>
+      <div class="panel">
+        <h2>Public API auth</h2>
+        <ul class="ticks">
+          <li>The token format is <code>avb_&lt;prefix&gt;_&lt;secret&gt;</code>.</li>
+          <li>Tokens are stored as SHA-256(raw). The prefix is visible; the secret cannot be recovered.</li>
+          <li>Scopes are fixed when the token is generated (v1: <code>view.*</code>).</li>
+          <li><code>last_used_at</code> and <code>last_used_ip</code> are updated on each call.</li>
+          <li>Revocation is immediate, through <code>revoked_at</code>.</li>
+        </ul>
+      </div>
+      <div class="panel">
+        <h2>Collector auth</h2>
+        <ul class="ticks">
+          <li>Each Collector has its own HMAC secret, AES-GCM encrypted at rest.</li>
+          <li><strong>Enrolment:</strong> the portal issues a single-use token, the installer calls <code>/public/collectors/enroll</code>, and the secret is returned once.</li>
+          <li>Every later call signs the body with HMAC-SHA256 in <code>X-Signature</code>.</li>
+          <li>Rotation is done by re-enrolment.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="keys">
+      <div>
+        <div class="kh">Legend</div>
+        <ul>
+          <li><b>Runtime A · Collector</b> (cyan) runs on the customer LAN.</li>
+          <li><b>Runtime B · Cloud</b> (indigo) is one binary that hosts every route group.</li>
+          <li><b>Runtime C · Portal</b> (magenta) is a Next.js app that calls the cloud API.</li>
+        </ul>
+      </div>
+      <div>
+        <div class="kh">Key wire contracts</div>
+        <ul>
+          <li><code>/ingest</code>, <code>/bridge/*</code>: HMAC, Collector to cloud.</li>
+          <li><code>/api/v1</code>: portal session tokens (<code>av_</code>).</li>
+          <li><code>/pub/v1</code>: public API bearer tokens (<code>avb_</code>).</li>
+          <li><code>/public/*</code>: pre-login (branding, reset, enrol, install).</li>
+        </ul>
+      </div>
+      <div>
+        <div class="kh">Background workers</div>
+        <ul>
+          <li><b>commands.Sweeper</b> requeues stale claims every 30 s.</li>
+          <li><b>collectorhealth</b> derives Collector status from heartbeats.</li>
+          <li><b>nightly</b> runs the scheduler and the morning digest.</li>
+          <li><b>sessioncleanup</b> sweeps expired sessions.</li>
+        </ul>
+      </div>
+      <div>
+        <div class="kh">Isolation model</div>
+        <ul>
+          <li><b>FORCE row-level security:</b> policies match <code>customer_id</code> against <code>app.current_customer</code>, which is set per transaction by <code>db.WithTenant</code>.</li>
+          <li><b>Partner access is explicit</b> through <code>X-Customer-Scope</code> and a partner Principal.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <span><span class="brand">Involve Visual Collaboration Ltd</span> · involve.vc</span>
+    <span>M.A.R.C.U.S. — Low-Level Architecture · v1.0 · Page 2 of 2</span>
+  </div>
+</div>
+</body>
+</html>

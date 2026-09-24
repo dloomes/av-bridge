@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>M.A.R.C.U.S. — Infrastructure Overview</title>
+<link rel="stylesheet" href="marcus-diagrams.css">
+<style>
+  @page { size: A4 landscape; margin: 10mm; }
+
+  .cols { display: grid; grid-template-columns: 1fr 0.62fr 1.9fr; gap: 3mm; flex: 1; min-height: 0; }
+  .col { border: 1px solid var(--border); border-top: 3px solid var(--cyan); border-radius: 5px; background: var(--panel); padding: 2.6mm 2.8mm; display: flex; flex-direction: column; gap: 1.8mm; min-height: 0; }
+  .col.pub { border-top-color: var(--magenta); }
+  .col.aws { border-top-color: var(--indigo); background: var(--indigo-soft); }
+  .col .kick { font-size: 6.2pt; letter-spacing: 0.16em; text-transform: uppercase; font-weight: 700; color: var(--cyan-deep); }
+  .col.pub .kick { color: var(--magenta); }
+  .col.aws .kick { color: var(--indigo); }
+  .col h2 { font-size: 11pt; color: var(--indigo); }
+  .col .lead { font-size: 7pt; color: var(--muted); margin-top: -1mm; }
+
+  .tile { background: var(--white); border: 1px solid var(--border); border-radius: 4px; padding: 1.5mm 2mm; }
+  .tile h3 { font-size: 7.8pt; color: var(--indigo); display: flex; align-items: center; gap: 1.5mm; margin-bottom: 0.4mm; }
+  .tile h3 .tag { margin-left: auto; font-size: 5.6pt; letter-spacing: 0.12em; text-transform: uppercase; color: var(--faint); font-weight: 700; }
+  .tile p { font-size: 6.8pt; color: var(--muted); line-height: 1.3; }
+  .tile.hero { border: 1.5px solid var(--cyan-deep); }
+  .tile.core { border: 1.5px solid var(--indigo); }
+  .ic { display: inline-flex; align-items: center; justify-content: center; min-width: 5mm; height: 5mm; padding: 0 0.8mm; border-radius: 2px; background: var(--indigo); color: var(--white); font-size: 5.8pt; font-weight: 700; letter-spacing: 0.02em; }
+  .ic.c { background: var(--cyan-deep); }
+  .ic.m { background: var(--magenta); }
+
+  .strap { font-family: Consolas, monospace; font-size: 6.2pt; letter-spacing: 0.08em; text-transform: uppercase; text-align: center; color: var(--cyan-deep); background: var(--cyan-soft); border: 1px solid var(--cyan-line); border-radius: 3px; padding: 1mm; }
+  .strap.m { color: #A3124F; background: var(--magenta-soft); border-color: var(--magenta-line); }
+
+  .g2t { display: grid; grid-template-columns: 1fr 1fr; gap: 1.6mm; }
+  .g3t { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.6mm; }
+  .vpc { border: 1.2px dashed var(--cyan-deep); background: var(--cyan-soft); border-radius: 5px; padding: 2.4mm 2mm 2mm; position: relative; margin-top: 1.4mm; }
+  .vpc .vl { position: absolute; top: -2.2mm; left: 3mm; background: var(--indigo-soft); padding: 0 1.4mm; font-family: Consolas, monospace; font-size: 6pt; letter-spacing: 0.12em; text-transform: uppercase; color: var(--cyan-deep); font-weight: 700; }
+  .pubstack { display: flex; flex-direction: column; gap: 1.8mm; flex: 1; }
+  .pubstack .tile { flex: 0 0 auto; }
+
+  /* page 2 */
+  .flows { display: grid; grid-template-columns: 9mm 46mm 1fr; gap: 1.6mm 2.4mm; align-items: start; }
+  .flows .k { display: inline-flex; justify-content: center; align-items: center; height: 5mm; border-radius: 2px; background: var(--cyan-deep); color: var(--white); font-weight: 700; font-size: 7pt; }
+  .flows .k.i { background: var(--indigo); }
+  .flows .k.m { background: var(--magenta); }
+  .flows .k.g { background: var(--faint); }
+  .flows .t b { display: block; color: var(--indigo); font-size: 7.8pt; }
+  .flows .t code { font-size: 6.4pt; color: var(--muted); }
+  .flows .d { font-size: 7.2pt; color: var(--muted); padding-top: 0.4mm; }
+  .flows .d code { color: var(--indigo); }
+</style>
+</head>
+<body>
+
+<!-- ======================= PAGE 1 ======================= -->
+<div class="page landscape">
+  <img class="banner" src="marcus-header-band.png" alt="M.A.R.C.U.S.">
+
+  <div class="titlebar">
+    <div>
+      <h1>Infrastructure Overview</h1>
+      <div class="sub">Platform architecture · v1.0</div>
+    </div>
+    <div class="meta"><strong>UK-hosted · AWS London</strong>eu-west-2 · Multi-tenant · General Availability</div>
+  </div>
+
+  <div class="content" style="display:flex; flex-direction:column;">
+    <div class="cols">
+
+      <!-- 01 CUSTOMER SITE -->
+      <div class="col">
+        <div class="kick">01 · Customer site</div>
+        <h2>On-premise LAN</h2>
+        <div class="lead">Room devices, discovered and polled by the on-site Collector.</div>
+        <div class="g2t">
+          <div class="tile"><h3><span class="ic">D</span>Displays</h3><p>Sony Bravia Professional</p></div>
+          <div class="tile"><h3><span class="ic">V</span>Codecs</h3><p>Poly VideoOS</p></div>
+          <div class="tile"><h3><span class="ic">A</span>Audio DSPs</h3><p>Biamp Tesira</p></div>
+          <div class="tile"><h3><span class="ic">C</span>Cameras</h3><p>VISCA-over-IP PTZ</p></div>
+          <div class="tile"><h3><span class="ic">P</span>Panels &amp; AVoIP</h3><p>Aurora RXT · Aurora VPX</p></div>
+          <div class="tile"><h3><span class="ic">W</span>Power &amp; generic</h3><p>ATEN PDU · REST · WebSocket · Telnet · RS-232 · ICMP</p></div>
+        </div>
+        <div class="strap">Native protocols · LAN only</div>
+        <div class="tile hero">
+          <h3><span class="ic c">M</span>M.A.R.C.U.S. Collector<span class="tag">Go binary</span></h3>
+          <p>Runs as a Windows service or Linux systemd unit. Polls devices on a schedule, reports health and host OS, batches telemetry and events, and connects out over HTTPS. Local status and touch-panel proxy on TCP 8080, LAN only.</p>
+        </div>
+        <div class="strap">Outbound HTTPS 443 · HMAC-signed</div>
+      </div>
+
+      <!-- 02 PUBLIC -->
+      <div class="col pub">
+        <div class="kick">02 · Public</div>
+        <h2>Internet</h2>
+        <div class="lead">Users, integrations, sign-in.</div>
+        <div class="pubstack">
+          <div class="tile"><h3><span class="ic m">U</span>Portal users</h3><p>Browser: operators, admins, viewers and service desk.</p></div>
+          <div class="tile"><h3><span class="ic m">I</span>Integrations</h3><p>ITSM, CMDB and BI through the read-only <code>/pub/v1</code> API.</p></div>
+          <div class="tile"><h3><span class="ic m">E</span>Microsoft Entra ID</h3><p>Portal SSO through a multi-tenant app registration, covering customer and partner tenants.</p></div>
+          <div class="tile"><h3><span class="ic m">N</span>Notifications</h3><p>Email, Microsoft Teams and webhook destinations for alerts and digests.</p></div>
+          <div style="flex:1"></div>
+          <div class="strap m">TLS 443 · Entra ID SSO</div>
+        </div>
+      </div>
+
+      <!-- 03 AWS -->
+      <div class="col aws">
+        <div class="kick">03 · AWS cloud · eu-west-2 (London)</div>
+        <h2>M.A.R.C.U.S. Cloud</h2>
+        <div class="lead">Managed AWS deployment, defined in Terraform. Multi-tenant PostgreSQL with row-level security.</div>
+        <div class="g3t">
+          <div class="tile"><h3><span class="ic c">53</span>Route 53</h3><p><code>*.involvecloud.com</code> DNS</p></div>
+          <div class="tile"><h3><span class="ic c">CM</span>ACM</h3><p>TLS certificates (TLS 1.2+)</p></div>
+          <div class="tile"><h3><span class="ic c">LB</span>Application Load Balancer</h3><p>Public subnets, HTTPS termination</p></div>
+        </div>
+        <div class="vpc">
+          <span class="vl">VPC · private subnets</span>
+          <div class="g2t">
+            <div class="tile core"><h3><span class="ic">EC</span>ECS Fargate<span class="tag">Cloud service</span></h3><p>Go service. Serves <code>/api/v1</code> (portal), <code>/pub/v1</code> (integrators), <code>/bridge/*</code> (Collectors) and <code>/public/*</code> (pre-login).</p></div>
+            <div class="tile core"><h3><span class="ic">DB</span>RDS PostgreSQL<span class="tag">Multi-AZ</span></h3><p>Multi-tenant, with isolation enforced by RLS. Migrations are applied at boot. Point-in-time recovery.</p></div>
+          </div>
+        </div>
+        <div class="g3t">
+          <div class="tile"><h3><span class="ic c">SM</span>Secrets Manager</h3><p>Collector HMAC keys, DB credentials, encryption keys</p></div>
+          <div class="tile"><h3><span class="ic c">SE</span>SES</h3><p>Transactional email: alerts, digests, sign-in links</p></div>
+          <div class="tile"><h3><span class="ic c">CW</span>CloudWatch</h3><p>Service logs, metrics and alarms</p></div>
+          <div class="tile"><h3><span class="ic c">CR</span>ECR</h3><p>Container registry for cloud service images</p></div>
+          <div class="tile"><h3><span class="ic m">AM</span>Amplify<span class="tag">Portal</span></h3><p>Hosts the Next.js portal at <code>app.involvecloud.com</code></p></div>
+          <div class="tile"><h3><span class="ic c">RL</span>Release pipeline</h3><p>Versioned cloud images and Collector releases</p></div>
+        </div>
+        <div style="flex:1"></div>
+        <div class="section-kicker" style="color:var(--indigo)">Resilience within the London region</div>
+        <div class="g3t" style="grid-template-columns: repeat(4, 1fr);">
+          <div class="tile"><h3>Multi-AZ</h3><p>Services and database span availability zones; automatic failover</p></div>
+          <div class="tile"><h3>Point-in-time recovery</h3><p>Continuous database backup, kept in London</p></div>
+          <div class="tile"><h3>RPO 15 min · RTO 4 h</h3><p>Contracted recovery objectives</p></div>
+          <div class="tile"><h3>Rebuild from code</h3><p>Terraform-defined; full-stack rebuild tested</p></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <span><span class="brand">Involve Visual Collaboration Ltd</span> · involve.vc</span>
+    <span>M.A.R.C.U.S. — Infrastructure Overview · v1.0 · Page 1 of 2</span>
+  </div>
+</div>
+
+<!-- ======================= PAGE 2 ======================= -->
+<div class="page landscape">
+  <img class="banner" src="marcus-header-band.png" alt="M.A.R.C.U.S.">
+
+  <div class="titlebar">
+    <div>
+      <h1>Infrastructure — Data Flows &amp; Principles</h1>
+      <div class="sub">Platform architecture · v1.0</div>
+    </div>
+    <div class="meta"><strong>UK-hosted · AWS London</strong>eu-west-2 · Multi-tenant · General Availability</div>
+  </div>
+
+  <div class="content">
+    <div class="grid g2" style="grid-template-columns: 1.35fr 1fr;">
+      <div class="panel">
+        <h2>Data flows</h2>
+        <div class="flows">
+          <span class="k">A</span>
+          <div class="t"><b>Collector ingest</b><code>Collector → ALB → ECS → RDS</code></div>
+          <div class="d">Outbound HTTPS from the customer LAN, HMAC-signed on every request. No inbound firewall change at site.</div>
+
+          <span class="k">B</span>
+          <div class="t"><b>Command dispatch</b><code>Portal → ECS → Collector → device</code></div>
+          <div class="d">Commands are queued in PostgreSQL and delivered on the Collector's long-poll. The result is returned to the portal in under a second, pushed by <code>LISTEN/NOTIFY</code>.</div>
+
+          <span class="k i">C</span>
+          <div class="t"><b>Portal (interactive)</b><code>Browser → Amplify → ALB → ECS → RDS</code></div>
+          <div class="d">The Next.js portal calls <code>/api/v1</code> through the ALB. Users sign in with Entra ID SSO or a local account.</div>
+
+          <span class="k">D</span>
+          <div class="t"><b>Integrator API</b><code>External → ALB → ECS /pub/v1</code></div>
+          <div class="d">Read-only public API. A bearer token is issued from the portal and scoped to a single customer tenant.</div>
+
+          <span class="k m">E</span>
+          <div class="t"><b>Notifications</b><code>ECS → SES / Teams / webhook</code></div>
+          <div class="d">Alerts and daily digests. Each customer tenant configures its own recipients and channels.</div>
+
+          <span class="k g">F</span>
+          <div class="t"><b>SSO redirect</b><code>Browser ⇄ Entra ID ⇄ ECS callback</code></div>
+          <div class="d">OIDC authorisation-code flow. The user is provisioned just in time on first sign-in.</div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Key principles</h2>
+        <ul class="ticks">
+          <li><strong>No inbound firewall changes at site.</strong> The Collector connects out over standard HTTPS 443, with no VPN and no port forwarding.</li>
+          <li><strong>HMAC on every Collector call.</strong> Each Collector has its own secret, which is decrypted server-side. Rotation is done by re-enrolment.</li>
+          <li><strong>Row-level security in PostgreSQL.</strong> Tenant isolation is enforced in the database as well as in application code, giving defence in depth.</li>
+          <li><strong>Secrets stay in AWS Secrets Manager.</strong> They are injected into the task at boot and are never stored in code or images.</li>
+          <li><strong>UK-hosted exclusively.</strong> All customer data, including backups and snapshots, stays in AWS eu-west-2 (London). There is no cross-region replication.</li>
+          <li><strong>Infrastructure as code.</strong> Every environment is defined in Terraform and can be rebuilt from source.</li>
+          <li><strong>Offline-aware status.</strong> Collector heartbeats are tracked. If a Collector goes silent, its devices show <i>Collector offline</i> rather than a stale status.</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="panel" style="margin-top:3mm;">
+      <h2>Security controls by layer</h2>
+      <table class="ref">
+        <thead><tr><th style="width:16%">Layer</th><th>Control</th></tr></thead>
+        <tbody>
+          <tr><td class="dir">Customer site</td><td>Outbound-only Collector. AV devices stay on the LAN, and the local port 8080 is never exposed to the internet.</td></tr>
+          <tr><td class="dir">Transport</td><td>TLS 1.2+ on every connection. ACM-managed certificates terminate at the ALB.</td></tr>
+          <tr><td class="dir">Collector identity</td><td>Per-Collector HMAC key, verified on every request. Enrolment uses single-use tokens.</td></tr>
+          <tr><td class="dir">User identity</td><td>Microsoft Entra ID SSO (OIDC) with MFA set by customer policy. Role-based permissions apply per tenant.</td></tr>
+          <tr><td class="dir">API access</td><td>Scoped bearer tokens that are read-only, revocable and tenant-bound.</td></tr>
+          <tr><td class="dir">Data</td><td>PostgreSQL row-level security on every tenant-scoped table. Data is encrypted at rest, and secrets are held in Secrets Manager.</td></tr>
+          <tr><td class="dir">Audit</td><td>A tenant-scoped audit log records every user, token and Collector action, retained for 24 months.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="footer">
+    <span><span class="brand">Involve Visual Collaboration Ltd</span> · involve.vc</span>
+    <span>M.A.R.C.U.S. — Infrastructure Overview · v1.0 · Page 2 of 2</span>
+  </div>
+</div>
+</body>
+</html>

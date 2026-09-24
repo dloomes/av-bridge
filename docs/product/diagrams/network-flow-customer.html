@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>M.A.R.C.U.S. — Customer Network Flow</title>
+<link rel="stylesheet" href="marcus-diagrams.css">
+<style>
+  @page { size: A4 portrait; margin: 10mm; }
+  .zone-head .zone-title { font-size: 11pt; }
+</style>
+</head>
+<body>
+<div class="page portrait">
+  <img class="banner" src="marcus-header-band.png" alt="M.A.R.C.U.S.">
+
+  <div class="titlebar">
+    <div>
+      <h1>Network Traffic Flow</h1>
+      <div class="sub">How data moves between your site and M.A.R.C.U.S. Cloud</div>
+    </div>
+    <div class="meta"><strong>UK-hosted · AWS London</strong>For network &amp; security review</div>
+  </div>
+
+  <div class="content">
+
+    <!-- YOUR SITE -->
+    <div class="zone site">
+      <div class="zone-head">
+        <span class="zone-kicker">Customer site — private network</span>
+        <span class="zone-title">Your site</span>
+        <span class="zone-desc">room devices · one Collector host · site firewall</span>
+      </div>
+      <div class="grid g4">
+        <div class="card"><h3>Displays &amp; codecs</h3><p>Sony Bravia Professional displays · Poly VideoOS codecs</p></div>
+        <div class="card"><h3>Audio &amp; cameras</h3><p>Biamp Tesira DSPs · VISCA-over-IP PTZ cameras</p></div>
+        <div class="card"><h3>Panels &amp; AV-over-IP</h3><p>Aurora RXT touch panels · Aurora VPX encoders / decoders</p></div>
+        <div class="card"><h3>Power &amp; other devices</h3><p>ATEN eco PDUs · any device with a REST, WebSocket, Telnet or RS-232 control interface</p></div>
+      </div>
+      <div class="callout" style="margin-top:2mm; border-left-color: var(--cyan-deep); background: var(--white);">
+        <strong>Local LAN only.</strong> Room devices talk to the M.A.R.C.U.S. Collector on their native protocols. No AV device ever contacts the cloud directly or is exposed to the internet.
+      </div>
+      <div class="grid g2" style="margin-top:2mm;">
+        <div class="card hero"><h3><span class="badge cyan">M</span>M.A.R.C.U.S. Collector</h3><p>Small Linux or Windows host you provide, sited on the AV VLAN. One outbound HTTPS connection to M.A.R.C.U.S. Cloud. Local status &amp; touch-panel proxy on TCP 8080 — LAN only, never internet-facing.</p></div>
+        <div class="card"><h3><span class="badge grey">F</span>Site firewall</h3><p>Standard corporate egress. A single outbound allow-list rule — see below.</p></div>
+      </div>
+    </div>
+
+    <div class="flow">
+      <div class="note"><h4><span class="kind">Egress</span>Collector → M.A.R.C.U.S. Cloud</h4>HTTPS / TCP 443 — command channel, telemetry, configuration sync. Every request is signed with a Collector-specific HMAC key.</div>
+      <div class="arrow"><svg viewBox="0 0 24 28"><path d="M12 2v20M5 15l7 7 7-7" fill="none" stroke="#0B7FA3" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>TLS 443</div>
+      <div class="note"><h4><span class="kind resp">Response</span>Cloud → Collector <i>(same connection)</i></h4>Commands and configuration return on the Collector's own outbound request. <b>No inbound firewall rule</b> is required and no site ports are exposed.</div>
+    </div>
+
+    <!-- CLOUD -->
+    <div class="zone cloud">
+      <div class="zone-head">
+        <span class="zone-kicker">Managed service</span>
+        <span class="zone-title">M.A.R.C.U.S. Cloud</span>
+        <span class="zone-desc">operated by Involve · UK-hosted exclusively in AWS London</span>
+      </div>
+      <div class="grid g3">
+        <div class="card hero-cloud"><h3>Collector endpoint</h3><p>Receives the Collector's outbound HTTPS connection. Command dispatch and telemetry ingest.</p></div>
+        <div class="card hero-cloud"><h3>Operator portal</h3><p>Web application used by your AV team, service desk and support staff.</p></div>
+        <div class="card hero-cloud"><h3>Public REST API</h3><p>Optional — for your own ITSM, CMDB, dashboards and BI. Bearer-token authenticated.</p></div>
+      </div>
+    </div>
+
+    <div class="flow">
+      <div class="note"><h4><span class="kind">Egress</span>Operators &amp; browsers → Portal</h4>HTTPS / TCP 443 from operator workstations. Sign-in with your organisation's Microsoft Entra ID — no separate password store.</div>
+      <div class="arrow"><svg viewBox="0 0 24 28"><path d="M12 26V6M5 13l7-7 7 7" fill="none" stroke="#0B7FA3" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>TLS 443</div>
+      <div class="note"><h4><span class="kind opt">Optional</span>Your tooling → Public API</h4>HTTPS / TCP 443 with a revocable, scoped bearer token issued from the portal. Used by ServiceNow, Jira, Power BI and similar systems.</div>
+    </div>
+
+    <!-- USERS -->
+    <div class="zone net">
+      <div class="zone-head">
+        <span class="zone-kicker">Your staff &amp; systems</span>
+        <span class="zone-title">Users of the service</span>
+        <span class="zone-desc">anywhere with browser or API access — no VPN into your network</span>
+      </div>
+      <div class="grid g3">
+        <div class="card"><h3>AV operations team</h3><p>Portal — device status, control, reports, assets</p></div>
+        <div class="card"><h3>Service desk</h3><p>Portal — help-desk view for room incidents</p></div>
+        <div class="card"><h3>Integrations (optional)</h3><p>ITSM · CMDB · dashboards via the Public API</p></div>
+      </div>
+    </div>
+
+    <div class="grid g2">
+      <div class="panel">
+        <h2>Firewall requirements</h2>
+        <table class="ref">
+          <thead><tr><th>Direction</th><th>Port</th><th>Destination</th><th>Source</th></tr></thead>
+          <tbody>
+            <tr><td class="dir">Outbound</td><td class="port">TCP 443</td><td><code>*.involvecloud.com</code></td><td>Collector host</td></tr>
+            <tr><td class="dir">Outbound</td><td class="port">TCP 443</td><td><code>*.involvecloud.com</code></td><td>Operator workstations</td></tr>
+            <tr><td class="dir">Outbound <i>(opt.)</i></td><td class="port">TCP 443</td><td><code>*.involvecloud.com</code></td><td>Your ITSM / CMDB / BI</td></tr>
+            <tr><td class="dir">Inbound</td><td colspan="3"><i>None. No public-facing ports on the customer site.</i></td></tr>
+          </tbody>
+        </table>
+        <p style="margin-top:1.4mm; font-size:6.8pt; color: var(--muted);">Hostnames can be pinned to specific UK endpoints on request for stricter allow-lists.</p>
+      </div>
+      <div class="panel">
+        <h2>Security &amp; data assurance</h2>
+        <ul class="ticks">
+          <li><strong>UK-hosted exclusively</strong> — all data stored and processed in AWS London.</li>
+          <li><strong>TLS 1.2+</strong> on every connection to M.A.R.C.U.S. Cloud.</li>
+          <li><strong>HMAC-signed</strong> Collector requests — identity verified per request.</li>
+          <li><strong>Entra ID SSO</strong> — per-tenant access, MFA at your policy.</li>
+          <li><strong>Scoped API tokens</strong> — revocable, expiring, least-privilege.</li>
+          <li><strong>Row-level tenant isolation</strong> in the database.</li>
+          <li><strong>No AV device exposed</strong> to the public internet.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <span><span class="brand">Involve Visual Collaboration Ltd</span> · involve.vc</span>
+    <span>M.A.R.C.U.S. — Customer Network Flow · v1.0</span>
+  </div>
+</div>
+</body>
+</html>
