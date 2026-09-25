@@ -35,7 +35,7 @@ This folder holds the customer-facing, procurement-ready documentation pack for 
 
 | Document | Audience | Notes |
 |---|---|---|
-| [Deployment Guide](deployment-guide.md) | Customer IT / networking | Predates the M.A.R.C.U.S. rebrand; awaits refresh before it moves into the pack proper. |
+| [Deployment Guide](deployment-guide.md) | Customer IT / networking | Collector deployment options, install steps, network, sizing, operations. Published to Mintlify via `mintlify/build.py`. |
 | [Data Residency & Retention](data-residency.md) | Customer InfoSec, privacy | Predates the M.A.R.C.U.S. rebrand; awaits refresh. Retention numbers are now the source of truth in *Service Description & SLA* and *Security & Trust*. |
 
 ---
