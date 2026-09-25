@@ -273,6 +273,77 @@
     "device_count": 0
   },
   {
+    "id": "cisco_roomos",
+    "name": "Cisco RoomOS",
+    "vendor": "Cisco",
+    "kind": "vendor",
+    "description": "Cisco collaboration devices running RoomOS: Room Kit, Room Bar, Board, Desk and Codec series. xAPI over HTTPS with a local Admin user; call control, standby power, audio and the device's own diagnostics.",
+    "device_types": [
+      "conferencing"
+    ],
+    "power": {
+      "on": true,
+      "off": true
+    },
+    "commands": [
+      "dial",
+      "hangup",
+      "mute",
+      "unmute",
+      "vol_up",
+      "vol_dn",
+      "power_on",
+      "power_off",
+      "reboot"
+    ],
+    "metrics": [
+      "call_state",
+      "active_calls",
+      "remote_number",
+      "mic_mute",
+      "volume",
+      "power_status",
+      "standby_state",
+      "product_id",
+      "software_version",
+      "serial_number",
+      "ip_address",
+      "mac_address",
+      "uptime_s",
+      "fault_count",
+      "faults",
+      "people_count",
+      "response_ms"
+    ],
+    "config_schema": [
+      {
+        "name": "address",
+        "required": true,
+        "description": "Device address. HTTPS is assumed; include http:// only if HTTP has been enabled on the device.",
+        "example": "192.168.20.40"
+      },
+      {
+        "name": "username",
+        "required": true,
+        "description": "Local user with the Admin role."
+      },
+      {
+        "name": "password",
+        "required": true,
+        "description": "That user's password."
+      },
+      {
+        "name": "tags.tls_skip_verify",
+        "required": false,
+        "description": "Set to \"true\" to accept the device's self-signed certificate, which RoomOS uses unless you've installed your own.",
+        "example": "true"
+      }
+    ],
+    "example_config": "- id: boardroom-roomkit\n  name: Boardroom Room Kit\n  type: conferencing\n  protocol: cisco_roomos\n  address: 192.168.20.40\n  username: marcus\n  password: ${CISCO_PASSWORD}\n  tags:\n    tls_skip_verify: \"true\"",
+    "docs_url": "https://roomos.cisco.com/doc/TechDocs/xAPI",
+    "device_count": 0
+  },
+  {
     "id": "sony_bravia",
     "name": "Sony Bravia Professional",
     "vendor": "Sony",

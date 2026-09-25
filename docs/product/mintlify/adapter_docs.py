@@ -78,6 +78,20 @@ SUPPLEMENT: dict[str, dict] = {
             "> **Microsoft Teams Rooms and Zoom Rooms:** when the codec runs in appliance mode, its API is read-only. Readings still update, but the portal disables the command buttons.",
         ],
     },
+    "cisco_roomos": {
+        "sidebar": "Cisco RoomOS", "icon": "video",
+        "models": "Cisco collaboration devices running RoomOS, including the Room Kit, Room Bar, Board, Desk and Codec series.",
+        "connection": "xAPI over HTTPS (TCP 443), using Basic authentication",
+        "before": [
+            "In the device's web interface, add a local user with the **Admin** role for M.A.R.C.U.S. to use. The HTTP xAPI requires that role.",
+            "Check HTTPS is enabled. It is by default; if `NetworkServices HTTP Mode` has been changed, it must still include HTTPS.",
+            "RoomOS uses a self-signed certificate unless you've installed your own. If you haven't, set the `tls_skip_verify` tag to `true` on the device.",
+        ],
+        "notes": [
+            "> **Power:** **Power Off** puts the device into standby and **Power On** wakes it. The device page shows the standby state: Off (awake), Halfwake, EnteringStandby or Standby.",
+            "> **Diagnostics:** **Fault Count** and **Faults** come from the device's own health check. They include its Warning, Error and Critical messages, such as a camera that isn't detected.",
+        ],
+    },
     "tesira": {
         "sidebar": "Biamp Tesira", "icon": "sliders",
         "models": "Biamp Tesira DSPs, including TesiraFORTÉ, over the Tesira Text Protocol (TTP).",

@@ -243,6 +243,49 @@ var catalogue = []Info{
 	},
 
 	{
+		ID:          "cisco_roomos",
+		Name:        "Cisco RoomOS",
+		Vendor:      "Cisco",
+		Kind:        KindVendor,
+		Description: "Cisco collaboration devices running RoomOS: Room Kit, Room Bar, Board, Desk and Codec series. xAPI over HTTPS with a local Admin user; call control, standby power, audio and the device's own diagnostics.",
+		DeviceTypes: []string{"conferencing"},
+		Power:       PowerCapability{On: true, Off: true},
+		Commands: []string{
+			"dial", "hangup",
+			"mute", "unmute",
+			"vol_up", "vol_dn",
+			"power_on", "power_off",
+			"reboot",
+		},
+		Metrics: []string{
+			"call_state", "active_calls", "remote_number",
+			"mic_mute", "volume",
+			"power_status", "standby_state",
+			"product_id", "software_version", "serial_number",
+			"ip_address", "mac_address", "uptime_s",
+			"fault_count", "faults",
+			"people_count",
+			"response_ms",
+		},
+		ConfigSchema: []ConfigField{
+			{Name: "address", Required: true, Description: "Device address. HTTPS is assumed; include http:// only if HTTP has been enabled on the device.", Example: "192.168.20.40"},
+			{Name: "username", Required: true, Description: "Local user with the Admin role."},
+			{Name: "password", Required: true, Description: "That user's password."},
+			{Name: "tags.tls_skip_verify", Required: false, Description: "Set to \"true\" to accept the device's self-signed certificate, which RoomOS uses unless you've installed your own.", Example: "true"},
+		},
+		ExampleConfig: `- id: boardroom-roomkit
+  name: Boardroom Room Kit
+  type: conferencing
+  protocol: cisco_roomos
+  address: 192.168.20.40
+  username: marcus
+  password: ${CISCO_PASSWORD}
+  tags:
+    tls_skip_verify: "true"`,
+		DocsURL: "https://roomos.cisco.com/doc/TechDocs/xAPI",
+	},
+
+	{
 		ID:          "sony_bravia",
 		Name:        "Sony Bravia Professional",
 		Vendor:      "Sony",
