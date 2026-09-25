@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Modal } from "@/components/modal";
 import { api } from "@/lib/api";
+import { templatePlaceholders } from "@/lib/command-template";
 import type { CommandResponse, DeviceDetail, Telemetry } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -73,11 +74,13 @@ const COMMAND_PROMPTS: Record<string, PromptedArg> = {
   },
 };
 
-// Modal state for numeric-arg prompts. `command` is null when closed.
+// Modal state for arg prompts. `template` is the device's command string
+// when the fields came from its placeholders (shown as a hint).
 interface PromptState {
   command: string;
-  spec: PromptedArg;
-  value: string;
+  specs: PromptedArg[];
+  values: string[];
+  template?: string;
   error: string | null;
 }
 
@@ -123,9 +126,24 @@ export function CommandPanel({ device, telemetry }: Props) {
   // Click handler for a command button. If the command needs an argument,
   // opens the prompt modal (deferring dispatch); otherwise sends immediately.
   const onCommandClick = (name: string) => {
-    const spec = COMMAND_PROMPTS[name];
-    if (spec) {
-      setPrompt({ command: name, spec, value: "", error: null });
+    // A per-device template with {placeholders} is the source of truth for
+    // what to ask; the fixed COMMAND_PROMPTS cover the vendor adapters.
+    const template = device.commands?.[name];
+    const placeholders = templatePlaceholders(template);
+    const specs: PromptedArg[] =
+      placeholders.length > 0
+        ? placeholders.map((arg) => ({ kind: "text", arg, label: prettyName(arg) }))
+        : COMMAND_PROMPTS[name]
+          ? [COMMAND_PROMPTS[name]]
+          : [];
+    if (specs.length > 0) {
+      setPrompt({
+        command: name,
+        specs,
+        values: specs.map(() => ""),
+        template: placeholders.length > 0 ? template : undefined,
+        error: null,
+      });
       return;
     }
     void dispatch(name);
@@ -158,34 +176,42 @@ export function CommandPanel({ device, telemetry }: Props) {
     }
   };
 
-  // Modal submit — validate per arg kind, close on success, dispatch. Leaves
+  // Modal submit — validate every field, close on success, dispatch. Leaves
   // the modal open with an inline error on invalid input so the user can
   // correct without re-clicking the command button.
   const submitPrompt = () => {
     if (!prompt) return;
-    const { spec, command } = prompt;
-    const trimmed = prompt.value.trim();
-    if (trimmed === "") {
-      setPrompt({ ...prompt, error: `${spec.label} is required.` });
-      return;
-    }
-    if (spec.kind === "number") {
-      const n = Number(trimmed);
-      if (!Number.isInteger(n) || n < spec.min || n > spec.max) {
-        setPrompt({
-          ...prompt,
-          error: `Enter an integer between ${spec.min} and ${spec.max}.`,
-        });
+    const args: Record<string, unknown> = {};
+    for (let i = 0; i < prompt.specs.length; i++) {
+      const spec = prompt.specs[i];
+      const trimmed = prompt.values[i].trim();
+      if (trimmed === "") {
+        setPrompt({ ...prompt, error: `${spec.label} is required.` });
         return;
       }
-      setPrompt(null);
-      void dispatch(command, { [spec.arg]: n });
-      return;
+      if (spec.kind === "number") {
+        const n = Number(trimmed);
+        if (!Number.isInteger(n) || n < spec.min || n > spec.max) {
+          setPrompt({
+            ...prompt,
+            error: `${spec.label}: enter an integer between ${spec.min} and ${spec.max}.`,
+          });
+          return;
+        }
+        args[spec.arg] = n;
+        continue;
+      }
+      // Line-based protocols (Tesira TTP, Telnet) treat a newline as the end
+      // of a command — never let one through inside a value.
+      if (/[\r\n]/.test(trimmed)) {
+        setPrompt({ ...prompt, error: `${spec.label} must be a single line.` });
+        return;
+      }
+      // Further shape validation (SIP URI, dB range…) is the adapter's job.
+      args[spec.arg] = trimmed;
     }
-    // text kind — send the trimmed string as-is. The backend adapter is
-    // responsible for further shape validation (SIP URI, etc.).
     setPrompt(null);
-    void dispatch(command, { [spec.arg]: trimmed });
+    void dispatch(prompt.command, args);
   };
 
   // Devices running as appliances (Microsoft Teams Rooms, Zoom Rooms, etc.)
@@ -259,51 +285,66 @@ export function CommandPanel({ device, telemetry }: Props) {
               }}
               className="space-y-4"
             >
-              <div className="space-y-1.5">
-                <label
-                  htmlFor="prompt-value"
-                  className="text-sm font-medium text-foreground"
-                >
-                  {prompt.spec.label}
-                </label>
-                {prompt.spec.kind === "number" ? (
-                  <input
-                    id="prompt-value"
-                    type="number"
-                    inputMode="numeric"
-                    min={prompt.spec.min}
-                    max={prompt.spec.max}
-                    step={1}
-                    autoFocus
-                    value={prompt.value}
-                    onChange={(e) =>
-                      setPrompt({ ...prompt, value: e.target.value, error: null })
-                    }
-                    placeholder={`${prompt.spec.min}–${prompt.spec.max}`}
-                    className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm outline-none transition-colors focus:border-primary focus:shadow-[0_0_0_3px_hsl(var(--primary)/0.15)]"
-                  />
-                ) : (
-                  <input
-                    id="prompt-value"
-                    type="text"
-                    autoFocus
-                    autoComplete="off"
-                    spellCheck={false}
-                    value={prompt.value}
-                    onChange={(e) =>
-                      setPrompt({ ...prompt, value: e.target.value, error: null })
-                    }
-                    placeholder={prompt.spec.placeholder}
-                    className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm outline-none transition-colors focus:border-primary focus:shadow-[0_0_0_3px_hsl(var(--primary)/0.15)]"
-                  />
-                )}
+              {prompt.specs.map((spec, i) => {
+                const onChange = (v: string) => {
+                  const values = [...prompt.values];
+                  values[i] = v;
+                  setPrompt({ ...prompt, values, error: null });
+                };
+                return (
+                  <div key={spec.arg} className="space-y-1.5">
+                    <label
+                      htmlFor={`prompt-${spec.arg}`}
+                      className="text-sm font-medium text-foreground"
+                    >
+                      {spec.label}
+                    </label>
+                    {spec.kind === "number" ? (
+                      <input
+                        id={`prompt-${spec.arg}`}
+                        type="number"
+                        inputMode="numeric"
+                        min={spec.min}
+                        max={spec.max}
+                        step={1}
+                        autoFocus={i === 0}
+                        value={prompt.values[i]}
+                        onChange={(e) => onChange(e.target.value)}
+                        placeholder={`${spec.min}–${spec.max}`}
+                        className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm outline-none transition-colors focus:border-primary focus:shadow-[0_0_0_3px_hsl(var(--primary)/0.15)]"
+                      />
+                    ) : (
+                      <input
+                        id={`prompt-${spec.arg}`}
+                        type="text"
+                        autoFocus={i === 0}
+                        autoComplete="off"
+                        spellCheck={false}
+                        value={prompt.values[i]}
+                        onChange={(e) => onChange(e.target.value)}
+                        placeholder={spec.placeholder}
+                        className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm outline-none transition-colors focus:border-primary focus:shadow-[0_0_0_3px_hsl(var(--primary)/0.15)]"
+                      />
+                    )}
+                    {(spec.helpText || spec.kind === "number") && (
+                      <p className="text-xs text-muted-foreground">
+                        {spec.helpText ??
+                          (spec.kind === "number"
+                            ? `Whole number between ${spec.min} and ${spec.max}.`
+                            : "")}
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
+              {prompt.template && (
                 <p className="text-xs text-muted-foreground">
-                  {prompt.spec.helpText ??
-                    (prompt.spec.kind === "number"
-                      ? `Whole number between ${prompt.spec.min} and ${prompt.spec.max}.`
-                      : "")}
+                  Sends{" "}
+                  <code className="rounded bg-muted px-1 py-0.5 text-[11px] text-foreground/80">
+                    {prompt.template}
+                  </code>
                 </p>
-              </div>
+              )}
               {prompt.error && (
                 <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs [color:hsl(var(--destructive))]">
                   {prompt.error}

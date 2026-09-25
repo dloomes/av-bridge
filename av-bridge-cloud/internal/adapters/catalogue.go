@@ -288,7 +288,7 @@ var catalogue = []Info{
 		Metrics:         nil, // user-defined per device via subscriptions
 		ConfigSchema: []ConfigField{
 			{Name: "address", Required: true, Description: "DSP IP (Telnet port 23 is implied).", Example: "192.168.40.10"},
-			{Name: "commands", Required: false, Description: "Named TTP command map. Each entry becomes a button in the portal."},
+			{Name: "commands", Required: false, Description: "Named TTP command map (<instance tag> <verb> <attribute> <channel> [value]). Each entry becomes a button in the portal; {name} placeholders are prompted for when the button is pressed."},
 			{Name: "subscriptions", Required: false, Description: "Push-notification subscriptions. Each becomes a live metric."},
 		},
 		ExampleConfig: `- id: main-hall-dsp
@@ -297,8 +297,13 @@ var catalogue = []Info{
   protocol: tesira
   address: 192.168.40.10
   commands:
-    mute_all: master_level mute set 1
-    unmute_all: master_level mute set 0
+    mute: master_level set mute 1 true
+    unmute: master_level set mute 1 false
+    toggle_mute: master_level toggle mute 1
+    vol_up: master_level increment level 1 3
+    vol_down: master_level decrement level 1 3
+    set_level: master_level set level 1 {level}
+    recall_preset: DEVICE recallPreset {preset}
   subscriptions:
     - tag: master_level
       attribute: level

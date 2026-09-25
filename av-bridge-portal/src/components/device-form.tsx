@@ -3,6 +3,18 @@
 import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  CommandEditor,
+  commandsFromRows,
+  rowsFromCommands,
+  type CommandRow,
+} from "@/components/command-editor";
+import {
+  SubscriptionEditor,
+  rowsFromSubscriptions,
+  subscriptionsFromRows,
+  type SubscriptionRow,
+} from "@/components/subscription-editor";
 import { api } from "@/lib/api";
 import type {
   AdapterInfo,
@@ -72,9 +84,9 @@ interface FormState {
   asset_purchase_date: string;
   asset_warranty_end: string;
   asset_notes: string;
-  commands_json: string;
+  commands: CommandRow[];
   tags_json: string;
-  subscriptions_json: string;
+  subscriptions: SubscriptionRow[];
 }
 
 function emptyForm(): FormState {
@@ -102,9 +114,9 @@ function emptyForm(): FormState {
     asset_purchase_date: "",
     asset_warranty_end: "",
     asset_notes: "",
-    commands_json: "",
+    commands: [],
     tags_json: "",
-    subscriptions_json: "",
+    subscriptions: [],
   };
 }
 
@@ -133,11 +145,9 @@ function formFromDetail(d: DeviceDetail): FormState {
     asset_purchase_date: d.asset?.purchase_date ?? "",
     asset_warranty_end: d.asset?.warranty_end ?? "",
     asset_notes: d.asset?.notes ?? "",
-    commands_json: d.commands ? JSON.stringify(d.commands, null, 2) : "",
+    commands: rowsFromCommands(d.commands),
     tags_json: d.tags ? JSON.stringify(d.tags, null, 2) : "",
-    subscriptions_json: d.subscriptions
-      ? JSON.stringify(d.subscriptions, null, 2)
-      : "",
+    subscriptions: rowsFromSubscriptions(d.subscriptions),
   };
 }
 
@@ -521,12 +531,9 @@ export function DeviceForm({
     let tags: Record<string, string> | undefined;
     let subscriptions: Subscription[] | undefined;
     try {
-      commands = parseJsonField<Record<string, string>>("commands", form.commands_json);
+      commands = commandsFromRows(form.commands);
       tags = parseJsonField<Record<string, string>>("tags", form.tags_json);
-      subscriptions = parseJsonField<Subscription[]>(
-        "subscriptions",
-        form.subscriptions_json
-      );
+      subscriptions = subscriptionsFromRows(form.subscriptions);
     } catch (e) {
       setError((e as Error).message);
       return;
@@ -1019,21 +1026,49 @@ export function DeviceForm({
         </div>
       </details>
 
+      <details
+        className="rounded-md border bg-muted/30 p-3"
+        // Open when there's something to see, and always for Tesira — its
+        // commands are defined here rather than built into the adapter.
+        open={form.commands.length > 0 || form.protocol === "tesira"}
+      >
+        <summary className="cursor-pointer text-xs font-medium text-muted-foreground uppercase tracking-wide">
+          Commands{form.commands.length > 0 ? ` (${form.commands.length})` : ""}
+        </summary>
+        <div className="mt-3">
+          <CommandEditor
+            rows={form.commands}
+            onChange={(rows) => set("commands", rows)}
+            protocol={form.protocol}
+          />
+        </div>
+      </details>
+
+      {/* Readings (subscriptions) are only consumed by the Tesira adapter;
+          still shown for other protocols if a device already has some, so
+          nothing is hidden from the operator. */}
+      {(form.protocol === "tesira" || form.subscriptions.length > 0) && (
+        <details
+          className="rounded-md border bg-muted/30 p-3"
+          open={form.subscriptions.length > 0 || form.protocol === "tesira"}
+        >
+          <summary className="cursor-pointer text-xs font-medium text-muted-foreground uppercase tracking-wide">
+            Readings{form.subscriptions.length > 0 ? ` (${form.subscriptions.length})` : ""}
+          </summary>
+          <div className="mt-3">
+            <SubscriptionEditor
+              rows={form.subscriptions}
+              onChange={(rows) => set("subscriptions", rows)}
+            />
+          </div>
+        </details>
+      )}
+
       <details className="rounded-md border bg-muted/30 p-3">
         <summary className="cursor-pointer text-xs font-medium text-muted-foreground uppercase tracking-wide">
           Advanced (JSON)
         </summary>
         <div className="mt-3 space-y-3">
-          <div>
-            <label className={labelClass}>Commands (object)</label>
-            <textarea
-              rows={4}
-              className={textareaClass}
-              value={form.commands_json}
-              onChange={(e) => set("commands_json", e.target.value)}
-              placeholder='{"mute": "...", "unmute": "..."}'
-            />
-          </div>
           <div>
             <label className={labelClass}>Tags (object)</label>
             <textarea
@@ -1042,16 +1077,6 @@ export function DeviceForm({
               value={form.tags_json}
               onChange={(e) => set("tags_json", e.target.value)}
               placeholder='{"make": "Sony", "model": "..."}'
-            />
-          </div>
-          <div>
-            <label className={labelClass}>Subscriptions (array)</label>
-            <textarea
-              rows={4}
-              className={textareaClass}
-              value={form.subscriptions_json}
-              onChange={(e) => set("subscriptions_json", e.target.value)}
-              placeholder='[{"tag":"master_level","attribute":"level","channel":1,"label":"db"}]'
             />
           </div>
         </div>

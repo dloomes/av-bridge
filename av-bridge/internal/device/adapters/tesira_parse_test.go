@@ -2,6 +2,7 @@ package adapters
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -294,6 +295,42 @@ func TestParseTesiraDeviceInfo(t *testing.T) {
 			}
 			if ip != tc.wantIP {
 				t.Errorf("ip: got %q want %q", ip, tc.wantIP)
+			}
+		})
+	}
+}
+
+func TestFillTTPTemplate(t *testing.T) {
+	cases := []struct {
+		name    string
+		tmpl    string
+		args    map[string]any
+		want    string
+		wantErr string
+	}{
+		{name: "no placeholders", tmpl: "master_level set mute 1 true", want: "master_level set mute 1 true"},
+		{name: "single", tmpl: "master_level set level 1 {level}", args: map[string]any{"level": "-12.5"}, want: "master_level set level 1 -12.5"},
+		{name: "numeric arg", tmpl: "DEVICE recallPreset {preset}", args: map[string]any{"preset": 1001}, want: "DEVICE recallPreset 1001"},
+		{name: "several", tmpl: "{block} set level {channel} {level}", args: map[string]any{"block": "Zone1", "channel": 2, "level": 0}, want: "Zone1 set level 2 0"},
+		{name: "unused arg ignored", tmpl: "master_level get level 1", args: map[string]any{"level": 3}, want: "master_level get level 1"},
+		{name: "missing", tmpl: "master_level set level 1 {level}", wantErr: "missing value for level"},
+		{name: "missing several", tmpl: "{block} set level {channel} {level}", args: map[string]any{"block": "Zone1"}, wantErr: "missing value for channel, level"},
+		{name: "newline injection", tmpl: "master_level set level 1 {level}", args: map[string]any{"level": "0\r\nDEVICE reboot"}, wantErr: "must be a single line"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := fillTTPTemplate(tc.tmpl, tc.args)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("err = %v, want containing %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("got %q, want %q", got, tc.want)
 			}
 		})
 	}

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -720,10 +721,9 @@ func (a *TesiraAdapter) SendCommand(ctx context.Context, req device.CommandReque
 		ttp = req.Name
 	}
 
-	// Replace any args placeholders — e.g. "level" arg for gain commands
-	// Args can contain: level, channel, value
-	for k, v := range req.Args {
-		ttp = strings.ReplaceAll(ttp, "{"+k+"}", fmt.Sprintf("%v", v))
+	ttp, err := fillTTPTemplate(ttp, req.Args)
+	if err != nil {
+		return nil, err
 	}
 
 	start := time.Now()
@@ -748,6 +748,34 @@ func (a *TesiraAdapter) SendCommand(ctx context.Context, req device.CommandReque
 		Parsed:  parsed,
 		Latency: time.Since(start),
 	}, nil
+}
+
+// ttpPlaceholder matches the {name} slots in a command template. The portal
+// uses the same identifier shape to decide which values to prompt for.
+var ttpPlaceholder = regexp.MustCompile(`\{[A-Za-z_][A-Za-z0-9_]*\}`)
+
+// fillTTPTemplate substitutes args into a command template such as
+// "master_level set level 1 {level}". It refuses to send a command with an
+// unfilled slot (the Tesira would only answer -ERR, and a literal "{level}"
+// hides the real mistake) or a value containing CR/LF, which TTP would read
+// as the start of a second command.
+func fillTTPTemplate(tmpl string, args map[string]any) (string, error) {
+	out := tmpl
+	for k, v := range args {
+		s := fmt.Sprintf("%v", v)
+		if strings.ContainsAny(s, "\r\n") {
+			return "", fmt.Errorf("argument %q must be a single line", k)
+		}
+		out = strings.ReplaceAll(out, "{"+k+"}", s)
+	}
+	if missing := ttpPlaceholder.FindAllString(out, -1); len(missing) > 0 {
+		names := make([]string, len(missing))
+		for i, m := range missing {
+			names[i] = strings.Trim(m, "{}")
+		}
+		return "", fmt.Errorf("missing value for %s", strings.Join(names, ", "))
+	}
+	return out, nil
 }
 
 // ── Capabilities ─────────────────────────────────────────────────────────────
