@@ -172,6 +172,7 @@ module "cloud_service" {
   entra_vendor_redirect_uri      = module.entra.redirect_uri
   entra_vendor_client_secret_arn = module.entra.client_secret_arn
   entra_portal_base_url          = "https://app.${var.dns_zone_name}"
+  cloud_base_url                 = "https://api.${var.dns_zone_name}"
 }
 
 # A alias record so browsers + bridge collectors reach the API at

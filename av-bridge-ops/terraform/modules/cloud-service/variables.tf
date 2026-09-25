@@ -226,6 +226,12 @@ variable "entra_vendor_client_secret_arn" {
   default     = ""
 }
 
+variable "cloud_base_url" {
+  description = "Public API origin handed to Collectors at enrolment and baked into the install scripts, e.g. https://api.uat.involvecloud.com. Empty falls back to the host that served the install script, which is wrong when that host is the portal."
+  type        = string
+  default     = ""
+}
+
 variable "entra_portal_base_url" {
   description = "Origin the callback redirects the browser back to after minting the session, e.g. https://app.uat.involvecloud.com. Empty falls back to the callback request's own scheme+host (fine when portal and API share an origin)."
   type        = string

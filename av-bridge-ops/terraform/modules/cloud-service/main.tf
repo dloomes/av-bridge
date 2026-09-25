@@ -163,6 +163,13 @@ resource "aws_ecs_task_definition" "this" {
         { name = "VENDOR_ADMIN_NAME", value = var.vendor_admin_name },
         { name = "NIGHTLY_EXEC_ENABLED", value = tostring(var.nightly_exec_enabled) },
       ],
+      # Origin Collectors are told to use for /ingest + /bridge/*. Without
+      # it the install script bakes in whichever host served it — the
+      # portal, when copied from Add Collector — and the portal doesn't
+      # proxy /bridge or /ingest, so every poll 404s.
+      var.cloud_base_url == "" ? [] : [
+        { name = "CLOUD_BASE_URL", value = var.cloud_base_url }
+      ],
       # Only emit VENDOR_ADMIN_PASSWORD when set — the seed step is a
       # first-boot no-op if either the email or password is blank, and the
       # value is only ever used on the first startup with an empty vendor
