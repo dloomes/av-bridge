@@ -230,7 +230,7 @@ func (h *Handler) CreateAPIToken(w http.ResponseWriter, r *http.Request) {
 
 	// Audit — never log the raw token or hash. Prefix + name are
 	// enough context for an operator retracing what was minted.
-	_ = h.store.WithTenantScoped(r.Context(), p.CustomerID, principalScope(p), func(tx pgx.Tx) error {
+	_ = h.store.WithTenantScope(r.Context(), p.CustomerID, principalScope(p), func(tx pgx.Tx) error {
 		return audit.Record(r.Context(), tx, p.CustomerID, stampActor(p, audit.Entry{
 			Action:     "api_token.create",
 			TargetKind: "api_token", TargetID: row.ID,
@@ -304,7 +304,7 @@ func (h *Handler) RevokeAPIToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = h.store.WithTenantScoped(r.Context(), p.CustomerID, principalScope(p), func(tx pgx.Tx) error {
+	_ = h.store.WithTenantScope(r.Context(), p.CustomerID, principalScope(p), func(tx pgx.Tx) error {
 		return audit.Record(r.Context(), tx, p.CustomerID, stampActor(p, audit.Entry{
 			Action:     "api_token.revoke",
 			TargetKind: "api_token", TargetID: id,

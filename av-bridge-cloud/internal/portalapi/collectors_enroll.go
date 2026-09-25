@@ -148,7 +148,7 @@ func (h *Handler) CreateCollector(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Audit — the create is per-customer so a normal audit entry fits.
-	_ = h.store.WithTenantScoped(r.Context(), p.CustomerID, principalScope(p), func(tx pgx.Tx) error {
+	_ = h.store.WithTenantScope(r.Context(), p.CustomerID, principalScope(p), func(tx pgx.Tx) error {
 		return audit.Record(r.Context(), tx, p.CustomerID, stampActor(p, audit.Entry{
 			Action:     "collector.create",
 			TargetKind: "collector", TargetID: regResult.ID,
@@ -209,7 +209,7 @@ func (h *Handler) ReissueCollectorEnrollmentToken(w http.ResponseWriter, r *http
 		return
 	}
 
-	_ = h.store.WithTenantScoped(r.Context(), p.CustomerID, principalScope(p), func(tx pgx.Tx) error {
+	_ = h.store.WithTenantScope(r.Context(), p.CustomerID, principalScope(p), func(tx pgx.Tx) error {
 		return audit.Record(r.Context(), tx, p.CustomerID, stampActor(p, audit.Entry{
 			Action:     "collector.enrollment_token_reissued",
 			TargetKind: "collector", TargetID: id,
@@ -347,7 +347,7 @@ func (h *Handler) DeleteCollector(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = h.store.WithTenantScoped(r.Context(), p.CustomerID, principalScope(p), func(tx pgx.Tx) error {
+	_ = h.store.WithTenantScope(r.Context(), p.CustomerID, principalScope(p), func(tx pgx.Tx) error {
 		return audit.Record(r.Context(), tx, p.CustomerID, stampActor(p, audit.Entry{
 			Action:     "collector.delete",
 			TargetKind: "collector", TargetID: id,

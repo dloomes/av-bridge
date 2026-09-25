@@ -53,6 +53,7 @@ export function SignInCallbackClient() {
           role: who.role,
           is_vendor: who.is_vendor,
           permissions: who.permissions ?? [],
+          is_scoped: who.is_scoped,
           landing_page: who.landing_page,
         });
         router.replace(landingPath(who.landing_page));

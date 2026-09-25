@@ -61,45 +61,58 @@ func (s *Store) WaitReady(ctx context.Context, timeout time.Duration) error {
 	}
 }
 
-// WithTenant runs fn in a transaction scoped to customerID via the RLS
-// session variable. Building scope defaults to empty (full-tenant access) —
-// bridge/ingest callers have no user Principal and need to write across
-// every device.  Portal handlers should use WithTenantScoped so a user's
-// building_scope_ids restricts what their queries can see.
-func (s *Store) WithTenant(ctx context.Context, customerID string, fn func(pgx.Tx) error) error {
-	return s.WithTenantScoped(ctx, customerID, nil, fn)
+// Scope is a caller's physical restriction: the hierarchy nodes they have
+// been granted. A caller sees everything under ANY listed node (migration
+// 0047). All-empty = unscoped, i.e. the whole tenant. IDs must already be
+// validated as belonging to the tenant — planting foreign UUIDs is the one
+// way to defeat RLS scope, so never pass request input straight through.
+type Scope struct {
+	BusinessUnits []string
+	Regions       []string
+	Locations     []string
+	Buildings     []string
+	Rooms         []string
 }
 
-// WithTenantScoped is WithTenant + a physical-scope restriction. When
-// buildingScope is empty/nil the caller sees every row in their tenant
-// (identical to WithTenant). When non-empty, the RESTRICTIVE policies
-// added in migration 0019 filter devices + telemetry + events + alerts +
-// commands to rows that hang off one of those buildings.
+// Empty reports whether the scope grants the whole tenant.
+func (sc Scope) Empty() bool {
+	return len(sc.BusinessUnits)+len(sc.Regions)+len(sc.Locations)+len(sc.Buildings)+len(sc.Rooms) == 0
+}
+
+// WithTenant runs fn in a transaction scoped to customerID via the RLS
+// session variable, with no physical scope (full-tenant access) —
+// bridge/ingest callers have no user Principal and need to write across
+// every device. Portal handlers should use WithTenantScope so a user's
+// scope restricts what their queries can see.
+func (s *Store) WithTenant(ctx context.Context, customerID string, fn func(pgx.Tx) error) error {
+	return s.WithTenantScope(ctx, customerID, Scope{}, fn)
+}
+
+// WithTenantScoped restricts to buildings only. Retained for callers that
+// predate Scope; new code should use WithTenantScope.
+func (s *Store) WithTenantScoped(ctx context.Context, customerID string, buildingScope []string, fn func(pgx.Tx) error) error {
+	return s.WithTenantScope(ctx, customerID, Scope{Buildings: buildingScope}, fn)
+}
+
+// WithTenantFullyScoped restricts to buildings and business units.
+// Retained for callers that predate Scope; new code should use
+// WithTenantScope.
+func (s *Store) WithTenantFullyScoped(ctx context.Context, customerID string, buildingScope []string, businessUnitScope []string, fn func(pgx.Tx) error) error {
+	return s.WithTenantScope(ctx, customerID, Scope{Buildings: buildingScope, BusinessUnits: businessUnitScope}, fn)
+}
+
+// WithTenantScope runs fn in a tenant transaction restricted to scope.
+//
+// For a scoped caller it first resolves the ancestors of every granted
+// node (the "path" — e.g. Region › Location › Building above a granted
+// room) while only tenant isolation is in force, then sets the scope
+// session variables that migration 0047's RESTRICTIVE policies read. The
+// path lets policies show a restricted user the route to their nodes
+// without a policy ever joining down the tree (which would recurse).
 //
 // Session vars are set with is_local=true so they revert at COMMIT /
-// ROLLBACK. A subsequent WithTenant call on the same pooled connection
-// starts fresh (empty scope). Reviewer note: never pass user-controlled
-// building_scope_ids without validating them against the caller's tenant
-// — an escape by planting foreign UUIDs would defeat the whole point.
-func (s *Store) WithTenantScoped(ctx context.Context, customerID string, buildingScope []string, fn func(pgx.Tx) error) error {
-	return s.WithTenantFullyScoped(ctx, customerID, buildingScope, nil, fn)
-}
-
-// WithTenantFullyScoped extends WithTenantScoped with an additional
-// businessUnitScope filter. When non-empty, migration 0043's RESTRICTIVE
-// policies on regions / locations / buildings / rooms limit the caller
-// to rows whose BU is in the scope; downstream tables (devices,
-// telemetry, alerts, etc.) reach through rooms transitively via the
-// existing building_scope policies' EXISTS clauses.
-//
-// Both scopes AND together — a caller restricted to Business Unit X and
-// buildings [A, B] sees only rooms in {A, B} that also sit under BU X.
-// Either or both may be empty; empty is "unscoped at that level".
-//
-// Same escape-hatch caveat as WithTenantScoped: never pass user-
-// controlled business_unit_scope_ids without validating them against the
-// caller's tenant.
-func (s *Store) WithTenantFullyScoped(ctx context.Context, customerID string, buildingScope []string, businessUnitScope []string, fn func(pgx.Tx) error) error {
+// ROLLBACK; the next transaction on the pooled connection starts clean.
+func (s *Store) WithTenantScope(ctx context.Context, customerID string, scope Scope, fn func(pgx.Tx) error) error {
 	tx, err := s.tenant.Begin(ctx)
 	if err != nil {
 		return err
@@ -109,19 +122,67 @@ func (s *Store) WithTenantFullyScoped(ctx context.Context, customerID string, bu
 	if _, err := tx.Exec(ctx, "SELECT set_config('app.current_customer', $1, true)", customerID); err != nil {
 		return fmt.Errorf("set tenant scope: %w", err)
 	}
-	// Comma-joined into a single string because Postgres GUCs are scalar.
-	// Empty string in the RLS policy short-circuits to "unscoped".
-	if _, err := tx.Exec(ctx, "SELECT set_config('app.building_scope', $1, true)", strings.Join(buildingScope, ",")); err != nil {
-		return fmt.Errorf("set building scope: %w", err)
+
+	var path []string
+	if !scope.Empty() {
+		if err := tx.QueryRow(ctx, scopePathSQL,
+			scope.Rooms, scope.Buildings, scope.Locations, scope.Regions).Scan(&path); err != nil {
+			return fmt.Errorf("resolve scope path: %w", err)
+		}
 	}
-	if _, err := tx.Exec(ctx, "SELECT set_config('app.business_unit_scope', $1, true)", strings.Join(businessUnitScope, ",")); err != nil {
-		return fmt.Errorf("set business unit scope: %w", err)
+
+	// Comma-joined because Postgres GUCs are scalar. Empty string = nothing
+	// granted at that level (see app_scope_ids in 0047).
+	for _, v := range []struct {
+		name string
+		ids  []string
+	}{
+		{"app.business_unit_scope", scope.BusinessUnits},
+		{"app.region_scope", scope.Regions},
+		{"app.location_scope", scope.Locations},
+		{"app.building_scope", scope.Buildings},
+		{"app.room_scope", scope.Rooms},
+		{"app.scope_path", path},
+	} {
+		if _, err := tx.Exec(ctx, "SELECT set_config($1, $2, true)", v.name, strings.Join(v.ids, ",")); err != nil {
+			return fmt.Errorf("set %s: %w", v.name, err)
+		}
 	}
 	if err := fn(tx); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
 }
+
+// scopePathSQL returns the distinct ancestor ids of the granted rooms ($1),
+// buildings ($2), locations ($3) and regions ($4), up to and including
+// each region's business unit. Runs before the scope variables are set,
+// so it sees the whole (tenant-isolated) hierarchy.
+const scopePathSQL = `
+SELECT COALESCE(array_agg(DISTINCT x::text) FILTER (WHERE x IS NOT NULL), '{}')
+  FROM (
+    SELECT unnest(ARRAY[r.building_id, b.location_id, l.region_id, g.business_unit_id]) AS x
+      FROM rooms r
+      JOIN buildings b ON b.id = r.building_id
+      JOIN locations l ON l.id = b.location_id
+      JOIN regions g   ON g.id = l.region_id
+     WHERE r.id = ANY($1::uuid[])
+    UNION ALL
+    SELECT unnest(ARRAY[b.location_id, l.region_id, g.business_unit_id])
+      FROM buildings b
+      JOIN locations l ON l.id = b.location_id
+      JOIN regions g   ON g.id = l.region_id
+     WHERE b.id = ANY($2::uuid[])
+    UNION ALL
+    SELECT unnest(ARRAY[l.region_id, g.business_unit_id])
+      FROM locations l
+      JOIN regions g ON g.id = l.region_id
+     WHERE l.id = ANY($3::uuid[])
+    UNION ALL
+    SELECT g.business_unit_id
+      FROM regions g
+     WHERE g.id = ANY($4::uuid[])
+  ) s`
 
 // Collector is the result of an auth lookup.
 type Collector struct {

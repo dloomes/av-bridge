@@ -56,6 +56,12 @@ type Principal struct {
 	// ignore BuildingScopeIDs. Populated from users.business_unit_scope_ids
 	// only for tenants where customers.business_units_enabled is true.
 	BusinessUnitScopeIDs []string
+	// RegionScopeIDs / LocationScopeIDs / RoomScopeIDs complete the
+	// hierarchy (migration 0047). Every scope level UNIONs: the caller sees
+	// everything under ANY granted node. All five empty = full tenant.
+	RegionScopeIDs   []string
+	LocationScopeIDs []string
+	RoomScopeIDs     []string
 }
 
 // HasPermission returns true if the principal holds the given capability.

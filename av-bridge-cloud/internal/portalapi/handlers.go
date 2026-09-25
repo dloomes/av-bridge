@@ -53,19 +53,9 @@ func (h *Handler) withTenant(w http.ResponseWriter, r *http.Request, fn func(con
 		writeErr(w, http.StatusInternalServerError, "no principal in context")
 		return false
 	}
-	// Vendor callers bypass physical scope by design — they act as
-	// unscoped admins inside whichever customer they're currently
-	// acting-as. Non-vendor callers honour their user's building
-	// restriction (migration 0019) AND their business-unit restriction
-	// (migration 0043): both empty = full tenant, either non-empty =
-	// only rows hanging off those buildings / BUs.
-	scope := p.BuildingScopeIDs
-	buScope := p.BusinessUnitScopeIDs
-	if p.IsVendor {
-		scope = nil
-		buScope = nil
-	}
-	err := h.store.WithTenantFullyScoped(r.Context(), p.CustomerID, scope, buScope, func(tx pgx.Tx) error {
+	// Physical scope (migration 0047) — see principalScope for the
+	// vendor bypass.
+	err := h.store.WithTenantScope(r.Context(), p.CustomerID, principalScope(p), func(tx pgx.Tx) error {
 		return fn(r.Context(), tx)
 	})
 	if err != nil {
@@ -76,27 +66,22 @@ func (h *Handler) withTenant(w http.ResponseWriter, r *http.Request, fn func(con
 	return true
 }
 
-// principalScope returns the effective physical-scope for a Principal:
-// nil (unscoped) for vendor callers, the user's building_scope_ids
-// otherwise. Handlers calling store.WithTenantScoped directly (audit
-// writes after a non-tenant operation, for example) should route their
-// scope choice through here so the vendor-bypass rule stays in one place.
-func principalScope(p portalauth.Principal) []string {
+// principalScope returns the effective physical scope for a Principal:
+// unscoped for vendor callers (they act as unscoped admins inside whichever
+// customer they're acting-as), otherwise every level of the user's scope.
+// All transactions a portal handler opens for a user should use this, so
+// the vendor-bypass rule and the full set of levels stay in one place.
+func principalScope(p portalauth.Principal) db.Scope {
 	if p.IsVendor {
-		return nil
+		return db.Scope{}
 	}
-	return p.BuildingScopeIDs
-}
-
-// principalBUScope is the BU-scope counterpart to principalScope —
-// nil (unscoped) for vendor callers, the user's business_unit_scope_ids
-// otherwise. Use alongside principalScope when calling
-// Store.WithTenantFullyScoped directly.
-func principalBUScope(p portalauth.Principal) []string {
-	if p.IsVendor {
-		return nil
+	return db.Scope{
+		BusinessUnits: p.BusinessUnitScopeIDs,
+		Regions:       p.RegionScopeIDs,
+		Locations:     p.LocationScopeIDs,
+		Buildings:     p.BuildingScopeIDs,
+		Rooms:         p.RoomScopeIDs,
 	}
-	return p.BusinessUnitScopeIDs
 }
 
 // stampActor fills the actor-context fields on an audit.Entry from the
@@ -1089,7 +1074,11 @@ func (h *Handler) Whoami(w http.ResponseWriter, r *http.Request) {
 		IsVendor         bool     `json:"is_vendor,omitempty"`
 		Permissions      []string `json:"permissions"`
 		BuildingScopeIDs []string `json:"building_scope_ids"`
-		LandingPage      string   `json:"landing_page"`
+		// IsScoped is true when the user is restricted at ANY hierarchy
+		// level. Prefer it over building_scope_ids, which only reflects
+		// the building level and is kept for older portal builds.
+		IsScoped    bool   `json:"is_scoped"`
+		LandingPage string `json:"landing_page"`
 	}
 	// Portal uses this list to gate UI (show/hide buttons). For vendor
 	// callers we now expand to whatever the vendor role permits —
@@ -1136,6 +1125,7 @@ func (h *Handler) Whoami(w http.ResponseWriter, r *http.Request) {
 		IsVendor:         p.IsVendor,
 		Permissions:      perms,
 		BuildingScopeIDs: scope,
+		IsScoped:         !principalScope(p).Empty(),
 		LandingPage:      landingPage,
 	})
 }

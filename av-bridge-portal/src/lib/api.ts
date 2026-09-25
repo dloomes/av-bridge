@@ -237,6 +237,9 @@ export interface WhoamiResponse {
   // authoritative for UI gating.
   permissions?: string[];
   building_scope_ids?: string[];
+  // True when the caller is restricted at any hierarchy level. Only
+  // whole-tenant users may change anyone's physical scope.
+  is_scoped?: boolean;
   // Preferred landing page after sign-in. Defaults to "overview" on the
   // backend when a user has never chosen; both pages remain reachable
   // from the sidebar regardless.

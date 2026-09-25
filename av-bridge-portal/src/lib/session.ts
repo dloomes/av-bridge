@@ -21,6 +21,8 @@ export interface SessionUser {
   // Missing / empty means "no permissions loaded yet" — the sidebar
   // treats gated items as hidden until whoami hydrates them.
   permissions?: string[];
+  // Restricted to part of the location hierarchy (from /whoami).
+  is_scoped?: boolean;
   // Preferred landing page for this user. Sign-in redirects here; a small
   // "Set as default" toggle on Overview/Map flips this without leaving
   // the page.

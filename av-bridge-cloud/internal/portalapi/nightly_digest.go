@@ -51,7 +51,7 @@ func (h *Handler) SendNightlyDigest(w http.ResponseWriter, r *http.Request) {
 	// Fire-and-forget audit — the operator triggered a real email send, so
 	// it goes in the log. We swallow audit errors: the send already
 	// happened.
-	if err := h.store.WithTenantScoped(r.Context(), p.CustomerID, principalScope(p), func(tx pgx.Tx) error {
+	if err := h.store.WithTenantScope(r.Context(), p.CustomerID, principalScope(p), func(tx pgx.Tx) error {
 		return audit.Record(r.Context(), tx, p.CustomerID, stampActor(p, audit.Entry{
 			Action:     "nightly.digest.send-now",
 			TargetKind: "customer", TargetID: p.CustomerID,

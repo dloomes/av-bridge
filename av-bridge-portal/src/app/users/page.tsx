@@ -17,6 +17,13 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Modal } from "@/components/modal";
 import { UserMenu } from "@/components/user-menu";
 import { MagicLinkModal, MagicLinkTrigger } from "@/components/magic-link-modal";
+import {
+  EMPTY_SCOPE,
+  ScopeTreePicker,
+  describeScope,
+  scopeIsEmpty,
+  type ScopeSelection,
+} from "@/components/scope-tree-picker";
 import { useSession } from "@/hooks/useSession";
 import { api } from "@/lib/api";
 import type { Branding, BusinessUnit } from "@/lib/api";
@@ -25,6 +32,7 @@ import { formatRelative } from "@/lib/utils";
 import type {
   BuildingRow,
   CreateUserBody,
+  NamedRow,
   RoleRow,
   UpdateUserBody,
   UserRow,
@@ -33,9 +41,9 @@ import type {
 // UsersPage — tenant user roster with multi-role assignment + optional
 // physical scope. Reads are any authed user with view.users; writes are
 // gated by user.create / user.update / user.reset_password / user.delete.
-// Physical scope UI writes users.building_scope_ids — enforcement (the
-// RLS scope engine) lands in a later slice, so scope is currently
-// advisory. Setting it does no harm — nothing enforces it yet.
+// Physical scope is edited with ScopeTreePicker and enforced by database
+// row-level security. Only whole-tenant users may change it; restricted
+// admins see it read-only (the API rejects their scope changes).
 export default function UsersPage() {
   const session = useSession();
   // "admin" flag now = "can perform any user management action".
@@ -49,6 +57,9 @@ export default function UsersPage() {
   const [users, setUsers] = useState<UserRow[] | null>(null);
   const [roles, setRoles] = useState<RoleRow[] | null>(null);
   const [buildings, setBuildings] = useState<BuildingRow[] | null>(null);
+  const [regions, setRegions] = useState<NamedRow[]>([]);
+  const [locations, setLocations] = useState<NamedRow[]>([]);
+  const [rooms, setRooms] = useState<NamedRow[]>([]);
   const [businessUnits, setBusinessUnits] = useState<BusinessUnit[]>([]);
   const [buFlagOn, setBUFlagOn] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -68,12 +79,15 @@ export default function UsersPage() {
       // has its role + building + BU lists ready as soon as it opens.
       // Branding gives us the business_units_enabled flag; BU list is
       // best-effort (empty on failure keeps the page working).
-      const [us, rs, bs, br, bus] = await Promise.all([
+      const [us, rs, bs, br, bus, rgs, locs, rms] = await Promise.all([
         api.listUsers(signal),
         api.listRoles(signal),
         api.listBuildings(signal),
         api.getBranding(signal).catch(() => ({} as Branding)),
         api.listBusinessUnits(signal).catch(() => [] as BusinessUnit[]),
+        api.listRegions(signal),
+        api.listLocations(signal),
+        api.listRooms(signal),
       ]);
       if (signal?.aborted) return;
       setUsers(us);
@@ -81,6 +95,9 @@ export default function UsersPage() {
       setBuildings(bs);
       setBUFlagOn(Boolean(br.business_units_enabled));
       setBusinessUnits(bus);
+      setRegions(rgs);
+      setLocations(locs);
+      setRooms(rms);
       setLoadError(null);
     } catch (e) {
       if (!signal?.aborted) setLoadError((e as Error).message);
@@ -178,6 +195,10 @@ export default function UsersPage() {
               roles={roles}
               buildings={buildings}
               businessUnits={buFlagOn ? businessUnits : []}
+              regions={regions}
+              locations={locations}
+              rooms={rooms}
+              canEditScope={!session.user?.is_scoped}
               onCancel={() => setEditing(null)}
               onSaved={async () => {
                 setEditing(null);
@@ -302,13 +323,13 @@ function UserRowView({
             </span>
           ))
         )}
-        {user.building_scope_ids.length > 0 && (
+        {!scopeIsEmpty(userScope(user)) && (
           <span
             className="inline-flex items-center gap-1 rounded bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 px-1.5 py-0.5 text-[11px] font-medium"
-            title={`Restricted to ${user.building_scope_ids.length} building${user.building_scope_ids.length === 1 ? "" : "s"}`}
+            title={`Restricted to ${describeScope(userScope(user))}`}
           >
             <MapPin className="h-3 w-3" />
-            {user.building_scope_ids.length}
+            {describeScope(userScope(user))}
           </span>
         )}
         {user.disabled && (
@@ -373,6 +394,10 @@ function UserForm({
   roles,
   buildings,
   businessUnits,
+  regions,
+  locations,
+  rooms,
+  canEditScope,
   onCancel,
   onSaved,
 }: {
@@ -380,10 +405,15 @@ function UserForm({
   existing?: UserRow;
   roles: RoleRow[];
   buildings: BuildingRow[];
-  // Empty array = hide the BU scope picker entirely (either the flag is
-  // off for this tenant, or the tenant has no BUs). Non-empty = render
-  // the picker alongside the building picker.
+  // Empty array = no business-unit tier in the scope tree (either the flag
+  // is off for this tenant, or the tenant has no BUs).
   businessUnits: BusinessUnit[];
+  regions: NamedRow[];
+  locations: NamedRow[];
+  rooms: NamedRow[];
+  // False for restricted admins — the API only lets whole-tenant users
+  // change physical scope, so the tree is shown read-only.
+  canEditScope: boolean;
   onCancel: () => void;
   onSaved: () => Promise<void> | void;
 }) {
@@ -392,11 +422,8 @@ function UserForm({
   const [selectedRoles, setSelectedRoles] = useState<Set<string>>(
     () => new Set(existing?.role_ids ?? [])
   );
-  const [selectedBuildings, setSelectedBuildings] = useState<Set<string>>(
-    () => new Set(existing?.building_scope_ids ?? [])
-  );
-  const [selectedBUs, setSelectedBUs] = useState<Set<string>>(
-    () => new Set(existing?.business_unit_scope_ids ?? [])
+  const [scope, setScope] = useState<ScopeSelection>(() =>
+    existing ? userScope(existing) : EMPTY_SCOPE
   );
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
@@ -404,24 +431,6 @@ function UserForm({
 
   const toggleRole = (id: string) => {
     setSelectedRoles((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
-  const toggleBuilding = (id: string) => {
-    setSelectedBuildings((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
-  const toggleBU = (id: string) => {
-    setSelectedBUs((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
@@ -444,18 +453,15 @@ function UserForm({
           password,
           full_name: fullName.trim() || undefined,
           role_ids: Array.from(selectedRoles),
-          building_scope_ids:
-            selectedBuildings.size > 0 ? Array.from(selectedBuildings) : undefined,
-          business_unit_scope_ids:
-            selectedBUs.size > 0 ? Array.from(selectedBUs) : undefined,
+          // Restricted admins can't set scope; their new users inherit it.
+          ...(canEditScope && !scopeIsEmpty(scope) ? scopeBody(scope) : {}),
         };
         await api.createUser(body);
       } else if (existing) {
         const body: UpdateUserBody = {
           full_name: fullName.trim(),
           role_ids: Array.from(selectedRoles),
-          building_scope_ids: Array.from(selectedBuildings),
-          business_unit_scope_ids: Array.from(selectedBUs),
+          ...(canEditScope ? scopeBody(scope) : {}),
         };
         await api.updateUser(existing.id, body);
       }
@@ -578,98 +584,36 @@ function UserForm({
           )}
         </div>
         <p className="text-[11px] text-muted-foreground">
-          Effective permissions are the union of every selected role's permission bundle.
+          Effective permissions are the union of every selected role&apos;s permission bundle.
         </p>
       </div>
 
       <div className="space-y-1">
         <div className="flex items-center justify-between">
-          <label className="text-xs font-medium text-muted-foreground">
-            Physical scope <span className="text-muted-foreground/70">(optional)</span>
+          <label className="text-xs font-medium text-muted-foreground flex items-center gap-1">
+            <MapPin className="h-3 w-3" /> Physical scope{" "}
+            <span className="text-muted-foreground/70">(optional)</span>
           </label>
-          <span className="text-xs text-muted-foreground">
-            {selectedBuildings.size === 0
-              ? "full tenant"
-              : `${selectedBuildings.size} building${selectedBuildings.size === 1 ? "" : "s"}`}
-          </span>
+          <span className="text-xs text-muted-foreground">{describeScope(scope)}</span>
         </div>
-        <div className="rounded-md border max-h-48 overflow-y-auto divide-y">
-          {buildings.length === 0 ? (
-            <div className="p-3 text-xs text-muted-foreground">
-              No buildings defined yet — add buildings via Locations first.
-            </div>
-          ) : (
-            buildings.map((b) => {
-              const on = selectedBuildings.has(b.id);
-              return (
-                <label
-                  key={b.id}
-                  className="flex items-center gap-2 p-2 cursor-pointer hover:bg-accent/30 text-sm"
-                >
-                  <input
-                    type="checkbox"
-                    checked={on}
-                    onChange={() => toggleBuilding(b.id)}
-                    disabled={busy}
-                  />
-                  <span className="flex-1 min-w-0">
-                    <span className="block truncate">{b.name}</span>
-                    {b.address && (
-                      <span className="block text-[11px] text-muted-foreground truncate">
-                        {b.address}
-                      </span>
-                    )}
-                  </span>
-                </label>
-              );
-            })
-          )}
-        </div>
+        <ScopeTreePicker
+          businessUnits={businessUnits}
+          regions={regions}
+          locations={locations}
+          buildings={buildings}
+          rooms={rooms}
+          value={scope}
+          onChange={setScope}
+          disabled={busy || !canEditScope}
+        />
         <p className="text-[11px] text-muted-foreground">
-          Leave empty for full-tenant access. Selecting buildings limits the user to only see and act
-          on those locations. Enforcement is landing in a follow-up slice — for now, scope is stored
-          but not yet filtered in queries.
+          {canEditScope
+            ? "Leave everything unticked for access to the whole tenant. Ticking a business unit, region, location, building or room gives access to it and everything inside it, including anything added later. Ticks at different levels combine."
+            : mode === "create"
+              ? "You're restricted to part of the tenant, so new users get your scope. Only admins with access to the whole tenant can change it."
+              : "You're restricted to part of the tenant, so you can't change a user's scope. Ask an admin with access to the whole tenant."}
         </p>
       </div>
-
-      {businessUnits.length > 0 && (
-        <div className="space-y-1">
-          <label className="text-xs font-medium text-muted-foreground flex items-center gap-1">
-            <MapPin className="h-3 w-3" /> Business unit scope
-          </label>
-          <div className="max-h-40 overflow-y-auto rounded-md border divide-y">
-            {businessUnits.map((bu) => {
-              const on = selectedBUs.has(bu.id);
-              return (
-                <label
-                  key={bu.id}
-                  className="flex items-center gap-2 p-2 cursor-pointer hover:bg-accent/30 text-sm"
-                >
-                  <input
-                    type="checkbox"
-                    checked={on}
-                    onChange={() => toggleBU(bu.id)}
-                    disabled={busy}
-                  />
-                  <span className="flex-1 min-w-0">
-                    <span className="block truncate">{bu.name}</span>
-                    {bu.description && (
-                      <span className="block text-[11px] text-muted-foreground truncate">
-                        {bu.description}
-                      </span>
-                    )}
-                  </span>
-                </label>
-              );
-            })}
-          </div>
-          <p className="text-[11px] text-muted-foreground">
-            Leave empty for unscoped access at BU level. Selecting business
-            units restricts the user to regions (and everything beneath) that
-            belong to those BUs — combines with the building scope above.
-          </p>
-        </div>
-      )}
 
       {mode === "create" && (
         <div className="space-y-1">
@@ -818,4 +762,27 @@ function DeleteUserConfirm({
       </div>
     </div>
   );
+}
+
+// userScope reads a user's physical scope as one selection. The region /
+// location / room lists are optional on the wire (older API builds).
+function userScope(u: UserRow): ScopeSelection {
+  return {
+    business_unit_ids: u.business_unit_scope_ids ?? [],
+    region_ids: u.region_scope_ids ?? [],
+    location_ids: u.location_scope_ids ?? [],
+    building_ids: u.building_scope_ids ?? [],
+    room_ids: u.room_scope_ids ?? [],
+  };
+}
+
+// scopeBody maps a selection onto the create/update request fields.
+function scopeBody(s: ScopeSelection) {
+  return {
+    business_unit_scope_ids: s.business_unit_ids,
+    region_scope_ids: s.region_ids,
+    location_scope_ids: s.location_ids,
+    building_scope_ids: s.building_ids,
+    room_scope_ids: s.room_ids,
+  };
 }

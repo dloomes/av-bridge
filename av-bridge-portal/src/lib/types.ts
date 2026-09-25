@@ -508,9 +508,11 @@ export interface BulkCommandResponse {
 // backend derives from the highest-privilege system-default role the
 // user holds; falls back to the first custom role's name). role_ids +
 // role_names are the authoritative multi-role assignment.
-// building_scope_ids empty = full-tenant scope; non-empty = the user
-// only sees/acts on those buildings once the physical scope engine is
-// live (backend enforcement lands in a later slice).
+// Physical scope: one id list per hierarchy level (business unit, region,
+// location, building, room). The user sees everything under ANY listed
+// node; all empty = the whole tenant. Enforced by database row-level
+// security (cloud migration 0047). The region/location/room lists are
+// optional so an older API that doesn't send them still renders.
 export interface UserRow {
   id: string;
   email: string;
@@ -523,6 +525,9 @@ export interface UserRow {
   // populated when the tenant has business_units_enabled; the backend
   // rejects writes that set this while the flag is off.
   business_unit_scope_ids: string[];
+  region_scope_ids?: string[];
+  location_scope_ids?: string[];
+  room_scope_ids?: string[];
   disabled: boolean;
   created_at?: string;
   last_login_at?: string;
@@ -539,6 +544,9 @@ export interface CreateUserBody {
   role_ids: string[];
   building_scope_ids?: string[];
   business_unit_scope_ids?: string[];
+  region_scope_ids?: string[];
+  location_scope_ids?: string[];
+  room_scope_ids?: string[];
 }
 
 // UpdateUserBody — every field optional; PATCH semantics on the cloud
@@ -550,6 +558,9 @@ export interface UpdateUserBody {
   role_ids?: string[];
   building_scope_ids?: string[];
   business_unit_scope_ids?: string[];
+  region_scope_ids?: string[];
+  location_scope_ids?: string[];
+  room_scope_ids?: string[];
   disabled?: boolean;
 }
 

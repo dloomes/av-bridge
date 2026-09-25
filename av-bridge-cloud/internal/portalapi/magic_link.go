@@ -122,7 +122,7 @@ func (h *Handler) IssueCustomerMagicLink(w http.ResponseWriter, r *http.Request)
 	// Records who issued it and for whom; the raw token is never
 	// audited (only its ID is meaningful for lookup and even that we
 	// don't include here to keep the row small).
-	_ = h.store.WithTenantScoped(r.Context(), p.CustomerID, principalScope(p), func(tx pgx.Tx) error {
+	_ = h.store.WithTenantScope(r.Context(), p.CustomerID, principalScope(p), func(tx pgx.Tx) error {
 		return audit.Record(r.Context(), tx, p.CustomerID, stampActor(p, audit.Entry{
 			Action:     "user.magic_link_issued",
 			TargetKind: "user", TargetID: id,

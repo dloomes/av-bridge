@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/dloomes/av-bridge-cloud/internal/audit"
+	"github.com/dloomes/av-bridge-cloud/internal/db"
 	"github.com/dloomes/av-bridge-cloud/internal/portalauth"
 	"github.com/jackc/pgx/v5"
 	"golang.org/x/crypto/bcrypt"
@@ -50,6 +51,9 @@ type userRow struct {
 	RoleNames            []string   `json:"role_names"`
 	BuildingScopeIDs     []string   `json:"building_scope_ids"`
 	BusinessUnitScopeIDs []string   `json:"business_unit_scope_ids"`
+	RegionScopeIDs       []string   `json:"region_scope_ids"`
+	LocationScopeIDs     []string   `json:"location_scope_ids"`
+	RoomScopeIDs         []string   `json:"room_scope_ids"`
 	Disabled             bool       `json:"disabled"`
 	CreatedAt            *time.Time `json:"created_at,omitempty"`
 	LastLoginAt          *time.Time `json:"last_login_at,omitempty"`
@@ -70,7 +74,10 @@ func (h *Handler) ListUsers(w http.ResponseWriter, r *http.Request) {
 		       COALESCE(array_agg(DISTINCT r.id::text) FILTER (WHERE r.id IS NOT NULL), '{}'),
 		       COALESCE(array_agg(DISTINCT r.name)     FILTER (WHERE r.name IS NOT NULL), '{}'),
 		       COALESCE(u.building_scope_ids::text[], '{}'),
-		       COALESCE(u.business_unit_scope_ids::text[], '{}')
+		       COALESCE(u.business_unit_scope_ids::text[], '{}'),
+		       COALESCE(u.region_scope_ids::text[], '{}'),
+		       COALESCE(u.location_scope_ids::text[], '{}'),
+		       COALESCE(u.room_scope_ids::text[], '{}')
 		  FROM users u
 		  LEFT JOIN user_roles ur ON ur.user_id = u.id
 		  LEFT JOIN roles r        ON r.id = ur.role_id
@@ -90,7 +97,8 @@ func (h *Handler) ListUsers(w http.ResponseWriter, r *http.Request) {
 		if err := rows.Scan(&u.ID, &u.Email, &u.FullName, &u.Disabled,
 			&u.CreatedAt, &u.LastLoginAt, &u.Role,
 			&u.RoleIDs, &u.RoleNames, &u.BuildingScopeIDs,
-			&u.BusinessUnitScopeIDs); err != nil {
+			&u.BusinessUnitScopeIDs, &u.RegionScopeIDs, &u.LocationScopeIDs,
+			&u.RoomScopeIDs); err != nil {
 			h.log.Error("list users scan", "error", err)
 			writeErr(w, http.StatusInternalServerError, "internal error")
 			return
@@ -107,7 +115,27 @@ type createUserReq struct {
 	RoleIDs              []string `json:"role_ids"`
 	BuildingScopeIDs     []string `json:"building_scope_ids,omitempty"`
 	BusinessUnitScopeIDs []string `json:"business_unit_scope_ids,omitempty"`
+	RegionScopeIDs       []string `json:"region_scope_ids,omitempty"`
+	LocationScopeIDs     []string `json:"location_scope_ids,omitempty"`
+	RoomScopeIDs         []string `json:"room_scope_ids,omitempty"`
 }
+
+// scope converts the request's scope fields to a db.Scope.
+func (req createUserReq) scope() db.Scope {
+	return db.Scope{
+		BusinessUnits: req.BusinessUnitScopeIDs,
+		Regions:       req.RegionScopeIDs,
+		Locations:     req.LocationScopeIDs,
+		Buildings:     req.BuildingScopeIDs,
+		Rooms:         req.RoomScopeIDs,
+	}
+}
+
+// errScopeChangeForbidden is returned when a restricted caller tries to set
+// physical scope. The users table isn't itself scope-filtered, so without
+// this a building-restricted admin could widen anyone's access — their own
+// included. Only full-tenant admins (and vendor staff) may change scope.
+const errScopeChangeForbidden = "only users with access to the whole tenant can change physical scope"
 
 // CreateUser — POST /api/v1/users  (needs user.create)
 func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
@@ -164,11 +192,20 @@ func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := h.validateBuildingIDsInTenant(ctx, p.CustomerID, req.BuildingScopeIDs); err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
-		return
+	// A restricted admin can't choose a scope; users they create inherit
+	// the admin's own scope so they can never exceed it.
+	if callerScope := principalScope(p); !callerScope.Empty() {
+		if !req.scope().Empty() {
+			writeErr(w, http.StatusForbidden, errScopeChangeForbidden)
+			return
+		}
+		req.BusinessUnitScopeIDs = callerScope.BusinessUnits
+		req.RegionScopeIDs = callerScope.Regions
+		req.LocationScopeIDs = callerScope.Locations
+		req.BuildingScopeIDs = callerScope.Buildings
+		req.RoomScopeIDs = callerScope.Rooms
 	}
-	if err := h.validateBusinessUnitIDsInTenant(ctx, p.CustomerID, req.BusinessUnitScopeIDs); err != nil {
+	if err := h.validateScopeInTenant(ctx, p.CustomerID, req.scope()); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -188,10 +225,16 @@ func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
 
 	var id string
 	if err := tx.QueryRow(ctx, `
-		INSERT INTO users (email, password_hash, full_name, role, customer_id, building_scope_ids, business_unit_scope_ids)
-		VALUES ($1, $2, NULLIF($3,''), NULLIF($4,''), $5, NULLIF($6::uuid[], '{}'::uuid[]), NULLIF($7::uuid[], '{}'::uuid[]))
+		INSERT INTO users (email, password_hash, full_name, role, customer_id,
+		                   building_scope_ids, business_unit_scope_ids,
+		                   region_scope_ids, location_scope_ids, room_scope_ids)
+		VALUES ($1, $2, NULLIF($3,''), NULLIF($4,''), $5,
+		        NULLIF($6::uuid[], '{}'::uuid[]), NULLIF($7::uuid[], '{}'::uuid[]),
+		        NULLIF($8::uuid[], '{}'::uuid[]), NULLIF($9::uuid[], '{}'::uuid[]), NULLIF($10::uuid[], '{}'::uuid[]))
 		RETURNING id::text`,
-		req.Email, string(hash), req.FullName, primaryRole, p.CustomerID, req.BuildingScopeIDs, req.BusinessUnitScopeIDs).Scan(&id); err != nil {
+		req.Email, string(hash), req.FullName, primaryRole, p.CustomerID,
+		req.BuildingScopeIDs, req.BusinessUnitScopeIDs,
+		req.RegionScopeIDs, req.LocationScopeIDs, req.RoomScopeIDs).Scan(&id); err != nil {
 		if strings.Contains(err.Error(), "SQLSTATE 23505") {
 			writeErr(w, http.StatusConflict, "a user with that email already exists in this tenant")
 			return
@@ -211,7 +254,7 @@ func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = h.store.WithTenantScoped(r.Context(), p.CustomerID, principalScope(p), func(tx pgx.Tx) error {
+	_ = h.store.WithTenantScope(r.Context(), p.CustomerID, principalScope(p), func(tx pgx.Tx) error {
 		return audit.Record(r.Context(), tx, p.CustomerID, stampActor(p, audit.Entry{
 			Action: "user.create",
 			TargetKind: "user", TargetID: id,
@@ -220,6 +263,9 @@ func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
 				"role_ids":                 req.RoleIDs,
 				"building_scope_ids":       req.BuildingScopeIDs,
 				"business_unit_scope_ids":  req.BusinessUnitScopeIDs,
+				"region_scope_ids":         req.RegionScopeIDs,
+				"location_scope_ids":       req.LocationScopeIDs,
+				"room_scope_ids":           req.RoomScopeIDs,
 				"full_name":                req.FullName,
 			}),
 		}))
@@ -232,7 +278,16 @@ type updateUserReq struct {
 	RoleIDs              *[]string `json:"role_ids,omitempty"`
 	BuildingScopeIDs     *[]string `json:"building_scope_ids,omitempty"`
 	BusinessUnitScopeIDs *[]string `json:"business_unit_scope_ids,omitempty"`
+	RegionScopeIDs       *[]string `json:"region_scope_ids,omitempty"`
+	LocationScopeIDs     *[]string `json:"location_scope_ids,omitempty"`
+	RoomScopeIDs         *[]string `json:"room_scope_ids,omitempty"`
 	Disabled             *bool     `json:"disabled,omitempty"`
+}
+
+// changesScope reports whether the request touches any scope field.
+func (req updateUserReq) changesScope() bool {
+	return req.BuildingScopeIDs != nil || req.BusinessUnitScopeIDs != nil ||
+		req.RegionScopeIDs != nil || req.LocationScopeIDs != nil || req.RoomScopeIDs != nil
 }
 
 // UpdateUser — PATCH /api/v1/users/{id}  (needs user.update)
@@ -255,6 +310,10 @@ func (h *Handler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "cannot disable yourself")
 		return
 	}
+	if req.changesScope() && !principalScope(p).Empty() {
+		writeErr(w, http.StatusForbidden, errScopeChangeForbidden)
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
@@ -265,12 +324,16 @@ func (h *Handler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		SELECT id::text, email, COALESCE(full_name,''), COALESCE(role,''),
 		       (disabled_at IS NOT NULL),
 		       COALESCE(building_scope_ids::text[], '{}'),
-		       COALESCE(business_unit_scope_ids::text[], '{}')
+		       COALESCE(business_unit_scope_ids::text[], '{}'),
+		       COALESCE(region_scope_ids::text[], '{}'),
+		       COALESCE(location_scope_ids::text[], '{}'),
+		       COALESCE(room_scope_ids::text[], '{}')
 		  FROM users
 		 WHERE id = $1 AND customer_id = $2`,
 		id, p.CustomerID).Scan(&before.ID, &before.Email, &before.FullName,
 		&before.Role, &before.Disabled, &before.BuildingScopeIDs,
-		&before.BusinessUnitScopeIDs); err != nil {
+		&before.BusinessUnitScopeIDs, &before.RegionScopeIDs,
+		&before.LocationScopeIDs, &before.RoomScopeIDs); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeErr(w, http.StatusNotFound, "user not found")
 			return
@@ -285,24 +348,15 @@ func (h *Handler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if req.BuildingScopeIDs != nil {
-		if err := h.validateBuildingIDsInTenant(ctx, p.CustomerID, *req.BuildingScopeIDs); err != nil {
-			writeErr(w, http.StatusBadRequest, err.Error())
-			return
-		}
-	}
-	if req.BusinessUnitScopeIDs != nil {
-		if err := h.validateBusinessUnitIDsInTenant(ctx, p.CustomerID, *req.BusinessUnitScopeIDs); err != nil {
-			writeErr(w, http.StatusBadRequest, err.Error())
-			return
-		}
-	}
 
 	// Compute target state so the write is single-shot.
 	targetFullName := before.FullName
 	targetDisabled := before.Disabled
 	targetScope := before.BuildingScopeIDs
 	targetBUScope := before.BusinessUnitScopeIDs
+	targetRegionScope := before.RegionScopeIDs
+	targetLocationScope := before.LocationScopeIDs
+	targetRoomScope := before.RoomScopeIDs
 	targetPrimaryRole := before.Role
 	if req.FullName != nil {
 		targetFullName = *req.FullName
@@ -315,6 +369,27 @@ func (h *Handler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.BusinessUnitScopeIDs != nil {
 		targetBUScope = *req.BusinessUnitScopeIDs
+	}
+	if req.RegionScopeIDs != nil {
+		targetRegionScope = *req.RegionScopeIDs
+	}
+	if req.LocationScopeIDs != nil {
+		targetLocationScope = *req.LocationScopeIDs
+	}
+	if req.RoomScopeIDs != nil {
+		targetRoomScope = *req.RoomScopeIDs
+	}
+	if req.changesScope() {
+		if err := h.validateScopeInTenant(ctx, p.CustomerID, db.Scope{
+			BusinessUnits: targetBUScope,
+			Regions:       targetRegionScope,
+			Locations:     targetLocationScope,
+			Buildings:     targetScope,
+			Rooms:         targetRoomScope,
+		}); err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
 	if req.RoleIDs != nil {
 		derived, err := h.derivePrimaryRoleName(ctx, p.CustomerID, *req.RoleIDs)
@@ -339,9 +414,13 @@ func (h *Handler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		  role                     = NULLIF($4,''),
 		  disabled_at              = CASE WHEN $5::bool THEN COALESCE(disabled_at, now()) ELSE NULL END,
 		  building_scope_ids       = NULLIF($6::uuid[], '{}'::uuid[]),
-		  business_unit_scope_ids  = NULLIF($7::uuid[], '{}'::uuid[])
+		  business_unit_scope_ids  = NULLIF($7::uuid[], '{}'::uuid[]),
+		  region_scope_ids         = NULLIF($8::uuid[], '{}'::uuid[]),
+		  location_scope_ids       = NULLIF($9::uuid[], '{}'::uuid[]),
+		  room_scope_ids           = NULLIF($10::uuid[], '{}'::uuid[])
 		WHERE id = $1 AND customer_id = $2`,
-		id, p.CustomerID, targetFullName, targetPrimaryRole, targetDisabled, targetScope, targetBUScope); err != nil {
+		id, p.CustomerID, targetFullName, targetPrimaryRole, targetDisabled, targetScope, targetBUScope,
+		targetRegionScope, targetLocationScope, targetRoomScope); err != nil {
 		h.log.Error("update user", "error", err)
 		writeErr(w, http.StatusInternalServerError, "internal error")
 		return
@@ -378,11 +457,14 @@ func (h *Handler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		"disabled":                 targetDisabled,
 		"building_scope_ids":       targetScope,
 		"business_unit_scope_ids":  targetBUScope,
+		"region_scope_ids":         targetRegionScope,
+		"location_scope_ids":       targetLocationScope,
+		"room_scope_ids":           targetRoomScope,
 	}
 	if req.RoleIDs != nil {
 		auditPayload["role_ids"] = *req.RoleIDs
 	}
-	_ = h.store.WithTenantScoped(r.Context(), p.CustomerID, principalScope(p), func(tx pgx.Tx) error {
+	_ = h.store.WithTenantScope(r.Context(), p.CustomerID, principalScope(p), func(tx pgx.Tx) error {
 		return audit.Record(r.Context(), tx, p.CustomerID, stampActor(p, audit.Entry{
 			Action: "user.update",
 			TargetKind: "user", TargetID: id,
@@ -459,7 +541,7 @@ func (h *Handler) ResetUserPassword(w http.ResponseWriter, r *http.Request) {
 		`UPDATE user_sessions SET revoked_at = now()
 		  WHERE user_id = $1 AND revoked_at IS NULL`, id)
 
-	_ = h.store.WithTenantScoped(r.Context(), p.CustomerID, principalScope(p), func(tx pgx.Tx) error {
+	_ = h.store.WithTenantScope(r.Context(), p.CustomerID, principalScope(p), func(tx pgx.Tx) error {
 		return audit.Record(r.Context(), tx, p.CustomerID, stampActor(p, audit.Entry{
 			Action: "user.reset_password",
 			TargetKind: "user", TargetID: id,
@@ -501,7 +583,7 @@ func (h *Handler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	_ = h.store.WithTenantScoped(r.Context(), p.CustomerID, principalScope(p), func(tx pgx.Tx) error {
+	_ = h.store.WithTenantScope(r.Context(), p.CustomerID, principalScope(p), func(tx pgx.Tx) error {
 		return audit.Record(r.Context(), tx, p.CustomerID, stampActor(p, audit.Entry{
 			Action: "user.delete",
 			TargetKind: "user", TargetID: id,
@@ -531,18 +613,35 @@ func (h *Handler) validateRoleIDsInTenant(ctx context.Context, customerID string
 	return nil
 }
 
-func (h *Handler) validateBuildingIDsInTenant(ctx context.Context, customerID string, ids []string) error {
-	if len(ids) == 0 {
-		return nil
+// validateScopeInTenant confirms every id at every level belongs to the
+// caller's tenant — planting a foreign UUID is the one way to defeat the RLS
+// scope policies, so this runs before any scope is written.
+func (h *Handler) validateScopeInTenant(ctx context.Context, customerID string, sc db.Scope) error {
+	if err := h.validateBusinessUnitIDsInTenant(ctx, customerID, sc.BusinessUnits); err != nil {
+		return err
 	}
-	var count int
-	if err := h.store.AdminPool().QueryRow(ctx,
-		`SELECT count(*)::int FROM buildings WHERE customer_id = $1 AND id = ANY($2::uuid[])`,
-		customerID, ids).Scan(&count); err != nil {
-		return errors.New("could not validate buildings")
-	}
-	if count != len(ids) {
-		return errors.New("one or more building_scope_ids don't belong to this tenant")
+	for _, lvl := range []struct {
+		table, field string
+		ids          []string
+	}{
+		{"regions", "region_scope_ids", sc.Regions},
+		{"locations", "location_scope_ids", sc.Locations},
+		{"buildings", "building_scope_ids", sc.Buildings},
+		{"rooms", "room_scope_ids", sc.Rooms},
+	} {
+		if len(lvl.ids) == 0 {
+			continue
+		}
+		var count int
+		// Table name comes from the fixed list above, never from input.
+		if err := h.store.AdminPool().QueryRow(ctx,
+			`SELECT count(*)::int FROM `+lvl.table+` WHERE customer_id = $1 AND id = ANY($2::uuid[])`,
+			customerID, lvl.ids).Scan(&count); err != nil {
+			return errors.New("could not validate " + lvl.field)
+		}
+		if count != len(lvl.ids) {
+			return errors.New("one or more " + lvl.field + " don't belong to this tenant")
+		}
 	}
 	return nil
 }

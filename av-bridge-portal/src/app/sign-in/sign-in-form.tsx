@@ -273,6 +273,7 @@ export function SignInForm({ branding, showVendorSSO = false, slug, appOrigin = 
           role: who.role,
           is_vendor: who.is_vendor,
           permissions: who.permissions ?? [],
+          is_scoped: who.is_scoped,
           landing_page: who.landing_page,
         });
         landing = landingPath(who.landing_page);
