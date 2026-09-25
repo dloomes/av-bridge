@@ -593,21 +593,10 @@ func (a *TesiraAdapter) Poll(ctx context.Context) (*device.Telemetry, error) {
 		}
 	}
 
-	// discoveredServers — JSON array of the Tesira-Server class devices
-	// this unit can see on the network. Count = quick topology check;
-	// full payload preserved for the portal to render if useful.
-	if resp, err := a.sendAndReceive(ctx, "DEVICE get discoveredServers", 3*time.Second); err == nil && strings.HasPrefix(resp, "+OK") {
-		raw := parseTTPValue(resp)
-		if strings.HasPrefix(strings.TrimSpace(raw), "[") {
-			var arr []any
-			if err := tesiraUnmarshal(raw, &arr); err == nil {
-				metrics["discovered_server_count"] = len(arr)
-				if len(arr) > 0 {
-					metrics["discovered_servers"] = arr
-				}
-			}
-		}
-	}
+	// discoveredServers and ptpInfo were queried here until 2026-09: both
+	// return raw nested arrays that operators found noise on the device
+	// page, and each cost a TTP round-trip per poll. Re-add as opt-in if
+	// a topology / AVB clock view is ever built.
 
 	// PoE status — only meaningful on PoE-capable models (some
 	// TesiraFORTE variants). Silent skip on -ERR / unsupported.
@@ -616,17 +605,6 @@ func (a *TesiraAdapter) Poll(ctx context.Context) (*device.Telemetry, error) {
 			var obj map[string]any
 			if err := tesiraUnmarshal(raw, &obj); err == nil {
 				metrics["poe_info"] = obj
-			}
-		}
-	}
-
-	// PTP / clock sync — critical for AVB/Dante models. Empty array
-	// on models without PTP; not an error.
-	if resp, err := a.sendAndReceive(ctx, "DEVICE get ptpInfo", 3*time.Second); err == nil && strings.HasPrefix(resp, "+OK") {
-		if raw := parseTTPValue(resp); raw != "" && strings.HasPrefix(strings.TrimSpace(raw), "[") {
-			var arr []any
-			if err := tesiraUnmarshal(raw, &arr); err == nil && len(arr) > 0 {
-				metrics["ptp_info"] = arr
 			}
 		}
 	}
