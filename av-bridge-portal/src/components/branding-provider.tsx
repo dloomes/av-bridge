@@ -10,6 +10,7 @@ import {
 import { api, type Branding } from "@/lib/api";
 import { hexToHslTriple } from "@/lib/hex-to-hsl";
 import { useSession } from "@/hooks/useSession";
+import { PRODUCT_NAME } from "@/lib/brand";
 
 // BrandingContext hands the current tenant's logo + accent + display name
 // down to consumers (page header, tab title, sign-in fallback). A `refresh`
@@ -81,7 +82,7 @@ export function BrandingProvider({ children }: { children: React.ReactNode }) {
   // branding becomes {} on logout.
   useEffect(() => {
     applyAccent(branding.accent_color);
-    document.title = branding.display_name || "AV Bridge";
+    document.title = branding.display_name || PRODUCT_NAME;
   }, [branding]);
 
   return (

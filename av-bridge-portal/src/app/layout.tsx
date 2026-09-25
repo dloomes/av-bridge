@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { PRODUCT_NAME } from "@/lib/brand";
 import "./globals.css";
 import { AppShell } from "@/components/app-shell";
 
@@ -13,8 +14,8 @@ function envTitlePrefix(): string {
 }
 
 export const metadata: Metadata = {
-  title: `${envTitlePrefix()}AV Bridge`,
-  description: "On-prem AV device gateway portal",
+  title: `${envTitlePrefix()}${PRODUCT_NAME}`,
+  description: "Monitoring, control and automation for AV and video collaboration estates",
 };
 
 // Env stripe tone — mirrors the sidebar footer badge palette. Kept inline

@@ -33,19 +33,19 @@ const PRESENTATION: Record<
   { title: string; blurb: string; platform: string }
 > = {
   "av-bridge-windows-amd64.exe": {
-    title: "AV Bridge Collector",
+    title: "M.A.R.C.U.S. Collector",
     blurb:
       "On-prem collector binary. Windows 10 / 11 and Windows Server 2016+. Runs as a Windows Service.",
     platform: "Windows · amd64",
   },
   "av-bridge-linux-amd64": {
-    title: "AV Bridge Collector",
+    title: "M.A.R.C.U.S. Collector",
     blurb:
       "On-prem collector binary. Ubuntu / Debian / RHEL x86_64 hosts. Runs as a systemd unit.",
     platform: "Linux · amd64",
   },
   "av-bridge-linux-arm64": {
-    title: "AV Bridge Collector",
+    title: "M.A.R.C.U.S. Collector",
     blurb:
       "On-prem collector binary for ARM64 hosts — Raspberry Pi 4/5, AWS Graviton, Ampere. Runs as a systemd unit.",
     platform: "Linux · arm64",

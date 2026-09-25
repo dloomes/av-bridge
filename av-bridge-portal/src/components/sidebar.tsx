@@ -35,6 +35,7 @@ import { api } from "@/lib/api";
 import { hasPermission, isAdmin } from "@/lib/session";
 import { cn } from "@/lib/utils";
 import type { AlertsSummary } from "@/lib/types";
+import { PRODUCT_NAME } from "@/lib/brand";
 
 // NavItem groups per-section entries with an optional badge. Grouping keeps
 // the sidebar scannable — one glance says "this is Monitor, that is Manage."
@@ -195,13 +196,12 @@ export function Sidebar() {
             className="h-8 w-8 rounded-md object-contain bg-white/5 p-0.5"
           />
         ) : (
-          <div className="h-8 w-8 rounded-md bg-primary/20 ring-1 ring-primary/30 flex items-center justify-center">
-            <Radio className="h-4 w-4 text-primary" />
-          </div>
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src="/marcus-ring.png" alt="" className="h-8 w-8 object-contain" />
         )}
         <div>
           <div className="font-semibold text-sm leading-tight">
-            {branding.display_name || "Medio Assist"}
+            {branding.display_name || PRODUCT_NAME}
           </div>
           <div className="text-xs text-sidebar-foreground/50 leading-tight">
             AV Monitoring

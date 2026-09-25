@@ -9,6 +9,7 @@ import { useBranding } from "@/components/branding-provider";
 import { useSession } from "@/hooks/useSession";
 import { setScope } from "@/lib/session";
 import { api } from "@/lib/api";
+import { PRODUCT_NAME } from "@/lib/brand";
 
 // Byte caps on the two image uploads. Backend enforces the same caps
 // (maxLogoBytes / maxHeroBytes in branding.go) so oversized files never
@@ -232,7 +233,7 @@ export default function BrandingPage() {
                   Product name
                 </label>
                 <p className="text-xs text-muted-foreground">
-                  Overrides the default "AV Bridge" wordmark shown in the header
+                  Overrides the default &ldquo;M.A.R.C.U.S.&rdquo; wordmark shown in the header
                   and browser tab. Leave blank to fall back to the default.
                 </p>
                 <input
@@ -240,7 +241,7 @@ export default function BrandingPage() {
                   type="text"
                   value={displayName}
                   onChange={(e) => setDisplayName(e.target.value)}
-                  placeholder="AV Bridge"
+                  placeholder={PRODUCT_NAME}
                   maxLength={64}
                   className="w-full max-w-sm rounded-md border bg-background px-3 py-2 text-sm"
                 />
@@ -656,7 +657,7 @@ export default function BrandingPage() {
               <p className="text-xs text-muted-foreground">
                 The sidebar and page headers update as soon as you save. This
                 card shows what the branding looks like right now — the tab title
-                also switches to "{displayName || "AV Bridge"}".
+                also switches to &ldquo;{displayName || PRODUCT_NAME}&rdquo;.
               </p>
               <div className="mt-4 flex items-center gap-3 rounded-md border bg-muted/30 p-4">
                 {logoDataURL ? (
@@ -670,7 +671,7 @@ export default function BrandingPage() {
                 )}
                 <div className="flex-1">
                   <div className="text-lg font-semibold">
-                    {displayName || "AV Bridge"}
+                    {displayName || PRODUCT_NAME}
                   </div>
                   <div className="text-xs text-muted-foreground">
                     Sample header

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { PRODUCT_NAME } from "@/lib/brand";
 
 interface Props {
   intervalMs?: number;
@@ -56,7 +57,7 @@ export function ConnectionIndicator({ intervalMs = 10_000 }: Props) {
       title={`Connected to ${upstreamHost}`}
     >
       <span className={cn("h-2 w-2 rounded-full", dot)} />
-      <span className="text-foreground/80">av-bridge</span>
+      <span className="text-foreground/80">{PRODUCT_NAME}</span>
       <span className="text-muted-foreground">·</span>
       <span className="font-mono text-foreground/80">{upstreamHost}</span>
       <span className="text-muted-foreground">·</span>

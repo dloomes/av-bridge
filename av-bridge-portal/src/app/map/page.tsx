@@ -43,6 +43,7 @@ import type {
   FleetStatus,
 } from "@/lib/types";
 import type { BuildingsMapEntry } from "@/components/buildings-map";
+import { PRODUCT_NAME } from "@/lib/brand";
 
 // Mapbox GL touches window at import time, so the whole map component
 // has to skip SSR. This dynamic import keeps the rest of the page
@@ -194,7 +195,7 @@ export default function MapPage() {
           )}
           <div>
             <h1 className="text-xl font-semibold">
-              {branding.display_name || "AV Bridge"} · Map
+              {branding.display_name || PRODUCT_NAME} · Map
             </h1>
             <p className="text-sm text-muted-foreground">
               Geographic view of every building on the fleet · refreshes every 15s
@@ -243,7 +244,7 @@ export default function MapPage() {
                   <AlertTriangle className="h-4 w-4 mt-0.5 [color:hsl(var(--destructive))]" />
                   <div>
                     <div className="font-medium [color:hsl(var(--destructive))]">
-                      Cannot reach av-bridge
+                      Cannot reach M.A.R.C.U.S. Cloud
                     </div>
                     <div className="text-muted-foreground mt-0.5">
                       {fleet.error.message}

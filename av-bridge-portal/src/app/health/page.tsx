@@ -10,7 +10,7 @@ import { UserMenu } from "@/components/user-menu";
 import { usePolling } from "@/hooks/usePolling";
 import { api, API_BASE } from "@/lib/api";
 
-const UPSTREAM_LABEL = API_BASE || "av-bridge (proxied via Next.js)";
+const UPSTREAM_LABEL = API_BASE || "M.A.R.C.U.S. Cloud (proxied via Next.js)";
 import type { FleetStatus, HealthResponse } from "@/lib/types";
 
 export default function HealthPage() {

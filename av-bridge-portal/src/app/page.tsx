@@ -34,6 +34,7 @@ import type {
   DeviceSummary,
   FleetStatus,
 } from "@/lib/types";
+import { PRODUCT_NAME } from "@/lib/brand";
 
 // Building-level "map" tile aggregates the four fleet statuses for a
 // single building. Composed on the client from the same /api/v1/devices
@@ -207,7 +208,7 @@ export default function DashboardPage() {
           )}
           <div>
             <h1 className="text-xl font-semibold">
-              {branding.display_name || "AV Bridge"} · Overview
+              {branding.display_name || PRODUCT_NAME} · Overview
             </h1>
             <p className="text-sm text-muted-foreground">
               Fleet-wide summary and building tiles · refreshes every 15s
@@ -251,7 +252,7 @@ export default function DashboardPage() {
                   <AlertTriangle className="h-4 w-4 mt-0.5 [color:hsl(var(--destructive))]" />
                   <div>
                     <div className="font-medium [color:hsl(var(--destructive))]">
-                      Cannot reach av-bridge
+                      Cannot reach M.A.R.C.U.S. Cloud
                     </div>
                     <div className="text-muted-foreground mt-0.5">
                       {fleet.error.message}

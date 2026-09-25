@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { api, type Branding } from "@/lib/api";
 import { hexToHslTriple } from "@/lib/hex-to-hsl";
 import { buildMockToken, landingPath, signIn, type SessionUser } from "@/lib/session";
+import { PRODUCT_NAME } from "@/lib/brand";
 
 // Human-readable labels for the ?entra_error= codes the callback sets on
 // its bounce-back. The codes are ours (not Microsoft's — we normalise
@@ -143,25 +144,6 @@ const PRESETS: Array<{
 
 const DEV_SHORTCUTS_ENABLED =
   process.env.NEXT_PUBLIC_AV_BRIDGE_ENABLE_DEV_SIGNINS === "true";
-
-// Signal-bars brand mark. Three ascending vertical bars — reads as "signal
-// strength / live monitoring". Used when the customer hasn't uploaded a
-// logo. The tallest bar uses `fill-primary`, so a customer accent flows
-// through it automatically.
-function SignalBarsMark({ className }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 20 20"
-      fill="none"
-      aria-hidden="true"
-      className={className}
-    >
-      <rect x="3" y="12" width="3" height="5" rx="0.8" className="fill-sidebar-foreground/40" />
-      <rect x="8.5" y="8" width="3" height="9" rx="0.8" className="fill-sidebar-foreground/85" />
-      <rect x="14" y="4" width="3" height="13" rx="0.8" className="fill-primary" />
-    </svg>
-  );
-}
 
 // Compact two-letter derivation for the mark fallback when a customer has
 // a display_name but no uploaded logo. "Acme Corp" → "AC", "Initech" → "I".
@@ -319,7 +301,7 @@ export function SignInForm({ branding, showVendorSSO = false, slug, appOrigin = 
     ? "Signing in…"
     : displayName
     ? `Sign in to ${displayName}`
-    : "Sign in to av-bridge";
+    : `Sign in to ${PRODUCT_NAME}`;
 
   return (
     <div
@@ -373,9 +355,9 @@ export function SignInForm({ branding, showVendorSSO = false, slug, appOrigin = 
         </div>
 
         {/* Brand row — logo tile + wordmark. Three states:
-              1. No branding                  → signal-bars mark + "av/bridge"
-              2. display_name, no logo        → initials tile + "<name> · on av-bridge"
-              3. logo_data_url present         → uploaded logo + "<name> · on av-bridge"
+              1. No branding                  → M.A.R.C.U.S. ring + wordmark
+              2. display_name, no logo        → initials tile + "<name> · on M.A.R.C.U.S."
+              3. logo_data_url present         → uploaded logo + "<name> · on M.A.R.C.U.S."
             The tile has fixed footprint (36px) either way so the layout doesn't
             reflow when branding hydrates. */}
         <div className="relative flex items-center gap-3 animate-fade-in">
@@ -395,9 +377,8 @@ export function SignInForm({ branding, showVendorSSO = false, slug, appOrigin = 
               {initialsFor(displayName)}
             </div>
           ) : (
-            <div className="h-9 w-9 rounded-md bg-sidebar-foreground/5 border border-sidebar-foreground/10 flex items-center justify-center shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
-              <SignalBarsMark className="h-5 w-5" />
-            </div>
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src="/marcus-ring.png" alt="" className="h-9 w-9 object-contain" />
           )}
 
           {displayName ? (
@@ -406,13 +387,11 @@ export function SignInForm({ branding, showVendorSSO = false, slug, appOrigin = 
                 {displayName}
               </span>
               <span className="font-mono text-[11px] tracking-wider text-sidebar-foreground/50">
-                on av-bridge
+                on {PRODUCT_NAME}
               </span>
             </div>
           ) : (
-            <div className="font-mono text-sm tracking-tight">
-              av<span className="mx-1 text-sidebar-foreground/40">/</span>bridge
-            </div>
+            <div className="text-[17px] font-semibold tracking-tight">{PRODUCT_NAME}</div>
           )}
         </div>
 
@@ -444,7 +423,7 @@ export function SignInForm({ branding, showVendorSSO = false, slug, appOrigin = 
             />
             All systems operational
           </span>
-          <span>© involve · av-bridge</span>
+          <span>© Involve · {PRODUCT_NAME}</span>
         </div>
       </section>
 
