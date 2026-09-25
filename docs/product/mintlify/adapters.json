@@ -1,0 +1,611 @@
+[
+  {
+    "id": "aten_pdu",
+    "name": "ATEN eco PDU",
+    "vendor": "ATEN",
+    "kind": "vendor",
+    "description": "ATEN eco PDU range (PE6108G and siblings) over the Telnet CLI on port 23. Per-outlet on/off/reboot control and per-outlet power metering; device-level voltage and total power draw.",
+    "device_types": [
+      "control"
+    ],
+    "power": {
+      "on": false,
+      "off": false
+    },
+    "commands": [
+      "outlet_on",
+      "outlet_off",
+      "outlet_reboot"
+    ],
+    "metrics": [
+      "voltage_v",
+      "total_power_w",
+      "outlet_count",
+      "response_ms",
+      "outlet_1_state",
+      "outlet_1_current_a",
+      "outlet_1_power_w",
+      "outlet_1_name",
+      "outlet_2_state",
+      "outlet_2_current_a",
+      "outlet_2_power_w",
+      "outlet_2_name",
+      "outlet_3_state",
+      "outlet_3_current_a",
+      "outlet_3_power_w",
+      "outlet_3_name",
+      "outlet_4_state",
+      "outlet_4_current_a",
+      "outlet_4_power_w",
+      "outlet_4_name",
+      "outlet_5_state",
+      "outlet_5_current_a",
+      "outlet_5_power_w",
+      "outlet_5_name",
+      "outlet_6_state",
+      "outlet_6_current_a",
+      "outlet_6_power_w",
+      "outlet_6_name",
+      "outlet_7_state",
+      "outlet_7_current_a",
+      "outlet_7_power_w",
+      "outlet_7_name",
+      "outlet_8_state",
+      "outlet_8_current_a",
+      "outlet_8_power_w",
+      "outlet_8_name"
+    ],
+    "config_schema": [
+      {
+        "name": "address",
+        "required": true,
+        "description": "PDU IP or host. Port 23 is the ATEN Telnet default; append :port to override.",
+        "example": "192.168.90.10"
+      },
+      {
+        "name": "username",
+        "required": true,
+        "description": "Admin username configured on the PDU.",
+        "example": "administrator"
+      },
+      {
+        "name": "password",
+        "required": true,
+        "description": "Admin password.",
+        "example": "${ATEN_PASSWORD}"
+      },
+      {
+        "name": "poll_rate",
+        "required": false,
+        "description": "How often to sample outlet state and power. 30s is a good default — every outlet is queried each poll.",
+        "example": "30s"
+      },
+      {
+        "name": "tags.outlet_count",
+        "required": false,
+        "description": "Override the outlet count for non-PE6108G models. Defaults to 8.",
+        "example": "16"
+      },
+      {
+        "name": "tags.outlet_N_name",
+        "required": false,
+        "description": "Optional per-outlet label override (e.g. tags.outlet_1_name: 'Codec'). Wins over the name configured on the PDU itself.",
+        "example": "Codec"
+      }
+    ],
+    "example_config": "- id: rack-a-pdu\n  name: Rack A PDU\n  type: control\n  protocol: aten_pdu\n  address: 192.168.90.10\n  username: administrator\n  password: ${ATEN_PASSWORD}\n  poll_rate: 30s",
+    "device_count": 0
+  },
+  {
+    "id": "aurora_rxt",
+    "name": "Aurora RXT-x Touch Panels",
+    "vendor": "Aurora Multimedia",
+    "kind": "vendor",
+    "description": "Wall-mount control touch panels. JSON-RPC over Telnet on port 6975, with proximity, lux, and relay control.",
+    "device_types": [
+      "control"
+    ],
+    "power": {
+      "on": false,
+      "off": false
+    },
+    "commands": [
+      "reboot",
+      "factory_default",
+      "test_audio",
+      "mute",
+      "unmute",
+      "auto_brightness_on",
+      "auto_brightness_off",
+      "relay_1_on",
+      "relay_1_off",
+      "relay_1_toggle",
+      "relay_2_on",
+      "relay_2_off",
+      "relay_2_toggle"
+    ],
+    "metrics": [
+      "volume",
+      "mute",
+      "lcd_brightness",
+      "lcd_timeout",
+      "lux",
+      "proximity",
+      "auto_brightness",
+      "relay_1",
+      "relay_2",
+      "event_manager",
+      "response_ms"
+    ],
+    "config_schema": [
+      {
+        "name": "address",
+        "required": true,
+        "description": "Panel IP or hostname (port 6975 is implied).",
+        "example": "192.168.1.50"
+      },
+      {
+        "name": "username",
+        "required": false,
+        "description": "Login username if the panel is secured.",
+        "example": "admin"
+      },
+      {
+        "name": "password",
+        "required": false,
+        "description": "Login password if the panel is secured."
+      }
+    ],
+    "example_config": "- id: reception-panel\n  name: Reception Touch Panel\n  type: control\n  protocol: aurora_rxt\n  address: 192.168.1.50\n  poll_rate: 30s",
+    "device_count": 0
+  },
+  {
+    "id": "aurora_vpx",
+    "name": "Aurora VPX Series",
+    "vendor": "Aurora Multimedia",
+    "kind": "vendor",
+    "description": "AV-over-IP encoders and decoders. JSON over Telnet on port 6970; encoder vs decoder mode is auto-detected at connect.",
+    "device_types": [
+      "display"
+    ],
+    "power": {
+      "on": false,
+      "off": false
+    },
+    "commands": [
+      "reboot",
+      "identify",
+      "stop_identify",
+      "mute",
+      "unmute",
+      "join",
+      "leave",
+      "start_stream",
+      "stop_stream"
+    ],
+    "metrics": [
+      "state",
+      "mode",
+      "fw_version",
+      "mac",
+      "hostname",
+      "ip_address",
+      "ip_mode",
+      "display_mode",
+      "hdmi_hdcp",
+      "hdmi_hpd_in1",
+      "hdmi_hpd_in2",
+      "local_display_source",
+      "stream_source",
+      "stream_status",
+      "video_h_size",
+      "video_v_size",
+      "video_fps"
+    ],
+    "config_schema": [
+      {
+        "name": "address",
+        "required": true,
+        "description": "Encoder or decoder IP (port 6970 is implied).",
+        "example": "192.168.10.20"
+      },
+      {
+        "name": "poll_rate",
+        "required": false,
+        "description": "How often to poll. Defaults to 60s.",
+        "example": "30s"
+      }
+    ],
+    "example_config": "- id: boardroom-vpx\n  name: Boardroom VPX Decoder\n  type: display\n  protocol: aurora_vpx\n  address: 192.168.10.20\n  poll_rate: 30s",
+    "device_count": 0
+  },
+  {
+    "id": "poly_videoos",
+    "name": "Poly VideoOS",
+    "vendor": "HP / Poly",
+    "kind": "vendor",
+    "description": "Studio X and G7500 conferencing codecs. REST with session/XSRF login lifecycle; reads work in appliance (Teams / Zoom Rooms) mode, writes lock.",
+    "device_types": [
+      "conferencing"
+    ],
+    "power": {
+      "on": false,
+      "off": false
+    },
+    "commands": [
+      "dial",
+      "hangup",
+      "mute",
+      "unmute",
+      "vol_up",
+      "vol_dn",
+      "reboot"
+    ],
+    "metrics": [
+      "call_state",
+      "active_calls",
+      "mic_mute",
+      "volume",
+      "device_mode_active",
+      "response_ms"
+    ],
+    "config_schema": [
+      {
+        "name": "address",
+        "required": true,
+        "description": "Codec base URL including scheme.",
+        "example": "https://192.168.20.30"
+      },
+      {
+        "name": "username",
+        "required": true,
+        "description": "Local admin username.",
+        "example": "admin"
+      },
+      {
+        "name": "password",
+        "required": true,
+        "description": "Local admin password."
+      }
+    ],
+    "example_config": "- id: studio-x70\n  name: Boardroom Studio X70\n  type: conferencing\n  protocol: poly_videoos\n  address: https://192.168.20.30\n  username: admin\n  password: ${POLY_PASSWORD}\n  tags:\n    lens_managed: \"true\"",
+    "docs_url": "https://docs.poly.com/",
+    "device_count": 0
+  },
+  {
+    "id": "sony_bravia",
+    "name": "Sony Bravia Professional",
+    "vendor": "Sony",
+    "kind": "vendor",
+    "description": "Bravia Professional Displays. JSON-RPC REST with Pre-Shared Key authentication and Wake-on-LAN power-on support.",
+    "device_types": [
+      "display"
+    ],
+    "power": {
+      "on": true,
+      "off": true
+    },
+    "commands": [
+      "power_on",
+      "power_off",
+      "input_hdmi1",
+      "input_hdmi2",
+      "input_hdmi3",
+      "input_hdmi4",
+      "mute",
+      "unmute",
+      "volume_up",
+      "volume_down"
+    ],
+    "metrics": [
+      "power_status",
+      "power_saving_mode",
+      "current_input",
+      "input_title",
+      "input_source",
+      "volume_speaker",
+      "mute_speaker",
+      "response_ms"
+    ],
+    "config_schema": [
+      {
+        "name": "address",
+        "required": true,
+        "description": "Display base URL (http:// is fine on the LAN).",
+        "example": "http://192.168.30.40"
+      },
+      {
+        "name": "password",
+        "required": true,
+        "description": "Pre-Shared Key configured on the display."
+      },
+      {
+        "name": "tags.mac_address",
+        "required": false,
+        "description": "MAC for Wake-on-LAN. Discovered automatically once the display is powered on; set explicitly if power_on must work from a cold start.",
+        "example": "AA:BB:CC:11:22:33"
+      }
+    ],
+    "example_config": "- id: waiting-room-tv\n  name: Waiting Room Display\n  type: display\n  protocol: sony_bravia\n  address: http://192.168.30.40\n  password: ${BRAVIA_PSK}",
+    "device_count": 0
+  },
+  {
+    "id": "tesira",
+    "name": "Biamp Tesira",
+    "vendor": "Biamp",
+    "kind": "vendor",
+    "description": "Tesira DSPs over TTP (Telnet). Subscription-based metrics; commands are TTP strings you define per device.",
+    "device_types": [
+      "audio"
+    ],
+    "power": {
+      "on": false,
+      "off": false
+    },
+    "dynamic_commands": true,
+    "config_schema": [
+      {
+        "name": "address",
+        "required": true,
+        "description": "DSP IP (Telnet port 23 is implied).",
+        "example": "192.168.40.10"
+      },
+      {
+        "name": "username",
+        "required": false,
+        "description": "Login username, if login security is enabled on the Tesira."
+      },
+      {
+        "name": "password",
+        "required": false,
+        "description": "Login password, if login security is enabled on the Tesira."
+      },
+      {
+        "name": "commands",
+        "required": false,
+        "description": "Named TTP command map (\u003cinstance tag\u003e \u003cverb\u003e \u003cattribute\u003e \u003cchannel\u003e [value]). Each entry becomes a button in the portal; {name} placeholders are prompted for when the button is pressed."
+      },
+      {
+        "name": "subscriptions",
+        "required": false,
+        "description": "Push-notification subscriptions. Each becomes a live metric."
+      }
+    ],
+    "example_config": "- id: main-hall-dsp\n  name: Main Hall Tesira\n  type: audio\n  protocol: tesira\n  address: 192.168.40.10\n  commands:\n    mute: master_level set mute 1 true\n    unmute: master_level set mute 1 false\n    toggle_mute: master_level toggle mute 1\n    vol_up: master_level increment level 1 3\n    vol_down: master_level decrement level 1 3\n    set_level: master_level set level 1 {level}\n    recall_preset: DEVICE recallPreset {preset}\n  subscriptions:\n    - tag: master_level\n      attribute: level\n      channel: 1\n      label: master_level_db\n      rate: 500",
+    "device_count": 0
+  },
+  {
+    "id": "visca_over_ip",
+    "name": "VISCA-over-IP (PTZ cameras)",
+    "vendor": "Sony standard",
+    "kind": "vendor",
+    "description": "Sony VISCA-over-IP on UDP 52381. Cross-vendor: works with Sony BRC/SRG, Panasonic AW-UE, PTZOptics, HuddleCam, Marshall CV, Lumens VC-A61P and other VISCA-compliant PTZ cameras.",
+    "device_types": [
+      "camera"
+    ],
+    "power": {
+      "on": true,
+      "off": true
+    },
+    "commands": [
+      "power_on",
+      "power_off",
+      "zoom_stop",
+      "zoom_tele",
+      "zoom_wide",
+      "zoom_direct",
+      "focus_auto",
+      "focus_manual",
+      "focus_one_push",
+      "preset_recall",
+      "preset_set",
+      "pan_left",
+      "pan_right",
+      "tilt_up",
+      "tilt_down",
+      "pan_tilt_stop",
+      "pan_tilt_home"
+    ],
+    "metrics": [
+      "power",
+      "zoom_position",
+      "zoom_percent",
+      "version",
+      "response_ms"
+    ],
+    "config_schema": [
+      {
+        "name": "address",
+        "required": true,
+        "description": "Camera IP or host. Port 52381 is the Sony default; append :port to override.",
+        "example": "192.168.50.20"
+      },
+      {
+        "name": "poll_rate",
+        "required": false,
+        "description": "How often to inquire power/zoom. Defaults to 30s.",
+        "example": "30s"
+      }
+    ],
+    "example_config": "- id: boardroom-cam\n  name: Boardroom PTZ\n  type: camera\n  protocol: visca_over_ip\n  address: 192.168.50.20\n  poll_rate: 30s",
+    "device_count": 0
+  },
+  {
+    "id": "rest",
+    "name": "Generic REST",
+    "kind": "transport",
+    "description": "HTTP GET-based polling for devices that expose a plain REST endpoint. Use as a starting point when no vendor adapter fits.",
+    "device_types": [
+      "display",
+      "conferencing",
+      "audio",
+      "camera",
+      "control"
+    ],
+    "power": {
+      "on": false,
+      "off": false
+    },
+    "config_schema": [
+      {
+        "name": "address",
+        "required": true,
+        "description": "Full URL to the endpoint being polled.",
+        "example": "http://192.168.50.10/api/status"
+      },
+      {
+        "name": "username",
+        "required": false,
+        "description": "HTTP Basic username if the endpoint requires auth."
+      },
+      {
+        "name": "password",
+        "required": false,
+        "description": "HTTP Basic password if the endpoint requires auth."
+      }
+    ],
+    "example_config": "- id: custom-rest-device\n  name: Custom REST Device\n  type: control\n  protocol: rest\n  address: http://192.168.50.10/api/status\n  poll_rate: 60s",
+    "device_count": 0
+  },
+  {
+    "id": "websocket",
+    "name": "Generic WebSocket",
+    "kind": "transport",
+    "description": "Long-lived WebSocket connection with periodic keep-alive probes. Suitable for devices that push state as JSON frames.",
+    "device_types": [
+      "display",
+      "conferencing",
+      "audio",
+      "camera",
+      "control"
+    ],
+    "power": {
+      "on": false,
+      "off": false
+    },
+    "config_schema": [
+      {
+        "name": "address",
+        "required": true,
+        "description": "ws:// or wss:// URL of the endpoint.",
+        "example": "wss://192.168.60.10/socket"
+      }
+    ],
+    "example_config": "- id: custom-ws-device\n  name: Custom WebSocket Device\n  type: control\n  protocol: websocket\n  address: wss://192.168.60.10/socket",
+    "device_count": 0
+  },
+  {
+    "id": "telnet",
+    "name": "Generic Telnet",
+    "kind": "transport",
+    "description": "Raw line-oriented Telnet transport. Custom command strings sent as configured; useful for legacy AV gear.",
+    "device_types": [
+      "display",
+      "audio",
+      "camera",
+      "control"
+    ],
+    "power": {
+      "on": false,
+      "off": false
+    },
+    "config_schema": [
+      {
+        "name": "address",
+        "required": true,
+        "description": "host:port of the Telnet endpoint.",
+        "example": "192.168.70.10:23"
+      },
+      {
+        "name": "commands",
+        "required": false,
+        "description": "Named command strings sent on demand from the portal."
+      }
+    ],
+    "example_config": "- id: custom-telnet-device\n  name: Custom Telnet Device\n  type: control\n  protocol: telnet\n  address: 192.168.70.10:23",
+    "device_count": 0
+  },
+  {
+    "id": "serial",
+    "name": "Generic Serial (RS-232)",
+    "kind": "transport",
+    "description": "Direct RS-232 to a device wired to the collector host. Baud rate configurable; commands sent as raw byte strings.",
+    "device_types": [
+      "display",
+      "audio",
+      "camera",
+      "control"
+    ],
+    "power": {
+      "on": false,
+      "off": false
+    },
+    "config_schema": [
+      {
+        "name": "address",
+        "required": true,
+        "description": "Serial device path on the host running the collector.",
+        "example": "/dev/ttyUSB0"
+      },
+      {
+        "name": "baud_rate",
+        "required": false,
+        "description": "Baud rate. Defaults to 9600.",
+        "example": "115200"
+      }
+    ],
+    "example_config": "- id: projector-rs232\n  name: Auditorium Projector\n  type: display\n  protocol: serial\n  address: /dev/ttyUSB0\n  baud_rate: 9600",
+    "device_count": 0
+  },
+  {
+    "id": "ping",
+    "name": "ICMP Ping",
+    "kind": "probe",
+    "description": "Network reachability probe. Sends ICMP echoes and records loss and latency. Use for devices with no vendor API — a switch, an unmanaged panel, an IP camera.",
+    "device_types": [
+      "display",
+      "conferencing",
+      "audio",
+      "camera",
+      "control"
+    ],
+    "power": {
+      "on": false,
+      "off": false
+    },
+    "commands": [
+      "ping"
+    ],
+    "metrics": [
+      "reachable",
+      "packets_sent",
+      "packets_recv",
+      "packet_loss_pct",
+      "response_ms",
+      "min_ms",
+      "max_ms"
+    ],
+    "config_schema": [
+      {
+        "name": "address",
+        "required": true,
+        "description": "IP address or hostname to probe.",
+        "example": "192.168.80.10"
+      },
+      {
+        "name": "tags.ping_count",
+        "required": false,
+        "description": "Packets per probe cycle. Defaults to 3.",
+        "example": "5"
+      },
+      {
+        "name": "tags.ping_timeout_ms",
+        "required": false,
+        "description": "Per-packet timeout. Defaults to 1000ms.",
+        "example": "2000"
+      }
+    ],
+    "example_config": "- id: floor-2-switch\n  name: Floor 2 Access Switch\n  type: control\n  protocol: ping\n  address: 192.168.80.10\n  poll_rate: 60s",
+    "device_count": 0
+  }
+]

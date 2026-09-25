@@ -288,6 +288,8 @@ var catalogue = []Info{
 		Metrics:         nil, // user-defined per device via subscriptions
 		ConfigSchema: []ConfigField{
 			{Name: "address", Required: true, Description: "DSP IP (Telnet port 23 is implied).", Example: "192.168.40.10"},
+			{Name: "username", Required: false, Description: "Login username, if login security is enabled on the Tesira."},
+			{Name: "password", Required: false, Description: "Login password, if login security is enabled on the Tesira."},
 			{Name: "commands", Required: false, Description: "Named TTP command map (<instance tag> <verb> <attribute> <channel> [value]). Each entry becomes a button in the portal; {name} placeholders are prompted for when the button is pressed."},
 			{Name: "subscriptions", Required: false, Description: "Push-notification subscriptions. Each becomes a live metric."},
 		},

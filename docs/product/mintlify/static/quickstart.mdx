@@ -1,0 +1,35 @@
+---
+title: "Quickstart"
+description: "Get from sign-in to live device status in four steps."
+icon: "bolt"
+---
+
+M.A.R.C.U.S. monitors and controls the AV and video collaboration equipment across your estate from one portal. It covers displays, codecs, DSPs, cameras, touch panels and PDUs. A small **Collector** on your network talks to your devices and reports to **M.A.R.C.U.S. Cloud**, which is hosted exclusively in the UK. The Collector needs only one outbound firewall rule.
+
+<Steps>
+  <Step title="Sign in to the portal">
+    Sign in with your organisation's Microsoft account, or with the email and password your administrator gave you.
+  </Step>
+  <Step title="Install a Collector">
+    Go to **Collectors** and select **New collector**. Copy the one-line install command it gives you and run it on a Linux or Windows host that can reach your AV network. The Collector shows as online within a minute or so.
+
+    The Collector needs outbound HTTPS (TCP 443) to `*.involvecloud.com` and nothing inbound. See [Network requirements](/deploy/network-requirements).
+  </Step>
+  <Step title="Add your devices">
+    Go to **Devices** and select **New device**. Choose your Collector, pick the device's **Protocol**, enter its address and credentials, and save. The Collector picks the device up within five minutes, and its status and readings then appear on the device page.
+  </Step>
+  <Step title="Get alerted">
+    Go to **Notifications** and add an Email, Microsoft Teams or webhook channel. You'll then hear about problems before your users do.
+  </Step>
+</Steps>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Deploy the Collector" icon="rocket-launch" href="/deploy/overview">
+    Choose a topology, size the host, and install on Linux, Windows, Docker or Kubernetes.
+  </Card>
+  <Card title="Supported devices" icon="plug-circle-check" href="/devices/overview">
+    What each adapter supports, and how to set up each kind of device.
+  </Card>
+</CardGroup>

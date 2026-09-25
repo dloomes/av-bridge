@@ -173,7 +173,7 @@ The Collector installs directly onto a Linux host (`amd64` or `arm64`) and runs 
 
 - A Linux host with systemd that meets the sizing in §4 and the network requirements in §3.
 - Root access (`sudo`) and `curl`.
-- An enrolment token: in the portal, go to **Collectors → Add Collector** and name the Collector. The portal issues a **single-use token** and a ready-to-paste install command.
+- An enrolment token: in the portal, go to **Collectors → New collector** and name the Collector. The portal issues a **single-use token** and a ready-to-paste install command.
 
 ### Run the installer
 
@@ -214,7 +214,7 @@ The Collector installs as a standard Windows service.
 
 - A Windows Server host that meets the sizing in §4 and the network requirements in §3.
 - An elevated (Administrator) PowerShell session.
-- An enrolment token from **Collectors → Add Collector** in the portal.
+- An enrolment token from **Collectors → New collector** in the portal.
 
 ### Run the installer
 
