@@ -65,6 +65,7 @@ const COMMAND_PROMPTS: Record<string, PromptedArg> = {
   outlet_on:     { kind: "number", arg: "outlet", label: "Outlet number to switch ON", min: 1, max: 8 },
   outlet_off:    { kind: "number", arg: "outlet", label: "Outlet number to switch OFF", min: 1, max: 8 },
   outlet_reboot: { kind: "number", arg: "outlet", label: "Outlet number to reboot (power cycle)", min: 1, max: 8 },
+  set_volume:   { kind: "number", arg: "level", label: "Volume level (0–100)", min: 0, max: 100 },
   // NETGEAR M4250 per-port commands. A bare number is expanded to 0/N by
   // the bridge (tags.port_prefix changes that); a full name is used as-is.
   poe_reset:    { kind: "text", arg: "port", label: "Port to power-cycle (PoE)", placeholder: "5 or 0/5" },

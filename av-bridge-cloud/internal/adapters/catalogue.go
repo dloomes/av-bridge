@@ -330,6 +330,45 @@ var catalogue = []Info{
 	},
 
 	{
+		ID:          "philips_sicp",
+		Name:        "Philips Professional Displays",
+		Vendor:      "Philips (PPDS)",
+		Kind:        KindVendor,
+		Description: "Philips professional and signage displays over SICP on TCP port 5000. Power, inputs, volume, mute and backlight; temperature, signal presence, operating hours and identity. Wake-on-LAN for power-on from deep standby.",
+		DeviceTypes: []string{"display"},
+		Power:       PowerCapability{On: true, Off: true},
+		Commands: []string{
+			"power_on", "power_off",
+			"input_hdmi1", "input_hdmi2", "input_hdmi3", "input_hdmi4",
+			"input_displayport", "input_dvi", "input_vga", "input_ops",
+			"set_volume", "volume_up", "volume_down", "mute", "unmute",
+			"backlight_on", "backlight_off",
+			"reboot",
+		},
+		Metrics: []string{
+			"power_status", "current_input", "signal_present", "backlight",
+			"volume", "volume_audio_out", "mute",
+			"temperature_c", "temperature_2_c", "operating_hours",
+			"model", "firmware_version", "serial_number",
+			"response_ms",
+		},
+		ConfigSchema: []ConfigField{
+			{Name: "address", Required: true, Description: "Display IP or hostname. Port 5000 is the SICP default; append :port to override.", Example: "192.168.30.50"},
+			{Name: "tags.monitor_id", Required: false, Description: "The display's Monitor ID (1–255), set in its menu. Defaults to 1.", Example: "1"},
+			{Name: "tags.mac_address", Required: false, Description: "MAC address for Wake-on-LAN, so power_on works when the display's network sleeps in standby.", Example: "AA:BB:CC:11:22:33"},
+		},
+		ExampleConfig: `- id: reception-signage
+  name: Reception Signage
+  type: display
+  protocol: philips_sicp
+  address: 192.168.30.50
+  tags:
+    monitor_id: "1"
+    mac_address: AA:BB:CC:11:22:33`,
+		DocsURL: "https://www.ppds.com/",
+	},
+
+	{
 		ID:          "sony_bravia",
 		Name:        "Sony Bravia Professional",
 		Vendor:      "Sony",

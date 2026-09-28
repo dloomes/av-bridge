@@ -53,6 +53,10 @@ func New(cfg config.DeviceConfig, deps Deps) (device.Device, error) {
 	case "poly_videoos":
 		// Poly VideoOS — G7500, Studio X70/X52/X50/X30; REST with session/XSRF lifecycle
 		return NewPolyVideoOSAdapter(cfg, deps.Lens), nil
+	case "philips_sicp":
+		// Philips professional displays (PPDS signage and meeting-room ranges) —
+		// SICP binary protocol on TCP 5000, Wake-on-LAN for power-on
+		return NewPhilipsSICPAdapter(cfg), nil
 	case "cisco_roomos":
 		// Cisco RoomOS — Room Kit / Room Bar / Board / Desk / Codec series;
 		// xAPI over HTTP(S) (getxml / putxml) with Basic auth
@@ -81,6 +85,6 @@ func New(cfg config.DeviceConfig, deps Deps) (device.Device, error) {
 		return NewFakeAdapter(cfg), nil
 
 	default:
-		return nil, fmt.Errorf("unsupported protocol: %q (supported: rest, websocket, telnet, serial, visca_over_ip, tesira, sony_bravia, poly_videoos, cisco_roomos, aurora_rxt, aurora_vpx, aten_pdu, netgear_m4250, ping, fake)", cfg.Protocol)
+		return nil, fmt.Errorf("unsupported protocol: %q (supported: rest, websocket, telnet, serial, visca_over_ip, tesira, sony_bravia, philips_sicp, poly_videoos, cisco_roomos, aurora_rxt, aurora_vpx, aten_pdu, netgear_m4250, ping, fake)", cfg.Protocol)
 	}
 }

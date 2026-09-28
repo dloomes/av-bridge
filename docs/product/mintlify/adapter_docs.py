@@ -32,6 +32,7 @@ PROMPTS = {
     "outlet_off": "Asks for the outlet number.",
     "outlet_reboot": "Asks for the outlet number (power-cycles it).",
     "dial": "Asks for the address to dial: SIP URI, H.323 address or phone number.",
+    "set_volume": "Asks for the level, 0–100.",
     "poe_reset": "Asks for the port, such as `5` or `0/5`, and power-cycles its PoE.",
     "poe_on": "Asks for the port.",
     "poe_off": "Asks for the port.",
@@ -69,6 +70,21 @@ SUPPLEMENT: dict[str, dict] = {
         ],
         "notes": [
             "> **Power-on:** M.A.R.C.U.S. sends a Wake-on-LAN packet straight to the display's address, then the IP-control power command. The display's MAC address is learned automatically the first time it's reached while switched on; set the `mac_address` tag if you need power-on to work before that.",
+        ],
+    },
+    "philips_sicp": {
+        "sidebar": "Philips displays", "icon": "display",
+        "models": "Philips professional displays from PPDS that support SICP over the network, including the Q-Line, D-Line and T-Line signage and meeting-room ranges.",
+        "connection": "SICP over TCP (port 5000), with Wake-on-LAN for power-on",
+        "before": [
+            "Connect the display to the network and note its IP address. SICP over the network uses port 5000.",
+            "Check the display's **Monitor ID** in its menu (default 1). If it isn't 1, set the `monitor_id` tag.",
+            "So that the display can be powered on remotely, either set its advanced power management (**APM**) to keep the network on in standby (TCP on), or set the `mac_address` tag and turn on Wake-on-LAN.",
+        ],
+        "notes": [
+            "> **Standby:** while the display is in standby it reports its power state, operating hours and identity; input, volume, signal and temperature readings return when it's switched on.",
+            "> **Backlight off** blanks the picture but leaves audio playing, which suits rooms where the screen should go dark without a full power-off.",
+            "> **Older models:** some older platforms only accept the short form of the volume commands. M.A.R.C.U.S. retries with that form automatically.",
         ],
     },
     "poly_videoos": {
