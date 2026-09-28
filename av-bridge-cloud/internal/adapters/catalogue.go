@@ -135,6 +135,50 @@ var catalogue = []Info{
 	},
 
 	{
+		ID:          "netgear_m4250",
+		Name:        "NETGEAR M4250 / M4350",
+		Vendor:      "NETGEAR",
+		Kind:        KindVendor,
+		Description: "NETGEAR AV Line fully managed switches over the CLI on Telnet port 23. Identity, uptime, temperature, fans and power supplies; PoE budget; per-port link, speed and PoE draw; PoE power-cycle and port control.",
+		DeviceTypes: []string{"control"},
+		Power:       PowerCapability{On: false, Off: false},
+		Commands: []string{
+			"reboot",
+			"poe_reset", "poe_on", "poe_off",
+			"port_enable", "port_disable",
+		},
+		Metrics: []string{
+			"model", "system_description", "serial_number", "mac_address",
+			"software_version", "boot_version",
+			"system_name", "system_location", "uptime_s",
+			"temperature_c", "fan_count", "psu_count",
+			"poe_status", "poe_budget_w", "poe_consumed_w", "poe_threshold_w", "poe_ports_delivering",
+			"ports_total", "ports_up",
+			"port_N_link", "port_N_admin", "port_N_speed",
+			"port_N_poe_status", "port_N_poe_power_w", "port_N_poe_class",
+			"fault_count", "faults",
+			"response_ms",
+		},
+		ConfigSchema: []ConfigField{
+			{Name: "address", Required: true, Description: "Switch management IP or hostname. Port 23 is the Telnet default; append :port to override.", Example: "192.168.1.2"},
+			{Name: "username", Required: true, Description: "Switch user with Privileged EXEC (admin) access.", Example: "admin"},
+			{Name: "password", Required: true, Description: "That user's password.", Example: "${NETGEAR_PASSWORD}"},
+			{Name: "poll_rate", Required: false, Description: "How often to poll. Each poll logs in and runs six show commands; 60s suits most sites.", Example: "60s"},
+			{Name: "tags.enable_password", Required: false, Description: "Enable password, if one is set on the switch. Blank by default."},
+			{Name: "tags.port_prefix", Required: false, Description: "Prefix added to a bare port number in port commands. Defaults to 0/ (M4250); use 1/0/ for an M4350 or stack unit 1.", Example: "1/0/"},
+		},
+		ExampleConfig: `- id: av-rack-switch
+  name: AV Rack Switch
+  type: control
+  protocol: netgear_m4250
+  address: 192.168.1.2
+  username: admin
+  password: ${NETGEAR_PASSWORD}
+  poll_rate: 60s`,
+		DocsURL: "https://www.netgear.com/business/wired/switches/fully-managed/",
+	},
+
+	{
 		ID:          "aurora_rxt",
 		Name:        "Aurora RXT-x Touch Panels",
 		Vendor:      "Aurora Multimedia",

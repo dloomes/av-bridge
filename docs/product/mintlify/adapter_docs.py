@@ -32,6 +32,11 @@ PROMPTS = {
     "outlet_off": "Asks for the outlet number.",
     "outlet_reboot": "Asks for the outlet number (power-cycles it).",
     "dial": "Asks for the address to dial: SIP URI, H.323 address or phone number.",
+    "poe_reset": "Asks for the port, such as `5` or `0/5`, and power-cycles its PoE.",
+    "poe_on": "Asks for the port.",
+    "poe_off": "Asks for the port.",
+    "port_enable": "Asks for the port.",
+    "port_disable": "Asks for the port.",
 }
 
 PORTAL_FIELD = {
@@ -155,6 +160,21 @@ SUPPLEMENT: dict[str, dict] = {
         ],
         "notes": [
             "> **Power readings:** per-outlet current and power show the live draw of whatever is plugged in. Energy estimates in Reports use the **Power on** and **Power standby** wattage set on each device's own record.",
+        ],
+    },
+    "netgear_m4250": {
+        "sidebar": "NETGEAR M4250", "icon": "network-wired",
+        "models": "NETGEAR AV Line fully managed switches: the M4250 series and the M4350 series.",
+        "connection": "Switch CLI over Telnet (TCP 23)",
+        "before": [
+            "Check Telnet is enabled on the switch. It is by default (`ip telnet server enable`).",
+            "Note a username and password for a switch user with admin (Privileged EXEC) access. If an enable password is set, add it as the `enable_password` tag.",
+            "For an M4350, set the `port_prefix` tag to `1/0/` so port numbers in commands match its unit/slot/port names.",
+        ],
+        "notes": [
+            "> **Port readings:** each front-panel port reports its link state, speed, admin state and, on PoE models, its PoE status, class and power draw in watts. Readings are named by port number, such as **Port 5 Link** and **Port 5 Poe Power W**. On a non-PoE model the PoE readings are left out.",
+            "> **Faults:** **Faults** lists failed fans or power supplies, temperature sensors outside their normal range, PoE port faults and a faulty PoE controller.",
+            "> **Commands change the running configuration only.** **PoE Reset** power-cycles the device on a port, such as a touch panel or camera. PoE on/off and port enable/disable are not saved to the switch's startup configuration, so rebooting the switch restores its saved settings. **Reboot** restarts the switch without saving unsaved changes.",
         ],
     },
     "rest": {

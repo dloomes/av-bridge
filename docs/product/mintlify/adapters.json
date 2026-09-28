@@ -97,6 +97,98 @@
     "device_count": 0
   },
   {
+    "id": "netgear_m4250",
+    "name": "NETGEAR M4250 / M4350",
+    "vendor": "NETGEAR",
+    "kind": "vendor",
+    "description": "NETGEAR AV Line fully managed switches over the CLI on Telnet port 23. Identity, uptime, temperature, fans and power supplies; PoE budget; per-port link, speed and PoE draw; PoE power-cycle and port control.",
+    "device_types": [
+      "control"
+    ],
+    "power": {
+      "on": false,
+      "off": false
+    },
+    "commands": [
+      "reboot",
+      "poe_reset",
+      "poe_on",
+      "poe_off",
+      "port_enable",
+      "port_disable"
+    ],
+    "metrics": [
+      "model",
+      "system_description",
+      "serial_number",
+      "mac_address",
+      "software_version",
+      "boot_version",
+      "system_name",
+      "system_location",
+      "uptime_s",
+      "temperature_c",
+      "fan_count",
+      "psu_count",
+      "poe_status",
+      "poe_budget_w",
+      "poe_consumed_w",
+      "poe_threshold_w",
+      "poe_ports_delivering",
+      "ports_total",
+      "ports_up",
+      "port_N_link",
+      "port_N_admin",
+      "port_N_speed",
+      "port_N_poe_status",
+      "port_N_poe_power_w",
+      "port_N_poe_class",
+      "fault_count",
+      "faults",
+      "response_ms"
+    ],
+    "config_schema": [
+      {
+        "name": "address",
+        "required": true,
+        "description": "Switch management IP or hostname. Port 23 is the Telnet default; append :port to override.",
+        "example": "192.168.1.2"
+      },
+      {
+        "name": "username",
+        "required": true,
+        "description": "Switch user with Privileged EXEC (admin) access.",
+        "example": "admin"
+      },
+      {
+        "name": "password",
+        "required": true,
+        "description": "That user's password.",
+        "example": "${NETGEAR_PASSWORD}"
+      },
+      {
+        "name": "poll_rate",
+        "required": false,
+        "description": "How often to poll. Each poll logs in and runs six show commands; 60s suits most sites.",
+        "example": "60s"
+      },
+      {
+        "name": "tags.enable_password",
+        "required": false,
+        "description": "Enable password, if one is set on the switch. Blank by default."
+      },
+      {
+        "name": "tags.port_prefix",
+        "required": false,
+        "description": "Prefix added to a bare port number in port commands. Defaults to 0/ (M4250); use 1/0/ for an M4350 or stack unit 1.",
+        "example": "1/0/"
+      }
+    ],
+    "example_config": "- id: av-rack-switch\n  name: AV Rack Switch\n  type: control\n  protocol: netgear_m4250\n  address: 192.168.1.2\n  username: admin\n  password: ${NETGEAR_PASSWORD}\n  poll_rate: 60s",
+    "docs_url": "https://www.netgear.com/business/wired/switches/fully-managed/",
+    "device_count": 0
+  },
+  {
     "id": "aurora_rxt",
     "name": "Aurora RXT-x Touch Panels",
     "vendor": "Aurora Multimedia",

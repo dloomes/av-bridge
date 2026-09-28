@@ -68,6 +68,10 @@ func New(cfg config.DeviceConfig, deps Deps) (device.Device, error) {
 		// ATEN eco PDU range (PE6108G and siblings) — Telnet CLI on port 23
 		// with per-outlet switching and per-outlet power metering
 		return NewATENPDUAdapter(cfg), nil
+	case "netgear_m4250":
+		// NETGEAR M4250 / M4350 (AV Line) managed switches — Telnet CLI on
+		// port 23; PoE budget and per-port PoE/link state, PoE power-cycle
+		return NewNetgearM4250Adapter(cfg), nil
 	case "ping":
 		// ICMP reachability probe for devices with no vendor API
 		return NewPingAdapter(cfg), nil
@@ -77,6 +81,6 @@ func New(cfg config.DeviceConfig, deps Deps) (device.Device, error) {
 		return NewFakeAdapter(cfg), nil
 
 	default:
-		return nil, fmt.Errorf("unsupported protocol: %q (supported: rest, websocket, telnet, serial, visca_over_ip, tesira, sony_bravia, poly_videoos, cisco_roomos, aurora_rxt, aurora_vpx, aten_pdu, ping, fake)", cfg.Protocol)
+		return nil, fmt.Errorf("unsupported protocol: %q (supported: rest, websocket, telnet, serial, visca_over_ip, tesira, sony_bravia, poly_videoos, cisco_roomos, aurora_rxt, aurora_vpx, aten_pdu, netgear_m4250, ping, fake)", cfg.Protocol)
 	}
 }
