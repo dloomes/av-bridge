@@ -2,6 +2,7 @@ package portalapi
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -638,7 +639,67 @@ type notificationChannelReq struct {
 }
 
 var allowedChannelTypes = map[string]bool{
-	"email": true, "teams": true, "webhook": true,
+	"email": true, "teams": true, "webhook": true, "servicenow": true,
+}
+
+// ServiceNow config keys the portal may set and read back. The password
+// arrives as plaintext "password", is encrypted into password_enc and is
+// never returned; has_password tells the form whether one is stored.
+var serviceNowConfigKeys = []string{
+	"username", "assignment_group", "caller", "category", "subcategory",
+	"close_code", "resolved_state",
+}
+
+// prepareServiceNowConfig validates and normalises a servicenow channel's
+// target and config. existing is the stored config (nil on create); a blank
+// password keeps the stored one.
+func (h *Handler) prepareServiceNowConfig(target string, cfg, existing map[string]any) (string, map[string]any, error) {
+	base, err := notify.NormaliseServiceNowURL(target)
+	if err != nil {
+		return "", nil, err
+	}
+	out := map[string]any{}
+	for _, k := range serviceNowConfigKeys {
+		if v, ok := cfg[k].(string); ok && strings.TrimSpace(v) != "" {
+			out[k] = strings.TrimSpace(v)
+		}
+	}
+	if out["username"] == nil {
+		return "", nil, errors.New("servicenow: username is required")
+	}
+	if pw, _ := cfg["password"].(string); pw != "" {
+		if h.cipher == nil {
+			return "", nil, errors.New("servicenow: secret storage is not configured")
+		}
+		enc, err := h.cipher.Encrypt([]byte(pw))
+		if err != nil {
+			return "", nil, err
+		}
+		out["password_enc"] = hex.EncodeToString(enc)
+	} else if old, _ := existing["password_enc"].(string); old != "" {
+		out["password_enc"] = old
+	} else {
+		return "", nil, errors.New("servicenow: password is required")
+	}
+	return base, out, nil
+}
+
+// safeChannelConfig is what List returns: ServiceNow's non-secret settings
+// plus has_password. Other channel types return no config (webhook headers
+// can carry credentials).
+func safeChannelConfig(typ string, cfg map[string]any) map[string]any {
+	if typ != "servicenow" || cfg == nil {
+		return nil
+	}
+	out := map[string]any{}
+	for _, k := range serviceNowConfigKeys {
+		if v, ok := cfg[k]; ok {
+			out[k] = v
+		}
+	}
+	_, hasPw := cfg["password_enc"]
+	out["has_password"] = hasPw
+	return out
 }
 
 var allowedSeverities = map[string]bool{
@@ -653,14 +714,15 @@ func (h *Handler) ListNotificationChannels(w http.ResponseWriter, r *http.Reques
 		Target      string     `json:"target"`
 		MinSeverity string     `json:"min_severity"`
 		Enabled     bool       `json:"enabled"`
-		LastSentAt  *time.Time `json:"last_sent_at,omitempty"`
-		LastError   string     `json:"last_error,omitempty"`
+		LastSentAt  *time.Time     `json:"last_sent_at,omitempty"`
+		LastError   string         `json:"last_error,omitempty"`
+		Config      map[string]any `json:"config,omitempty"`
 	}
 	out := []item{}
 	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `
 			SELECT id::text, name, type, target, min_severity, enabled,
-			       last_sent_at, COALESCE(last_error,'')
+			       last_sent_at, COALESCE(last_error,''), config
 			  FROM notification_channels ORDER BY created_at DESC`)
 		if err != nil {
 			return err
@@ -668,9 +730,16 @@ func (h *Handler) ListNotificationChannels(w http.ResponseWriter, r *http.Reques
 		defer rows.Close()
 		for rows.Next() {
 			var it item
+			var cfg []byte
 			if err := rows.Scan(&it.ID, &it.Name, &it.Type, &it.Target,
-				&it.MinSeverity, &it.Enabled, &it.LastSentAt, &it.LastError); err != nil {
+				&it.MinSeverity, &it.Enabled, &it.LastSentAt, &it.LastError, &cfg); err != nil {
 				return err
+			}
+			if len(cfg) > 0 {
+				var m map[string]any
+				if json.Unmarshal(cfg, &m) == nil {
+					it.Config = safeChannelConfig(it.Type, m)
+				}
 			}
 			out = append(out, it)
 		}
@@ -693,8 +762,16 @@ func (h *Handler) CreateNotificationChannel(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if !allowedChannelTypes[req.Type] {
-		writeErr(w, http.StatusBadRequest, "type must be one of email/teams/webhook")
+		writeErr(w, http.StatusBadRequest, "type must be one of email/teams/webhook/servicenow")
 		return
+	}
+	if req.Type == "servicenow" {
+		target, cfg, err := h.prepareServiceNowConfig(req.Target, req.Config, nil)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		req.Target, req.Config = target, cfg
 	}
 	if req.MinSeverity == "" {
 		req.MinSeverity = "warning"
@@ -763,10 +840,32 @@ func (h *Handler) UpdateNotificationChannel(w http.ResponseWriter, r *http.Reque
 	p, _ := portalauth.From(r.Context())
 
 	var rowsAffected int64
+	var badReq error
 	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
+		var typ string
+		var stored []byte
+		err := tx.QueryRow(ctx, `SELECT type, config FROM notification_channels WHERE id = $1`, id).Scan(&typ, &stored)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if typ == "servicenow" {
+			var existing map[string]any
+			_ = json.Unmarshal(stored, &existing)
+			target, cfg, err := h.prepareServiceNowConfig(req.Target, req.Config, existing)
+			if err != nil {
+				badReq = err
+				return nil
+			}
+			req.Target, req.Config = target, cfg
+		}
+		// A request without config keeps the stored config (the portal form
+		// doesn't send webhook headers back, so this used to wipe them).
 		tag, err := tx.Exec(ctx, `
 			UPDATE notification_channels
-			   SET name = $2, target = $3, config = $4::jsonb,
+			   SET name = $2, target = $3, config = COALESCE($4::jsonb, config),
 			       min_severity = $5, enabled = $6
 			 WHERE id = $1`,
 			id, req.Name, req.Target, jsonOrNil(req.Config),
@@ -788,6 +887,10 @@ func (h *Handler) UpdateNotificationChannel(w http.ResponseWriter, r *http.Reque
 		}))
 	})
 	if !ok {
+		return
+	}
+	if badReq != nil {
+		writeErr(w, http.StatusBadRequest, badReq.Error())
 		return
 	}
 	if rowsAffected == 0 {

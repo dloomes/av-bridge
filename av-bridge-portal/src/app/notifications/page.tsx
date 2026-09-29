@@ -9,6 +9,7 @@ import {
   MessageSquare,
   Plus,
   Send,
+  Ticket,
   Trash2,
   Webhook,
   XCircle,
@@ -33,19 +34,50 @@ const TYPE_ICON: Record<NotificationChannelType, React.ComponentType<{ className
   email: Mail,
   teams: MessageSquare,
   webhook: Webhook,
+  servicenow: Ticket,
 };
 
 const TYPE_DESCRIPTION: Record<NotificationChannelType, string> = {
   email: "Email address — alerts arrive as plain-text email via the SMTP relay.",
   teams: "Microsoft Teams incoming-webhook URL — pasted from the Teams channel connector setup.",
-  webhook: "Generic HTTP POST URL — receives the alert as JSON. Use for ServiceNow, Dynamics 365, Zapier, etc.",
+  webhook: "Generic HTTP POST URL — receives the alert as JSON. Use for Dynamics 365, Zapier, etc.",
+  servicenow:
+    "Opens a ServiceNow incident when an alert opens, and resolves it when the alert clears. Needs a ServiceNow user with the itil role.",
 };
 
 const TARGET_PLACEHOLDER: Record<NotificationChannelType, string> = {
   email: "oncall@your-org.com",
   teams: "https://outlook.office.com/webhook/...",
   webhook: "https://hooks.example.com/incoming",
+  servicenow: "https://your-instance.service-now.com",
 };
+
+const TARGET_LABEL: Record<NotificationChannelType, string> = {
+  email: "Target",
+  teams: "Target",
+  webhook: "Target",
+  servicenow: "Instance URL",
+};
+
+// ServiceNow incident defaults, in form order. Names are entered as shown
+// in ServiceNow (group name, user ID), not sys_ids.
+const SN_FIELDS: { key: keyof SNValues; label: string; placeholder: string; help?: string }[] = [
+  { key: "assignment_group", label: "Assignment group", placeholder: "AV Support" },
+  { key: "caller", label: "Caller", placeholder: "marcus.integration", help: "User ID recorded as the caller. Defaults to the integration user." },
+  { key: "category", label: "Category", placeholder: "hardware" },
+  { key: "subcategory", label: "Subcategory", placeholder: "" },
+  { key: "close_code", label: "Resolution code", placeholder: "Solution provided", help: "Used when the alert clears. Must match a resolution code on your instance." },
+];
+
+interface SNValues {
+  username: string;
+  password: string;
+  assignment_group: string;
+  caller: string;
+  category: string;
+  subcategory: string;
+  close_code: string;
+}
 
 export default function NotificationsPage() {
   const session = useSession();
@@ -317,6 +349,18 @@ function ChannelForm({ mode, existing, onCancel, onSuccess }: ChannelFormProps) 
   const [target, setTarget] = useState(existing?.target ?? "");
   const [minSeverity, setMinSeverity] = useState<AlertSeverity>(existing?.min_severity ?? "warning");
   const [enabled, setEnabled] = useState(existing?.enabled ?? true);
+  const snExisting = existing?.config;
+  const [sn, setSn] = useState<SNValues>({
+    username: snExisting?.username ?? "",
+    password: "",
+    assignment_group: snExisting?.assignment_group ?? "",
+    caller: snExisting?.caller ?? "",
+    category: snExisting?.category ?? "",
+    subcategory: snExisting?.subcategory ?? "",
+    close_code: snExisting?.close_code ?? "",
+  });
+  const setSnField = (k: keyof SNValues, v: string) => setSn((prev) => ({ ...prev, [k]: v }));
+  const hasStoredPassword = !!snExisting?.has_password;
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -331,6 +375,14 @@ function ChannelForm({ mode, existing, onCancel, onSuccess }: ChannelFormProps) 
         min_severity: minSeverity,
         enabled,
       };
+      if (type === "servicenow") {
+        const cfg: Record<string, string> = {};
+        (Object.keys(sn) as (keyof SNValues)[]).forEach((k) => {
+          const v = sn[k].trim();
+          if (v) cfg[k] = k === "password" ? sn[k] : v;
+        });
+        body.config = cfg;
+      }
       if (mode === "create") {
         body.type = type;
         await api.createNotificationChannel(body);
@@ -379,6 +431,7 @@ function ChannelForm({ mode, existing, onCancel, onSuccess }: ChannelFormProps) 
           <option value="email">Email</option>
           <option value="teams">Microsoft Teams</option>
           <option value="webhook">Generic webhook</option>
+          <option value="servicenow">ServiceNow</option>
         </select>
         <p className="mt-1 text-[11px] text-muted-foreground">
           {TYPE_DESCRIPTION[type]}
@@ -387,7 +440,7 @@ function ChannelForm({ mode, existing, onCancel, onSuccess }: ChannelFormProps) 
 
       <div>
         <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-          Target
+          {TARGET_LABEL[type]}
         </label>
         <input
           className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
@@ -397,6 +450,63 @@ function ChannelForm({ mode, existing, onCancel, onSuccess }: ChannelFormProps) 
           required
         />
       </div>
+
+      {type === "servicenow" && (
+        <div className="space-y-3 rounded-md border bg-muted/30 p-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                Username
+              </label>
+              <input
+                className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                value={sn.username}
+                onChange={(e) => setSnField("username", e.target.value)}
+                autoComplete="off"
+                required
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                Password
+              </label>
+              <input
+                type="password"
+                className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                value={sn.password}
+                onChange={(e) => setSnField("password", e.target.value)}
+                placeholder={hasStoredPassword ? "Unchanged" : ""}
+                autoComplete="new-password"
+                required={!hasStoredPassword}
+              />
+            </div>
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            The password is stored encrypted and never shown again.
+            {hasStoredPassword && " Leave it blank to keep the current one."}
+          </p>
+          <div className="grid grid-cols-2 gap-3">
+            {SN_FIELDS.map((f) => (
+              <div key={f.key} className={f.help ? "col-span-2" : undefined}>
+                <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                  {f.label} <span className="normal-case font-normal">(optional)</span>
+                </label>
+                <input
+                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                  value={sn[f.key]}
+                  onChange={(e) => setSnField(f.key, e.target.value)}
+                  placeholder={f.placeholder}
+                />
+                {f.help && <p className="mt-1 text-[11px] text-muted-foreground">{f.help}</p>}
+              </div>
+            ))}
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            <span className="font-medium">Test</span> opens a test incident and resolves it straight away, to confirm
+            M.A.R.C.U.S. can both create and update incidents.
+          </p>
+        </div>
+      )}
 
       <div className="grid grid-cols-2 gap-3">
         <div>

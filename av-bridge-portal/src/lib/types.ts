@@ -373,7 +373,20 @@ export interface AlertsSummary {
   critical_open: number;
 }
 
-export type NotificationChannelType = "email" | "teams" | "webhook";
+export type NotificationChannelType = "email" | "teams" | "webhook" | "servicenow";
+
+// Non-secret ServiceNow settings as returned by the API. The password is
+// write-only: send it in config.password, read back has_password.
+export interface ServiceNowChannelConfig {
+  username?: string;
+  assignment_group?: string;
+  caller?: string;
+  category?: string;
+  subcategory?: string;
+  close_code?: string;
+  resolved_state?: string;
+  has_password?: boolean;
+}
 
 export interface NotificationChannel {
   id: string;
@@ -384,6 +397,7 @@ export interface NotificationChannel {
   enabled: boolean;
   last_sent_at?: string;
   last_error?: string;
+  config?: ServiceNowChannelConfig; // servicenow channels only
 }
 
 export interface NotificationChannelBody {
@@ -392,6 +406,7 @@ export interface NotificationChannelBody {
   target: string;
   min_severity: AlertSeverity;
   enabled?: boolean;
+  config?: Record<string, string>; // omit to keep the stored config
 }
 
 export interface DeviceUptimeRow {

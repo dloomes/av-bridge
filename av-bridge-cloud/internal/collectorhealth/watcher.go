@@ -137,7 +137,8 @@ func (w *Watcher) openStale(ctx context.Context) ([]notify.AlertEvent, error) {
 		       ),
 		       'open'
 		  FROM stale s
-		RETURNING customer_id::text,
+		RETURNING id::text,
+		          customer_id::text,
 		          collector_id::text,
 		          (SELECT name FROM collectors WHERE id = alerts.collector_id),
 		          message,
@@ -155,15 +156,16 @@ func (w *Watcher) openStale(ctx context.Context) ([]notify.AlertEvent, error) {
 	var events []notify.AlertEvent
 	for rows.Next() {
 		var (
-			customerID, collectorID, name, message, payloadText string
+			alertID, customerID, collectorID, name, message, payloadText string
 			openedAt                                            time.Time
 		)
-		if err := rows.Scan(&customerID, &collectorID, &name, &message, &openedAt, &payloadText); err != nil {
+		if err := rows.Scan(&alertID, &customerID, &collectorID, &name, &message, &openedAt, &payloadText); err != nil {
 			return nil, err
 		}
 		payloadMap := map[string]any{}
 		_ = json.Unmarshal([]byte(payloadText), &payloadMap)
 		events = append(events, notify.AlertEvent{
+			AlertID:       alertID,
 			CustomerID:    customerID,
 			CollectorID:   collectorID,
 			CollectorName: name,

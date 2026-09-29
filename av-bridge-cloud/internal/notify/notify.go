@@ -32,6 +32,7 @@ import (
 // to pick the correct label and to include the right identifiers in the
 // outbound webhook payload.
 type AlertEvent struct {
+	AlertID       string // alerts.id; empty for portal test sends
 	CustomerID    string
 	DeviceID      string
 	DeviceName    string
@@ -66,7 +67,7 @@ func (a AlertEvent) SubjectLabel() string {
 // so the dispatcher can iterate quickly without dragging the DB tags around.
 type Channel struct {
 	ID          string
-	Type        string // email | teams | webhook
+	Type        string // email | teams | webhook | servicenow
 	Name        string
 	Target      string
 	Config      map[string]any
@@ -83,6 +84,7 @@ type SenderRegistry interface {
 type Dispatcher struct {
 	pool     *pgxpool.Pool
 	senders  SenderRegistry
+	snow     *ServiceNow // nil until SetServiceNow; servicenow channels then fail as unsupported
 	log      *slog.Logger
 	deadline time.Duration
 }
@@ -122,7 +124,12 @@ func (d *Dispatcher) run(evt AlertEvent) {
 	}
 
 	for _, ch := range channels {
-		err := d.senders.Send(ctx, ch, evt)
+		var err error
+		if ch.Type == "servicenow" {
+			err = d.openTicket(ctx, ch, evt)
+		} else {
+			err = d.senders.Send(ctx, ch, evt)
+		}
 		d.recordResult(ctx, ch.ID, err)
 		if err != nil {
 			d.log.Warn("notify: send failed",
@@ -198,7 +205,12 @@ func (d *Dispatcher) SendToChannel(ctx context.Context, customerID, channelID st
 	if len(cfg) > 0 {
 		_ = json.Unmarshal(cfg, &ch.Config)
 	}
-	sendErr := d.senders.Send(ctx, ch, evt)
+	var sendErr error
+	if ch.Type == "servicenow" {
+		sendErr = d.testServiceNow(ctx, ch, evt)
+	} else {
+		sendErr = d.senders.Send(ctx, ch, evt)
+	}
 	d.recordResult(ctx, ch.ID, sendErr)
 	return sendErr
 }

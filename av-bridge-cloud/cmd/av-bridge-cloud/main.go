@@ -116,6 +116,9 @@ func main() {
 		From:     cfg.SMTPFrom,
 	}, log)
 	dispatcher := notify.NewDispatcher(store.AdminPool(), senders, log)
+	// ServiceNow channels open an incident per alert and resolve it when the
+	// alert clears; the integration password is stored AES-GCM encrypted.
+	dispatcher.SetServiceNow(notify.NewServiceNow(cipher.Decrypt))
 	if cfg.SMTPHost == "" {
 		log.Info("notify: SMTP not configured — email channels run in dry-run mode (logs only)")
 	} else {
@@ -381,6 +384,10 @@ func main() {
 	// was constructed earlier (main.go, right after the notify
 	// dispatcher) so the portal handler could take a reference.
 	go nightlyDigest.Run(sweeperCtx)
+
+	// ServiceNow ticket sync — resolves incidents whose alert has cleared
+	// and retries incident opens that failed.
+	go dispatcher.RunTicketSync(sweeperCtx, time.Minute)
 
 	go func() {
 		log.Info("cloud ingest listening", "addr", cfg.ListenAddr)

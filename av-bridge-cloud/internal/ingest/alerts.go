@@ -84,6 +84,7 @@ func handleAlertEvent(ctx context.Context, tx pgx.Tx, customerID, deviceID strin
 	// (already notified — don't spam).
 	var inserted bool
 	var openedAt time.Time
+	var alertID string
 	err = tx.QueryRow(ctx, `
 		INSERT INTO alerts (customer_id, device_id, alert_key, severity, message, payload, status)
 		VALUES ($1, $2, $3, $4, COALESCE($5,''), $6::jsonb, 'open')
@@ -91,9 +92,9 @@ func handleAlertEvent(ctx context.Context, tx pgx.Tx, customerID, deviceID strin
 		SET severity = EXCLUDED.severity,
 		    message  = EXCLUDED.message,
 		    payload  = EXCLUDED.payload
-		RETURNING (xmax = 0) AS inserted, opened_at`,
+		RETURNING (xmax = 0) AS inserted, opened_at, id::text`,
 		customerID, deviceID, alertKey, severity, message, payloadParam).
-		Scan(&inserted, &openedAt)
+		Scan(&inserted, &openedAt, &alertID)
 	if err != nil {
 		// A no-row return shouldn't happen for an UPSERT, but be defensive.
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -107,6 +108,7 @@ func handleAlertEvent(ctx context.Context, tx pgx.Tx, customerID, deviceID strin
 	}
 	return alertOutcome{
 		notifyEvent: &notify.AlertEvent{
+			AlertID:    alertID,
 			CustomerID: customerID,
 			DeviceID:   deviceID,
 			DeviceName: e.DeviceName,
