@@ -50,6 +50,17 @@ PORTAL_FIELD = {
     "subscriptions": "Readings",
 }
 
+# Vendor adapters are grouped by category in the sidebar and on the
+# overview page, in this order. Each vendor SUPPLEMENT entry names one.
+CATEGORIES = [
+    ("displays", "Displays"),
+    ("conferencing", "Video conferencing"),
+    ("audio", "Audio"),
+    ("cameras", "Cameras"),
+    ("control", "Control and AV-over-IP"),
+    ("power-network", "Power and network"),
+]
+
 DEVICE_TYPE = {
     "display": "Display",
     "conferencing": "Conferencing",
@@ -60,6 +71,7 @@ DEVICE_TYPE = {
 
 SUPPLEMENT: dict[str, dict] = {
     "sony_bravia": {
+        "category": "displays",
         "sidebar": "Sony Bravia", "icon": "tv",
         "models": "Sony Bravia Professional Displays with IP control.",
         "connection": "JSON-RPC over HTTP, with Wake-on-LAN for power-on",
@@ -73,6 +85,7 @@ SUPPLEMENT: dict[str, dict] = {
         ],
     },
     "philips_sicp": {
+        "category": "displays",
         "sidebar": "Philips displays", "icon": "display",
         "models": "Philips professional displays from PPDS that support SICP over the network, including the Q-Line, D-Line and T-Line signage and meeting-room ranges.",
         "connection": "SICP over TCP (port 5000), with Wake-on-LAN for power-on",
@@ -88,6 +101,7 @@ SUPPLEMENT: dict[str, dict] = {
         ],
     },
     "poly_videoos": {
+        "category": "conferencing",
         "sidebar": "Poly VideoOS", "icon": "video",
         "models": "Poly Studio X30, X50, X52 and X70, and the G7500.",
         "connection": "REST API over HTTPS, using a local admin session",
@@ -100,6 +114,7 @@ SUPPLEMENT: dict[str, dict] = {
         ],
     },
     "cisco_roomos": {
+        "category": "conferencing",
         "sidebar": "Cisco RoomOS", "icon": "video",
         "models": "Cisco collaboration devices running RoomOS, including the Room Kit, Room Bar, Board, Desk and Codec series.",
         "connection": "xAPI over HTTPS (TCP 443), using Basic authentication",
@@ -114,6 +129,7 @@ SUPPLEMENT: dict[str, dict] = {
         ],
     },
     "tesira": {
+        "category": "audio",
         "sidebar": "Biamp Tesira", "icon": "sliders",
         "models": "Biamp Tesira DSPs, including TesiraFORTÉ, over the Tesira Text Protocol (TTP).",
         "connection": "TTP over Telnet (TCP 23)",
@@ -138,6 +154,7 @@ SUPPLEMENT: dict[str, dict] = {
         ),
     },
     "visca_over_ip": {
+        "category": "cameras",
         "sidebar": "PTZ cameras (VISCA)", "icon": "camera",
         "models": "PTZ cameras that speak Sony VISCA-over-IP, including Sony BRC and SRG, Panasonic AW-UE, PTZOptics, HuddleCam, Marshall CV and Lumens VC-A61P.",
         "connection": "VISCA-over-IP (UDP 52381)",
@@ -147,6 +164,7 @@ SUPPLEMENT: dict[str, dict] = {
         ],
     },
     "aurora_rxt": {
+        "category": "control",
         "sidebar": "Aurora RXT panels", "icon": "tablet-screen-button",
         "models": "Aurora Multimedia RXT-x wall-mount touch panels.",
         "connection": "JSON-RPC over Telnet (TCP 6975)",
@@ -159,6 +177,7 @@ SUPPLEMENT: dict[str, dict] = {
         ],
     },
     "aurora_vpx": {
+        "category": "control",
         "sidebar": "Aurora VPX", "icon": "tower-broadcast",
         "models": "Aurora Multimedia VPX-series AV-over-IP encoders and decoders.",
         "connection": "JSON over Telnet (TCP 6970)",
@@ -167,6 +186,7 @@ SUPPLEMENT: dict[str, dict] = {
         ],
     },
     "aten_pdu": {
+        "category": "power-network",
         "sidebar": "ATEN eco PDU", "icon": "plug",
         "models": "ATEN eco PDU range, such as the PE6108G.",
         "connection": "Telnet CLI (TCP 23)",
@@ -179,6 +199,7 @@ SUPPLEMENT: dict[str, dict] = {
         ],
     },
     "netgear_m4250": {
+        "category": "power-network",
         "sidebar": "NETGEAR M4250", "icon": "network-wired",
         "models": "NETGEAR AV Line fully managed switches: the M4250 series and the M4350 series.",
         "connection": "Switch CLI over Telnet (TCP 23)",
@@ -363,6 +384,16 @@ def page_markdown(a: dict, sup: dict) -> str:
     return "\n".join(lines)
 
 
+def vendor_groups(vendor: list) -> list[tuple[str, list]]:
+    """Vendor adapters by category, in CATEGORIES order, names A–Z within each."""
+    out = []
+    for key, label in CATEGORIES:
+        items = sorted((v for v in vendor if v[1]["category"] == key), key=lambda v: v[0]["name"].lower())
+        if items:
+            out.append((label, items))
+    return out
+
+
 def build(out_dir: Path, convert, frontmatter, yaml_str) -> tuple[list[Path], dict]:
     """Write the section; returns (files written, docs.json nav group)."""
     cat = load_catalogue()
@@ -370,6 +401,11 @@ def build(out_dir: Path, convert, frontmatter, yaml_str) -> tuple[list[Path], di
     if missing:
         raise SystemExit(f"adapter_docs: add SUPPLEMENT entries for {missing} "
                          "(new adapter in the catalogue)")
+    known = {k for k, _ in CATEGORIES}
+    uncategorised = [a["id"] for a in cat if a["kind"] == "vendor"
+                     and SUPPLEMENT[a["id"]].get("category") not in known]
+    if uncategorised:
+        raise SystemExit(f"adapter_docs: give {uncategorised} a SUPPLEMENT category from {sorted(known)}")
     base = out_dir / SECTION_DIR
     base.mkdir(parents=True, exist_ok=True)
     written = []
@@ -405,14 +441,17 @@ def build(out_dir: Path, convert, frontmatter, yaml_str) -> tuple[list[Path], di
         "New vendor adapters are added in most releases, and customer requests set the priorities. "
         "Contact commercial@involve.vc with the make and model you need.",
     ]
-    cards = ["<CardGroup cols={2}>"]
-    for a, sup, path in vendor:
-        cards += [f'  <Card title={yaml_str(a["name"])} icon={yaml_str(sup["icon"])} href={yaml_str("/" + path)}>',
-                  f"    {sup['models']}", "  </Card>"]
-    cards.append("</CardGroup>")
+    groups = vendor_groups(vendor)
+    cards = []
+    for label, items in groups:
+        cards += [f"### {label}", "", "<CardGroup cols={2}>"]
+        for a, sup, path in items:
+            cards += [f'  <Card title={yaml_str(a["name"])} icon={yaml_str(sup["icon"])} href={yaml_str("/" + path)}>',
+                      f"    {sup['models']}", "  </Card>"]
+        cards += ["</CardGroup>", ""]
     body = convert("\n".join(ov))
-    # Vendor cards go first, under their own heading.
-    body = "## Vendor adapters\n\n" + "\n".join(cards) + "\n\n" + body
+    # Vendor cards go first, under their own heading, grouped by category.
+    body = "## Vendor adapters\n\n" + "\n".join(cards) + "\n" + body
     ov_meta = {"title": "Supported devices", "sidebarTitle": "Overview",
                "description": "The device adapters M.A.R.C.U.S. supports, and how to add each kind of device.",
                "icon": "plug-circle-check"}
@@ -425,7 +464,8 @@ def build(out_dir: Path, convert, frontmatter, yaml_str) -> tuple[list[Path], di
         "icon": "plug-circle-check",
         "pages": [
             f"{SECTION_DIR}/overview",
-            {"group": "Vendor adapters", "pages": [p for _, _, p in vendor]},
+            {"group": "Vendor adapters", "pages": [
+                {"group": label, "pages": [p for _, _, p in items]} for label, items in groups]},
             {"group": "Generic adapters", "pages": [p for _, _, p in generic]},
         ],
     }
