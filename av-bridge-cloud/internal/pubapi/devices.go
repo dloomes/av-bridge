@@ -88,6 +88,13 @@ const publicDeviceFrom = `
 
 var publicDeviceBaseSelect = publicDeviceColumns + publicDeviceFrom
 
+// neverSeen stands in for a NULL last_seen_at in the device sort order
+// and cursors: earlier than any real timestamp, and representable in both
+// Go and Postgres (unlike -infinity).
+var neverSeen = time.Date(1, 1, 1, 0, 0, 0, 0, time.UTC)
+
+const lastSeenSortKey = "COALESCE(d.last_seen_at, '0001-01-01 00:00:00+00'::timestamptz)"
+
 // uuidRE matches the canonical 8-4-4-4-12 hex form.
 var uuidRE = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
@@ -178,16 +185,22 @@ func (h *Handler) ListDevices(w http.ResponseWriter, r *http.Request) {
 		sql += " AND (" + devicestatus.EffectiveStatusSQL + ") = " + arg(statusFilter)
 	}
 	// Cursor: page forward from wherever the previous response left
-	// off. Compare on (COALESCE(last_seen_at,'-infinity'), id) so nulls
-	// sort last consistently and the tuple comparison stays strict.
-	if cursor.TS != nil {
-		tsP := arg(*cursor.TS)
+	// off. Never-seen devices sort last as neverSeen, and a cursor that
+	// ends on one carries neverSeen too; it used to carry no timestamp,
+	// which restarted the listing from the top on the next page.
+	// An id-only cursor (issued before that fix) resumes the same way.
+	if cursor.TS != nil || cursor.ID != "" {
+		ts := neverSeen
+		if cursor.TS != nil {
+			ts = *cursor.TS
+		}
+		tsP := arg(ts)
 		idP := arg(cursor.ID)
-		sql += " AND (COALESCE(d.last_seen_at, '-infinity'::timestamptz), d.id::text) < (" + tsP + ", " + idP + ")"
+		sql += " AND (" + lastSeenSortKey + ", d.id::text) < (" + tsP + ", " + idP + ")"
 	}
 	// Explicit ::int cast keeps LIMIT's type inference boringly stable
 	// against pgx's parse-with-inference path.
-	sql += " ORDER BY COALESCE(d.last_seen_at, '-infinity'::timestamptz) DESC, d.id::text DESC LIMIT " + arg(limit+1) + "::int"
+	sql += " ORDER BY " + lastSeenSortKey + " DESC, d.id::text DESC LIMIT " + arg(limit+1) + "::int"
 
 	out, nextCursor, ok := listPublicDevices(h, w, r, sql, args, limit)
 	if !ok {
@@ -223,7 +236,11 @@ func listPublicDevices(h *Handler, w http.ResponseWriter, r *http.Request, sql s
 	var nextCursor *string
 	if len(out) > limit {
 		last := out[limit-1]
-		nc := EncodeCursor(Cursor{TS: last.LastSeenAt, ID: last.ID})
+		ts := last.LastSeenAt
+		if ts == nil {
+			ts = &neverSeen
+		}
+		nc := EncodeCursor(Cursor{TS: ts, ID: last.ID})
 		nextCursor = &nc
 		out = out[:limit]
 	}
