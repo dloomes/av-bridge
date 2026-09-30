@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -55,7 +56,12 @@ type publicDevice struct {
 // live-reported metrics (so a portal-authored override sticks).
 // status uses the effective projection so a stale latest_status on an
 // offline-collector device doesn't leak out through the public API.
-var publicDeviceBaseSelect = `
+//
+// The column list and FROM clause are kept separate so GetDevice can add
+// latest_metrics to the columns; appending it to the full SELECT put it
+// after the joins, where Postgres read it as a table and every
+// GET /pub/v1/devices/{id} failed with a 500.
+var publicDeviceColumns = `
 	SELECT d.id::text,
 	       COALESCE(d.name, d.reported_id, ''),
 	       COALESCE(d.type, ''),
@@ -72,11 +78,34 @@ var publicDeviceBaseSelect = `
 	       COALESCE(b.id::text, ''),
 	       COALESCE(b.name, ''),
 	       d.last_seen_at,
-	       d.tags
+	       d.tags`
+
+const publicDeviceFrom = `
 	  FROM devices d
 	  LEFT JOIN rooms r     ON r.id = d.room_id
 	  LEFT JOIN buildings b ON b.id = r.building_id
 	  LEFT JOIN collectors c ON c.id = d.collector_id`
+
+var publicDeviceBaseSelect = publicDeviceColumns + publicDeviceFrom
+
+// uuidRE matches the canonical 8-4-4-4-12 hex form.
+var uuidRE = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
+// deviceIDParam returns the {id} path value, answering 400 when it's
+// missing and 404 when it isn't a UUID — a device with that id can't
+// exist, and passing it to Postgres would fail the uuid cast with a 500.
+func deviceIDParam(w http.ResponseWriter, r *http.Request) (string, bool) {
+	id := strings.TrimSpace(r.PathValue("id"))
+	if id == "" {
+		writeErr(w, http.StatusBadRequest, "device id required")
+		return "", false
+	}
+	if !uuidRE.MatchString(id) {
+		writeErr(w, http.StatusNotFound, "device not found")
+		return "", false
+	}
+	return id, true
+}
 
 // scanDevice reads a single publicDevice off the pgx.Row. Kept as a
 // method-free helper so both single-row (QueryRow.Scan) and multi-row
@@ -207,9 +236,8 @@ func listPublicDevices(h *Handler, w http.ResponseWriter, r *http.Request, sql s
 // shape so a caller resolving a device from an alert or event doesn't
 // need a follow-up telemetry call for common lookups.
 func (h *Handler) GetDevice(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	if id == "" {
-		writeErr(w, http.StatusBadRequest, "device id required")
+	id, ok := deviceIDParam(w, r)
+	if !ok {
 		return
 	}
 
@@ -222,8 +250,8 @@ func (h *Handler) GetDevice(w http.ResponseWriter, r *http.Request) {
 		out      detail
 		notFound bool
 	)
-	sql := publicDeviceBaseSelect + ", d.latest_metrics WHERE d.id = $1 AND d.deleted_at IS NULL"
-	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
+	sql := publicDeviceColumns + ", d.latest_metrics" + publicDeviceFrom + " WHERE d.id = $1 AND d.deleted_at IS NULL"
+	ok = h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
 		row := tx.QueryRow(ctx, sql, id)
 		var tags []byte
 		var metrics []byte
@@ -265,9 +293,8 @@ func (h *Handler) GetDevice(w http.ResponseWriter, r *http.Request) {
 // series should use the events endpoint or the future /pub/v2
 // history route.
 func (h *Handler) GetDeviceTelemetry(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	if id == "" {
-		writeErr(w, http.StatusBadRequest, "device id required")
+	id, ok := deviceIDParam(w, r)
+	if !ok {
 		return
 	}
 	type out struct {
@@ -281,7 +308,7 @@ func (h *Handler) GetDeviceTelemetry(w http.ResponseWriter, r *http.Request) {
 		o        out
 		notFound bool
 	)
-	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
+	ok = h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
 		err := tx.QueryRow(ctx, `
 			SELECT d.id::text,
 			       `+devicestatus.EffectiveStatusSQL+`,
@@ -314,9 +341,8 @@ func (h *Handler) GetDeviceTelemetry(w http.ResponseWriter, r *http.Request) {
 // upgrade from single-device polling to global polling without
 // changing their parsing.
 func (h *Handler) GetDeviceEvents(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	if id == "" {
-		writeErr(w, http.StatusBadRequest, "device id required")
+	id, ok := deviceIDParam(w, r)
+	if !ok {
 		return
 	}
 	cursor, err := ParseCursor(r)
