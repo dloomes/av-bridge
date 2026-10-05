@@ -25,10 +25,10 @@ Each group maps to one role. Map several groups to give different people differe
 
 1. **First sign-in:** M.A.R.C.U.S. creates their account. If a password user with the same email already exists, it's linked to their Microsoft account instead.
 2. **Every sign-in:** their roles from Entra are rebuilt from their current groups. Someone added to a mapped group gets the role at their next sign-in; someone removed from it loses it.
-3. **Roles you assign by hand** in **Users** are kept; sign-in only changes roles that came from Entra.
+3. **Roles you assign by hand** in **Users** are kept; sign-in only changes roles that came from Entra. In **Edit user**, roles from Entra are marked **from Entra**.
 
 <Note>
-Someone in no mapped group can still sign in, but has no roles, so they see almost nothing. Add them to a mapped group in Entra, or give them a role in **Users**.
+Someone in no mapped group can still sign in, but has no roles. They see a **You don't have access yet** page explaining what to ask for. Add them to a mapped group in Entra, or give them a role in **Users**.
 </Note>
 
 Deleting a mapping takes that role away from users at their next sign-in, unless it was also given by hand.

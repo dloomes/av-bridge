@@ -38,12 +38,18 @@ The **Users** list shows each user's scope as a chip, such as "2 regions · 1 ro
 
 An administrator who is themselves restricted to part of the estate:
 
+- **sees and manages only users inside their own access.** Users elsewhere in the estate, and users with access to the whole estate, don't appear in their list;
 - **can't change anyone's scope**: only administrators with access to the whole estate can;
 - **gives new users their own scope** automatically.
 
-<Warning>
-A restricted administrator can still see every user in your organisation, give any role (including admin), and disable or delete any user. Their restriction applies to the estate, not to user management. Give user-management permissions only to people you'd trust with the whole organisation's accounts.
-</Warning>
+## You can't give more than you have
+
+Whatever their scope, nobody can:
+
+- give a role with permissions they don't hold themselves;
+- edit, reset, disable or delete a user who holds permissions they don't.
+
+So someone who can manage users but isn't a full administrator can't make anyone an administrator, or take over an administrator's account by resetting its password.
 
 ## Change, reset or remove a user
 
@@ -59,7 +65,7 @@ Use the icons on the user's row:
 You can't disable or delete your own account.
 
 <Note>
-Saving a Microsoft user in **Edit user** turns all their roles into manually assigned roles. From then on, their roles no longer follow their Microsoft group membership. Prefer managing Microsoft users through [sign-in mappings](/admin/single-sign-on).
+For users who sign in with Microsoft, roles from [sign-in mappings](/admin/single-sign-on) are marked **from Entra** in **Edit user**. They follow the user's Entra groups: unticking one only lasts until their next sign-in while they're still in the group. Roles you tick by hand stay until you remove them.
 </Note>
 
 ## Business units
