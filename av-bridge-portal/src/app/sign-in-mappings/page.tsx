@@ -50,8 +50,9 @@ export default function SignInMappingsPage() {
           <div>
             <h1 className="text-2xl font-semibold">Sign-in mappings</h1>
             <p className="text-sm text-muted-foreground max-w-2xl">
-              Map Entra security groups to roles so SSO users land with the
-              right permissions on their first sign-in.
+              Map Entra security groups to roles. Users who sign in with
+              Microsoft get the roles for the groups they belong to, updated
+              every time they sign in.
             </p>
           </div>
           <UserMenu />
@@ -118,10 +119,10 @@ function CustomerSection() {
               <h2 className="font-medium">This tenant</h2>
             </div>
             <p className="text-xs text-muted-foreground max-w-xl">
-              Each mapping grants a role to any signing-in user who is a
-              member of the Entra group. Roles applied on first sign-in;
-              manual promotions made later are not overridden on subsequent
-              sign-ins.
+              Each mapping grants a role to any user in the Entra group.
+              Roles from mappings are rebuilt at every sign-in, so adding or
+              removing someone from a group changes their roles the next time
+              they sign in. Roles given by hand on the Users page are kept.
             </p>
           </div>
           <Button size="sm" onClick={() => setEditing({ mode: "create" })}>
@@ -525,9 +526,9 @@ function DeleteConfirm({ groupID, role, onCancel, onConfirm }: DeleteConfirmProp
       <p>
         Remove the mapping for group{" "}
         <span className="font-mono text-xs">{groupID}</span> to role{" "}
-        <span className="font-medium">{role}</span>? Existing users who
-        received this role from a previous sign-in keep it — this only
-        affects future sign-ins.
+        <span className="font-medium">{role}</span>? Users who got this
+        role from the group lose it at their next sign-in, unless it was also
+        given to them by hand on the Users page.
       </p>
       {error && (
         <div className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 [color:hsl(var(--destructive))]">

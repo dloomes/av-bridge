@@ -32,6 +32,16 @@ type Handler struct {
 	digest     *nightly.DigestSender
 	executor   *nightly.Executor
 	log        *slog.Logger
+	// customerSSO is true when the cloud has the customer Entra app
+	// configured, so Microsoft sign-in can work for customers that have
+	// an Entra tenant set. Drives sso_available on GET /branding.
+	customerSSO bool
+}
+
+// SetCustomerSSO records whether customer Microsoft sign-in is configured.
+func (h *Handler) SetCustomerSSO(enabled bool) *Handler {
+	h.customerSSO = enabled
+	return h
 }
 
 // New. dispatcher may be nil — the notification channel endpoints still

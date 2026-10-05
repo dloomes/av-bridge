@@ -437,10 +437,14 @@ export function SignInForm({ branding, showVendorSSO = false, slug, appOrigin = 
         }}
       >
         {/* Top row: talk-to-sales — the only chrome */}
-        <div className="flex justify-end items-center gap-2 font-mono text-[11px] text-muted-foreground animate-fade-in">
+        <div
+          className={`flex justify-end items-center gap-2 font-mono text-[11px] text-muted-foreground animate-fade-in ${
+            slug ? "invisible" : ""
+          }`}
+        >
           <span>Need an account?</span>
           <a
-            href="#"
+            href="mailto:commercial@involve.vc?subject=M.A.R.C.U.S.%20enquiry"
             className="ml-1 rounded-md border border-border bg-background px-2.5 py-1.5 text-foreground/80 no-underline transition-colors hover:border-input hover:bg-muted hover:text-foreground"
           >
             Talk to sales →

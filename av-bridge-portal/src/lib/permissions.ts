@@ -54,6 +54,7 @@ export const PERMISSIONS: readonly PermissionDef[] = [
   // Fleet management
   { key: "device.crud",       title: "Manage devices",       description: "Add, edit, and remove devices from the tenant.",           category: "Fleet management" },
   { key: "hierarchy.crud",    title: "Manage locations",     description: "Regions, locations, buildings, rooms — full CRUD.",         category: "Fleet management" },
+  { key: "business_unit.crud", title: "Manage business units", description: "Create, rename and remove business units, and assign regions to them. Only applies when business units are switched on for the tenant.", category: "Fleet management" },
   { key: "collector.crud",    title: "Manage collectors",    description: "Pre-provision on-prem bridges from the portal and issue enrollment tokens for site setup.", category: "Fleet management" },
 
   // Notifications
@@ -76,6 +77,7 @@ export const PERMISSIONS: readonly PermissionDef[] = [
   { key: "asset.crud",          title: "Manage assets",        description: "Add, edit, and remove assets (physical inventory) in the tenant.", category: "Assets" },
   // Room Readiness (nightly lifecycle)
   { key: "nightly.view",        title: "View Room Readiness",  description: "See nightly schedules, routines, and run history.",                       category: "Room Readiness" },
+  { key: "nightly.defer",       title: "Defer tonight's power-down", description: "Keep a room powered up tonight when it's still in use; it returns to schedule the next day.", category: "Room Readiness" },
   { key: "nightly.manage",      title: "Manage Room Readiness", description: "Edit the nightly schedule, room overrides, and test routines.",         category: "Room Readiness" },
   // Public API
   { key: "api_token.view",      title: "View API tokens",       description: "See the list of API tokens minted for programmatic access, and their last-used timestamps.", category: "Public API" },

@@ -49,6 +49,7 @@ type userRow struct {
 	Role                 string     `json:"role"` // legacy — derived primary role for display
 	RoleIDs              []string   `json:"role_ids"`
 	RoleNames            []string   `json:"role_names"`
+	EntraRoleIDs         []string   `json:"entra_role_ids"` // roles that come from Entra group mappings
 	BuildingScopeIDs     []string   `json:"building_scope_ids"`
 	BusinessUnitScopeIDs []string   `json:"business_unit_scope_ids"`
 	RegionScopeIDs       []string   `json:"region_scope_ids"`
@@ -73,6 +74,7 @@ func (h *Handler) ListUsers(w http.ResponseWriter, r *http.Request) {
 		       COALESCE(u.role, ''),
 		       COALESCE(array_agg(DISTINCT r.id::text) FILTER (WHERE r.id IS NOT NULL), '{}'),
 		       COALESCE(array_agg(DISTINCT r.name)     FILTER (WHERE r.name IS NOT NULL), '{}'),
+		       COALESCE(array_agg(DISTINCT r.id::text) FILTER (WHERE r.id IS NOT NULL AND ur.granted_by = 'entra'), '{}'),
 		       COALESCE(u.building_scope_ids::text[], '{}'),
 		       COALESCE(u.business_unit_scope_ids::text[], '{}'),
 		       COALESCE(u.region_scope_ids::text[], '{}'),
@@ -91,17 +93,35 @@ func (h *Handler) ListUsers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer rows.Close()
+	// A restricted caller sees only users whose access lies inside theirs
+	// (and themselves); see user_guards.go.
+	var cov *scopeCoverage
+	if caller := principalScope(p); !caller.Empty() {
+		c, err := h.coverage(r.Context(), p.CustomerID, caller)
+		if err != nil {
+			h.log.Error("list users: coverage", "error", err)
+			writeErr(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		cov = &c
+	}
 	out := []userRow{}
 	for rows.Next() {
 		var u userRow
 		if err := rows.Scan(&u.ID, &u.Email, &u.FullName, &u.Disabled,
 			&u.CreatedAt, &u.LastLoginAt, &u.Role,
-			&u.RoleIDs, &u.RoleNames, &u.BuildingScopeIDs,
+			&u.RoleIDs, &u.RoleNames, &u.EntraRoleIDs, &u.BuildingScopeIDs,
 			&u.BusinessUnitScopeIDs, &u.RegionScopeIDs, &u.LocationScopeIDs,
 			&u.RoomScopeIDs); err != nil {
 			h.log.Error("list users scan", "error", err)
 			writeErr(w, http.StatusInternalServerError, "internal error")
 			return
+		}
+		if cov != nil && u.ID != p.UserID && !cov.contains(db.Scope{
+			BusinessUnits: u.BusinessUnitScopeIDs, Regions: u.RegionScopeIDs,
+			Locations: u.LocationScopeIDs, Buildings: u.BuildingScopeIDs, Rooms: u.RoomScopeIDs,
+		}) {
+			continue
 		}
 		out = append(out, u)
 	}
@@ -190,6 +210,10 @@ func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
 
 	if err := h.validateRoleIDsInTenant(ctx, p.CustomerID, req.RoleIDs); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := h.guardAssignRoles(ctx, p, req.RoleIDs, nil); err != nil {
+		writeGuardErr(w, h, err)
 		return
 	}
 	// A restricted admin can't choose a scope; users they create inherit
@@ -318,6 +342,11 @@ func (h *Handler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 
+	if err := h.guardManageUser(ctx, p, id); err != nil {
+		writeGuardErr(w, h, err)
+		return
+	}
+
 	// Snapshot before-state for audit and to preserve unchanged fields.
 	var before userRow
 	if err := h.store.AdminPool().QueryRow(ctx, `
@@ -345,6 +374,16 @@ func (h *Handler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 	if req.RoleIDs != nil {
 		if err := h.validateRoleIDsInTenant(ctx, p.CustomerID, *req.RoleIDs); err != nil {
 			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		current, err := h.currentRoleIDs(ctx, id)
+		if err != nil {
+			h.log.Error("update user: current roles", "error", err)
+			writeErr(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		if err := h.guardAssignRoles(ctx, p, *req.RoleIDs, current); err != nil {
+			writeGuardErr(w, h, err)
 			return
 		}
 	}
@@ -425,16 +464,22 @@ func (h *Handler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	// Role change: swap the user_roles mapping wholesale. Uses DELETE + INSERT
-	// so a role removed from the new list is also removed from the mapping.
+	// Role change: remove roles no longer listed and add new ones, leaving
+	// kept roles untouched. A kept role keeps its granted_by, so a role that
+	// came from an Entra group still follows group membership at the next
+	// sign-in; only roles added here are 'manual'. (Rewriting every row as
+	// manual used to freeze Entra roles on whoever was edited.)
 	if req.RoleIDs != nil {
-		if _, err := tx.Exec(ctx, `DELETE FROM user_roles WHERE user_id = $1`, id); err != nil {
-			h.log.Error("update user: clear roles", "error", err)
+		if _, err := tx.Exec(ctx,
+			`DELETE FROM user_roles WHERE user_id = $1 AND role_id <> ALL($2::uuid[])`, id, *req.RoleIDs); err != nil {
+			h.log.Error("update user: remove roles", "error", err)
 			writeErr(w, http.StatusInternalServerError, "internal error")
 			return
 		}
-		if err := assignRoles(ctx, tx, id, *req.RoleIDs); err != nil {
-			h.log.Error("update user: assign roles", "error", err)
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO user_roles (user_id, role_id) SELECT $1, unnest($2::uuid[]) ON CONFLICT DO NOTHING`,
+			id, *req.RoleIDs); err != nil {
+			h.log.Error("update user: add roles", "error", err)
 			writeErr(w, http.StatusInternalServerError, "internal error")
 			return
 		}
@@ -500,6 +545,11 @@ func (h *Handler) ResetUserPassword(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 
+	if err := h.guardManageUser(ctx, p, id); err != nil {
+		writeGuardErr(w, h, err)
+		return
+	}
+
 	// Refuse if the tenant has flipped SSO-only. Setting a password on a
 	// user whose sign-in path is Entra-only just leaves inert bytes on
 	// the row — better to reject explicitly so the admin doesn't think
@@ -564,6 +614,11 @@ func (h *Handler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
+
+	if err := h.guardManageUser(ctx, p, id); err != nil {
+		writeGuardErr(w, h, err)
+		return
+	}
 
 	var email, role string
 	if err := h.store.AdminPool().QueryRow(ctx,

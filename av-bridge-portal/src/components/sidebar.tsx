@@ -32,7 +32,7 @@ import { useBranding } from "@/components/branding-provider";
 import { usePolling } from "@/hooks/usePolling";
 import { useSession } from "@/hooks/useSession";
 import { api } from "@/lib/api";
-import { hasPermission, isAdmin } from "@/lib/session";
+import { hasPermission } from "@/lib/session";
 import { cn } from "@/lib/utils";
 import type { AlertsSummary } from "@/lib/types";
 import { PRODUCT_NAME } from "@/lib/brand";
@@ -171,7 +171,7 @@ export function Sidebar() {
   // Vendor is treated as admin-equivalent for UI gating — the backend
   // vendor-bypass makes every permission check pass anyway, so hiding
   // admin links from vendor would just hurt their workflow.
-  const canManageBranding = isAdmin(session.user?.role) || isVendor;
+  const canManageBranding = hasPermission(session.user, "branding.update") || isVendor;
   const { isOpen, toggle } = useSectionOpenState();
 
   // Poll the alerts summary so the sidebar Alerts item can show a live

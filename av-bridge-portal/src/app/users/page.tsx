@@ -568,6 +568,14 @@ function UserForm({
                           system
                         </span>
                       )}
+                      {existing?.entra_role_ids?.includes(r.id) && (
+                        <span
+                          className="text-[10px] uppercase tracking-wide bg-sky-500/10 px-1 py-0.5 rounded text-sky-700"
+                          title="Given by a sign-in mapping. Follows the user's Entra group membership at each sign-in."
+                        >
+                          from Entra
+                        </span>
+                      )}
                       <span className="text-[10px] text-muted-foreground">
                         {r.permissions.length} perm{r.permissions.length === 1 ? "" : "s"}
                       </span>
@@ -585,6 +593,9 @@ function UserForm({
         </div>
         <p className="text-[11px] text-muted-foreground">
           Effective permissions are the union of every selected role&apos;s permission bundle.
+          {(existing?.entra_role_ids?.length ?? 0) > 0 &&
+            " Roles marked “from Entra” follow the user’s Entra groups: unticking one only lasts until their next sign-in while they're still in the group."}
+          {" "}You can only give roles whose permissions you hold yourself.
         </p>
       </div>
 

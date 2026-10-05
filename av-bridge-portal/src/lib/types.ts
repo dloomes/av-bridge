@@ -535,6 +535,9 @@ export interface UserRow {
   role: string; // legacy primary-role display name
   role_ids: string[];
   role_names: string[];
+  // Roles that come from Entra group mappings: rebuilt at every Microsoft
+  // sign-in, so unticking one only lasts until the user next signs in.
+  entra_role_ids?: string[];
   building_scope_ids: string[];
   // business_unit_scope_ids: empty = unscoped at BU level. Only ever
   // populated when the tenant has business_units_enabled; the backend

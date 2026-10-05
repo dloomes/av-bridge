@@ -79,6 +79,11 @@ func (h *Handler) GetBranding(w http.ResponseWriter, r *http.Request) {
 		// toggle behind "customer has Entra configured". Omitted when
 		// unset so the payload stays compact for unbranded tenants.
 		EntraTenantID string `json:"entra_tenant_id,omitempty"`
+		// sso_available: Microsoft sign-in can work for this customer (the
+		// cloud has the customer Entra app and the customer has a tenant
+		// set). The admin UI only offers "Require single sign-on" when true;
+		// without it the toggle was permanently greyed out.
+		SSOAvailable bool `json:"sso_available"`
 		// business_units_enabled controls whether the portal surfaces
 		// the Business Unit tier (management page, tree column, user-
 		// scope picker). Non-omitempty — a missing field would ambiguously
@@ -148,6 +153,7 @@ func (h *Handler) GetBranding(w http.ResponseWriter, r *http.Request) {
 		if entraTenantID != nil {
 			o.EntraTenantID = *entraTenantID
 		}
+		o.SSOAvailable = h.customerSSO && o.EntraTenantID != ""
 		o.BusinessUnitsEnabled = buEnabled
 		return nil
 	})

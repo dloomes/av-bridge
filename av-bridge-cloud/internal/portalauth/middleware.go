@@ -100,6 +100,13 @@ func withPrincipal(ctx context.Context, p Principal) context.Context {
 	return context.WithValue(ctx, principalKey{}, p)
 }
 
+// ContextWithPrincipal returns ctx carrying p, as Middleware would. For
+// tests that call handlers directly; production requests get their
+// Principal from Middleware only.
+func ContextWithPrincipal(ctx context.Context, p Principal) context.Context {
+	return withPrincipal(ctx, p)
+}
+
 // From retrieves the Principal placed by Middleware. Returns ok=false if no
 // Principal is set — handlers downstream of Middleware should never see this.
 func From(ctx context.Context) (Principal, bool) {
