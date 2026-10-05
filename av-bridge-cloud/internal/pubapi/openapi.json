@@ -4,7 +4,7 @@
     "title": "av-bridge Public API",
     "version": "1.0.0",
     "summary": "Programmatic access to a customer's AV fleet.",
-    "description": "Read-only integration API for the av-bridge monitoring platform. Use it to sync device inventory into a CMDB, mirror alerts into an incident tool, or feed dashboards with live fleet state. Every route is scoped to the token's tenant — one token, one customer's data.\n\nRate limits are per-token; polling intervals of once per minute are ample for most use cases. Cursor-based pagination keeps list endpoints stable under concurrent inserts."
+    "description": "Read-only integration API for the av-bridge monitoring platform. Use it to sync device inventory into a CMDB, mirror alerts into an incident tool, or feed dashboards with live fleet state. Every route is scoped to the token's tenant — one token, one customer's data.\n\nPolling once a minute is ample for most use cases. Cursor-based pagination keeps list endpoints stable under concurrent inserts."
   },
   "security": [{ "bearerAuth": [] }],
   "tags": [
@@ -569,7 +569,7 @@
         "type": "object",
         "required": ["id", "device_id", "device_name", "event_type", "timestamp"],
         "properties": {
-          "id": { "type": "string", "format": "uuid" },
+          "id": { "type": "string", "description": "Event id: a number, sent as a string. Increases over time." },
           "device_id": { "type": "string", "format": "uuid" },
           "device_name": { "type": "string" },
           "event_type": { "type": "string", "description": "Adapter-emitted event key, e.g. `power.on`, `input.changed`." },
