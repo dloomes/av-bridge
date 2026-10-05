@@ -1,0 +1,74 @@
+---
+title: "Working with devices"
+sidebarTitle: "Devices"
+description: "Find a device, read its live information, send it commands, and see its history."
+icon: "display"
+---
+
+## Find a device
+
+There are three ways to reach a device:
+
+- **Places**, in the sidebar: open a building and room, then select the device.
+- **Devices**, in the sidebar: search by name, room, address or protocol, and filter by status and type.
+- **Overview**: select a summary card or building tile to open a filtered list.
+
+When you arrive at **Devices** from a building, room or Collector, the filter shows as a chip at the top, such as **Building: North Wing**. Select the chip's cross to clear it.
+
+The list refreshes every 30 seconds.
+
+## The device page
+
+Select **View** on a device to open its page. The header shows its status, room, type, protocol and model, and when it last updated.
+
+### Device Information
+
+**Device Information** shows everything the device reports, refreshed every 10 seconds: identity such as model, serial number and firmware version, network details, and the device's own readings, such as power state, input, volume or temperature. Which readings appear depends on the device; see [Supported devices](/devices/overview).
+
+If the device reports faults, **Fault Count** and **Faults** appear first. Select a list to expand it.
+
+### Commands
+
+**Commands** has a button for each command the device supports, such as **Power On**, **Mute** or **Input Hdmi1**. Some commands ask for a value first: a preset number, a volume level, a switch port or a dial address. Each command shows **OK** and how long it took, or the error the device returned.
+
+You need the **Send device commands** permission to see commands.
+
+<Note>
+Video codecs running as a Microsoft Teams Rooms or Zoom Rooms appliance show **Control disabled — appliance mode**. Their readings stay live, but the device itself refuses commands.
+</Note>
+
+### Events
+
+- **Live events** shows changes as they happen, such as a device going offline or recovering, or an input changing.
+- **Recent events** shows the last 50.
+
+### Activity
+
+Select **Activity** in the header to see every change made to the device and every command sent to it: who did it, when, and what changed.
+
+## If a device isn't responding
+
+<Steps>
+  <Step title="Check its status">
+    **Collector offline** means the problem is the Collector, not the device. Check the Collector's host and network first.
+  </Step>
+  <Step title="Reconnect">
+    Select **Reconnect** in the header. The Collector drops its connection to the device and starts a new one, which clears most stuck sessions.
+  </Step>
+  <Step title="Power-cycle it">
+    If the device is on a supported PDU or a PoE switch port, power-cycle it from that device's **Commands**: **Outlet Reboot** on the PDU, or **Poe Reset** on the switch.
+  </Step>
+</Steps>
+
+## Send a command to many devices
+
+1. On **Devices**, select **Send to group**.
+2. Enter the **Command name**, such as `power_off`, and any arguments.
+3. Choose the devices, or use **Select visible** to take everything matching your search.
+4. Select **Send**.
+
+Each device runs the command if it has it, and the summary shows how many were queued and how many failed. Follow up on individual devices from their pages. You need the **Bulk command fan-out** permission.
+
+## Add or change a device
+
+Administrators with the **Manage devices** permission can select **New device** on the **Devices** page, or **Edit** on a device page. See [Supported devices](/devices/overview) for what to enter for each kind of device.

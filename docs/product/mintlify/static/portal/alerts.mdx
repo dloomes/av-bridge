@@ -1,0 +1,43 @@
+---
+title: "Handling alerts"
+sidebarTitle: "Alerts"
+description: "What raises an alert, and how to acknowledge and resolve one."
+icon: "bell"
+---
+
+An alert is raised when something needs attention, most often a device or Collector that has stopped responding. The **Alerts** item in the sidebar shows how many are open, and turns red when any is critical.
+
+## What raises an alert
+
+| Alert | Raised when | Clears |
+|---|---|---|
+| **Device offline** | A device stops responding | Automatically, when it responds again |
+| **Collector offline** | A Collector stops checking in. Always critical, because none of its devices can be monitored | Automatically, when it checks in again |
+| Device-specific alerts | A device reports a problem, depending on the device | When resolved |
+
+Alerts are also closed automatically if their device is deleted.
+
+## Severity
+
+| Severity | Shown in | Use |
+|---|---|---|
+| **Critical** | Red | Needs action now: a room or site is affected. |
+| **Warning** | Amber | Needs attention soon. |
+| **Info** | Blue | For awareness. |
+
+## Work through alerts
+
+**Alerts** has four tabs: **Open** (the default), **Acknowledged**, **Resolved** and **All**. Each alert shows the device, what happened, when it opened and the details.
+
+- Select **Ack** to show you're dealing with it. The alert moves to **Acknowledged**, recording your name and the time, so colleagues don't duplicate the work.
+- Select **Resolve** when it's fixed and won't clear on its own.
+
+Offline alerts don't need resolving by hand: they clear the moment the device or Collector is back.
+
+You need the **Acknowledge alerts** or **Resolve alerts** permission for these actions.
+
+## Get alerts outside the portal
+
+Alerts can also be sent by email, to a Microsoft Teams channel, to any system that accepts a webhook, or straight into ServiceNow as incidents. An administrator sets these up; see [Notifications](/admin/notifications).
+
+Notifications go out when an alert first opens, not every time it repeats, so an unstable device doesn't flood your inbox.

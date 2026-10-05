@@ -1,0 +1,23 @@
+---
+title: "Audit log"
+description: "See who changed what, and when, across your organisation."
+icon: "clipboard-list"
+---
+
+The audit log records every change made in the portal: devices, locations, users, roles, notification channels, branding, API tokens and more, plus every command sent to a device. It's on the **Activity** page in the sidebar, and needs the **View audit log** permission.
+
+## Read the log
+
+Entries are newest first, and the page refreshes every 30 seconds. Each entry shows what was changed, the action (**Created**, **Updated**, **Deleted** or **Submitted**), who did it and when.
+
+Expand an entry to see exactly what changed: a field-by-field comparison of before and after.
+
+Secrets, such as device passwords and token values, are never recorded.
+
+## One device's history
+
+Every device page has an **Activity** button showing just that device's history: edits, and every command sent to it, with who sent it.
+
+## Keep or analyse the log elsewhere
+
+The page shows the latest 100 entries. For the full history, a longer retention, or to feed a SIEM, read the log through the Public API with a token that has the **Read audit log** scope. The API can filter by action, kind of record, record, person and date range. See [List audit entries](/api-reference/audit/list-audit-entries).

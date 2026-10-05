@@ -1,0 +1,41 @@
+---
+title: "API tokens"
+description: "Give another system read-only access to your estate through the Public API."
+icon: "key"
+---
+
+API tokens let other systems, such as a CMDB, BI tool or SIEM, read from M.A.R.C.U.S. through the [Public API](/api-reference/introduction). Tokens are read-only. You need **View API tokens** to see the list and **Manage API tokens** to create or revoke them.
+
+## Create a token
+
+1. Go to **API tokens** and select **New token**.
+2. Give it a **Name** that says what uses it, such as *Facilities BI export*.
+3. Tick only the **Scopes** it needs:
+
+   | Scope | Lets it read |
+   |---|---|
+   | **Read fleet + devices** | Devices, telemetry, rooms, buildings, alerts and events |
+   | **Read assets (CMDB)** | The asset register |
+   | **Read audit log** | The audit trail |
+
+   The other scopes listed (firmware, notification channels, reports, Room Readiness) are reserved for endpoints not yet in the API.
+4. Choose when it **Expires**: 30 days, 90 days (the default) or 1 year. **Never** is available but not recommended.
+5. Select **Create token**, then copy the token.
+
+<Warning>
+The token is shown only once. Store it in the integration's secret store straight away; M.A.R.C.U.S. keeps only a fingerprint of it and can't show it again.
+</Warning>
+
+## Keep track of tokens
+
+The list shows each token's prefix (such as `avb_1a2b3c4d…`), its scopes, who created it, when and from where it was last used, and when it expires. A token that has never been used, or hasn't been used for months, may be safe to revoke.
+
+## Revoke a token
+
+Select the token's revoke icon, then **Revoke token**. The integration using it stops working immediately. The token stays in the history so past activity can still be traced.
+
+To rotate a token without downtime, create the new one, update the integration, then revoke the old one.
+
+<Tip>
+**API docs**, at the top of the page, opens the interactive API reference for trying calls with a token.
+</Tip>

@@ -1,0 +1,67 @@
+---
+title: "Users and access"
+description: "Add users, give them roles, and limit them to the parts of the estate they look after."
+icon: "users"
+---
+
+Each user has one or more **roles**, which decide what they can do, and optionally an **access scope**, which decides which parts of the estate they can see. You need the **View users** permission to see the **Users** page, and the create, update, reset and delete user permissions for each action.
+
+## Add a user
+
+If your organisation signs in with Microsoft, you usually don't need to add users here: they're created the first time they sign in, with roles from your [sign-in mappings](/admin/single-sign-on). Add users by hand for people who sign in with a password.
+
+1. Go to **Users** and select **New user**.
+2. Enter their **Email** and **Full name**.
+3. Tick one or more **Roles**. A user with several roles can do everything any of their roles allows.
+4. Optionally, limit their access under **Physical scope** (below).
+5. Set an **Initial password** of at least 12 characters, and select **Create user**.
+
+M.A.R.C.U.S. doesn't send an invitation email. Give the user their password by another route, such as by phone or your password manager. They can change it later with **Forgot?** on the sign-in page.
+
+<Note>
+If your organisation requires Microsoft sign-in, users can't be added here; they're created when they first sign in.
+</Note>
+
+## Limit a user to part of the estate
+
+By default a user can see the whole estate. To restrict them, tick the parts they look after under **Physical scope**:
+
+- Tick a **business unit, region, location, building or room** to give access to it and everything inside it, including anything added later.
+- Ticks at different levels combine. Ticking one region and one room elsewhere gives access to both.
+- Leave everything unticked for the whole estate.
+
+A restricted user sees only those parts everywhere in the portal: the sidebar, Overview, Map, Devices, Alerts and reports. Access is enforced by the database itself, not just hidden in the screens.
+
+The **Users** list shows each user's scope as a chip, such as "2 regions · 1 room".
+
+### Administrators with restricted access
+
+An administrator who is themselves restricted to part of the estate:
+
+- **can't change anyone's scope**: only administrators with access to the whole estate can;
+- **gives new users their own scope** automatically.
+
+<Warning>
+A restricted administrator can still see every user in your organisation, give any role (including admin), and disable or delete any user. Their restriction applies to the estate, not to user management. Give user-management permissions only to people you'd trust with the whole organisation's accounts.
+</Warning>
+
+## Change, reset or remove a user
+
+Use the icons on the user's row:
+
+| Action | What happens |
+|---|---|
+| **Edit user** | Change their name, roles and scope. The email address can't be changed; delete and recreate the user instead. |
+| **Reset password** | Sets a new password and signs them out everywhere. Share the new password by another route. Not available if your organisation requires Microsoft sign-in. |
+| **Disable user** | Stops them signing in straight away and ends their sessions. Use this when someone leaves; you can re-enable them later. |
+| **Delete user** | Removes them permanently. Their actions stay in the [audit log](/admin/audit-log). |
+
+You can't disable or delete your own account.
+
+<Note>
+Saving a Microsoft user in **Edit user** turns all their roles into manually assigned roles. From then on, their roles no longer follow their Microsoft group membership. Prefer managing Microsoft users through [sign-in mappings](/admin/single-sign-on).
+</Note>
+
+## Business units
+
+If your organisation has several business units, such as separate departments or agencies, M.A.R.C.U.S. can keep each one's rooms, devices and users apart within a single portal. Your service provider switches this on. Business units are then managed on the **Locations** page, regions are assigned to them, and users can be scoped to them as above.

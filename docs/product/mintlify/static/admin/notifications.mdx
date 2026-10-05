@@ -1,0 +1,53 @@
+---
+title: "Notification channels"
+sidebarTitle: "Notifications"
+description: "Send alerts by email, to Microsoft Teams, to a webhook, or into ServiceNow as incidents."
+icon: "paper-plane"
+---
+
+A notification channel sends alerts outside the portal. Channels fire when an alert **first opens**; an alert that repeats while it's still open doesn't notify again.
+
+You need **View notifications** to see channels, **Manage notification channels** to add or change them, and **Test notification channel** to send a test.
+
+## Add a channel
+
+1. Go to **Notifications** and select **New channel**.
+2. Give it a **Name**, such as *AV on-call email*.
+3. Choose its **Type** (below) and enter where to send alerts. The type can't be changed later.
+4. Set the **Minimum severity**: **Info (everything)**, **Warning** (the default) or **Critical only**.
+5. Leave **Dispatching active** ticked, and select **Create channel**.
+6. Select **Test** on the new channel to check it works.
+
+| Type | Enter | Alerts arrive as |
+|---|---|---|
+| **Email** | An email address or distribution list | An email with the device, alert and details |
+| **Microsoft Teams** | The channel's incoming webhook URL, from the channel's **Connectors** or **Workflows** settings in Teams | A card in the channel, coloured by severity |
+| **Generic webhook** | An HTTPS URL | A JSON POST, for tools such as Dynamics 365 or Zapier |
+| **ServiceNow** | Your instance URL and an integration user (below) | An incident that resolves itself when the alert clears |
+
+## ServiceNow
+
+A ServiceNow channel opens an incident for each new alert and resolves it automatically when the alert clears, whether the device recovers, someone resolves the alert, or the device is removed.
+
+<Steps>
+  <Step title="Create an integration user in ServiceNow">
+    Create a user with the **itil** role, or any role that can create and update incidents.
+  </Step>
+  <Step title="Add the channel">
+    Choose **ServiceNow** and enter the **Instance URL**, such as `https://acme.service-now.com`, with the user's **Username** and **Password**. The password is stored encrypted and never shown again.
+  </Step>
+  <Step title="Set incident defaults (optional)">
+    **Assignment group**, **Caller**, **Category** and **Subcategory**, by name as they appear in ServiceNow. **Resolution code** is used when the incident resolves. The default, "Solution provided", suits most instances; change it if yours uses different codes.
+  </Step>
+  <Step title="Test">
+    **Test** opens a test incident and resolves it straight away, which confirms M.A.R.C.U.S. can both create and update incidents.
+  </Step>
+</Steps>
+
+Incident priority follows the alert's severity: critical alerts open as P2, warnings as P3, info as P4 (with ServiceNow's standard priority matrix). Each incident links back to the M.A.R.C.U.S. alert, so a retry never creates a duplicate. If ServiceNow is unavailable, M.A.R.C.U.S. keeps trying for about ten minutes.
+
+## Check a channel
+
+Each channel shows when it last sent, and the last error in red if a send failed, such as a mistyped address or an expired Teams webhook. Fix it with **Edit**, then **Test** again. When editing a ServiceNow channel, leave the password blank to keep the current one.
+
+To pause a channel without deleting it, clear **Dispatching active**.

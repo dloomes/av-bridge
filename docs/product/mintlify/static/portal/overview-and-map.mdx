@@ -1,0 +1,50 @@
+---
+title: "Overview and Map"
+description: "See the health of your whole estate, and drill into what needs attention."
+icon: "gauge"
+---
+
+**Overview** and **Map** show your whole estate on one screen. Both refresh every 15 seconds; select **Refresh** to update straight away.
+
+## Overview
+
+### Summary cards
+
+The cards at the top count your devices by status. Select a card to open the matching list.
+
+| Card | Shows | Opens |
+|---|---|---|
+| **Total devices** | Every device | All devices |
+| **Online** | Devices responding normally | Online devices |
+| **Offline** | Devices that have stopped responding | Offline devices |
+| **Unknown** | Devices whose status can't currently be checked, usually because their Collector isn't reporting | Unknown devices |
+| **Rooms with issues** | Rooms with at least one offline device | The offline devices |
+| **Open alerts** | Alerts not yet resolved. Reads **Open alerts (critical)** when any is critical | [Alerts](/portal/alerts) |
+| **Offline collectors** | Collectors that have stopped checking in | Collectors |
+
+### Buildings
+
+Below the cards, each building has a tile showing its location, device count, a health bar, and how many devices are offline, unknown and online. Select a tile to list that building's devices.
+
+Devices that haven't been put in a room appear in an **Unassigned** tile.
+
+## Map
+
+The map shows a pin for each building that has devices, coloured by its worst device status: red if anything is offline, grey if anything is unknown, green if all is well. The number on a pin is its device count.
+
+Select a pin to see the building's address and status, then **View devices** to list them.
+
+Buildings that haven't been given map coordinates are listed under **Missing coordinates**. An administrator can add them on the **Locations** page.
+
+## Device status
+
+| Status | Meaning |
+|---|---|
+| **Online** | The device is responding normally. |
+| **Offline** | The device has stopped responding. An alert is raised. |
+| **Unknown** | M.A.R.C.U.S. can't currently check the device. |
+| **Collector offline** | The device's status is unknown because the Collector that monitors it has stopped reporting. Fix the Collector and its devices' statuses return. |
+
+<Tip>
+Make the page you use most your landing page with **Set as default** in the page header.
+</Tip>

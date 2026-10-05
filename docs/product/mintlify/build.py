@@ -45,6 +45,18 @@ SRC_DIR = HERE.parent
 # Single-page documents. Add the rest of the doc pack here as each is ready.
 PAGES: dict[str, dict] = {}
 
+# Hand-written Mintlify pages under static/<folder>/, shown as sidebar
+# groups after the Introduction, in this order. Every .mdx in a listed
+# folder must appear here (the build checks), so a new page can't be
+# copied without a place in the navigation.
+STATIC_GROUPS: list[dict] = [
+    {"group": "Using the portal", "icon": "computer-mouse", "folder": "portal",
+     "pages": ["getting-around", "overview-and-map", "devices", "alerts"]},
+    {"group": "Administration", "icon": "user-gear", "folder": "admin",
+     "pages": ["users-and-access", "roles", "single-sign-on", "notifications",
+               "api-tokens", "branding", "audit-log"]},
+]
+
 # Multi-page guides. Section numbers match the "## N." headings in the .md.
 GUIDES: dict[str, dict] = {
     "deployment-guide": {
@@ -368,6 +380,16 @@ def main() -> int:
     # Introduction (static/quickstart.mdx); the API reference tab is filled
     # by api_docs. docs-navigation.json is the whole "navigation" value.
     doc_groups = [{"group": "Introduction", "icon": "book-open", "pages": ["quickstart"]}]
+    for g in STATIC_GROUPS:
+        folder = HERE / "static" / g["folder"]
+        present = sorted(p.stem for p in folder.glob("*.mdx")) if folder.exists() else []
+        listed = sorted(g["pages"])
+        if present != listed:
+            print(f"static/{g['folder']}: pages on disk {present} don't match STATIC_GROUPS {listed}",
+                  file=sys.stderr)
+            return 1
+        doc_groups.append({"group": g["group"], "icon": g["icon"],
+                           "pages": [f"{g['folder']}/{p}" for p in g["pages"]]})
     api_groups: list[dict] = []
     nav = doc_groups
     for n in names:
@@ -400,8 +422,10 @@ def main() -> int:
     print(f"wrote {nav_file}  (paste into docs.json -> navigation)")
 
     # Hand-written Mintlify-only pages (no Word equivalent), e.g. quickstart.
-    for src in sorted((HERE / "static").glob("*.mdx")):
-        dest = args.out / src.name
+    static = HERE / "static"
+    for src in sorted(static.rglob("*.mdx")):
+        dest = args.out / src.relative_to(static)
+        dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(src.read_bytes())
         print(f"wrote {dest}")
 

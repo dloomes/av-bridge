@@ -1,0 +1,51 @@
+---
+title: "Sign-in with Microsoft"
+sidebarTitle: "Single sign-on"
+description: "Let users sign in with Microsoft Entra ID, and give them roles from their Entra groups."
+icon: "microsoft"
+---
+
+M.A.R.C.U.S. supports single sign-on with Microsoft Entra ID. Users sign in with their work account, nobody needs a separate password, and roles follow Entra group membership, so joiners, movers and leavers are handled in Entra.
+
+## Turn it on
+
+Your service provider links your M.A.R.C.U.S. organisation to your Entra tenant. You'll need to give them your **Entra tenant ID**, and an Entra administrator may need to grant consent the first time someone signs in. Once linked, the sign-in page shows **Sign in with Microsoft**.
+
+## Give roles from Entra groups
+
+Sign-in mappings connect an Entra security group to a M.A.R.C.U.S. role. You need the **Manage sign-in mappings** permission.
+
+1. In Entra, find the group's **Object ID** (a GUID).
+2. In M.A.R.C.U.S., go to **Sign-in mappings** and select **New mapping**.
+3. Paste the **Entra group ID**, choose the **Role**, and select **Create**.
+
+Each group maps to one role. Map several groups to give different people different roles, for example *AV Engineers* to operator and *AV Managers* to admin.
+
+## What happens when someone signs in
+
+1. **First sign-in:** M.A.R.C.U.S. creates their account. If a password user with the same email already exists, it's linked to their Microsoft account instead.
+2. **Every sign-in:** their roles from Entra are rebuilt from their current groups. Someone added to a mapped group gets the role at their next sign-in; someone removed from it loses it.
+3. **Roles you assign by hand** in **Users** are kept; sign-in only changes roles that came from Entra.
+
+<Note>
+Someone in no mapped group can still sign in, but has no roles, so they see almost nothing. Add them to a mapped group in Entra, or give them a role in **Users**.
+</Note>
+
+Deleting a mapping takes that role away from users at their next sign-in, unless it was also given by hand.
+
+To restrict Microsoft users to part of the estate, set their [access scope](/admin/users-and-access#limit-a-user-to-part-of-the-estate) in **Users** after their first sign-in.
+
+## Require Microsoft sign-in
+
+Once Microsoft sign-in works, you can turn passwords off for everyone: on **Branding**, tick **Require single sign-on**. Then:
+
+- the sign-in page shows only **Sign in with Microsoft**;
+- passwords, password resets and adding users by hand stop working.
+
+<Warning>
+This includes your own password. Before turning it on, check that at least one administrator can sign in with Microsoft and that your sign-in mappings cover the roles your team needs.
+</Warning>
+
+## Customise the sign-in button
+
+On **Branding**, **SSO button label** replaces the "Sign in with Microsoft" text, for example with *Sign in with your Acme account*.
