@@ -364,7 +364,7 @@ def main() -> int:
               file=sys.stderr)
         return 1
 
-    # Navigation is two tabs. Documentation starts with the hand-written
+    # Navigation is two sections. Documentation starts with the hand-written
     # Introduction (static/quickstart.mdx); the API reference tab is filled
     # by api_docs. docs-navigation.json is the whole "navigation" value.
     doc_groups = [{"group": "Introduction", "icon": "book-open", "pages": ["quickstart"]}]
@@ -390,11 +390,13 @@ def main() -> int:
         for f in files:
             print(f"wrote {f}")
 
-    tabs = [{"tab": "Documentation", "icon": "book-open", "groups": doc_groups}]
+    # Anchors rather than tabs: the willow theme shows tabs as a dropdown,
+    # anchors as a row of links at the top of the sidebar.
+    anchors = [{"anchor": "Documentation", "icon": "book-open", "groups": doc_groups}]
     if api_groups:
-        tabs.append({"tab": "API reference", "icon": "code", "groups": api_groups})
+        anchors.append({"anchor": "API reference", "icon": "code", "groups": api_groups})
     nav_file = args.out / "docs-navigation.json"
-    nav_file.write_text(json.dumps({"tabs": tabs}, indent=2) + "\n", encoding="utf-8")
+    nav_file.write_text(json.dumps({"anchors": anchors}, indent=2) + "\n", encoding="utf-8")
     print(f"wrote {nav_file}  (paste into docs.json -> navigation)")
 
     # Hand-written Mintlify-only pages (no Word equivalent), e.g. quickstart.
