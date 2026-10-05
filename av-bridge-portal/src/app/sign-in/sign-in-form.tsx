@@ -413,16 +413,8 @@ export function SignInForm({ branding, showVendorSSO = false, slug, appOrigin = 
           </p>
         </div>
 
-        {/* Foot: quiet operational marker + brand line */}
+        {/* Foot: brand line */}
         <div className="relative flex items-center gap-6 font-mono text-[10.5px] tracking-wider text-sidebar-foreground/45 animate-fade-in [animation-delay:280ms] [animation-fill-mode:both]">
-          <span className="inline-flex items-center gap-2">
-            <span
-              className="h-1.5 w-1.5 rounded-full bg-success"
-              style={{ boxShadow: "0 0 8px hsl(var(--success) / 0.55)" }}
-              aria-hidden="true"
-            />
-            All systems operational
-          </span>
           <span>© Involve · {PRODUCT_NAME}</span>
         </div>
       </section>
@@ -436,21 +428,6 @@ export function SignInForm({ branding, showVendorSSO = false, slug, appOrigin = 
           backgroundSize: "22px 22px",
         }}
       >
-        {/* Top row: talk-to-sales — the only chrome */}
-        <div
-          className={`flex justify-end items-center gap-2 font-mono text-[11px] text-muted-foreground animate-fade-in ${
-            slug ? "invisible" : ""
-          }`}
-        >
-          <span>Need an account?</span>
-          <a
-            href="mailto:commercial@involve.vc?subject=M.A.R.C.U.S.%20enquiry"
-            className="ml-1 rounded-md border border-border bg-background px-2.5 py-1.5 text-foreground/80 no-underline transition-colors hover:border-input hover:bg-muted hover:text-foreground"
-          >
-            Talk to sales →
-          </a>
-        </div>
-
         {/* Form column — vertically centred in remaining space */}
         <div className="flex-1 flex items-center justify-center py-10">
           <div className="w-full max-w-sm animate-fade-in [animation-delay:180ms] [animation-fill-mode:both]">
