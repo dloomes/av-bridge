@@ -374,6 +374,9 @@ def main() -> int:
             import api_docs
             files, group = api_docs.build(args.out, frontmatter, args.api_base or api_docs.DEFAULT_API_BASE)
             nav.append(group)
+            # Endpoint pages render empty unless docs.json registers the spec.
+            print('note: docs.json needs  "api": {"openapi": "api-reference/openapi.json"}'
+                  '  or the API reference pages show only their titles')
         elif n in GUIDES:
             files = build_guide(n, GUIDES[n], args.out)
             nav.append(guide_nav(GUIDES[n]))

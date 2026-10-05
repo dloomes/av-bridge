@@ -14,6 +14,9 @@ openapi.json) is the single source of truth. This module writes:
                                    parameters, schemas and "Try it" from the
                                    spec via the `openapi:` frontmatter.
 
+docs.json must register the spec — "api": {"openapi": "api-reference/openapi.json"} —
+or Mintlify renders the endpoint pages with only their titles.
+
 Required scopes are read from the route table in av-bridge-cloud/internal/
 api/server.go (pubWrapScope(portalauth.PermX, ...)), and the build fails if
 a spec path has no route or a route has no spec entry — so the reference
