@@ -23,6 +23,8 @@ Usage:
   python docs/product/mintlify/build.py                   # everything -> ./out
   python docs/product/mintlify/build.py deployment-guide
   python docs/product/mintlify/build.py devices           # Supported devices (from the adapter catalogue)
+  python docs/product/mintlify/build.py api               # API reference (from the public API spec)
+  python docs/product/mintlify/build.py --api-base https://api.example.com   # server for "Try it"
   python docs/product/mintlify/build.py --out C:/path/to/mintlify-repo
 """
 from __future__ import annotations
@@ -160,7 +162,7 @@ def callout_for(body: str) -> str:
 
 def frontmatter(meta: dict) -> str:
     fm = ["---"]
-    for key in ("title", "sidebarTitle", "description", "icon"):
+    for key in ("title", "sidebarTitle", "description", "icon", "openapi"):
         if meta.get(key):
             fm.append(f"{key}: {yaml_str(meta[key])}")
     fm.append("---")
@@ -345,11 +347,16 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("docs", nargs="*", help="documents to build (default: all)")
     ap.add_argument("--out", type=Path, default=HERE / "out")
+    ap.add_argument("--api-base", default=None,
+                    help="API server shown in the API reference and used by its playground "
+                         "(default: the UAT API)")
     args = ap.parse_args()
 
     # "devices" is the Supported devices section, generated from the adapter
     # catalogue by adapter_docs.py rather than from a Markdown source.
-    known = {**PAGES, **GUIDES, "devices": None}
+    # "api" is the API reference, generated from the public API's OpenAPI
+    # spec and route table by api_docs.py.
+    known = {**PAGES, **GUIDES, "devices": None, "api": None}
     names = args.docs or list(known)
     unknown = [n for n in names if n not in known]
     if unknown:
@@ -362,6 +369,10 @@ def main() -> int:
         if n == "devices":
             import adapter_docs
             files, group = adapter_docs.build(args.out, convert, frontmatter, yaml_str)
+            nav.append(group)
+        elif n == "api":
+            import api_docs
+            files, group = api_docs.build(args.out, frontmatter, args.api_base or api_docs.DEFAULT_API_BASE)
             nav.append(group)
         elif n in GUIDES:
             files = build_guide(n, GUIDES[n], args.out)
