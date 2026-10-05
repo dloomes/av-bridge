@@ -364,7 +364,12 @@ def main() -> int:
               file=sys.stderr)
         return 1
 
-    nav = []
+    # Navigation is two tabs. Documentation starts with the hand-written
+    # Introduction (static/quickstart.mdx); the API reference tab is filled
+    # by api_docs. docs-navigation.json is the whole "navigation" value.
+    doc_groups = [{"group": "Introduction", "icon": "book-open", "pages": ["quickstart"]}]
+    api_groups: list[dict] = []
+    nav = doc_groups
     for n in names:
         if n == "devices":
             import adapter_docs
@@ -372,8 +377,7 @@ def main() -> int:
             nav.append(group)
         elif n == "api":
             import api_docs
-            files, group = api_docs.build(args.out, frontmatter, args.api_base or api_docs.DEFAULT_API_BASE)
-            nav.append(group)
+            files, api_groups = api_docs.build(args.out, frontmatter, args.api_base or api_docs.DEFAULT_API_BASE)
             # Endpoint pages render empty unless docs.json registers the spec.
             print('note: docs.json needs  "api": {"openapi": "api-reference/openapi.json"}'
                   '  or the API reference pages show only their titles')
@@ -386,8 +390,11 @@ def main() -> int:
         for f in files:
             print(f"wrote {f}")
 
+    tabs = [{"tab": "Documentation", "icon": "book-open", "groups": doc_groups}]
+    if api_groups:
+        tabs.append({"tab": "API reference", "icon": "code", "groups": api_groups})
     nav_file = args.out / "docs-navigation.json"
-    nav_file.write_text(json.dumps(nav, indent=2) + "\n", encoding="utf-8")
+    nav_file.write_text(json.dumps({"tabs": tabs}, indent=2) + "\n", encoding="utf-8")
     print(f"wrote {nav_file}  (paste into docs.json -> navigation)")
 
     # Hand-written Mintlify-only pages (no Word equivalent), e.g. quickstart.

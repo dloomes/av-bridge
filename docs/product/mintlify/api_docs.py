@@ -295,8 +295,8 @@ A filter that matches nothing returns `200` with an empty `data` list, not `404`
     }
 
 
-def build(out_dir: Path, frontmatter, api_base: str = DEFAULT_API_BASE) -> tuple[list[Path], dict]:
-    """Write the section; returns (files written, docs.json nav group)."""
+def build(out_dir: Path, frontmatter, api_base: str = DEFAULT_API_BASE) -> tuple[list[Path], list[dict]]:
+    """Write the section; returns (files written, the API reference tab's nav groups)."""
     spec = json.loads(SPEC.read_text(encoding="utf-8"))
     scopes = route_scopes()
     check_routes(spec, scopes)
@@ -328,12 +328,9 @@ def build(out_dir: Path, frontmatter, api_base: str = DEFAULT_API_BASE) -> tuple
         dest.write_text(frontmatter(meta) + body, encoding="utf-8", newline="\n")
         written.append(dest)
 
-    nav = {
-        "group": "API reference",
-        "icon": "code",
-        "pages": [f"{SECTION}/introduction", f"{SECTION}/authentication",
-                  f"{SECTION}/pagination", f"{SECTION}/errors"]
-                 + [{"group": label, "icon": icon, "pages": tag_pages[tag]}
-                    for tag, label, icon in TAGS if tag in tag_pages],
-    }
-    return written, nav
+    groups = [{"group": "Getting started", "icon": "rocket",
+               "pages": [f"{SECTION}/introduction", f"{SECTION}/authentication",
+                         f"{SECTION}/pagination", f"{SECTION}/errors"]}]
+    groups += [{"group": label, "icon": icon, "pages": tag_pages[tag]}
+               for tag, label, icon in TAGS if tag in tag_pages]
+    return written, groups
