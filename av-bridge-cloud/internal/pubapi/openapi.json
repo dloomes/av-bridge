@@ -13,7 +13,8 @@
     { "name": "Hierarchy", "description": "Physical structure: buildings and rooms." },
     { "name": "Assets", "description": "The CMDB inventory — every physical thing the tenant owns, monitored or not. Broader than Devices: includes mounts, cables, spares, retired gear." },
     { "name": "Alerts", "description": "Open + historical incidents raised on devices and collectors." },
-    { "name": "Events", "description": "Device-emitted events — state changes, adapter messages, telemetry deltas." }
+    { "name": "Events", "description": "Device-emitted events — state changes, adapter messages, telemetry deltas." },
+    { "name": "Audit", "description": "The tenant's audit trail of changes and commands. Needs the view.audit scope." }
   ],
   "paths": {
     "/pub/v1/ping": {
@@ -287,6 +288,41 @@
           "403": { "$ref": "#/components/responses/Forbidden" }
         }
       }
+    },
+    "/pub/v1/audit": {
+      "get": {
+        "tags": ["Audit"],
+        "summary": "List audit entries",
+        "description": "The tenant's audit trail, most recent first: who changed what, and when, with before/after snapshots of the record. Use it to feed a SIEM or keep a change record outside the platform. Secrets such as device credentials and password or token hashes are never recorded. Requires the `view.audit` scope.",
+        "parameters": [
+          { "name": "action", "in": "query", "description": "Exact action, e.g. `device.update`. End with a dot (`device.`) to match every action on that kind of record.", "schema": { "type": "string" } },
+          { "name": "target_kind", "in": "query", "description": "Exact kind of record, e.g. `device`, `user`, `notification_channel`.", "schema": { "type": "string" } },
+          { "name": "target_id", "in": "query", "description": "Matches the primary or the related target, so a device's feed also includes commands sent to it.", "schema": { "type": "string" } },
+          { "name": "actor", "in": "query", "description": "Exact actor label, as shown in `actor`.", "schema": { "type": "string" } },
+          { "name": "since", "in": "query", "description": "Entries at or after this time (RFC 3339).", "schema": { "type": "string", "format": "date-time" } },
+          { "name": "until", "in": "query", "description": "Entries before this time (RFC 3339).", "schema": { "type": "string", "format": "date-time" } },
+          { "$ref": "#/components/parameters/Limit" },
+          { "$ref": "#/components/parameters/Cursor" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Page of audit entries.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    { "$ref": "#/components/schemas/Page" },
+                    { "type": "object", "properties": { "data": { "type": "array", "items": { "$ref": "#/components/schemas/AuditEntry" } } } }
+                  ]
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
     }
   },
   "components": {
@@ -539,6 +575,23 @@
           "event_type": { "type": "string", "description": "Adapter-emitted event key, e.g. `power.on`, `input.changed`." },
           "payload": { "type": "object", "additionalProperties": true },
           "timestamp": { "type": "string", "format": "date-time" }
+        }
+      },
+      "AuditEntry": {
+        "type": "object",
+        "required": ["id", "timestamp", "actor", "action", "target_kind"],
+        "properties": {
+          "id": { "type": "string", "description": "Entry id; increases over time." },
+          "timestamp": { "type": "string", "format": "date-time" },
+          "actor": { "type": "string", "description": "Who made the change: a user, an API token, or `system:` / `auto:` for platform actions." },
+          "action": { "type": "string", "description": "What happened, e.g. `device.update`, `command.submit`, `user.create`." },
+          "target_kind": { "type": "string" },
+          "target_id": { "type": "string" },
+          "related_target_kind": { "type": "string", "description": "A second record the action affected, e.g. the device a command was sent to." },
+          "related_target_id": { "type": "string" },
+          "before": { "type": "object", "additionalProperties": true, "description": "The record before the change, where applicable." },
+          "after": { "type": "object", "additionalProperties": true, "description": "The record after the change, where applicable." },
+          "metadata": { "type": "object", "additionalProperties": true }
         }
       }
     }

@@ -120,6 +120,7 @@ func TestAllEndpoints(t *testing.T) {
 		"GET /pub/v1/assets/{id}":            h.GetAsset,
 		"GET /pub/v1/alerts":                 h.ListAlerts,
 		"GET /pub/v1/events":                 h.ListEvents,
+		"GET /pub/v1/audit":                  h.ListAudit,
 	} {
 		mux.HandleFunc(pattern, fn)
 	}
@@ -165,6 +166,7 @@ func TestAllEndpoints(t *testing.T) {
 		"/pub/v1/assets/" + a1,
 		"/pub/v1/alerts", "/pub/v1/alerts?status=open", "/pub/v1/alerts?severity=warning",
 		"/pub/v1/events", "/pub/v1/events?device_id=" + devs[1], "/pub/v1/events?device_id=junk",
+		"/pub/v1/audit", "/pub/v1/audit?action=device.", "/pub/v1/audit?target_id=" + devs[0],
 	}
 	for _, p := range ok200 {
 		if code, body := get(p); code != http.StatusOK {

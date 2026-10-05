@@ -501,6 +501,7 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 			"/pub/v1/assets/{id}",
 			"/pub/v1/alerts",
 			"/pub/v1/events",
+			"/pub/v1/audit",
 		} {
 			mux.Handle("OPTIONS "+p, optionsPreflight)
 		}
@@ -537,6 +538,11 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 			pubWrapScope(portalauth.PermViewDashboard, pubAPI.Handler.ListAlerts))
 		mux.Handle("GET /pub/v1/events",
 			pubWrapScope(portalauth.PermViewDashboard, pubAPI.Handler.ListEvents))
+
+		// Audit trail — its own scope so a SIEM token can read changes
+		// without device data, and a dashboard token can't read the trail.
+		mux.Handle("GET /pub/v1/audit",
+			pubWrapScope(portalauth.PermViewAudit, pubAPI.Handler.ListAudit))
 	}
 
 	// Bridge-side command channel — HMAC-authenticated, same scheme as /ingest.

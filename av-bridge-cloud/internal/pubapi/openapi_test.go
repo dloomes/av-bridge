@@ -38,6 +38,7 @@ func TestOpenAPISpecShape(t *testing.T) {
 		"/pub/v1/assets/{id}",
 		"/pub/v1/alerts",
 		"/pub/v1/events",
+		"/pub/v1/audit",
 	}
 	for _, p := range wantPaths {
 		if _, ok := doc.Paths[p]; !ok {
