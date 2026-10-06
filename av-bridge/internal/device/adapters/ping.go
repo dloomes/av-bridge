@@ -3,6 +3,7 @@ package adapters
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"time"
 
 	probing "github.com/prometheus-community/pro-bing"
@@ -22,19 +23,20 @@ import (
 //	ping_count       int    number of echoes per Poll        (default 3)
 //	ping_timeout_ms  int    per-echo timeout in milliseconds (default 1000)
 //	ping_interval_ms int    gap between echoes in ms         (default 100)
-//	ping_privileged  bool   set true to use raw ICMP sockets (default false)
+//	ping_privileged  bool   raw ICMP sockets (default true on Windows, false elsewhere)
 //
 // Linux note: unprivileged mode (the default) uses UDP sockets that
 // the kernel translates to ICMP. It requires the running user's GID
 // to be inside net.ipv4.ping_group_range, or the process needs
 // CAP_NET_RAW. Systemd deployments should add AmbientCapabilities.
-// Windows requires privileged mode + elevation.
+// Windows only supports privileged mode, so it's the default there; the
+// collector's Windows service runs as LocalSystem, which has the rights.
 type PingAdapter struct {
 	device.Base
-	count       int
-	timeout     time.Duration
-	interval    time.Duration
-	privileged  bool
+	count      int
+	timeout    time.Duration
+	interval   time.Duration
+	privileged bool
 }
 
 func NewPingAdapter(cfg config.DeviceConfig) *PingAdapter {
@@ -43,7 +45,7 @@ func NewPingAdapter(cfg config.DeviceConfig) *PingAdapter {
 		count:      3,
 		timeout:    time.Second,
 		interval:   100 * time.Millisecond,
-		privileged: false,
+		privileged: runtime.GOOS == "windows",
 	}
 	if v := parseIntTag(cfg.Tags, "ping_count"); v > 0 {
 		a.count = v
@@ -51,11 +53,16 @@ func NewPingAdapter(cfg config.DeviceConfig) *PingAdapter {
 	if v := parseIntTag(cfg.Tags, "ping_timeout_ms"); v > 0 {
 		a.timeout = time.Duration(v) * time.Millisecond
 	}
-	if v := parseIntTag(cfg.Tags, "ping_interval_ms"); v >= 0 {
+	// > 0, not >= 0: parseIntTag returns 0 for a missing tag, and a zero
+	// interval makes pro-bing panic (NewTicker) and take the collector down.
+	if v := parseIntTag(cfg.Tags, "ping_interval_ms"); v > 0 {
 		a.interval = time.Duration(v) * time.Millisecond
 	}
-	if cfg.Tags["ping_privileged"] == "true" {
+	switch cfg.Tags["ping_privileged"] {
+	case "true":
 		a.privileged = true
+	case "false":
+		a.privileged = false
 	}
 	return a
 }
