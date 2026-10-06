@@ -46,6 +46,17 @@ RUN BUILD_TIME="${BRIDGE_BUILD_TIME:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}" \
  && CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
     go build -ldflags "$LDFLAGS" -o /out/av-bridge-linux-arm64      ./cmd/av-bridge
 
+# Update manifest: SHA-256 + Ed25519 signature per binary, which the
+# collector self-updater checks before installing. The signing key comes
+# in as a BuildKit secret (never a build arg, never in a layer):
+#   docker build --secret id=update_signing_key,src=<key file> ...
+# Without the secret the manifest is written unsigned and the portal
+# reports updates as unavailable for this build.
+RUN --mount=type=secret,id=update_signing_key,required=false \
+    go run ./cmd/av-bridge-sign -key /run/secrets/update_signing_key \
+      -version "${BRIDGE_VERSION}" -out /out/manifest.json \
+      /out/av-bridge-windows-amd64.exe /out/av-bridge-linux-amd64 /out/av-bridge-linux-arm64
+
 # ---- Cloud (native linux) build -------------------------------------------
 FROM golang:1.22-alpine AS cloud-build
 WORKDIR /src
@@ -65,5 +76,6 @@ COPY --from=cloud-build /out/av-bridge-cloud /av-bridge-cloud
 COPY --from=bridge-build /out/av-bridge-windows-amd64.exe /downloads/av-bridge-windows-amd64.exe
 COPY --from=bridge-build /out/av-bridge-linux-amd64      /downloads/av-bridge-linux-amd64
 COPY --from=bridge-build /out/av-bridge-linux-arm64      /downloads/av-bridge-linux-arm64
+COPY --from=bridge-build /out/manifest.json              /downloads/manifest.json
 EXPOSE 8090
 ENTRYPOINT ["/av-bridge-cloud"]

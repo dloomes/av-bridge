@@ -2,6 +2,8 @@ package publicapi
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -40,10 +42,14 @@ type enrollResponse struct {
 // EnrollCollector — POST /public/collectors/enroll
 //
 // Atomic redeem: WHERE gates every "still redeemable" condition on the
-// UPDATE so a concurrent second click can't double-consume. On success
-// we decrypt the collector's stored HMAC secret and return the
-// plaintext to the caller once; the raw value is not retained anywhere
-// in the response cycle beyond this handler frame.
+// UPDATE so a concurrent second click can't double-consume.
+//
+// Each redeem mints a fresh HMAC secret for the collector, in the same tx
+// as the token consume. Whichever machine enrolled last is the only one
+// that can authenticate, so re-enrolling onto replacement hardware (or
+// re-running the installer) cuts off the previous machine instead of
+// leaving two boxes reporting as one collector. The plaintext is returned
+// to the caller once and not retained beyond this handler frame.
 func (h *Handler) EnrollCollector(w http.ResponseWriter, r *http.Request) {
 	var req enrollRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -55,20 +61,35 @@ func (h *Handler) EnrollCollector(w http.ResponseWriter, r *http.Request) {
 		writeJSONStatus(w, http.StatusBadRequest, map[string]string{"error": "invalid token"})
 		return
 	}
+	if h.cipher == nil {
+		h.log.Error("collector enroll: cipher not configured")
+		writeJSONStatus(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 
-	// Redeem + fetch collector row in one round-trip via CTE. Returning
-	// clause emits the collector's id, bridge id, customer id, and
-	// encrypted HMAC so we don't have to re-select after the UPDATE.
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		h.log.Error("collector enroll: secret generation failed", "error", err)
+		writeJSONStatus(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+	hmacPlaintext := hex.EncodeToString(raw)
+	hmacEnc, err := h.cipher.Encrypt([]byte(hmacPlaintext))
+	if err != nil {
+		h.log.Error("collector enroll: secret encrypt failed", "error", err)
+		writeJSONStatus(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+
 	var (
 		collectorID string
 		bridgeID    string
 		customerID  string
-		hmacEnc     []byte
 	)
-	err := h.store.AdminPool().QueryRow(ctx, `
+	err = h.store.AdminPool().QueryRow(ctx, `
 		WITH consumed AS (
 		    UPDATE collector_enrollment_tokens
 		       SET used_at = now()
@@ -77,32 +98,21 @@ func (h *Handler) EnrollCollector(w http.ResponseWriter, r *http.Request) {
 		       AND expires_at > now()
 		    RETURNING collector_id
 		)
-		SELECT c.id::text,
-		       COALESCE(c.bridge_collector_id, ''),
-		       c.customer_id::text,
-		       c.hmac_secret_enc
+		UPDATE collectors c
+		   SET hmac_secret_enc = $2
 		  FROM consumed
-		  JOIN collectors c ON c.id = consumed.collector_id`,
-		portalauth.HashToken(req.Token),
-	).Scan(&collectorID, &bridgeID, &customerID, &hmacEnc)
+		 WHERE c.id = consumed.collector_id
+		RETURNING c.id::text,
+		          COALESCE(c.bridge_collector_id, ''),
+		          c.customer_id::text`,
+		portalauth.HashToken(req.Token), hmacEnc,
+	).Scan(&collectorID, &bridgeID, &customerID)
 	if err != nil {
 		if !errors.Is(err, pgx.ErrNoRows) {
 			h.log.Warn("collector enroll: redeem failed", "error", err)
 		}
 		writeJSONStatus(w, http.StatusBadRequest,
 			map[string]string{"error": "enrollment failed — token missing, expired, or already used"})
-		return
-	}
-	if h.cipher == nil {
-		h.log.Error("collector enroll: cipher not configured")
-		writeJSONStatus(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
-		return
-	}
-	hmacPlaintext, err := h.cipher.Decrypt(hmacEnc)
-	if err != nil {
-		h.log.Error("collector enroll: hmac decrypt failed",
-			"collector_id", collectorID, "error", err)
-		writeJSONStatus(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 		return
 	}
 
@@ -132,7 +142,7 @@ func (h *Handler) EnrollCollector(w http.ResponseWriter, r *http.Request) {
 		CollectorID:       collectorID,
 		BridgeCollectorID: bridgeID,
 		CustomerID:        customerID,
-		HMACSecret:        string(hmacPlaintext),
+		HMACSecret:        hmacPlaintext,
 		CloudBaseURL:      strings.TrimRight(h.cloudBaseURL, "/"),
 	})
 }

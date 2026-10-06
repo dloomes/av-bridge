@@ -179,7 +179,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				return err
 			}
-			if outcome.notifyEvent != nil {
+			// Events replayed from a bridge's spool after an outage still
+			// open/resolve alerts, but don't page anyone hours late.
+			if outcome.notifyEvent != nil && !replayedTooLate(e.Timestamp) {
 				newAlerts = append(newAlerts, *outcome.notifyEvent)
 			}
 		}
@@ -227,11 +229,33 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// replayNotifyCutoff — alert events older than this when they reach the
+// cloud (a bridge replaying its spool after an outage) are recorded but
+// not sent to notification channels.
+const replayNotifyCutoff = 15 * time.Minute
+
+func replayedTooLate(ts time.Time) bool {
+	return !ts.IsZero() && time.Since(ts) > replayNotifyCutoff
+}
+
+// INSERT ... SELECT so the tombstone gate can veto auto-creating a device
+// that was moved off this collector (collector_device_tombstones, written
+// by the device move). The gate never blocks a device that exists here —
+// the EXISTS arm keeps the ON CONFLICT update path open for it.
+//
+// latest_status / latest_metrics / last_seen_at only move forward in time:
+// telemetry replayed from a bridge's spool, or straggling in from a
+// device's previous collector, must not roll the current state back.
 const upsertDeviceSQL = `
 INSERT INTO devices (customer_id, collector_id, reported_id, name, type, protocol,
                      make, model, serial_number, firmware_version, mac_address, ip_address,
                      tags, latest_status, latest_metrics, last_seen_at, capabilities)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14,$15::jsonb,$16,$17::jsonb)
+SELECT $1::uuid,$2::uuid,$3::text,$4::text,$5::text,$6::text,$7::text,$8::text,$9::text,$10::text,$11::text,$12::text,
+       $13::jsonb,$14::text,$15::jsonb,$16::timestamptz,$17::jsonb
+ WHERE NOT EXISTS (SELECT 1 FROM collector_device_tombstones t
+                    WHERE t.collector_id = $2::uuid AND t.reported_id = $3::text)
+    OR EXISTS (SELECT 1 FROM devices d
+                WHERE d.collector_id = $2::uuid AND d.reported_id = $3::text)
 ON CONFLICT (collector_id, reported_id) DO UPDATE SET
   name             = COALESCE(EXCLUDED.name, devices.name),
   type             = COALESCE(EXCLUDED.type, devices.type),
@@ -248,9 +272,15 @@ ON CONFLICT (collector_id, reported_id) DO UPDATE SET
   mac_address      = COALESCE(EXCLUDED.mac_address, devices.mac_address),
   ip_address       = COALESCE(EXCLUDED.ip_address, devices.ip_address),
   tags             = COALESCE(EXCLUDED.tags, devices.tags),
-  latest_status    = COALESCE(EXCLUDED.latest_status, devices.latest_status),
-  latest_metrics   = COALESCE(EXCLUDED.latest_metrics, devices.latest_metrics),
-  last_seen_at     = COALESCE(EXCLUDED.last_seen_at, devices.last_seen_at),
+  latest_status    = CASE WHEN devices.last_seen_at IS NULL OR EXCLUDED.last_seen_at IS NULL
+                               OR EXCLUDED.last_seen_at >= devices.last_seen_at
+                          THEN COALESCE(EXCLUDED.latest_status, devices.latest_status)
+                          ELSE devices.latest_status END,
+  latest_metrics   = CASE WHEN devices.last_seen_at IS NULL OR EXCLUDED.last_seen_at IS NULL
+                               OR EXCLUDED.last_seen_at >= devices.last_seen_at
+                          THEN COALESCE(EXCLUDED.latest_metrics, devices.latest_metrics)
+                          ELSE devices.latest_metrics END,
+  last_seen_at     = GREATEST(EXCLUDED.last_seen_at, devices.last_seen_at),
   capabilities     = COALESCE(EXCLUDED.capabilities, devices.capabilities)
 WHERE devices.deleted_at IS NULL
 RETURNING id::text`
@@ -296,8 +326,9 @@ func upsertDeviceFromTelemetry(ctx context.Context, tx pgx.Tx, customerID, colle
 		nilIfEmptyRaw(t.Capabilities),
 	).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
-		// Soft-deleted device — the WHERE deleted_at IS NULL guard on
-		// DO UPDATE skipped the update. Not an error; caller drops the
+		// Soft-deleted device (the WHERE deleted_at IS NULL guard on
+		// DO UPDATE skipped the update) or a tombstoned one that moved
+		// to another collector. Not an error; caller drops the
 		// telemetry silently.
 		return "", nil
 	}

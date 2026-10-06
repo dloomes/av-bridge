@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/dloomes/av-bridge-cloud/internal/audit"
+	"github.com/dloomes/av-bridge-cloud/internal/collectorupdate"
 	"github.com/dloomes/av-bridge-cloud/internal/portalauth"
 	"github.com/dloomes/av-bridge-cloud/internal/registration"
 	"github.com/jackc/pgx/v5"
@@ -367,6 +368,9 @@ type updateCollectorReq struct {
 	// Name: rename the collector. Empty string is rejected — a
 	// collector without a name is unusable in the fleet UI.
 	Name *string `json:"name,omitempty"`
+	// UpdateWindow: "HH:MM" (building local time) opens a daily 2-hour
+	// automatic update window; "" turns automatic updates off.
+	UpdateWindow *string `json:"update_window,omitempty"`
 }
 
 // UpdateCollector — PATCH /api/v1/collectors/{id}
@@ -412,6 +416,15 @@ func (h *Handler) UpdateCollector(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "name cannot be blank")
 		return
 	}
+	var windowStart any
+	if req.UpdateWindow != nil && strings.TrimSpace(*req.UpdateWindow) != "" {
+		m, err := collectorupdate.ParseWindow(*req.UpdateWindow)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		windowStart = m
+	}
 
 	// Build the SET clause dynamically — matches the pattern used by
 	// UpdateDevice / UpdateRegion elsewhere in the file.
@@ -426,6 +439,9 @@ func (h *Handler) UpdateCollector(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Name != nil {
 		add("name", strings.TrimSpace(*req.Name))
+	}
+	if req.UpdateWindow != nil {
+		add("update_window_start", windowStart)
 	}
 	if len(set) == 0 {
 		w.WriteHeader(http.StatusNoContent)

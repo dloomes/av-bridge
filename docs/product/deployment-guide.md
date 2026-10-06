@@ -388,13 +388,32 @@ To rotate a key, re-enrol the Collector with a new token from the portal. This i
 
 ## 11. Update the Collector
 
+### From the portal
+
+Collectors running as a Linux or Windows service can update themselves. The **Collectors** page shows **vX.Y.Z available** under any Collector that's behind the latest release.
+
+- **Update now:** select the update button on the Collector's row, or **Update all** at the top of the page. An online Collector starts within seconds.
+- **Update automatically:** select the schedule button on the row, tick **Update automatically** and choose a time. When a newer version is available, the Collector updates within two hours of that time, in its building's time zone.
+
+During an update, the Collector downloads the new version from M.A.R.C.U.S. Cloud and checks its digital signature. Then it confirms the new version accepts its configuration and restarts. Monitoring pauses for under a minute. If the new version can't reach the cloud within five minutes, or fails to start, the Collector puts the previous version back and restarts on it. The portal then shows **Update rolled back** and the reason.
+
+Updates are signed with a release key held by Involve, separately from M.A.R.C.U.S. Cloud. A Collector only installs software signed with that key, so even M.A.R.C.U.S. Cloud can't make it run anything else.
+
+Updating needs the **Manage collectors** permission. If a Collector can't update itself, the portal says why, for example "runs in a container".
+
+> **Linux Collectors installed before version 1.0.20** keep their binary in `/usr/local/bin`, which the service can't write to. Re-run the install command from the portal once to move it to `/opt/av-bridge/bin`; after that the Collector updates itself.
+
+### By hand
+
 | Runtime | How to update |
 |---|---|
-| Linux service | Replace the binary, then run `systemctl restart av-bridge` |
+| Linux service | Replace `/opt/av-bridge/bin/av-bridge`, then run `systemctl restart av-bridge` |
 | Windows service | Replace the binary, then run `Restart-Service av-bridge` |
 | Docker Compose | `docker compose pull && docker compose up -d` |
 | Kubernetes | Update the image tag in the Deployment |
 | Managed container platforms | Redeploy with the new image tag |
+
+Collectors in containers are always updated by deploying a new image.
 
 Collector releases use semantic version tags. The current cloud release always supports the two most recent Collector minor versions. The portal's **Collectors** page shows each Collector's version, so you can see which ones need updating. The *M.A.R.C.U.S. — Release & Upgrade Policy* has the full compatibility commitments.
 
@@ -414,11 +433,35 @@ Collector releases use semantic version tags. The current cloud release always s
 | Windows | `C:\ProgramData\av-bridge\logs\` |
 | Docker and Kubernetes | stdout and stderr. Forward these to your logging platform, such as Amazon CloudWatch Logs, Azure Monitor, Google Cloud Logging or a self-hosted equivalent. |
 
-## 13. Back up and restore
+## 13. Outages, backup and replacement
 
-The Collector keeps only a small amount of local state: the last-known status of each device, and telemetry waiting for its next push. When it restarts from scratch, it downloads its device list from the cloud and rebuilds current device status within one poll cycle.
+### If the cloud or the internet is unreachable
+
+The Collector keeps monitoring your devices while it can't reach the cloud:
+
+- **Telemetry and events are buffered on disk** and sent, in order, as soon as the connection returns. The buffer holds up to 72 hours or 256 MB, whichever comes first, and survives a restart of the Collector or its host. Once the buffer is full, the oldest data is discarded first.
+- **Alerts raised during the outage** reach the portal when the connection returns. Notifications go out only for alerts less than 15 minutes old, so nobody is paged hours late about an alert that may already have cleared.
+- **The device list is cached on disk**, encrypted with the Collector's key. If the Collector restarts during an outage, it carries on polling the devices the cloud last gave it.
+- **Commands sent from the portal** wait up to 10 minutes for the Collector. If it doesn't pick a command up in that time, the command is cancelled and the portal says so. A command can't run hours later, when the Collector comes back.
+
+Buffer locations: `/var/lib/av-bridge/spool` on Linux, and a `spool` folder next to the state file on Windows. To change the limits, set `cloud.spool_dir`, `cloud.spool_max_bytes` and `cloud.spool_max_age` in `config.yaml`.
+
+### Back up and restore
+
+The Collector keeps only a small amount of local state: the last-known status of each device, the cached device list, and any buffered telemetry. When it restarts from scratch, it downloads its device list from the cloud and rebuilds current device status within one poll cycle.
 
 > **You don't need to back up the Collector.** Redeploying is safe. The only file worth keeping is the configuration, because it holds the Collector's identity and HMAC key. If it's lost, re-enrol the Collector with a new token (§10).
+
+### Replace a failed Collector
+
+If a Collector's host fails, you don't need to recreate its devices. Either:
+
+- **Reuse the same Collector.** Install the Collector on the new host and enrol it with a fresh token from the **Collectors** page. Enrolling issues a new key, so the old host can't report as this Collector any more, even if it comes back.
+- **Enrol the new host as a new Collector, then move the devices.** On the **Collectors** page, select **Replace** on the failed Collector and choose the new one. Every device moves across with its history, alerts and settings. Both Collectors pick up the change within seconds. Then delete the old Collector.
+
+To move a single device, edit it and choose a different **Collector**. A move is refused if the target Collector already has a device with the same reported ID.
+
+Each device is polled by one Collector at a time. Some devices accept only one control connection, so running two Collectors against the same devices isn't supported.
 
 ---
 

@@ -238,15 +238,30 @@ func (s *Store) MarkCollectorSeen(ctx context.Context, id, version, buildTime, o
 // buildTime="unknown" errors the cast, aborts the UPDATE, and leaves
 // last_config_pull_at frozen, which surfaces as a spurious "stale"
 // config-sync badge on the /collectors page.
-func (s *Store) TouchCollectorConfigPull(ctx context.Context, id, version, buildTime, os string) error {
+//
+// configVersion is the collectors.config_version the pull served; it's
+// recorded as config_version_pulled so /bridge/poll can tell the bridge
+// to re-pull when the device set changes (see CollectorNeedsResync).
+func (s *Store) TouchCollectorConfigPull(ctx context.Context, id string, configVersion int64, version, buildTime, os string) error {
 	_, err := s.admin.Exec(ctx, `
 		UPDATE collectors
-		   SET last_config_pull_at = now(),
-		       bridge_version      = COALESCE(NULLIF(NULLIF($2, ''), 'unknown'), bridge_version),
-		       bridge_build_time   = COALESCE(NULLIF(NULLIF($3, ''), 'unknown')::timestamptz, bridge_build_time),
-		       bridge_os           = COALESCE(NULLIF($4, ''), bridge_os)
-		 WHERE id = $1`, id, version, buildTime, os)
+		   SET last_config_pull_at   = now(),
+		       config_version_pulled = GREATEST(config_version_pulled, $5),
+		       bridge_version        = COALESCE(NULLIF(NULLIF($2, ''), 'unknown'), bridge_version),
+		       bridge_build_time     = COALESCE(NULLIF(NULLIF($3, ''), 'unknown')::timestamptz, bridge_build_time),
+		       bridge_os             = COALESCE(NULLIF($4, ''), bridge_os)
+		 WHERE id = $1`, id, version, buildTime, os, configVersion)
 	return err
+}
+
+// CollectorNeedsResync reports whether the collector's device config has
+// changed since its bridge last pulled it.
+func (s *Store) CollectorNeedsResync(ctx context.Context, id string) (bool, error) {
+	var stale bool
+	err := s.admin.QueryRow(ctx,
+		`SELECT config_version > config_version_pulled FROM collectors WHERE id = $1`, id,
+	).Scan(&stale)
+	return stale, err
 }
 
 // LookupCollectorByBridgeID resolves the id the bridge reports to a collector

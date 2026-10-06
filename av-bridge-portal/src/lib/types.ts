@@ -137,7 +137,30 @@ export interface CollectorSummary {
   // on but not the panel directly. Empty falls back to a
   // direct-to-panel link.
   local_url?: string;
+
+  // Self-update. latest_version is the collector release bundled with
+  // the cloud; update_available is true when this collector can take it
+  // now, otherwise update_blocker says why ("up to date" when current).
+  latest_version?: string;
+  update_available: boolean;
+  update_blocker?: string;
+  update_state: CollectorUpdateState;
+  update_target_version?: string;
+  update_message?: string;
+  update_state_at?: string;
+  // Daily automatic update window start, "HH:MM" in time_zone; absent
+  // when updates are manual only.
+  update_window?: string;
+  time_zone: string;
 }
+
+export type CollectorUpdateState =
+  | "idle"
+  | "requested"
+  | "in_progress"
+  | "succeeded"
+  | "failed"
+  | "rolled_back";
 
 // UpdateCollectorBody — PATCH shape. Every field optional; only fields
 // present in the payload are written. Empty string on local_url clears
@@ -145,6 +168,9 @@ export interface CollectorSummary {
 export interface UpdateCollectorBody {
   local_url?: string;
   name?: string;
+  // "HH:MM" opens a daily 2-hour automatic update window; "" turns
+  // automatic updates off.
+  update_window?: string;
 }
 
 // Collector-enrollment (M-collector-enroll v1). Create pre-provisions
@@ -166,6 +192,19 @@ export interface CreateCollectorResponse {
 export interface EnrollmentTokenResponse {
   enrollment_token: string;
   expires_at: string;
+}
+
+// Result of moving devices between collectors. unchanged counts devices
+// that were already on the target.
+export interface MoveResult {
+  moved: number;
+  unchanged: number;
+}
+
+export interface MoveConflict {
+  device_id: string;
+  reported_id: string;
+  name?: string;
 }
 
 export interface NamedRow {

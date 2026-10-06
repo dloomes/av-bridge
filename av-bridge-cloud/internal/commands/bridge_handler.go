@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/dloomes/av-bridge-cloud/internal/bridgeauth"
+	"github.com/dloomes/av-bridge-cloud/internal/collectorupdate"
 	"github.com/dloomes/av-bridge-cloud/internal/db"
 	"github.com/dloomes/av-bridge-cloud/internal/secrets"
 	"github.com/jackc/pgx/v5"
@@ -26,6 +27,13 @@ type BridgeHandler struct {
 	auth    *bridgeauth.Authenticator
 	log     *slog.Logger
 	maxHold time.Duration
+	updates *collectorupdate.Service // nil: no self-update offers
+}
+
+// SetUpdates enables collector self-update offers on /bridge/poll and the
+// /bridge/update-status report endpoint.
+func (h *BridgeHandler) SetUpdates(svc *collectorupdate.Service) {
+	h.updates = svc
 }
 
 // DefaultBridgePollMaxHold is how long /bridge/poll may block waiting for a
@@ -48,10 +56,19 @@ func NewBridgeHandler(store *db.Store, cipher secrets.Cipher, maxHold time.Durat
 type pollReq struct {
 	CollectorID string `json:"collector_id"`
 	Max         int    `json:"max"`
+	// Self-description from bridges that have the updater.
+	collectorupdate.PollMeta
 }
 
 type pollResp struct {
 	Commands []Command `json:"commands"`
+	// Resync tells the bridge its device config changed since its last
+	// /bridge/config pull (a device was added, edited, deleted or moved),
+	// so it should pull now rather than on its next slow tick. Older
+	// bridges ignore the field and catch up on that tick.
+	Resync bool `json:"resync,omitempty"`
+	// Update offers a new collector version (see collectorupdate).
+	Update *collectorupdate.Instruction `json:"update,omitempty"`
 }
 
 // Poll is a long-poll: try to claim ready commands immediately; if none,
@@ -88,7 +105,7 @@ func (h *BridgeHandler) Poll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(claimed) > 0 {
-		bridgeauth.WriteJSON(w, http.StatusOK, pollResp{Commands: claimed})
+		h.respond(w, r, col.ID, req, claimed)
 		return
 	}
 
@@ -112,7 +129,7 @@ func (h *BridgeHandler) Poll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(claimed) > 0 {
-		bridgeauth.WriteJSON(w, http.StatusOK, pollResp{Commands: claimed})
+		h.respond(w, r, col.ID, req, claimed)
 		return
 	}
 
@@ -136,7 +153,56 @@ func (h *BridgeHandler) Poll(w http.ResponseWriter, r *http.Request) {
 	if claimed == nil {
 		claimed = []Command{}
 	}
-	bridgeauth.WriteJSON(w, http.StatusOK, pollResp{Commands: claimed})
+	h.respond(w, r, col.ID, req, claimed)
+}
+
+// respond writes the poll response, flagging resync when the collector's
+// device config is newer than what its bridge last pulled. The device
+// trigger NOTIFYs cmd_pending on config changes, so a held poll wakes and
+// carries the flag back within a second of the change. A lookup failure
+// only costs the hint, never the commands.
+func (h *BridgeHandler) respond(w http.ResponseWriter, r *http.Request, collectorID string, req pollReq, cmds []Command) {
+	resync, err := h.store.CollectorNeedsResync(r.Context(), collectorID)
+	if err != nil {
+		h.log.Debug("resync check failed", "collector", collectorID, "error", err)
+	}
+	var upd *collectorupdate.Instruction
+	if h.updates != nil {
+		upd = h.updates.Offer(r.Context(), collectorID, req.PollMeta)
+	}
+	bridgeauth.WriteJSON(w, http.StatusOK, pollResp{Commands: cmds, Resync: resync, Update: upd})
+}
+
+type updateStatusReq struct {
+	CollectorID string `json:"collector_id"`
+	State       string `json:"state"`
+	Version     string `json:"version"`
+	Message     string `json:"message"`
+}
+
+// PostUpdateStatus — POST /bridge/update-status. The collector reports
+// how a self-update went: restarting, succeeded, failed or rolled_back.
+func (h *BridgeHandler) PostUpdateStatus(w http.ResponseWriter, r *http.Request) {
+	body, col, ok := h.auth.Authenticate(w, r)
+	if !ok {
+		return
+	}
+	if h.updates == nil {
+		bridgeauth.WriteErr(w, http.StatusNotFound, "updates not enabled")
+		return
+	}
+	var req updateStatusReq
+	if err := json.Unmarshal(body, &req); err != nil || req.State == "" || req.Version == "" {
+		bridgeauth.WriteErr(w, http.StatusBadRequest, "state and version are required")
+		return
+	}
+	if err := h.updates.Report(r.Context(), col.ID, req.State, req.Version, req.Message); err != nil {
+		bridgeauth.WriteErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	h.log.Info("collector update status", "collector", col.ID,
+		"state", req.State, "version", req.Version, "message", req.Message)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // claim is a thin helper: run ClaimPending inside a per-tenant tx.

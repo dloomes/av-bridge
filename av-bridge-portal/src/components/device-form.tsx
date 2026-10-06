@@ -15,7 +15,7 @@ import {
   subscriptionsFromRows,
   type SubscriptionRow,
 } from "@/components/subscription-editor";
-import { api } from "@/lib/api";
+import { api, MoveError } from "@/lib/api";
 import type {
   AdapterInfo,
   AssetRow,
@@ -608,6 +608,22 @@ export function DeviceForm({
         if (form.username) body.username = form.username;
         if (form.password) body.password = form.password;
         if (!initial) throw new Error("missing initial device for edit");
+        // A collector change is a move, which has its own endpoint (it
+        // also hands the device's pending commands over and tells both
+        // bridges to re-pull). Do it first so a clash on the target
+        // collector stops the save before anything else changes.
+        if (form.collector_id && form.collector_id !== initial.collector_id) {
+          try {
+            await api.moveDevices([initial.id], form.collector_id);
+          } catch (e) {
+            if (e instanceof MoveError && e.conflicts.length > 0) {
+              throw new Error(
+                `The chosen collector already has a device with reported ID "${form.reported_id}". Nothing was saved.`
+              );
+            }
+            throw e;
+          }
+        }
         await api.updateDevice(initial.id, body);
         onSuccess(initial.id);
       }
@@ -635,7 +651,7 @@ export function DeviceForm({
             className={inputClass}
             value={form.collector_id}
             onChange={(e) => set("collector_id", e.target.value)}
-            disabled={isEdit || loadingLookups}
+            disabled={loadingLookups}
             required
           >
             <option value="">— Select —</option>
@@ -645,6 +661,12 @@ export function DeviceForm({
               </option>
             ))}
           </select>
+          {isEdit && initial && form.collector_id !== initial.collector_id && (
+            <p className="mt-1 text-xs text-muted-foreground">
+              Saving moves this device to the chosen collector. Its history,
+              alerts and settings move with it.
+            </p>
+          )}
         </div>
         <div>
           <label className={labelClass}>Reported ID</label>

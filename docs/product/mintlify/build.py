@@ -103,14 +103,15 @@ GUIDES: dict[str, dict] = {
                                  "key and how to rotate it."),
             11: dict(slug="updates", title="Update the Collector", sidebarTitle="Updates",
                      nav="Operate", icon="arrows-rotate",
-                     description="Update each runtime and the version compatibility commitment."),
+                     description="Update Collectors from the portal, automatically or by hand, and the "
+                                 "version compatibility commitment."),
             12: dict(slug="monitoring", title="Monitor health and logs",
                      sidebarTitle="Health & logs", nav="Operate", icon="heart-pulse",
                      description="Local health checks, Prometheus metrics, portal status and logs."),
-            13: dict(slug="backup", title="Back up and restore", sidebarTitle="Backup & restore",
-                     nav="Operate", icon="box-archive",
-                     description="What the Collector stores locally and what, if anything, to "
-                                 "back up."),
+            13: dict(slug="backup", title="Outages, backup and replacement",
+                     sidebarTitle="Outages & replacement", nav="Operate", icon="box-archive",
+                     description="How the Collector rides out a cloud outage, what to back up, "
+                                 "and how to replace a failed Collector."),
         },
     },
 }

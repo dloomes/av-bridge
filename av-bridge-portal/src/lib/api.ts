@@ -12,6 +12,8 @@ import type {
   CommandRequest,
   CreateCollectorBody,
   CreateCollectorResponse,
+  MoveConflict,
+  MoveResult,
   CommandResponse,
   CreateAPITokenBody,
   CreateAPITokenResponse,
@@ -196,6 +198,38 @@ async function request<T>(
     return undefined as T;
   }
   return JSON.parse(text) as T;
+}
+
+// MoveError carries the reported-ID clashes from a refused device move so
+// the UI can name the devices.
+export class MoveError extends Error {
+  conflicts: MoveConflict[];
+  constructor(message: string, conflicts: MoveConflict[]) {
+    super(message);
+    this.conflicts = conflicts;
+  }
+}
+
+async function moveRequest(path: string, body: unknown): Promise<MoveResult> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(body),
+    cache: "no-store",
+  });
+  const text = await res.text().catch(() => "");
+  let parsed: { error?: string; conflicts?: MoveConflict[] } & Partial<MoveResult> = {};
+  try {
+    parsed = text ? JSON.parse(text) : {};
+  } catch {}
+  if (!res.ok) {
+    if (res.status === 401) handle401IfSessionDeath(path);
+    throw new MoveError(
+      parsed.error ?? `${res.status} ${res.statusText}`,
+      parsed.conflicts ?? []
+    );
+  }
+  return { moved: parsed.moved ?? 0, unchanged: parsed.unchanged ?? 0 };
 }
 
 async function requestText(
@@ -564,6 +598,15 @@ export interface ListRunsOpts {
 const COMMAND_POLL_INTERVAL_MS = 750;
 const COMMAND_POLL_CEILING_MS = 90_000;
 
+// Readable text for the cloud's own command failure codes (as opposed to
+// errors reported by the device, which pass through as-is).
+const COMMAND_ERROR_TEXT: Record<string, string> = {
+  expired:
+    "The collector didn't pick this command up within 10 minutes, so it was cancelled. Check the collector is online.",
+  bridge_timeout:
+    "The collector accepted this command but never reported a result.",
+};
+
 async function pollCommandUntilTerminal(
   commandId: string,
   signal?: AbortSignal
@@ -595,7 +638,7 @@ async function pollCommandUntilTerminal(
     }
     if (cmd.status === "failed" || cmd.status === "cancelled") {
       throw new ApiError(
-        cmd.error || `command ${cmd.status}`,
+        (cmd.error && COMMAND_ERROR_TEXT[cmd.error]) || cmd.error || `command ${cmd.status}`,
         cmd.status === "cancelled" ? 499 : 500
       );
     }
@@ -964,7 +1007,9 @@ export const api = {
 
   // Fresh enrollment token for an already-created collector. Used when
   // the original token was lost or expired between create and site
-  // visit. Collector's stable id / HMAC secret don't change.
+  // visit, or to enrol replacement hardware. The collector's id doesn't
+  // change; redeeming the token mints a new HMAC secret, which cuts off
+  // whichever machine was enrolled before.
   reissueCollectorEnrollmentToken: (id: string, signal?: AbortSignal) =>
     request<EnrollmentTokenResponse>(
       `/api/v1/collectors/${encodeURIComponent(id)}/enrollment-token`,
@@ -1297,6 +1342,36 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
       signal,
+    }),
+
+  // Move devices to another collector. All-or-nothing: a reported ID
+  // already used on the target rejects the whole move with MoveError
+  // listing the clashes.
+  moveDevices: (deviceIDs: string[], targetCollectorID: string) =>
+    moveRequest("/api/v1/devices/move", {
+      device_ids: deviceIDs,
+      target_collector_id: targetCollectorID,
+    }),
+
+  // Ask a collector to update itself to the release bundled with the
+  // cloud. 409 with a reason when it can't (blocked, up to date, busy).
+  requestCollectorUpdate: (id: string) =>
+    request<{ state: string; version: string }>(
+      `/api/v1/collectors/${encodeURIComponent(id)}/update`,
+      { method: "POST" }
+    ),
+
+  // Request the update for every collector that can take it.
+  requestAllCollectorUpdates: () =>
+    request<{ requested: number }>("/api/v1/collectors/update-all", {
+      method: "POST",
+    }),
+
+  // Move every device on a collector to another one — used after
+  // enrolling replacement hardware as a new collector.
+  replaceCollector: (id: string, targetCollectorID: string) =>
+    moveRequest(`/api/v1/collectors/${encodeURIComponent(id)}/replace`, {
+      target_collector_id: targetCollectorID,
     }),
 
   updateDevice: (id: string, body: UpdateDeviceBody, signal?: AbortSignal) =>

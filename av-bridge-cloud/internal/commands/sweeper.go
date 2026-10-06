@@ -11,7 +11,9 @@ import (
 // Sweeper rescues commands stuck in_progress past the stale-after threshold:
 // requeues them back to pending so the next bridge poll picks them up, and
 // marks them failed once claim_count >= maxClaims so a flapping or absent
-// bridge can't trap a command in an infinite loop.
+// bridge can't trap a command in an infinite loop. It also expires commands
+// still pending pendingExpireAfter after submission (their collector never
+// picked them up), so they can't run long after the operator gave up.
 //
 // Runs as app_admin (BYPASSRLS) because it operates across all tenants and
 // isn't tied to a request-bound session.
@@ -20,16 +22,19 @@ type Sweeper struct {
 	interval   time.Duration
 	staleAfter time.Duration
 	maxClaims  int
-	log        *slog.Logger
+	// pendingExpireAfter <= 0 disables pending expiry.
+	pendingExpireAfter time.Duration
+	log                *slog.Logger
 }
 
-func NewSweeper(pool *pgxpool.Pool, interval, staleAfter time.Duration, maxClaims int, log *slog.Logger) *Sweeper {
+func NewSweeper(pool *pgxpool.Pool, interval, staleAfter time.Duration, maxClaims int, pendingExpireAfter time.Duration, log *slog.Logger) *Sweeper {
 	return &Sweeper{
-		pool:       pool,
-		interval:   interval,
-		staleAfter: staleAfter,
-		maxClaims:  maxClaims,
-		log:        log,
+		pool:               pool,
+		interval:           interval,
+		staleAfter:         staleAfter,
+		maxClaims:          maxClaims,
+		pendingExpireAfter: pendingExpireAfter,
+		log:                log,
 	}
 }
 
@@ -40,7 +45,8 @@ func (s *Sweeper) Run(ctx context.Context) {
 		return
 	}
 	s.log.Info("command sweeper started",
-		"interval", s.interval, "stale_after", s.staleAfter, "max_claims", s.maxClaims)
+		"interval", s.interval, "stale_after", s.staleAfter, "max_claims", s.maxClaims,
+		"pending_expire_after", s.pendingExpireAfter)
 	t := time.NewTicker(s.interval)
 	defer t.Stop()
 	for {
@@ -53,10 +59,13 @@ func (s *Sweeper) Run(ctx context.Context) {
 	}
 }
 
-// Sweep runs one fail+requeue pass. Exposed for tests; Run calls it on a tick.
-// Fails first, then requeues — order matters so a command that just crossed
-// maxClaims doesn't get re-pended in the same pass it should be failed in.
+// Sweep runs one expire+fail+requeue pass. Exposed for tests; Run calls it
+// on a tick. Fails first, then requeues — order matters so a command that
+// just crossed maxClaims doesn't get re-pended in the same pass it should be
+// failed in.
 func (s *Sweeper) Sweep(ctx context.Context) {
+	s.expirePending(ctx)
+
 	staleSecs := int(s.staleAfter.Seconds())
 
 	failed, err := s.pool.Exec(ctx, `
@@ -122,5 +131,53 @@ func (s *Sweeper) Sweep(ctx context.Context) {
 			}
 		}
 		s.log.Info("sweeper requeued stale in-progress commands", "count", rowCount)
+	}
+}
+
+// expirePending fails pending commands older than pendingExpireAfter with
+// error 'expired', then NOTIFYs cmd_done for each so a portal request or
+// nightly routine still waiting on one wakes immediately. A command that
+// was claimed and requeued keeps its original submitted_at, so it expires
+// on the same clock.
+func (s *Sweeper) expirePending(ctx context.Context) {
+	if s.pendingExpireAfter <= 0 {
+		return
+	}
+	rows, err := s.pool.Query(ctx, `
+		UPDATE commands
+		   SET status = 'failed',
+		       error = 'expired',
+		       completed_at = now()
+		 WHERE status = 'pending'
+		   AND submitted_at < now() - make_interval(secs => $1)
+		RETURNING id::text`,
+		int(s.pendingExpireAfter.Seconds()))
+	if err != nil {
+		s.log.Warn("sweeper expire-step error", "error", err)
+		return
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			s.log.Warn("sweeper expire scan error", "error", err)
+			return
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		s.log.Warn("sweeper expire iterate error", "error", err)
+		return
+	}
+	for _, id := range ids {
+		if _, err := s.pool.Exec(ctx, `SELECT pg_notify($1, $2)`, ChannelDone, id); err != nil {
+			s.log.Warn("sweeper expire notify error", "command", id, "error", err)
+		}
+	}
+	if len(ids) > 0 {
+		s.log.Info("sweeper expired unclaimed commands",
+			"count", len(ids), "pending_expire_after", s.pendingExpireAfter)
 	}
 }

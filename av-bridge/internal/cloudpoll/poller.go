@@ -29,6 +29,7 @@ import (
 	"github.com/dloomes/av-bridge/internal/config"
 	"github.com/dloomes/av-bridge/internal/device"
 	"github.com/dloomes/av-bridge/internal/hub"
+	"github.com/dloomes/av-bridge/internal/update"
 )
 
 // CommandReconnectName is the reserved command name the cloud uses to ask the
@@ -46,6 +47,12 @@ type Poller struct {
 	hub         *hub.Hub
 	http        *http.Client
 	baseURL     string
+	onResync    func()
+	// Self-update plumbing (see internal/update). All optional.
+	version    string
+	capability func() (bool, string)
+	onUpdate   func(update.Instruction)
+	onPollOK   func()
 }
 
 func NewPoller(cfg config.CloudConfig, collectorID string, h *hub.Hub) *Poller {
@@ -112,16 +119,71 @@ type bridgeCommand struct {
 
 type pollResp struct {
 	Commands []bridgeCommand `json:"commands"`
+	// Resync: the cloud says this collector's device set changed since
+	// its last config pull — hand off to the config puller now.
+	Resync bool `json:"resync,omitempty"`
+	// Update: the cloud offers a new collector version to install.
+	Update *update.Instruction `json:"update,omitempty"`
+}
+
+// EnableUpdates tells the cloud, on every poll, which version and
+// platform this collector runs and whether it can update itself, and
+// routes update offers to onUpdate. onPollOK runs after every
+// successful poll (the updater uses the first one as its health check).
+func (p *Poller) EnableUpdates(version string, capability func() (bool, string), onUpdate func(update.Instruction), onPollOK func()) {
+	p.version = version
+	p.capability = capability
+	p.onUpdate = onUpdate
+	p.onPollOK = onPollOK
+}
+
+// ReportUpdate posts a self-update state to the cloud. Best-effort.
+func (p *Poller) ReportUpdate(ctx context.Context, state, version, message string) {
+	if p.baseURL == "" || p.cfg.HMACSecret == "" {
+		return
+	}
+	b, _ := json.Marshal(map[string]any{
+		"collector_id": p.collectorID,
+		"state":        state,
+		"version":      version,
+		"message":      message,
+	})
+	rctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	resp, err := p.signedPost(rctx, "/bridge/update-status", b)
+	if err != nil {
+		slog.Warn("update status post failed", "state", state, "error", err)
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		drained, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		slog.Warn("update status rejected", "status", resp.StatusCode, "body", string(drained))
+	}
+}
+
+// OnResync registers the callback run when a poll response carries the
+// cloud's resync flag. Set before Run.
+func (p *Poller) OnResync(fn func()) {
+	p.onResync = fn
 }
 
 // pollOnce returns true on any successful round-trip (including an empty
 // commands list after a long-hold), false on transport/decode/HTTP-error
 // failure. The caller uses the false result to trigger reconnect backoff.
 func (p *Poller) pollOnce(ctx context.Context) bool {
-	body, _ := json.Marshal(map[string]any{
+	req := map[string]any{
 		"collector_id": p.collectorID,
 		"max":          p.cfg.CommandMaxBatch,
-	})
+	}
+	if p.capability != nil {
+		capable, blocker := p.capability()
+		req["version"] = p.version
+		req["platform"] = update.Platform()
+		req["update_capable"] = capable
+		req["update_blocker"] = blocker
+	}
+	body, _ := json.Marshal(req)
 	resp, err := p.signedPost(ctx, "/bridge/poll", body)
 	if err != nil {
 		// ctx cancels aren't a "real" error — the shutdown path handles
@@ -141,6 +203,15 @@ func (p *Poller) pollOnce(ctx context.Context) bool {
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		slog.Warn("command poll decode failed", "error", err)
 		return false
+	}
+	if p.onPollOK != nil {
+		p.onPollOK()
+	}
+	if out.Resync && p.onResync != nil {
+		p.onResync()
+	}
+	if out.Update != nil && p.onUpdate != nil {
+		p.onUpdate(*out.Update)
 	}
 	for _, c := range out.Commands {
 		p.execute(ctx, c)

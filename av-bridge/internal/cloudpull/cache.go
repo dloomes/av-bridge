@@ -1,0 +1,101 @@
+package cloudpull
+
+import (
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+
+	"github.com/dloomes/av-bridge/internal/config"
+)
+
+// The device cache keeps the last device set pulled from the cloud on
+// disk, so a bridge that restarts while the cloud is unreachable carries
+// on polling the devices the cloud last gave it — not the (possibly long
+// out of date) devices in its local YAML.
+//
+// The set includes device credentials, so the file is sealed with
+// AES-256-GCM under a key derived from the collector's HMAC secret. If the
+// secret changes (re-enrolment), the old cache simply fails to open and
+// is ignored until the next successful pull rewrites it.
+
+const cacheKeyContext = "av-bridge device cache v1\x00"
+
+func cacheKey(hmacSecret string) []byte {
+	k := sha256.Sum256([]byte(cacheKeyContext + hmacSecret))
+	return k[:]
+}
+
+// saveCache writes devices to path atomically (temp file + rename).
+func saveCache(path, hmacSecret string, devices []wireDevice) error {
+	plain, err := json.Marshal(devices)
+	if err != nil {
+		return err
+	}
+	block, err := aes.NewCipher(cacheKey(hmacSecret))
+	if err != nil {
+		return err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return err
+	}
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := rand.Read(nonce); err != nil {
+		return err
+	}
+	sealed := gcm.Seal(nonce, nonce, plain, nil)
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, sealed, 0o600); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
+}
+
+// LoadCache returns the device set last pulled from the cloud. ok is false
+// when there is no usable cache (missing, from another secret, corrupt).
+func LoadCache(path, hmacSecret string) (devices []config.DeviceConfig, ok bool, err error) {
+	if path == "" || hmacSecret == "" {
+		return nil, false, nil
+	}
+	sealed, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	block, err := aes.NewCipher(cacheKey(hmacSecret))
+	if err != nil {
+		return nil, false, err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, false, err
+	}
+	if len(sealed) < gcm.NonceSize() {
+		return nil, false, fmt.Errorf("device cache truncated")
+	}
+	plain, err := gcm.Open(nil, sealed[:gcm.NonceSize()], sealed[gcm.NonceSize():], nil)
+	if err != nil {
+		return nil, false, fmt.Errorf("device cache unreadable (secret changed?): %w", err)
+	}
+	var wire []wireDevice
+	if err := json.Unmarshal(plain, &wire); err != nil {
+		return nil, false, fmt.Errorf("device cache corrupt: %w", err)
+	}
+	out := make([]config.DeviceConfig, len(wire))
+	for i, d := range wire {
+		out[i] = d.toConfig()
+	}
+	return out, true, nil
+}

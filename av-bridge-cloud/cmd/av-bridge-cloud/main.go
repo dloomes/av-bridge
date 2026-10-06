@@ -13,6 +13,7 @@ import (
 	"github.com/dloomes/av-bridge-cloud/internal/admin"
 	"github.com/dloomes/av-bridge-cloud/internal/api"
 	"github.com/dloomes/av-bridge-cloud/internal/bridgecfg"
+	"github.com/dloomes/av-bridge-cloud/internal/collectorupdate"
 	"github.com/dloomes/av-bridge-cloud/internal/commands"
 	"github.com/dloomes/av-bridge-cloud/internal/config"
 	"github.com/dloomes/av-bridge-cloud/internal/db"
@@ -158,6 +159,20 @@ func main() {
 	sweeperCtx, stopSweeper := context.WithCancel(context.Background())
 	defer stopSweeper()
 
+	// Collector self-update: the release bundled into this image at
+	// /downloads (manifest.json written and signed at build time).
+	bundled, err := collectorupdate.LoadRelease("/downloads/manifest.json")
+	if err != nil {
+		log.Warn("collector release manifest unreadable — updates disabled", "error", err)
+	}
+	collectorUpdates := collectorupdate.NewService(store, bundled, log)
+	if bundled != nil {
+		log.Info("collector release bundled", "version", bundled.Version, "signed", bundled.Signed())
+	} else {
+		log.Info("no collector release bundled — updates disabled")
+	}
+	go collectorUpdates.Run(sweeperCtx)
+
 	// Routine executor — Phase B slice 1. Constructed early so the
 	// portal handler can hold a reference for the run-now endpoint.
 	// Goroutine work is entirely lazy: it only spawns when the
@@ -234,7 +249,7 @@ func main() {
 
 		portalRoutes = &api.PortalRoutes{
 			Resolver:      resolver,
-			Portal:        portalapi.New(store, cipher, dispatcher, nightlyDigest, nightlyExecutor, log).SetCustomerSSO(entraCustomer != nil),
+			Portal:        portalapi.New(store, cipher, dispatcher, nightlyDigest, nightlyExecutor, log).SetCustomerSSO(entraCustomer != nil).SetCollectorUpdates(collectorUpdates),
 			WSHub:         hub,
 			EntraVendor:   entraVendor,
 			EntraCustomer: entraCustomer,
@@ -257,9 +272,11 @@ func main() {
 	}
 
 	bridgeCmds := commands.NewBridgeHandler(store, cipher, cfg.BridgePollMaxHold, log)
+	bridgeCmds.SetUpdates(collectorUpdates)
 	bridgeRoutes := api.BridgeCommandRoutes{
-		Poll:   bridgeCmds.Poll,
-		Result: bridgeCmds.PostResult,
+		Poll:         bridgeCmds.Poll,
+		Result:       bridgeCmds.PostResult,
+		UpdateStatus: bridgeCmds.PostUpdateStatus,
 	}
 
 	bridgeCfg := bridgecfg.NewHandler(store, cipher, log)
@@ -328,6 +345,7 @@ func main() {
 		cfg.CommandSweepInterval,
 		cfg.CommandStaleAfter,
 		cfg.CommandMaxClaims,
+		cfg.CommandPendingExpireAfter,
 		log,
 	)
 	go sweeper.Run(sweeperCtx)

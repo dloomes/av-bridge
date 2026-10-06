@@ -99,8 +99,21 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 	var req getReq
 	_ = json.Unmarshal(body, &req)
 
-	var devices []Device
+	var (
+		devices       []Device
+		configVersion int64
+	)
 	err := h.store.WithTenant(r.Context(), col.CustomerID, func(tx pgx.Tx) error {
+		// Read the config version BEFORE the device set. A change that
+		// commits between the two reads leaves us recording the older
+		// version, so /bridge/poll asks for one more (harmless) pull —
+		// the other order could record a version whose changes we never
+		// served.
+		if err := tx.QueryRow(r.Context(),
+			`SELECT config_version FROM collectors WHERE id = $1`, col.ID,
+		).Scan(&configVersion); err != nil {
+			return err
+		}
 		rows, err := tx.Query(r.Context(), `
 			SELECT COALESCE(reported_id,''), COALESCE(name,''), COALESCE(type,''),
 			       COALESCE(protocol,''), COALESCE(address,''),
@@ -173,7 +186,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 	// config sync — best-effort, don't block the response on failure.
 	// Also refreshes bridge_version + bridge_build_time when the bridge
 	// supplied them.
-	if err := h.store.TouchCollectorConfigPull(r.Context(), col.ID, req.BridgeVersion, req.BridgeBuildTime, req.BridgeOS); err != nil {
+	if err := h.store.TouchCollectorConfigPull(r.Context(), col.ID, configVersion, req.BridgeVersion, req.BridgeBuildTime, req.BridgeOS); err != nil {
 		h.log.Warn("touch collector config pull failed", "collector", col.ID, "error", err)
 	}
 	bridgeauth.WriteJSON(w, http.StatusOK, getResp{Devices: devices})

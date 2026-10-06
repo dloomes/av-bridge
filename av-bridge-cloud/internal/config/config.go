@@ -52,6 +52,11 @@ type Config struct {
 	CommandStaleAfter    time.Duration
 	CommandMaxClaims     int
 	CommandSweepInterval time.Duration
+	// CommandPendingExpireAfter fails a command with error 'expired' if no
+	// collector has claimed it this long after submission — typically
+	// because its collector is offline. Stops a "power off" queued during
+	// an outage from running whenever the collector comes back. 0 disables.
+	CommandPendingExpireAfter time.Duration
 
 	// BridgePollMaxHold is how long /bridge/poll blocks waiting for a
 	// cmd_pending NOTIFY before returning an empty response. Long-poll
@@ -178,6 +183,10 @@ func FromEnv() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	pendingExpireAfter, err := getenvDuration("COMMAND_PENDING_EXPIRE_AFTER", 10*time.Minute)
+	if err != nil {
+		return Config{}, err
+	}
 	// 25s hold sits comfortably under the AWS ALB default 60s idle
 	// timeout — a healthy long-poll never trips it. Override for
 	// non-ALB deployments or aggressive local reload cadences.
@@ -251,6 +260,7 @@ func FromEnv() (Config, error) {
 		CommandStaleAfter:       staleAfter,
 		CommandMaxClaims:        maxClaims,
 		CommandSweepInterval:    sweepInterval,
+		CommandPendingExpireAfter: pendingExpireAfter,
 		BridgePollMaxHold:       bridgePollMaxHold,
 		SessionCleanupInterval:  sessionCleanupInterval,
 		SessionCleanupRetention: sessionCleanupRetention,

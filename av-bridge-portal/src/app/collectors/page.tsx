@@ -3,7 +3,11 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import {
+  ArrowRightLeft,
+  ArrowUpCircle,
+  CalendarClock,
   CircleAlert,
+  CircleCheck,
   Copy,
   HelpCircle,
   Loader2,
@@ -23,7 +27,7 @@ import { Modal } from "@/components/modal";
 import { UserMenu } from "@/components/user-menu";
 import { usePolling } from "@/hooks/usePolling";
 import { useSession } from "@/hooks/useSession";
-import { api } from "@/lib/api";
+import { api, MoveError } from "@/lib/api";
 import { hasPermission } from "@/lib/session";
 import { cn, formatRelative } from "@/lib/utils";
 import type {
@@ -80,6 +84,36 @@ export default function CollectorsPage() {
     | null
   >(null);
   const [deleting, setDeleting] = useState<CollectorSummary | null>(null);
+  const [replacing, setReplacing] = useState<CollectorSummary | null>(null);
+  const [scheduling, setScheduling] = useState<CollectorSummary | null>(null);
+  const [updateError, setUpdateError] = useState<string | null>(null);
+  const [updatingAll, setUpdatingAll] = useState(false);
+  const updatable = (data ?? []).filter(
+    (c) => c.update_available && !updateBusy(c.update_state)
+  );
+  const latestVersion = data?.find((c) => c.latest_version)?.latest_version;
+
+  const requestUpdate = async (c: CollectorSummary) => {
+    setUpdateError(null);
+    try {
+      await api.requestCollectorUpdate(c.id);
+      await refresh();
+    } catch (e) {
+      setUpdateError(`${c.name}: ${(e as Error).message}`);
+    }
+  };
+  const requestAll = async () => {
+    setUpdateError(null);
+    setUpdatingAll(true);
+    try {
+      await api.requestAllCollectorUpdates();
+      await refresh();
+    } catch (e) {
+      setUpdateError((e as Error).message);
+    } finally {
+      setUpdatingAll(false);
+    }
+  };
   const [editingLocalURL, setEditingLocalURL] = useState<CollectorSummary | null>(null);
 
   return (
@@ -98,6 +132,22 @@ export default function CollectorsPage() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            {canManage && updatable.length > 0 && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={requestAll}
+                disabled={updatingAll}
+                title={`Update ${updatable.length} collector${updatable.length === 1 ? "" : "s"} to ${latestVersion}`}
+              >
+                {updatingAll ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <ArrowUpCircle className="h-3.5 w-3.5" />
+                )}
+                Update all ({updatable.length})
+              </Button>
+            )}
             {canManage && (
               <Button size="sm" onClick={() => setAdding(true)}>
                 <Plus className="h-3.5 w-3.5" />
@@ -111,6 +161,17 @@ export default function CollectorsPage() {
 
       <div className="flex-1 px-6 py-6">
         <div className="mx-auto max-w-6xl space-y-4">
+          {updateError && (
+            <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm [color:hsl(var(--destructive))] flex items-center justify-between">
+              <span>{updateError}</span>
+              <button
+                onClick={() => setUpdateError(null)}
+                className="text-xs underline underline-offset-2 hover:opacity-80"
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
           {error && (
             <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm [color:hsl(var(--destructive))] flex items-center justify-between">
               <span>Failed to load collectors: {error.message}</span>
@@ -226,6 +287,7 @@ export default function CollectorsPage() {
                             ) : (
                               <span className="text-muted-foreground">—</span>
                             )}
+                            <UpdateStatus collector={c} />
                           </td>
                           <td className="px-4 py-3.5 align-top text-right tabular-nums">
                             {c.device_count > 0 ? (
@@ -306,6 +368,46 @@ export default function CollectorsPage() {
                                     })
                                   }
                                 />
+                                {c.update_available && !updateBusy(c.update_state) && (
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    aria-label={`Update to ${c.latest_version}`}
+                                    title={`Update to ${c.latest_version} now`}
+                                    onClick={() => requestUpdate(c)}
+                                  >
+                                    <ArrowUpCircle className="h-3.5 w-3.5" />
+                                  </Button>
+                                )}
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  aria-label="Automatic updates"
+                                  title={
+                                    c.update_window
+                                      ? `Automatic updates daily at ${c.update_window} (${c.time_zone})`
+                                      : "Automatic updates: off"
+                                  }
+                                  onClick={() => setScheduling(c)}
+                                >
+                                  <CalendarClock
+                                    className={cn(
+                                      "h-3.5 w-3.5",
+                                      c.update_window && "text-primary"
+                                    )}
+                                  />
+                                </Button>
+                                {c.device_count > 0 && (
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    aria-label="Replace collector"
+                                    title="Replace: move all its devices to another collector"
+                                    onClick={() => setReplacing(c)}
+                                  >
+                                    <ArrowRightLeft className="h-3.5 w-3.5" />
+                                  </Button>
+                                )}
                                 <Button
                                   variant="ghost"
                                   size="icon"
@@ -391,6 +493,47 @@ export default function CollectorsPage() {
             onDeleted={async () => {
               setDeleting(null);
               await refresh();
+            }}
+          />
+        )}
+      </Modal>
+
+      <Modal
+        open={scheduling !== null}
+        onClose={() => setScheduling(null)}
+        title="Automatic updates"
+        wide={false}
+      >
+        {scheduling && (
+          <UpdateScheduleForm
+            collector={scheduling}
+            onCancel={() => setScheduling(null)}
+            onSaved={async () => {
+              setScheduling(null);
+              await refresh();
+            }}
+          />
+        )}
+      </Modal>
+
+      <Modal
+        open={replacing !== null}
+        onClose={() => setReplacing(null)}
+        title="Replace collector"
+        wide={false}
+      >
+        {replacing && (
+          <ReplaceCollectorForm
+            collector={replacing}
+            others={(data ?? []).filter((c) => c.id !== replacing.id)}
+            onCancel={() => setReplacing(null)}
+            onDone={() => {
+              refresh();
+            }}
+            onDeleteOld={() => {
+              const old = replacing;
+              setReplacing(null);
+              setDeleting({ ...old, device_count: 0 });
             }}
           />
         )}
@@ -574,6 +717,338 @@ function DeleteCollectorConfirm({
   );
 }
 
+function updateBusy(state: CollectorSummary["update_state"]): boolean {
+  return state === "requested" || state === "in_progress";
+}
+
+// UpdateStatus: one line under the version saying where this collector
+// stands against the release bundled with the cloud.
+function UpdateStatus({ collector: c }: { collector: CollectorSummary }) {
+  const target = c.update_target_version;
+  const recent =
+    c.update_state_at &&
+    Date.now() - new Date(c.update_state_at).getTime() < 7 * 24 * 3600 * 1000;
+  let line: React.ReactNode = null;
+  switch (c.update_state) {
+    case "requested":
+      line = (
+        <span className="inline-flex items-center gap-1 text-muted-foreground">
+          <Loader2 aria-hidden="true" className="h-3 w-3" />
+          Update to {target} queued
+        </span>
+      );
+      break;
+    case "in_progress":
+      line = (
+        <span className="inline-flex items-center gap-1 text-primary">
+          <Loader2 aria-hidden="true" className="h-3 w-3 animate-spin" />
+          Updating to {target}…
+        </span>
+      );
+      break;
+    case "failed":
+    case "rolled_back":
+      if (recent) {
+        line = (
+          <span
+            className="inline-flex items-center gap-1 [color:hsl(var(--destructive))]"
+            title={c.update_message}
+          >
+            <CircleAlert aria-hidden="true" className="h-3 w-3" />
+            {c.update_state === "failed" ? "Update failed" : "Update rolled back"}
+            {c.update_message ? `: ${c.update_message}` : ""}
+          </span>
+        );
+      }
+      break;
+    case "succeeded":
+      if (recent && !c.update_available) {
+        line = (
+          <span className="inline-flex items-center gap-1 [color:hsl(var(--success))]">
+            <CircleCheck aria-hidden="true" className="h-3 w-3" />
+            Updated {c.update_state_at && formatRelative(c.update_state_at)}
+          </span>
+        );
+      }
+      break;
+  }
+  if (!line && c.update_available) {
+    line = (
+      <span className="inline-flex items-center gap-1 text-primary">
+        <ArrowUpCircle aria-hidden="true" className="h-3 w-3" />
+        {c.latest_version} available
+      </span>
+    );
+  } else if (
+    !line &&
+    c.latest_version &&
+    c.update_blocker &&
+    c.update_blocker !== "up to date"
+  ) {
+    line = (
+      <span className="text-muted-foreground" title={c.update_blocker}>
+        Can&apos;t update automatically
+      </span>
+    );
+  }
+  return (
+    <>
+      {line && (
+        <div className="text-[10px] mt-1 max-w-[220px] truncate">{line}</div>
+      )}
+      {c.update_window && (
+        <div className="text-[10px] text-muted-foreground mt-0.5">
+          Auto-updates {c.update_window} {c.time_zone}
+        </div>
+      )}
+    </>
+  );
+}
+
+// UpdateScheduleForm: turn automatic updates on or off. The window opens
+// daily at the chosen time in the building's time zone and stays open two
+// hours; the collector updates once, when it's behind the cloud's release.
+function UpdateScheduleForm({
+  collector,
+  onCancel,
+  onSaved,
+}: {
+  collector: CollectorSummary;
+  onCancel: () => void;
+  onSaved: () => Promise<void>;
+}) {
+  const [enabled, setEnabled] = useState(Boolean(collector.update_window));
+  const [time, setTime] = useState(collector.update_window || "02:00");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const save = async () => {
+    setError(null);
+    setSubmitting(true);
+    try {
+      await api.updateCollector(collector.id, {
+        update_window: enabled ? time : "",
+      });
+      await onSaved();
+    } catch (e) {
+      setError((e as Error).message);
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-4 text-sm">
+      <p>
+        Keep <span className="font-medium">{collector.name}</span> on the
+        latest collector version.
+      </p>
+      <label className="flex items-center gap-2">
+        <input
+          type="checkbox"
+          checked={enabled}
+          onChange={(e) => setEnabled(e.target.checked)}
+        />
+        Update automatically
+      </label>
+      {enabled && (
+        <div>
+          <label htmlFor="update-window" className="text-xs font-medium">
+            Daily, starting at
+          </label>
+          <div className="mt-1 flex items-center gap-2">
+            <input
+              id="update-window"
+              type="time"
+              step={900}
+              className="rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+              value={time}
+              onChange={(e) => setTime(e.target.value)}
+              required
+            />
+            <span className="text-xs text-muted-foreground">{collector.time_zone}</span>
+          </div>
+          <p className="mt-2 text-xs text-muted-foreground">
+            If a newer version is available, the collector updates within two
+            hours of this time. Monitoring pauses for under a minute while it
+            restarts. If the new version can&apos;t reach the cloud, the
+            collector goes back to the previous version on its own.
+          </p>
+        </div>
+      )}
+      {!collector.update_available &&
+        collector.update_blocker &&
+        collector.update_blocker !== "up to date" && (
+          <p className="rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+            This collector can&apos;t update itself yet: {collector.update_blocker}.
+          </p>
+        )}
+      {error && (
+        <div className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 [color:hsl(var(--destructive))]">
+          {error}
+        </div>
+      )}
+      <div className="flex items-center justify-end gap-2 pt-2">
+        <Button type="button" variant="ghost" onClick={onCancel} disabled={submitting}>
+          Cancel
+        </Button>
+        <Button type="button" onClick={save} disabled={submitting || (enabled && !time)}>
+          {submitting ? (
+            <>
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              Saving…
+            </>
+          ) : (
+            "Save"
+          )}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// ReplaceCollectorForm: cold-standby swap. The operator enrols the
+// replacement machine as a new collector, then moves every device from the
+// old one across. The cloud tells both bridges to re-pull their config,
+// so the old one stops polling and the new one starts within seconds.
+function ReplaceCollectorForm({
+  collector,
+  others,
+  onCancel,
+  onDone,
+  onDeleteOld,
+}: {
+  collector: CollectorSummary;
+  others: CollectorSummary[];
+  onCancel: () => void;
+  onDone: () => void;
+  onDeleteOld: () => void;
+}) {
+  // Online collectors first: the replacement should already be reporting.
+  const targets = [...others].sort(
+    (a, b) =>
+      Number(b.status === "online") - Number(a.status === "online") ||
+      a.name.localeCompare(b.name)
+  );
+  const [target, setTarget] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [conflicts, setConflicts] = useState<MoveError["conflicts"]>([]);
+  const [moved, setMoved] = useState<number | null>(null);
+  const chosen = targets.find((c) => c.id === target);
+
+  const run = async () => {
+    setError(null);
+    setConflicts([]);
+    setSubmitting(true);
+    try {
+      const res = await api.replaceCollector(collector.id, target);
+      setMoved(res.moved);
+      onDone();
+    } catch (e) {
+      setError((e as Error).message);
+      if (e instanceof MoveError) setConflicts(e.conflicts);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  if (moved !== null) {
+    return (
+      <div className="flex flex-col gap-4 text-sm">
+        <p>
+          Moved {moved} device{moved === 1 ? "" : "s"} from{" "}
+          <span className="font-medium">{collector.name}</span> to{" "}
+          <span className="font-medium">{chosen?.name}</span>.
+        </p>
+        <p className="text-xs text-muted-foreground">
+          Both collectors pick up the change within a few seconds. If the old
+          machine is gone for good, delete its collector so it stops raising
+          an offline alert.
+        </p>
+        <div className="flex items-center justify-end gap-2 pt-2">
+          <Button type="button" variant="ghost" onClick={onCancel}>
+            Close
+          </Button>
+          <Button type="button" variant="outline" onClick={onDeleteOld}>
+            <Trash2 className="h-3.5 w-3.5" />
+            Delete {collector.name}
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-4 text-sm">
+      <p>
+        Move all {collector.device_count} device
+        {collector.device_count === 1 ? "" : "s"} from{" "}
+        <span className="font-medium">{collector.name}</span> to another
+        collector.
+      </p>
+      <p className="text-xs text-muted-foreground">
+        Use this when the machine behind a collector has failed: add the
+        replacement as a new collector, enrol it, then move the devices to it
+        here. Device history, alerts and settings move with them.
+      </p>
+      <div>
+        <label htmlFor="replace-target" className="text-xs font-medium">
+          Move devices to
+        </label>
+        <select
+          id="replace-target"
+          className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+          value={target}
+          onChange={(e) => setTarget(e.target.value)}
+        >
+          <option value="">Select a collector</option>
+          {targets.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name} ({c.bridge_collector_id}): {STATUS_TONE[c.status]?.label ?? c.status}
+            </option>
+          ))}
+        </select>
+        {chosen && chosen.status !== "online" && (
+          <p className="mt-1 text-xs text-muted-foreground">
+            {chosen.name} isn&apos;t online. Its devices will show as unknown
+            until it reports in.
+          </p>
+        )}
+      </div>
+      {error && (
+        <div className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 [color:hsl(var(--destructive))]">
+          {error}
+          {conflicts.length > 0 && (
+            <ul className="mt-1 list-disc pl-5 text-xs">
+              {conflicts.map((c) => (
+                <li key={c.device_id}>
+                  {c.name || c.reported_id}{" "}
+                  <span className="font-mono">({c.reported_id})</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+      <div className="flex items-center justify-end gap-2 pt-2">
+        <Button type="button" variant="ghost" onClick={onCancel} disabled={submitting}>
+          Cancel
+        </Button>
+        <Button type="button" onClick={run} disabled={submitting || !target}>
+          {submitting ? (
+            <>
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              Moving…
+            </>
+          ) : (
+            "Move devices"
+          )}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function ReissueTokenButton({
   collector,
   onIssued,
@@ -587,6 +1062,12 @@ function ReissueTokenButton({
     collector.last_seen_at
       ? "Re-issue enrollment token"
       : "Show enrollment token";
+  // Redeeming a token rotates the collector's secret, so for a collector
+  // that has already reported it hands the identity to a new machine.
+  const title =
+    collector.last_seen_at
+      ? "Re-issue enrollment token. Enrolling a machine with it cuts off the machine currently running this collector."
+      : label;
   const Icon = collector.last_seen_at ? RefreshCw : Zap;
   return (
     <>
@@ -594,7 +1075,7 @@ function ReissueTokenButton({
         variant="ghost"
         size="icon"
         aria-label={label}
-        title={label}
+        title={title}
         disabled={busy}
         onClick={async () => {
           setErr(null);

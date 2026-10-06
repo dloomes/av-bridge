@@ -17,6 +17,7 @@ import (
 
 	"github.com/dloomes/av-bridge-cloud/internal/audit"
 	"github.com/dloomes/av-bridge-cloud/internal/db"
+	"github.com/dloomes/av-bridge-cloud/internal/collectorupdate"
 	"github.com/dloomes/av-bridge-cloud/internal/devicestatus"
 	"github.com/dloomes/av-bridge-cloud/internal/nightly"
 	"github.com/dloomes/av-bridge-cloud/internal/notify"
@@ -36,6 +37,8 @@ type Handler struct {
 	// configured, so Microsoft sign-in can work for customers that have
 	// an Entra tenant set. Drives sso_available on GET /branding.
 	customerSSO bool
+	// collectorUpdates offers the bundled collector release; nil = off.
+	collectorUpdates *collectorupdate.Service
 }
 
 // SetCustomerSSO records whether customer Microsoft sign-in is configured.
@@ -209,8 +212,24 @@ func (h *Handler) ListCollectors(w http.ResponseWriter, r *http.Request) {
 		// reach panels through the bridge's on-prem proxy. Empty when
 		// unset — portal falls back to a direct-to-panel link.
 		LocalURL string `json:"local_url,omitempty"`
+
+		// Self-update. LatestVersion is the release bundled with this
+		// cloud; UpdateAvailable is true when this collector can take it
+		// now, otherwise UpdateBlocker says why (or "up to date").
+		LatestVersion   string     `json:"latest_version,omitempty"`
+		UpdateAvailable bool       `json:"update_available"`
+		UpdateBlocker   string     `json:"update_blocker,omitempty"`
+		UpdateState     string     `json:"update_state"`
+		UpdateTarget    string     `json:"update_target_version,omitempty"`
+		UpdateMessage   string     `json:"update_message,omitempty"`
+		UpdateStateAt   *time.Time `json:"update_state_at,omitempty"`
+		// UpdateWindow is the automatic update window start, "HH:MM" in
+		// TimeZone; empty = manual updates only.
+		UpdateWindow string `json:"update_window,omitempty"`
+		TimeZone     string `json:"time_zone"`
 	}
 	out := []item{}
+	release := h.collectorUpdates.Release()
 	now := time.Now()
 	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `
@@ -224,7 +243,11 @@ func (h *Handler) ListCollectors(w http.ResponseWriter, r *http.Request) {
 			       c.bridge_build_time,
 			       COALESCE(c.bridge_os, ''),
 			       c.last_config_pull_at,
-			       COALESCE(c.local_url, '')
+			       COALESCE(c.local_url, ''),
+			       COALESCE(c.bridge_platform, ''), c.update_capable, COALESCE(c.update_blocker, ''),
+			       c.update_state, COALESCE(c.update_target_version, ''), COALESCE(c.update_message, ''),
+			       c.update_state_at, c.update_window_start,
+			       COALESCE(NULLIF(b.timezone, ''), 'Europe/London')
 			  FROM collectors c
 			  LEFT JOIN buildings b ON b.id = c.building_id
 			 ORDER BY c.name`)
@@ -233,13 +256,31 @@ func (h *Handler) ListCollectors(w http.ResponseWriter, r *http.Request) {
 		}
 		defer rows.Close()
 		for rows.Next() {
-			var c item
+			var (
+				c        item
+				platform string
+				capable  *bool
+				blocker  string
+				window   *int16
+			)
 			if err := rows.Scan(&c.ID, &c.BridgeCollectorID, &c.Name, &c.BuildingName,
 				&c.LastSeenAt, &c.DeviceCount,
 				&c.BridgeVersion, &c.BridgeBuildTime, &c.BridgeOS,
 				&c.LastConfigPullAt, &c.LocalURL,
+				&platform, &capable, &blocker,
+				&c.UpdateState, &c.UpdateTarget, &c.UpdateMessage,
+				&c.UpdateStateAt, &window, &c.TimeZone,
 			); err != nil {
 				return err
+			}
+			if release != nil {
+				c.LatestVersion = release.Version
+			}
+			c.UpdateAvailable, c.UpdateBlocker = release.Eligibility(collectorupdate.Collector{
+				Version: c.BridgeVersion, Platform: platform, Capable: capable, Blocker: blocker,
+			})
+			if window != nil {
+				c.UpdateWindow = collectorupdate.FormatWindow(int(*window))
 			}
 			c.Status = computeCollectorStatus(c.LastSeenAt, now)
 			c.ConfigSyncStatus = computeConfigSyncStatus(c.LastConfigPullAt, now)

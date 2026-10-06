@@ -27,6 +27,7 @@ import (
 	"github.com/dloomes/av-bridge/internal/config"
 	"github.com/dloomes/av-bridge/internal/hub"
 	"github.com/dloomes/av-bridge/internal/store"
+	"github.com/dloomes/av-bridge/internal/update"
 )
 
 func notifySystemd(state string) {
@@ -221,7 +222,15 @@ func (p *program) Start(_ service.Service) error {
 
 	go func() {
 		defer close(stopped)
-		if err := p.run(ctx); err != nil {
+		err := p.run(ctx)
+		if errors.Is(err, errRestartForUpdate) {
+			// Exit non-zero so the service manager restarts us on the new
+			// binary: systemd via Restart=on-failure, Windows via the
+			// service recovery actions set in ensureServiceRecovery.
+			slog.Info("exiting to restart on the updated binary")
+			os.Exit(updateRestartExitCode)
+		}
+		if err != nil {
 			slog.Error("run failed", "error", err)
 			// On a fatal error we cancel our own context so Stop-side
 			// callers know we're done. The service host will notice the
@@ -257,6 +266,14 @@ func (p *program) Stop(_ service.Service) error {
 	}
 	return nil
 }
+
+// errRestartForUpdate is returned by run after a clean shutdown that was
+// requested by the self-updater.
+var errRestartForUpdate = errors.New("restart for update")
+
+// updateRestartExitCode is deliberately non-zero: Restart=on-failure and
+// Windows recovery actions only restart a process that exits abnormally.
+const updateRestartExitCode = 3
 
 // run is the body of the old main() — everything from config load
 // through the signal loop. Broken out so Program.Start can drive it via
@@ -344,6 +361,20 @@ func (p *program) run(ctx context.Context) error {
 		}()
 	}
 
+	// Prefer the device set last pulled from the cloud over local YAML, so
+	// a restart while the cloud is unreachable keeps polling the right
+	// devices. An empty cached set is ignored: it can't be told apart from
+	// "never seeded", and seeding from YAML must still work.
+	deviceCachePath := filepath.Join(filepath.Dir(cfg.Hub.StorePath), "devices-cache.bin")
+	primedFromCache := false
+	if cached, ok, err := cloudpull.LoadCache(deviceCachePath, cfg.Cloud.HMACSecret); err != nil {
+		slog.Warn("device cache ignored", "path", deviceCachePath, "error", err)
+	} else if ok && len(cached) > 0 {
+		cfg.Devices = cached
+		primedFromCache = true
+		slog.Info("devices loaded from cache of last cloud pull", "count", len(cached))
+	}
+
 	h := hub.New(cfg, cloudClient, lensClient, st)
 
 	authCfg := api.AuthConfig{
@@ -358,11 +389,47 @@ func (p *program) run(ctx context.Context) error {
 		return fmt.Errorf("hub start: %w", err)
 	}
 
-	cmdPoller := cloudpoll.NewPoller(cfg.Cloud, cfg.Hub.CollectorID, h)
-	go cmdPoller.Run(ctx)
-
-	cfgPuller := cloudpull.NewPoller(cfg.Cloud, cfg.Hub.DeviceSyncInterval, cfg.Hub.CollectorID, version, buildTime, h)
+	cfgPuller := cloudpull.NewPoller(cfg.Cloud, cfg.Hub.DeviceSyncInterval, cfg.Hub.CollectorID, version, buildTime, deviceCachePath, h)
+	if primedFromCache {
+		cfgPuller.MarkSeeded()
+	}
 	go cfgPuller.Run(ctx)
+
+	cmdPoller := cloudpoll.NewPoller(cfg.Cloud, cfg.Hub.CollectorID, h)
+	cmdPoller.OnResync(cfgPuller.Trigger)
+
+	// Self-update. The updater asks for a restart by closing restartCh;
+	// the shutdown below then runs normally (flushing telemetry to the
+	// spool) before the process exits for the service manager to restart.
+	restartCh := make(chan struct{})
+	var restartOnce sync.Once
+	asService := !service.Interactive()
+	if asService {
+		ensureServiceRecovery()
+	}
+	exePath, _ := os.Executable()
+	if resolved, err := filepath.EvalSymlinks(exePath); err == nil {
+		exePath = resolved
+	}
+	updater := update.New(update.Config{
+		Version:    version,
+		ExePath:    exePath,
+		StateDir:   filepath.Dir(cfg.Hub.StorePath),
+		ConfigPath: p.configPath,
+		EnvPath:    resolvedEnv,
+		CloudBase:  cfg.Cloud.PortalAPI,
+		TLSSkip:    cfg.Cloud.TLSSkipVerify,
+		Service:    asService,
+	}, cmdPoller.ReportUpdate, func() { restartOnce.Do(func() { close(restartCh) }) })
+	watch := updater.Startup(ctx)
+	cmdPoller.EnableUpdates(version, updater.Capability,
+		func(inst update.Instruction) { go updater.Apply(ctx, inst) },
+		func() {
+			if watch != nil {
+				watch.Healthy()
+			}
+		})
+	go cmdPoller.Run(ctx)
 
 	go func() {
 		var serverErr error
@@ -407,11 +474,15 @@ func (p *program) run(ctx context.Context) error {
 	// Whichever fires first wins; the other becomes a no-op.
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	restarting := false
 	select {
 	case <-quit:
 		slog.Info("shutdown signal received")
 	case <-ctx.Done():
 		slog.Info("service host requested stop")
+	case <-restartCh:
+		slog.Info("restarting for update")
+		restarting = true
 	}
 	notifySystemd("STOPPING=1")
 
@@ -420,5 +491,8 @@ func (p *program) run(ctx context.Context) error {
 	_ = apiServer.Shutdown(shutCtx)
 	h.Stop()
 	slog.Info("av-bridge stopped cleanly", "version", version)
+	if restarting {
+		return errRestartForUpdate
+	}
 	return nil
 }

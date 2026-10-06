@@ -35,6 +35,8 @@ type PortalRoutes struct {
 type BridgeCommandRoutes struct {
 	Poll   http.HandlerFunc
 	Result http.HandlerFunc
+	// UpdateStatus receives collector self-update reports.
+	UpdateStatus http.HandlerFunc
 }
 
 // BridgeConfigRoutes wires the config-pull endpoints. GetConfig returns the
@@ -226,6 +228,9 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 		mux.Handle("POST /api/v1/collectors/{id}/enrollment-token", wrapPerm(portalauth.PermCollectorCRUD, portal.Portal.ReissueCollectorEnrollmentToken))
 		mux.Handle("PATCH /api/v1/collectors/{id}", wrapPerm(portalauth.PermCollectorCRUD, portal.Portal.UpdateCollector))
 		mux.Handle("DELETE /api/v1/collectors/{id}", wrapPerm(portalauth.PermCollectorCRUD, portal.Portal.DeleteCollector))
+		mux.Handle("POST /api/v1/collectors/{id}/replace", wrapPerm(portalauth.PermCollectorCRUD, portal.Portal.ReplaceCollector))
+		mux.Handle("POST /api/v1/collectors/{id}/update", wrapPerm(portalauth.PermCollectorCRUD, portal.Portal.RequestCollectorUpdate))
+		mux.Handle("POST /api/v1/collectors/update-all", wrapPerm(portalauth.PermCollectorCRUD, portal.Portal.RequestAllCollectorUpdates))
 		mux.Handle("GET /api/v1/devices", wrapPerm(portalauth.PermViewDashboard, portal.Portal.ListDevices))
 		mux.Handle("GET /api/v1/devices/{id}", wrapPerm(portalauth.PermViewDashboard, portal.Portal.GetDevice))
 		mux.Handle("GET /api/v1/devices/{id}/telemetry", wrapPerm(portalauth.PermViewDashboard, portal.Portal.GetTelemetry))
@@ -368,6 +373,7 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 
 		// Device CRUD.
 		mux.Handle("POST /api/v1/devices", wrapPerm(portalauth.PermDeviceCRUD, portal.Portal.CreateDevice))
+		mux.Handle("POST /api/v1/devices/move", wrapPerm(portalauth.PermDeviceCRUD, portal.Portal.MoveDevices))
 		mux.Handle("PATCH /api/v1/devices/{id}", wrapPerm(portalauth.PermDeviceCRUD, portal.Portal.UpdateDevice))
 		mux.Handle("DELETE /api/v1/devices/{id}", wrapPerm(portalauth.PermDeviceCRUD, portal.Portal.DeleteDevice))
 
@@ -551,6 +557,9 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 	}
 	if bridgeCommands.Result != nil {
 		mux.Handle("POST /bridge/commands/{id}/result", bridgeCommands.Result)
+	}
+	if bridgeCommands.UpdateStatus != nil {
+		mux.Handle("POST /bridge/update-status", bridgeCommands.UpdateStatus)
 	}
 
 	// Bridge-side config channel — same HMAC scheme. POST not GET because every

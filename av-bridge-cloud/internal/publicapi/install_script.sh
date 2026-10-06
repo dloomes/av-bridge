@@ -27,7 +27,11 @@ ENV_FILE="${CONFIG_DIR}/env"
 CONFIG_FILE="${CONFIG_DIR}/config.yaml"
 SERVICE_USER="av-bridge"
 SERVICE_FILE="/etc/systemd/system/av-bridge.service"
-BIN_PATH="/usr/local/bin/av-bridge"
+# The binary lives in a directory the service account owns so the
+# Collector can install signed updates itself (see the portal's
+# Collectors page). /usr/local/bin/av-bridge is a symlink for admins.
+BIN_DIR="/opt/av-bridge/bin"
+BIN_PATH="${BIN_DIR}/av-bridge"
 
 die() {
     echo "ERROR: $*" >&2
@@ -75,8 +79,8 @@ echo "    Enrolled as: $BRIDGE_ID (id=$COLLECTOR_ID)"
 if ! id "$SERVICE_USER" >/dev/null 2>&1; then
     useradd --system --no-create-home --shell /usr/sbin/nologin "$SERVICE_USER"
 fi
-mkdir -p "$CONFIG_DIR" /var/lib/av-bridge /var/log/av-bridge
-chown "$SERVICE_USER:$SERVICE_USER" /var/lib/av-bridge /var/log/av-bridge
+mkdir -p "$CONFIG_DIR" /var/lib/av-bridge /var/log/av-bridge "$BIN_DIR"
+chown "$SERVICE_USER:$SERVICE_USER" /var/lib/av-bridge /var/log/av-bridge "$BIN_DIR"
 chown root:"$SERVICE_USER" "$CONFIG_DIR"
 chmod 750 "$CONFIG_DIR"
 
@@ -101,6 +105,10 @@ if [ ! -x "$BIN_PATH" ]; then
         || die "binary download failed"
     chmod 755 "$BIN_PATH"
 fi
+chown "$SERVICE_USER:$SERVICE_USER" "$BIN_PATH"
+# Older installs put a real binary here; replace it with a link to the
+# updatable one so `av-bridge -version` always reports what's running.
+ln -sfn "$BIN_PATH" /usr/local/bin/av-bridge
 
 # ── Config + env ─────────────────────────────────────────────────────────────
 
@@ -162,14 +170,17 @@ StandardError=journal
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/lib/av-bridge /var/log/av-bridge
+ReadWritePaths=/var/lib/av-bridge /var/log/av-bridge /opt/av-bridge
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
 systemctl daemon-reload
-systemctl enable --now av-bridge
+systemctl enable av-bridge
+# restart, not start: enrolling mints a new HMAC secret, so a bridge that
+# was already running (re-enrol on the same box) must reload its env.
+systemctl restart av-bridge
 
 # ── Health check ─────────────────────────────────────────────────────────────
 

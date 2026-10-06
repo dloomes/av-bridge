@@ -33,6 +33,8 @@ If the device reports faults, **Fault Count** and **Faults** appear first. Selec
 
 You need the **Send device commands** permission to see commands.
 
+If the device's Collector is offline, a command waits up to 10 minutes for it to come back. After that the command is cancelled, so it can't run unexpectedly later.
+
 <Note>
 Video codecs running as a Microsoft Teams Rooms or Zoom Rooms appliance show **Control disabled — appliance mode**. Their readings stay live, but the device itself refuses commands.
 </Note>
@@ -72,3 +74,9 @@ Each device runs the command if it has it, and the summary shows how many were q
 ## Add or change a device
 
 Administrators with the **Manage devices** permission can select **New device** on the **Devices** page, or **Edit** on a device page. See [Supported devices](/devices/overview) for what to enter for each kind of device.
+
+### Move a device to another Collector
+
+Edit the device and choose a different **Collector**. When you save, the device moves with its history, alerts and settings, and both Collectors pick up the change within seconds. The move is refused if the other Collector already has a device with the same **Reported ID**.
+
+To move every device off a failed Collector at once, use **Replace** on the **Collectors** page. See [Replace a failed Collector](/deploy/backup#replace-a-failed-collector).

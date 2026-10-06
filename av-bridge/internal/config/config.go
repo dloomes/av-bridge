@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -68,6 +69,14 @@ type CloudConfig struct {
 	// CommandMaxBatch caps how many commands the bridge claims per poll.
 	// Defaults to 10.
 	CommandMaxBatch int `yaml:"command_max_batch"`
+	// SpoolDir holds ingest payloads the cloud couldn't accept, replayed
+	// oldest-first once it's reachable again (store-and-forward). Defaults
+	// to a "spool" directory next to hub.store_path. Bounded by
+	// SpoolMaxBytes (default 256 MiB) and SpoolMaxAge (default 72h, long
+	// enough to ride out a weekend outage).
+	SpoolDir      string        `yaml:"spool_dir"`
+	SpoolMaxBytes int64         `yaml:"spool_max_bytes"`
+	SpoolMaxAge   time.Duration `yaml:"spool_max_age"`
 }
 
 type APIConfig struct {
@@ -177,6 +186,15 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Cloud.CommandMaxBatch == 0 {
 		cfg.Cloud.CommandMaxBatch = 10
+	}
+	if cfg.Cloud.SpoolDir == "" {
+		cfg.Cloud.SpoolDir = filepath.Join(filepath.Dir(cfg.Hub.StorePath), "spool")
+	}
+	if cfg.Cloud.SpoolMaxBytes == 0 {
+		cfg.Cloud.SpoolMaxBytes = 256 << 20
+	}
+	if cfg.Cloud.SpoolMaxAge == 0 {
+		cfg.Cloud.SpoolMaxAge = 72 * time.Hour
 	}
 	if cfg.Lens.PollInterval == 0 {
 		cfg.Lens.PollInterval = 5 * time.Minute

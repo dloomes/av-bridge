@@ -150,9 +150,16 @@ type Poller struct {
 	http        *http.Client
 	baseURL     string
 	seeded      bool // first-run seed only runs once
+	// cachePath is where each successful pull is cached for restarts
+	// without cloud access (see cache.go). Empty disables the cache.
+	cachePath string
+	// resync is signalled when the cloud says this collector's device set
+	// changed (the command long-poll's resync flag). Buffered 1 so
+	// repeated signals coalesce into one pull.
+	resync chan struct{}
 }
 
-func NewPoller(cloudCfg config.CloudConfig, interval time.Duration, collectorID, version, buildTime string, h *hub.Hub) *Poller {
+func NewPoller(cloudCfg config.CloudConfig, interval time.Duration, collectorID, version, buildTime, cachePath string, h *hub.Hub) *Poller {
 	base := strings.TrimRight(cloudCfg.PortalAPI, "/")
 	transport := &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: cloudCfg.TLSSkipVerify},
@@ -166,7 +173,25 @@ func NewPoller(cloudCfg config.CloudConfig, interval time.Duration, collectorID,
 		hub:         h,
 		baseURL:     base,
 		http:        &http.Client{Timeout: 30 * time.Second, Transport: transport},
+		cachePath:   cachePath,
+		resync:      make(chan struct{}, 1),
 	}
+}
+
+// Trigger asks for a pull now rather than on the next tick. Non-blocking
+// and safe to call from any goroutine.
+func (p *Poller) Trigger() {
+	select {
+	case p.resync <- struct{}{}:
+	default:
+	}
+}
+
+// MarkSeeded records that the cloud already owns this collector's device
+// set — used at startup when the hub was primed from the device cache, so
+// the first pull never seeds local YAML over it.
+func (p *Poller) MarkSeeded() {
+	p.seeded = true
 }
 
 // Run blocks until ctx is cancelled. Does an initial sync immediately, then
@@ -192,6 +217,9 @@ func (p *Poller) Run(ctx context.Context) {
 			return
 		case <-t.C:
 			p.syncOnce(ctx)
+		case <-p.resync:
+			slog.Info("config resync requested by cloud")
+			p.syncOnce(ctx)
 		}
 	}
 }
@@ -201,6 +229,11 @@ func (p *Poller) syncOnce(ctx context.Context) {
 	if err != nil {
 		slog.Warn("config fetch failed", "error", err)
 		return
+	}
+	if p.cachePath != "" {
+		if err := saveCache(p.cachePath, p.cfg.HMACSecret, devices); err != nil {
+			slog.Warn("device cache write failed", "path", p.cachePath, "error", err)
+		}
 	}
 
 	if len(devices) == 0 && !p.seeded {
