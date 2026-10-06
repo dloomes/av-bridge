@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"strings"
@@ -40,6 +41,9 @@ type AuroraVPXAdapter struct {
 	connMu sync.Mutex
 	conn   net.Conn
 	dec    *json.Decoder
+	// raw keeps the tail of what the device sent, so a reply that isn't
+	// valid JSON can be shown to the operator and mined for the mode.
+	raw *tailBuffer
 
 	// cmdMu serialises in-flight commands so Poll doesn't interleave with
 	// SendCommand. Aurora VPX serves strictly one request/response per
@@ -71,7 +75,43 @@ func NewAuroraVPXAdapter(cfg config.DeviceConfig) *AuroraVPXAdapter {
 
 func (a *AuroraVPXAdapter) Connect(ctx context.Context) error {
 	log := slog.With("device", a.Cfg.ID, "address", a.address)
+	if err := a.dialAndProbe(ctx); err != nil {
+		return err
+	}
 
+	// Detect mode. Failure here isn't fatal — Poll retries — but the log
+	// helps operators spot config drift quickly. A failed `get settings`
+	// drops the connection (see request), so dial again for normal use.
+	if err := a.refreshMode(ctx); err != nil {
+		log.Warn("aurora_vpx mode detect failed", "error", err)
+		if !a.connected() {
+			if err := a.dialAndProbe(ctx); err != nil {
+				return err
+			}
+		}
+	}
+
+	a.SetStatus(device.StatusOnline)
+	log.Info("aurora_vpx connected", "fw_version", a.getFWVersion(), "mode", a.getMode())
+	return nil
+}
+
+func (a *AuroraVPXAdapter) connected() bool {
+	a.connMu.Lock()
+	defer a.connMu.Unlock()
+	return a.conn != nil
+}
+
+// ensureConn reconnects when an earlier failure dropped the connection.
+func (a *AuroraVPXAdapter) ensureConn(ctx context.Context) error {
+	if a.connected() {
+		return nil
+	}
+	return a.Connect(ctx)
+}
+
+// dialAndProbe opens the TCP connection and checks the device answers.
+func (a *AuroraVPXAdapter) dialAndProbe(ctx context.Context) error {
 	d := net.Dialer{Timeout: 10 * time.Second}
 	conn, err := d.DialContext(ctx, "tcp", a.address)
 	if err != nil {
@@ -85,7 +125,8 @@ func (a *AuroraVPXAdapter) Connect(ctx context.Context) error {
 		_ = a.conn.Close()
 	}
 	a.conn = conn
-	a.dec = json.NewDecoder(bufio.NewReader(newTelnetFilter(conn)))
+	a.raw = &tailBuffer{max: 8 << 10}
+	a.dec = json.NewDecoder(bufio.NewReader(io.TeeReader(newTelnetFilter(conn), a.raw)))
 	a.connMu.Unlock()
 
 	// Probe with `version` — no side effects, minimal response, confirms the
@@ -100,15 +141,6 @@ func (a *AuroraVPXAdapter) Connect(ctx context.Context) error {
 		a.fwVersion = fw
 		a.modeMu.Unlock()
 	}
-
-	// Detect mode. Failure here isn't fatal — Poll retries — but the log
-	// helps operators spot config drift quickly.
-	if err := a.refreshMode(ctx); err != nil {
-		log.Warn("aurora_vpx mode detect failed", "error", err)
-	}
-
-	a.SetStatus(device.StatusOnline)
-	log.Info("aurora_vpx connected", "fw_version", a.getFWVersion(), "mode", a.getMode())
 	return nil
 }
 
@@ -143,6 +175,15 @@ func (a *AuroraVPXAdapter) Poll(ctx context.Context) (*device.Telemetry, error) 
 	t := a.BaseTelemetry()
 	t.Metrics = map[string]any{}
 
+	// A failed request drops the connection (see request); open a fresh
+	// one here rather than waiting for the hub's 30s reconnect tick.
+	if err := a.ensureConn(ctx); err != nil {
+		a.SetStatus(device.StatusOffline)
+		t.Status = device.StatusOffline
+		t.Error = err.Error()
+		return t, nil
+	}
+
 	// `get status` is the primary health signal. If it fails we're offline
 	// — no point issuing the rest.
 	status, err := a.request(ctx, "get status")
@@ -162,9 +203,6 @@ func (a *AuroraVPXAdapter) Poll(ctx context.Context) (*device.Telemetry, error) 
 
 	// The remaining reads are best-effort — a firmware that doesn't
 	// support one shouldn't blank the whole telemetry payload.
-	if settings, err := a.request(ctx, "get settings"); err == nil {
-		a.applySettings(settings, t)
-	}
 	if hp, err := a.request(ctx, "get hotplug_status"); err == nil {
 		if r, ok := hp["result"].(map[string]any); ok {
 			if v, ok := r["IN1"].(string); ok {
@@ -190,6 +228,15 @@ func (a *AuroraVPXAdapter) Poll(ctx context.Context) (*device.Telemetry, error) 
 			t.Metrics["video_hdcp"] = v
 		}
 	}
+	// Last: it's the largest reply and the likeliest to fail, and a
+	// failure drops the connection — the reads above are already in.
+	if settings, err := a.request(ctx, "get settings"); err == nil {
+		a.applySettings(settings, t)
+	} else {
+		// Surfaced so the device page shows why mode, MAC etc. are
+		// missing — the usual cause of "mode not detected".
+		t.Metrics["settings_error"] = err.Error()
+	}
 
 	if fw := a.getFWVersion(); fw != "" {
 		t.Metrics["fw_version"] = fw
@@ -206,8 +253,9 @@ func (a *AuroraVPXAdapter) Poll(ctx context.Context) (*device.Telemetry, error) 
 // large (mac + hostname + full stream + audio + video geometry); we
 // surface only what a fleet-monitoring view actually needs.
 func (a *AuroraVPXAdapter) applySettings(resp map[string]any, t *device.Telemetry) {
-	settings, ok := resp["settings"].(map[string]any)
+	settings, ok := settingsOf(resp)
 	if !ok {
+		t.Metrics["settings_error"] = "get settings reply has no settings object"
 		return
 	}
 	if v, ok := settings["mac"].(string); ok {
@@ -322,6 +370,9 @@ func (a *AuroraVPXAdapter) SendCommand(ctx context.Context, cmd device.CommandRe
 
 	wire, err := a.translateCommand(cmd)
 	if err != nil {
+		return nil, err
+	}
+	if err := a.ensureConn(ctx); err != nil {
 		return nil, err
 	}
 
@@ -471,22 +522,20 @@ func (a *AuroraVPXAdapter) translateCommand(cmd device.CommandRequest) (string, 
 	return "", fmt.Errorf("aurora_vpx: unsupported command %q", cmd.Name)
 }
 
+// requireEncoder / requireDecoder refuse a command only when the device's
+// mode is known and wrong. With the mode unknown (get settings failing)
+// the command is sent and the firmware decides — it rejects a wrong-mode
+// command itself, so refusing here would only block working commands.
 func requireEncoder(mode, name string) error {
-	if mode == "encoder" {
+	if mode == "" || mode == "encoder" {
 		return nil
-	}
-	if mode == "" {
-		return fmt.Errorf("aurora_vpx: mode not detected yet; retry after next poll (%s requires encoder)", name)
 	}
 	return fmt.Errorf("aurora_vpx: %s requires encoder mode, device is %s", name, mode)
 }
 
 func requireDecoder(mode, name string) error {
-	if mode == "decoder" {
+	if mode == "" || mode == "decoder" {
 		return nil
-	}
-	if mode == "" {
-		return fmt.Errorf("aurora_vpx: mode not detected yet; retry after next poll (%s requires decoder)", name)
 	}
 	return fmt.Errorf("aurora_vpx: %s requires decoder mode, device is %s", name, mode)
 }
@@ -518,11 +567,23 @@ func (a *AuroraVPXAdapter) request(ctx context.Context, cmd string) (map[string]
 	defer func() { _ = conn.SetDeadline(time.Time{}) }()
 
 	if _, err := conn.Write([]byte(cmd + "\r\n")); err != nil {
+		a.dropConn(conn)
 		return nil, fmt.Errorf("aurora_vpx write %q: %w", cmd, err)
 	}
 
 	resp := map[string]any{}
 	if err := dec.Decode(&resp); err != nil {
+		// A json.Decoder that has failed keeps returning that error, and
+		// a late reply would answer the next request — either way this
+		// connection is unusable. Drop it; the next poll reconnects.
+		snippet := a.rawTail(conn, 160)
+		if cmd == "get settings" {
+			a.modeFromRaw(conn)
+		}
+		a.dropConn(conn)
+		if snippet != "" {
+			return nil, fmt.Errorf("aurora_vpx decode reply to %q: %w (device sent: %q)", cmd, err, snippet)
+		}
 		return nil, fmt.Errorf("aurora_vpx decode reply to %q: %w", cmd, err)
 	}
 
@@ -539,6 +600,88 @@ func (a *AuroraVPXAdapter) request(ctx context.Context, cmd string) (map[string]
 	return resp, nil
 }
 
+// dropConn closes conn if it's still the current connection.
+func (a *AuroraVPXAdapter) dropConn(conn net.Conn) {
+	a.connMu.Lock()
+	defer a.connMu.Unlock()
+	if a.conn == conn {
+		_ = a.conn.Close()
+		a.conn = nil
+		a.dec = nil
+	}
+}
+
+// rawTail returns up to n trailing bytes the device sent on conn.
+func (a *AuroraVPXAdapter) rawTail(conn net.Conn, n int) string {
+	a.connMu.Lock()
+	defer a.connMu.Unlock()
+	if a.conn != conn || a.raw == nil {
+		return ""
+	}
+	b := a.raw.bytes()
+	if len(b) > n {
+		b = b[len(b)-n:]
+	}
+	return strings.TrimSpace(string(b))
+}
+
+// modeFromRaw recovers the encoder/decoder role from a get settings reply
+// that wasn't valid JSON, by finding `"tx":"y|n"` in the raw bytes.
+func (a *AuroraVPXAdapter) modeFromRaw(conn net.Conn) {
+	a.connMu.Lock()
+	var raw string
+	if a.conn == conn && a.raw != nil {
+		raw = strings.ReplaceAll(string(a.raw.bytes()), " ", "")
+	}
+	a.connMu.Unlock()
+	mode := ""
+	switch {
+	case strings.Contains(raw, `"tx":"y"`):
+		mode = "encoder"
+	case strings.Contains(raw, `"tx":"n"`):
+		mode = "decoder"
+	}
+	if mode != "" {
+		a.modeMu.Lock()
+		a.mode = mode
+		a.modeMu.Unlock()
+	}
+}
+
+// settingsOf returns the settings object from a get settings reply. The
+// protocol guide puts it under "settings"; accept "result" too, which
+// every other command in the guide uses.
+func settingsOf(resp map[string]any) (map[string]any, bool) {
+	if m, ok := resp["settings"].(map[string]any); ok {
+		return m, true
+	}
+	m, ok := resp["result"].(map[string]any)
+	return m, ok
+}
+
+// tailBuffer is an io.Writer keeping the last max bytes written.
+type tailBuffer struct {
+	mu  sync.Mutex
+	max int
+	buf []byte
+}
+
+func (t *tailBuffer) Write(p []byte) (int, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.buf = append(t.buf, p...)
+	if len(t.buf) > t.max {
+		t.buf = append([]byte(nil), t.buf[len(t.buf)-t.max:]...)
+	}
+	return len(p), nil
+}
+
+func (t *tailBuffer) bytes() []byte {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return append([]byte(nil), t.buf...)
+}
+
 // refreshMode issues `get settings` and caches the encoder/decoder role.
 // Called at Connect and again on every Poll (via applySettings), so a
 // device that gets flipped from encoder to decoder in the field is picked
@@ -548,7 +691,7 @@ func (a *AuroraVPXAdapter) refreshMode(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	settings, ok := resp["settings"].(map[string]any)
+	settings, ok := settingsOf(resp)
 	if !ok {
 		return errors.New("aurora_vpx: settings payload missing")
 	}
