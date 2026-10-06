@@ -7,6 +7,7 @@ import {
   ArrowRight,
   Bell,
   Building2,
+  CircleCheck,
   CircleHelp,
   CircleSlash,
   Link as LinkIcon,
@@ -189,11 +190,19 @@ function CustomerCard({
   // Border accent reflects the worst signal so the helpdesk eye is drawn to
   // troubled tenants first. Unknown devices (collector offline) get the
   // same amber tint as offline devices — either way there's something
-  // for the operator to look at.
+  // for the operator to look at. Green means genuinely all clear: devices
+  // being monitored, a collector reporting, and nothing wrong. A tenant
+  // with nothing monitored yet stays neutral rather than looking healthy.
+  const hasOpenAlerts = c.alerts_open > 0;
+  const monitored = c.devices_total > 0 && !!c.last_bridge_seen;
+  const healthy =
+    monitored && !hasCritical && !hasOffline && !hasUnknown && !hasOpenAlerts && !stale;
   const tone = hasCritical
     ? "border-red-500/40 bg-red-500/5"
-    : hasOffline || hasUnknown || stale
+    : hasOffline || hasUnknown || hasOpenAlerts || stale
     ? "border-amber-500/40 bg-amber-500/5"
+    : healthy
+    ? "border-green-500/40 bg-green-500/5"
     : "";
 
   return (
@@ -201,7 +210,15 @@ function CustomerCard({
       <CardContent className="p-4 space-y-3">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
-            <div className="text-base font-semibold truncate">{c.name}</div>
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="text-base font-semibold truncate">{c.name}</div>
+              {healthy && (
+                <span className="inline-flex shrink-0 items-center gap-1 text-[11px] font-medium text-green-600">
+                  <CircleCheck aria-hidden="true" className="h-3.5 w-3.5" />
+                  No issues
+                </span>
+              )}
+            </div>
             {c.slug && (
               <div className="mt-0.5 flex items-center gap-1 text-[11px] text-muted-foreground truncate">
                 <LinkIcon className="h-3 w-3 shrink-0" />
