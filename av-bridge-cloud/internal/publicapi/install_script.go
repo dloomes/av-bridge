@@ -49,6 +49,10 @@ func (h *Handler) resolveCloudBase(r *http.Request) string {
 // eyeball it as text; the pipe-to-bash path doesn't care.
 func (h *Handler) ServeInstallScript(w http.ResponseWriter, r *http.Request) {
 	body := strings.ReplaceAll(installScriptTmpl, "@@CLOUD_BASE_URL@@", h.resolveCloudBase(r))
+	// bash reads a CRLF file's `set -euo pipefail` as "pipefail\r" and
+	// dies. .gitattributes pins *.sh to LF, but a checkout made with
+	// different settings would still embed CRLF — so normalise here too.
+	body = strings.ReplaceAll(body, "\r\n", "\n")
 	w.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
 	// Short cache lets the same script survive on CloudFront for a few
 	// minutes but doesn't lock in an old cloud URL if we ever rotate.

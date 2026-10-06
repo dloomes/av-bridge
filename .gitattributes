@@ -1,0 +1,6 @@
+# Shell scripts and systemd units run on Linux and must keep LF endings,
+# whatever core.autocrlf a checkout uses. The cloud embeds
+# av-bridge-cloud/internal/publicapi/install_script.sh into its binary;
+# a CRLF copy makes bash fail with "invalid option name pipefail".
+*.sh      text eol=lf
+*.service text eol=lf
