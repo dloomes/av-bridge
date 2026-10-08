@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/dloomes/av-bridge-cloud/internal/bridgeauth"
+	"github.com/dloomes/av-bridge-cloud/internal/collectorha"
 	"github.com/dloomes/av-bridge-cloud/internal/collectorupdate"
 	"github.com/dloomes/av-bridge-cloud/internal/db"
 	"github.com/dloomes/av-bridge-cloud/internal/secrets"
@@ -28,6 +29,12 @@ type BridgeHandler struct {
 	log     *slog.Logger
 	maxHold time.Duration
 	updates *collectorupdate.Service // nil: no self-update offers
+	ha      *collectorha.Manager     // nil: every collector serves itself
+}
+
+// SetHA enables collector groups (warm standby) on /bridge/poll.
+func (h *BridgeHandler) SetHA(mgr *collectorha.Manager) {
+	h.ha = mgr
 }
 
 // SetUpdates enables collector self-update offers on /bridge/poll and the
@@ -69,6 +76,12 @@ type pollResp struct {
 	Resync bool `json:"resync,omitempty"`
 	// Update offers a new collector version (see collectorupdate).
 	Update *collectorupdate.Instruction `json:"update,omitempty"`
+	// Role is "active" or "standby" for a machine in a collector group
+	// (warm standby); omitted for a collector on its own. A standby holds
+	// no devices; an active machine must stop polling devices if it hasn't
+	// had a successful poll within LeaseTTLSeconds minus a safety margin.
+	Role            string `json:"role,omitempty"`
+	LeaseTTLSeconds int    `json:"lease_ttl_seconds,omitempty"`
 }
 
 // Poll is a long-poll: try to claim ready commands immediately; if none,
@@ -79,6 +92,13 @@ type pollResp struct {
 // re-check closes the missed-notify window: any NOTIFY that fires between
 // the initial (fast-path) claim and the wait is buffered by pgx and
 // returned by the next Wait call.
+//
+// Collector groups (warm standby, see collectorha): the poll takes or
+// renews the group lease first. Only the lease holder claims commands —
+// for the group, i.e. the primary's id — and the response tells the
+// bridge its role so a standby holds no devices. The lease is renewed
+// again at the end of the hold, which also picks up a failover or
+// handover that happened while the poll was held.
 func (h *BridgeHandler) Poll(w http.ResponseWriter, r *http.Request) {
 	body, col, ok := h.auth.Authenticate(w, r)
 	if !ok {
@@ -96,64 +116,98 @@ func (h *BridgeHandler) Poll(w http.ResponseWriter, r *http.Request) {
 	if max > 100 {
 		max = 100
 	}
+	ctx := r.Context()
 
-	// Fast path — anything ready right now, ship it and skip the LISTEN.
-	claimed, err := h.claim(r.Context(), col.CustomerID, col.ID, max)
+	lease, err := h.lease(ctx, *col)
 	if err != nil {
-		h.log.Error("claim commands failed", "collector", col.ID, "error", err)
+		// No role rather than a guessed one: the bridge treats a failed
+		// poll as "no news", and a holder that can't renew fences itself.
+		h.log.Error("collector lease failed", "collector", col.ID, "error", err)
 		bridgeauth.WriteErr(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	if len(claimed) > 0 {
-		h.respond(w, r, col.ID, req, claimed)
-		return
+
+	// Fast path — anything ready right now, ship it and skip the LISTEN.
+	if lease.Active {
+		claimed, err := h.claim(ctx, col.CustomerID, lease.GroupID, max)
+		if err != nil {
+			h.log.Error("claim commands failed", "collector", col.ID, "error", err)
+			bridgeauth.WriteErr(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		if len(claimed) > 0 {
+			h.respond(w, r, *col, req, lease, claimed)
+			return
+		}
 	}
 
 	// Slow path — no work right now. Open the listener FIRST, then
 	// re-check to close the race, then block up to maxHold.
-	listener, err := h.store.Listen(r.Context(), ChannelPending)
+	listener, err := h.store.Listen(ctx, ChannelPending)
 	if err != nil {
 		// Degrade to an empty response rather than 500 — the bridge
 		// re-polls immediately and the queue advances on the next tick.
 		h.log.Warn("listen cmd_pending failed", "collector", col.ID, "error", err)
-		bridgeauth.WriteJSON(w, http.StatusOK, pollResp{Commands: []Command{}})
+		h.respond(w, r, *col, req, lease, []Command{})
 		return
 	}
 	defer listener.Close()
 
 	// Race-closer re-check.
-	claimed, err = h.claim(r.Context(), col.CustomerID, col.ID, max)
-	if err != nil {
-		h.log.Error("claim commands failed (post-listen)", "collector", col.ID, "error", err)
-		bridgeauth.WriteErr(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-	if len(claimed) > 0 {
-		h.respond(w, r, col.ID, req, claimed)
-		return
+	if lease.Active {
+		claimed, err := h.claim(ctx, col.CustomerID, lease.GroupID, max)
+		if err != nil {
+			h.log.Error("claim commands failed (post-listen)", "collector", col.ID, "error", err)
+			bridgeauth.WriteErr(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		if len(claimed) > 0 {
+			h.respond(w, r, *col, req, lease, claimed)
+			return
+		}
 	}
 
-	if err := WaitForPending(r.Context(), listener, col.ID, h.maxHold); err != nil {
+	// Wake on this machine's id (config changes, updates) or the group's
+	// (commands for the devices it may be serving).
+	if err := WaitForPending(ctx, listener, h.maxHold, col.ID, lease.GroupID); err != nil {
 		// Client cancel or listener death — return empty. The bridge
 		// treats an empty 200 as "nothing to do" and re-polls immediately.
 		h.log.Debug("wait for pending returned early", "collector", col.ID, "error", err)
-		bridgeauth.WriteJSON(w, http.StatusOK, pollResp{Commands: []Command{}})
+		h.respond(w, r, *col, req, lease, []Command{})
 		return
 	}
 
-	// Woken (or timed out) — final claim attempt. May still return empty
-	// if a competing cloud task claimed the same batch first; the bridge
-	// re-polls immediately regardless.
-	claimed, err = h.claim(r.Context(), col.CustomerID, col.ID, max)
+	// Woken (or timed out): renew the lease, then a final claim attempt.
+	// May still return empty if a competing cloud task claimed the same
+	// batch first; the bridge re-polls immediately regardless.
+	lease, err = h.lease(ctx, *col)
 	if err != nil {
-		h.log.Error("claim commands failed (post-wait)", "collector", col.ID, "error", err)
+		h.log.Error("collector lease failed (post-wait)", "collector", col.ID, "error", err)
 		bridgeauth.WriteErr(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	if claimed == nil {
-		claimed = []Command{}
+	claimed := []Command{}
+	if lease.Active {
+		claimed, err = h.claim(ctx, col.CustomerID, lease.GroupID, max)
+		if err != nil {
+			h.log.Error("claim commands failed (post-wait)", "collector", col.ID, "error", err)
+			bridgeauth.WriteErr(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		if claimed == nil {
+			claimed = []Command{}
+		}
 	}
-	h.respond(w, r, col.ID, req, claimed)
+	h.respond(w, r, *col, req, lease, claimed)
+}
+
+// lease returns the machine's standing in its collector group. Without a
+// lease manager wired (tests, pre-HA) every collector serves itself.
+func (h *BridgeHandler) lease(ctx context.Context, col db.Collector) (collectorha.Lease, error) {
+	if h.ha == nil {
+		return collectorha.Lease{Active: true, GroupID: col.GroupID()}, nil
+	}
+	return h.ha.Acquire(ctx, col)
 }
 
 // respond writes the poll response, flagging resync when the collector's
@@ -161,16 +215,20 @@ func (h *BridgeHandler) Poll(w http.ResponseWriter, r *http.Request) {
 // trigger NOTIFYs cmd_pending on config changes, so a held poll wakes and
 // carries the flag back within a second of the change. A lookup failure
 // only costs the hint, never the commands.
-func (h *BridgeHandler) respond(w http.ResponseWriter, r *http.Request, collectorID string, req pollReq, cmds []Command) {
-	resync, err := h.store.CollectorNeedsResync(r.Context(), collectorID)
+func (h *BridgeHandler) respond(w http.ResponseWriter, r *http.Request, col db.Collector, req pollReq, lease collectorha.Lease, cmds []Command) {
+	resync, err := h.store.CollectorNeedsResync(r.Context(), col.ID)
 	if err != nil {
-		h.log.Debug("resync check failed", "collector", collectorID, "error", err)
+		h.log.Debug("resync check failed", "collector", col.ID, "error", err)
 	}
 	var upd *collectorupdate.Instruction
 	if h.updates != nil {
-		upd = h.updates.Offer(r.Context(), collectorID, req.PollMeta)
+		upd = h.updates.Offer(r.Context(), col.ID, req.PollMeta)
 	}
-	bridgeauth.WriteJSON(w, http.StatusOK, pollResp{Commands: cmds, Resync: resync, Update: upd})
+	resp := pollResp{Commands: cmds, Resync: resync, Update: upd, Role: lease.Role()}
+	if lease.Grouped {
+		resp.LeaseTTLSeconds = int(collectorha.TTL.Seconds())
+	}
+	bridgeauth.WriteJSON(w, http.StatusOK, resp)
 }
 
 type updateStatusReq struct {
@@ -239,7 +297,9 @@ func (h *BridgeHandler) PostResult(w http.ResponseWriter, r *http.Request) {
 	}
 
 	err := h.store.WithTenant(r.Context(), col.CustomerID, func(tx pgx.Tx) error {
-		return Complete(r.Context(), tx, commandID, col.ID, req.Result, req.Error)
+		// Commands belong to the group (the primary's id); a standby that
+		// claimed one while active completes it under that id.
+		return Complete(r.Context(), tx, commandID, col.GroupID(), req.Result, req.Error)
 	})
 	if err != nil {
 		h.log.Warn("command complete rejected", "command_id", commandID, "collector", col.ID, "error", err)

@@ -34,6 +34,11 @@ const OfflineAfter = 5 * time.Minute
 //      'online' from before the device moved networks / was
 //      unplugged).
 //
+// Warm standby: when a standby is serving the devices, the primary row's
+// serving_seen_at is stamped on each of its polls, so the freshness check
+// uses the later of that and the primary's own last_seen_at — devices
+// stay visible while the primary machine itself is down.
+//
 // Uses "d." for the device row and "c." for the collector row — every
 // calling query must LEFT JOIN collectors c ON c.id = d.collector_id
 // (or an equivalent alias mapping).
@@ -42,8 +47,8 @@ const OfflineAfter = 5 * time.Minute
 // fragment is baked into many static queries and passing arguments
 // everywhere buys nothing at current scale.
 const EffectiveStatusSQL = `CASE
-  WHEN c.last_seen_at IS NULL
-    OR c.last_seen_at < now() - interval '5 minutes'
+  WHEN GREATEST(c.last_seen_at, c.serving_seen_at) IS NULL
+    OR GREATEST(c.last_seen_at, c.serving_seen_at) < now() - interval '5 minutes'
     THEN 'unknown'
   WHEN d.last_seen_at IS NOT NULL
     AND d.last_seen_at < now() - interval '15 minutes'
@@ -58,7 +63,7 @@ END`
 // the UI can label the pill accordingly. Every calling query must
 // LEFT JOIN collectors c ON c.id = d.collector_id.
 const CollectorStatusSQL = `CASE
-  WHEN c.last_seen_at IS NULL THEN 'unknown'
-  WHEN c.last_seen_at < now() - interval '5 minutes' THEN 'offline'
+  WHEN GREATEST(c.last_seen_at, c.serving_seen_at) IS NULL THEN 'unknown'
+  WHEN GREATEST(c.last_seen_at, c.serving_seen_at) < now() - interval '5 minutes' THEN 'offline'
   ELSE 'online'
 END`

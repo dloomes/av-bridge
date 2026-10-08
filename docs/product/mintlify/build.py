@@ -111,7 +111,8 @@ GUIDES: dict[str, dict] = {
             13: dict(slug="backup", title="Outages, backup and replacement",
                      sidebarTitle="Outages & replacement", nav="Operate", icon="box-archive",
                      description="How the Collector rides out a cloud outage, what to back up, "
-                                 "and how to replace a failed Collector."),
+                                 "how to replace a failed Collector, and automatic failover "
+                                 "with a standby."),
         },
     },
 }

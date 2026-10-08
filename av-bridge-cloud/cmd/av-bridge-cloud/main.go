@@ -13,6 +13,7 @@ import (
 	"github.com/dloomes/av-bridge-cloud/internal/admin"
 	"github.com/dloomes/av-bridge-cloud/internal/api"
 	"github.com/dloomes/av-bridge-cloud/internal/bridgecfg"
+	"github.com/dloomes/av-bridge-cloud/internal/collectorha"
 	"github.com/dloomes/av-bridge-cloud/internal/collectorupdate"
 	"github.com/dloomes/av-bridge-cloud/internal/commands"
 	"github.com/dloomes/av-bridge-cloud/internal/config"
@@ -273,6 +274,10 @@ func main() {
 
 	bridgeCmds := commands.NewBridgeHandler(store, cipher, cfg.BridgePollMaxHold, log)
 	bridgeCmds.SetUpdates(collectorUpdates)
+	// Warm-standby collector groups: lease on /bridge/poll, devices only
+	// to the lease holder on /bridge/config.
+	collectorLeases := collectorha.NewManager(store, log)
+	bridgeCmds.SetHA(collectorLeases)
 	bridgeRoutes := api.BridgeCommandRoutes{
 		Poll:         bridgeCmds.Poll,
 		Result:       bridgeCmds.PostResult,
@@ -280,6 +285,7 @@ func main() {
 	}
 
 	bridgeCfg := bridgecfg.NewHandler(store, cipher, log)
+	bridgeCfg.SetHA(collectorLeases)
 	bridgeConfigRoutes := api.BridgeConfigRoutes{
 		GetConfig: bridgeCfg.Get,
 		PutConfig: bridgeCfg.Put,

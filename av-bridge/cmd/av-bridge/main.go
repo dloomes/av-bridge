@@ -25,6 +25,7 @@ import (
 	"github.com/dloomes/av-bridge/internal/cloudpoll"
 	"github.com/dloomes/av-bridge/internal/cloudpull"
 	"github.com/dloomes/av-bridge/internal/config"
+	"github.com/dloomes/av-bridge/internal/ha"
 	"github.com/dloomes/av-bridge/internal/hub"
 	"github.com/dloomes/av-bridge/internal/store"
 	"github.com/dloomes/av-bridge/internal/update"
@@ -397,6 +398,13 @@ func (p *program) run(ctx context.Context) error {
 
 	cmdPoller := cloudpoll.NewPoller(cfg.Cloud, cfg.Hub.CollectorID, h)
 	cmdPoller.OnResync(cfgPuller.Trigger)
+
+	// Warm standby: the cloud's role on each poll decides whether this
+	// machine polls devices; the controller fences if contact is lost.
+	haCtl := ha.New(h, cfgPuller.Trigger)
+	cfgPuller.SetServingGate(haCtl.Serving)
+	cmdPoller.OnRole(haCtl.Observe)
+	go haCtl.Run(ctx)
 
 	// Self-update. The updater asks for a restart by closing restartCh;
 	// the shutdown below then runs normally (flushing telemetry to the

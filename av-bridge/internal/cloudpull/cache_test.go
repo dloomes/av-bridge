@@ -16,7 +16,7 @@ func TestCacheRoundTrip(t *testing.T) {
 		Address: "10.0.0.5", Password: "s3cret", PollRate: 30,
 		Tags: map[string]string{"room": "boardroom"},
 	}}
-	if err := saveCache(path, "secret-a", in); err != nil {
+	if err := saveCache(path, "secret-a", in, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -40,7 +40,7 @@ func TestCacheRoundTrip(t *testing.T) {
 
 func TestCacheFromAnotherSecretIsIgnored(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "devices-cache.bin")
-	if err := saveCache(path, "old-secret", []wireDevice{{ID: "d"}}); err != nil {
+	if err := saveCache(path, "old-secret", []wireDevice{{ID: "d"}}, false); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok, err := LoadCache(path, "new-secret"); ok || err == nil {
@@ -52,5 +52,17 @@ func TestMissingCache(t *testing.T) {
 	_, ok, err := LoadCache(filepath.Join(t.TempDir(), "none"), "s")
 	if ok || err != nil {
 		t.Fatalf("missing cache: ok=%v err=%v", ok, err)
+	}
+}
+
+// A warm-standby group member must never start polling from its cache:
+// after a restart it waits for the cloud to confirm it holds the lease.
+func TestCacheOfGroupMemberIsNotPrimed(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "devices-cache.bin")
+	if err := saveCache(path, "s", []wireDevice{{ID: "d"}}, true); err != nil {
+		t.Fatal(err)
+	}
+	if devs, ok, err := LoadCache(path, "s"); ok || err != nil || devs != nil {
+		t.Fatalf("group member cache: ok=%v err=%v devs=%v, want unused", ok, err, devs)
 	}
 }

@@ -94,7 +94,7 @@ func (h *Handler) DeviceUptimeReport(w http.ResponseWriter, r *http.Request) {
 			LEFT JOIN collectors c ON c.id = d.collector_id
 			LEFT JOIN telemetry t ON t.device_id = d.id AND t.ts >= (SELECT since FROM win)
 			WHERE d.deleted_at IS NULL
-			GROUP BY d.id, d.name, d.reported_id, r.name, b.name, d.latest_status, d.last_seen_at, c.last_seen_at
+			GROUP BY d.id, d.name, d.reported_id, r.name, b.name, d.latest_status, d.last_seen_at, c.last_seen_at, c.serving_seen_at
 			ORDER BY uptime_pct ASC NULLS LAST, dev_name`, days))
 		if err != nil {
 			return err

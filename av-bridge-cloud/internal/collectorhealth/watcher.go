@@ -116,7 +116,15 @@ func (w *Watcher) autoResolve(ctx context.Context) error {
 func (w *Watcher) openStale(ctx context.Context) ([]notify.AlertEvent, error) {
 	rows, err := w.admin.Query(ctx, `
 		WITH stale AS (
-		    SELECT c.id, c.customer_id, c.name, c.last_seen_at
+		    -- Warm standby: losing one machine of a group that still has
+		    -- another serving is a warning, not an outage. "Serving" is the
+		    -- group's freshest machine having checked in recently.
+		    SELECT c.id, c.customer_id, c.name, c.last_seen_at,
+		           (c.standby_for IS NOT NULL
+		            OR EXISTS (SELECT 1 FROM collectors s
+		                        WHERE s.standby_for = c.id
+		                          AND s.last_seen_at > now() - make_interval(secs => $1))) AS has_cover,
+		           c.standby_for IS NOT NULL AS is_standby
 		      FROM collectors c
 		     WHERE c.last_seen_at IS NOT NULL
 		       AND c.last_seen_at <= now() - make_interval(secs => $1)
@@ -128,8 +136,13 @@ func (w *Watcher) openStale(ctx context.Context) ([]notify.AlertEvent, error) {
 		       )
 		)
 		INSERT INTO alerts (customer_id, collector_id, alert_key, severity, message, payload, status)
-		SELECT s.customer_id, s.id, 'collector_offline', 'critical',
-		       'Collector has not reported telemetry recently',
+		SELECT s.customer_id, s.id, 'collector_offline',
+		       CASE WHEN s.has_cover THEN 'warning' ELSE 'critical' END,
+		       CASE WHEN s.is_standby
+		              THEN 'Standby collector offline: no failover available until it is back'
+		            WHEN s.has_cover
+		              THEN 'Collector offline: its standby has taken over its devices'
+		            ELSE 'Collector has not reported telemetry recently' END,
 		       jsonb_build_object(
 		           'last_seen_at', to_char(s.last_seen_at AT TIME ZONE 'UTC',
 		                                   'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
@@ -141,6 +154,7 @@ func (w *Watcher) openStale(ctx context.Context) ([]notify.AlertEvent, error) {
 		          customer_id::text,
 		          collector_id::text,
 		          (SELECT name FROM collectors WHERE id = alerts.collector_id),
+		          severity,
 		          message,
 		          opened_at,
 		          payload::text`,
@@ -156,10 +170,10 @@ func (w *Watcher) openStale(ctx context.Context) ([]notify.AlertEvent, error) {
 	var events []notify.AlertEvent
 	for rows.Next() {
 		var (
-			alertID, customerID, collectorID, name, message, payloadText string
+			alertID, customerID, collectorID, name, severity, message, payloadText string
 			openedAt                                            time.Time
 		)
-		if err := rows.Scan(&alertID, &customerID, &collectorID, &name, &message, &openedAt, &payloadText); err != nil {
+		if err := rows.Scan(&alertID, &customerID, &collectorID, &name, &severity, &message, &openedAt, &payloadText); err != nil {
 			return nil, err
 		}
 		payloadMap := map[string]any{}
@@ -170,7 +184,7 @@ func (w *Watcher) openStale(ctx context.Context) ([]notify.AlertEvent, error) {
 			CollectorID:   collectorID,
 			CollectorName: name,
 			AlertKey:      "collector_offline",
-			Severity:      "critical",
+			Severity:      severity,
 			Message:       message,
 			OpenedAt:      openedAt,
 			Payload:       payloadMap,

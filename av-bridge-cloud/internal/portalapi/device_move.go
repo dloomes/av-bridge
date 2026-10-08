@@ -51,6 +51,7 @@ type moveResult struct {
 var (
 	errMoveTargetNotFound = errors.New("target collector not found")
 	errMoveDeviceNotFound = errors.New("device not found")
+	errMoveTargetStandby  = errors.New("target is a standby collector")
 )
 
 // moveDevices moves deviceIDs to target inside tx. Returns a result with
@@ -58,14 +59,17 @@ var (
 func moveDevices(ctx context.Context, tx pgx.Tx, p portalauth.Principal, deviceIDs []string, target string) (moveResult, error) {
 	var res moveResult
 
-	var targetExists bool
+	var targetIsStandby *bool
 	if err := tx.QueryRow(ctx,
-		`SELECT EXISTS (SELECT 1 FROM collectors WHERE id = $1)`, target,
-	).Scan(&targetExists); err != nil {
+		`SELECT standby_for IS NOT NULL FROM collectors WHERE id = $1`, target,
+	).Scan(&targetIsStandby); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return res, err
 	}
-	if !targetExists {
+	if targetIsStandby == nil {
 		return res, errMoveTargetNotFound
+	}
+	if *targetIsStandby {
+		return res, errMoveTargetStandby
 	}
 
 	type dev struct {
@@ -266,7 +270,7 @@ func (h *Handler) MoveDevices(w http.ResponseWriter, r *http.Request) {
 	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
 		var err error
 		res, err = moveDevices(ctx, tx, p, ids, req.TargetCollectorID)
-		if errors.Is(err, errMoveTargetNotFound) || errors.Is(err, errMoveDeviceNotFound) {
+		if errors.Is(err, errMoveTargetNotFound) || errors.Is(err, errMoveDeviceNotFound) || errors.Is(err, errMoveTargetStandby) {
 			moveErr = err
 			return nil
 		}
@@ -356,7 +360,7 @@ func (h *Handler) ReplaceCollector(w http.ResponseWriter, r *http.Request) {
 		}
 		if len(ids) > 0 {
 			res, err = moveDevices(ctx, tx, p, ids, req.TargetCollectorID)
-			if errors.Is(err, errMoveTargetNotFound) {
+			if errors.Is(err, errMoveTargetNotFound) || errors.Is(err, errMoveTargetStandby) {
 				moveErr = err
 				return nil
 			}
@@ -398,6 +402,8 @@ func writeMoveResult(w http.ResponseWriter, res moveResult, moveErr error) {
 	switch {
 	case errors.Is(moveErr, errMoveTargetNotFound):
 		writeErr(w, http.StatusBadRequest, "target collector not found in this customer")
+	case errors.Is(moveErr, errMoveTargetStandby):
+		writeErr(w, http.StatusBadRequest, "devices can't be moved to a standby collector; they belong to its primary, which the standby takes over automatically")
 	case errors.Is(moveErr, errMoveDeviceNotFound):
 		writeErr(w, http.StatusNotFound, "one or more devices not found")
 	case len(res.Conflicts) > 0:

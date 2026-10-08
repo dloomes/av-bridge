@@ -53,6 +53,7 @@ type Poller struct {
 	capability func() (bool, string)
 	onUpdate   func(update.Instruction)
 	onPollOK   func()
+	onRole     func(role string, ttl time.Duration)
 }
 
 func NewPoller(cfg config.CloudConfig, collectorID string, h *hub.Hub) *Poller {
@@ -124,6 +125,16 @@ type pollResp struct {
 	Resync bool `json:"resync,omitempty"`
 	// Update: the cloud offers a new collector version to install.
 	Update *update.Instruction `json:"update,omitempty"`
+	// Role / LeaseTTLSeconds: warm-standby group membership ("active" or
+	// "standby"); empty when the collector isn't in a group.
+	Role            string `json:"role,omitempty"`
+	LeaseTTLSeconds int    `json:"lease_ttl_seconds,omitempty"`
+}
+
+// OnRole registers the callback that receives the group role from every
+// successful poll (see internal/ha). Set before Run.
+func (p *Poller) OnRole(fn func(role string, ttl time.Duration)) {
+	p.onRole = fn
 }
 
 // EnableUpdates tells the cloud, on every poll, which version and
@@ -206,6 +217,11 @@ func (p *Poller) pollOnce(ctx context.Context) bool {
 	}
 	if p.onPollOK != nil {
 		p.onPollOK()
+	}
+	// Role before commands: a machine told it's standby drops its devices
+	// first (the cloud doesn't send a standby commands anyway).
+	if p.onRole != nil {
+		p.onRole(out.Role, time.Duration(out.LeaseTTLSeconds)*time.Second)
 	}
 	if out.Resync && p.onResync != nil {
 		p.onResync()

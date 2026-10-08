@@ -61,6 +61,10 @@ type createCollectorReq struct {
 	// customer admin can just type a name and go; ops with a naming
 	// convention can supply their own.
 	BridgeCollectorID string `json:"bridge_collector_id"`
+	// StandbyFor makes the new collector a warm standby for an existing
+	// collector (see collectorha): it takes over that collector's
+	// devices if it stops reporting. The standby inherits its building.
+	StandbyFor string `json:"standby_for,omitempty"`
 }
 
 type createCollectorResp struct {
@@ -110,6 +114,39 @@ func (h *Handler) CreateCollector(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 
+	// A standby must point at a primary in this tenant that isn't itself
+	// a standby (groups are one primary + standbys, no chains).
+	if req.StandbyFor != "" {
+		if !uuidRe.MatchString(req.StandbyFor) {
+			writeErr(w, http.StatusBadRequest, "standby_for must be a collector id")
+			return
+		}
+		var (
+			primaryStandbyFor *string
+			primaryBuilding   *string
+		)
+		err := h.store.AdminPool().QueryRow(ctx, `
+			SELECT standby_for::text, building_id::text
+			  FROM collectors WHERE id = $1 AND customer_id = $2`,
+			req.StandbyFor, p.CustomerID).Scan(&primaryStandbyFor, &primaryBuilding)
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeErr(w, http.StatusBadRequest, "standby_for collector not found")
+			return
+		}
+		if err != nil {
+			h.log.Error("create collector: load primary", "error", err)
+			writeErr(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		if primaryStandbyFor != nil {
+			writeErr(w, http.StatusBadRequest, "that collector is itself a standby; add the standby to its primary")
+			return
+		}
+		if req.BuildingID == nil {
+			req.BuildingID = primaryBuilding
+		}
+	}
+
 	// Delegate the actual collector INSERT + HMAC secret generation to
 	// the existing registration package — the /admin/collectors handler
 	// uses the same helper, so the on-wire shape and encryption path
@@ -140,6 +177,16 @@ func (h *Handler) CreateCollector(w http.ResponseWriter, r *http.Request) {
 	// needs the raw secret. See publicapi/collectors_enroll.go.
 	regResult.HMACSecret = ""
 
+	if req.StandbyFor != "" {
+		if _, err := h.store.AdminPool().Exec(ctx,
+			`UPDATE collectors SET standby_for = $2 WHERE id = $1 AND customer_id = $3`,
+			regResult.ID, req.StandbyFor, p.CustomerID); err != nil {
+			h.log.Error("create collector: set standby_for", "error", err)
+			writeErr(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+	}
+
 	token, expiresAt, err := h.mintEnrollmentToken(ctx, regResult.ID, p, r)
 	if err != nil {
 		h.log.Error("create collector: mint token failed",
@@ -156,6 +203,7 @@ func (h *Handler) CreateCollector(w http.ResponseWriter, r *http.Request) {
 			After: mustJSON(map[string]any{
 				"name":                req.Name,
 				"bridge_collector_id": req.BridgeCollectorID,
+				"standby_for":         req.StandbyFor,
 			}),
 		}))
 	})
@@ -326,6 +374,21 @@ func (h *Handler) DeleteCollector(w http.ResponseWriter, r *http.Request) {
 	}
 	exists = true
 	_ = exists
+
+	var standbys int
+	if err := h.store.AdminPool().QueryRow(ctx,
+		`SELECT count(*)::int FROM collectors WHERE standby_for = $1`, id,
+	).Scan(&standbys); err != nil {
+		h.log.Error("delete collector: count standbys", "error", err)
+		writeErr(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if standbys > 0 {
+		writeErr(w, http.StatusConflict, fmt.Sprintf(
+			"collector has %d standby collector(s) — delete them first, or make a standby active and move the devices to it",
+			standbys))
+		return
+	}
 
 	if liveDevices > 0 {
 		writeErr(w, http.StatusConflict, fmt.Sprintf(

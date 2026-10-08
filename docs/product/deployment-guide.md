@@ -461,7 +461,22 @@ If a Collector's host fails, you don't need to recreate its devices. Either:
 
 To move a single device, edit it and choose a different **Collector**. A move is refused if the target Collector already has a device with the same reported ID.
 
-Each device is polled by one Collector at a time. Some devices accept only one control connection, so running two Collectors against the same devices isn't supported.
+### Automatic failover with a standby Collector
+
+For sites where monitoring must continue through the loss of a Collector host, add a standby: a second Collector, on a separate machine that can reach the same devices, which takes over automatically.
+
+1. On the **Collectors** page, select **Add standby** on the Collector you want to protect.
+2. Install the standby on the second machine with the enrolment command shown, exactly as for any Collector.
+
+The two machines then work as a pair:
+
+- **One machine polls at a time.** The active machine polls the devices; the standby stays connected to M.A.R.C.U.S. Cloud but polls nothing. Each shows **Active** or **Standby** on the **Collectors** page. Devices only ever have one poller, which matters for devices that accept a single control connection.
+- **Failover is automatic.** If the active machine stops reporting, the standby takes over its devices within about 90 seconds. Device history, alerts, settings and pending commands carry on as normal, and the change is recorded in the audit log.
+- **No automatic failback.** When the original machine comes back, it becomes the standby. To move the devices back, select **Make active** on it; the active machine stops first, and the other starts about 10 seconds later.
+- **Safe when a machine is cut off.** An active machine that loses contact with M.A.R.C.U.S. Cloud stops polling its devices after 40 seconds, before the standby can take over. If the whole site loses its internet connection, a pair therefore pauses monitoring until the connection returns; a single Collector keeps monitoring and buffering instead.
+- **Alerts.** Losing one machine of a pair raises a warning, not a critical alert, because the other is still covering: "Standby collector offline" means there's no failover available until it's back.
+
+Devices always belong to the primary Collector, so add and move devices there. To retire a pair, delete the standby first.
 
 ---
 

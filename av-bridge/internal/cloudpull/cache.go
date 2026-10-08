@@ -30,9 +30,16 @@ func cacheKey(hmacSecret string) []byte {
 	return k[:]
 }
 
+// cacheFile is the sealed content. HA marks a warm-standby group member,
+// which must not start polling from the cache (see LoadCache).
+type cacheFile struct {
+	HA      bool         `json:"ha,omitempty"`
+	Devices []wireDevice `json:"devices"`
+}
+
 // saveCache writes devices to path atomically (temp file + rename).
-func saveCache(path, hmacSecret string, devices []wireDevice) error {
-	plain, err := json.Marshal(devices)
+func saveCache(path, hmacSecret string, devices []wireDevice, ha bool) error {
+	plain, err := json.Marshal(cacheFile{HA: ha, Devices: devices})
 	if err != nil {
 		return err
 	}
@@ -62,7 +69,10 @@ func saveCache(path, hmacSecret string, devices []wireDevice) error {
 }
 
 // LoadCache returns the device set last pulled from the cloud. ok is false
-// when there is no usable cache (missing, from another secret, corrupt).
+// when there is no usable cache (missing, from another secret, corrupt),
+// and also for a warm-standby group member: it must wait for the cloud to
+// confirm it holds the lease before polling anything, or a restart could
+// put two machines on the same devices.
 func LoadCache(path, hmacSecret string) (devices []config.DeviceConfig, ok bool, err error) {
 	if path == "" || hmacSecret == "" {
 		return nil, false, nil
@@ -89,10 +99,17 @@ func LoadCache(path, hmacSecret string) (devices []config.DeviceConfig, ok bool,
 	if err != nil {
 		return nil, false, fmt.Errorf("device cache unreadable (secret changed?): %w", err)
 	}
-	var wire []wireDevice
-	if err := json.Unmarshal(plain, &wire); err != nil {
-		return nil, false, fmt.Errorf("device cache corrupt: %w", err)
+	var cf cacheFile
+	if err := json.Unmarshal(plain, &cf); err != nil {
+		// Caches written before group support are a bare array.
+		if err2 := json.Unmarshal(plain, &cf.Devices); err2 != nil {
+			return nil, false, fmt.Errorf("device cache corrupt: %w", err)
+		}
 	}
+	if cf.HA {
+		return nil, false, nil
+	}
+	wire := cf.Devices
 	out := make([]config.DeviceConfig, len(wire))
 	for i, d := range wire {
 		out[i] = d.toConfig()

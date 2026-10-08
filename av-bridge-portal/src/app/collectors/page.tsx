@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import {
   ArrowRightLeft,
+  Power,
+  ShieldPlus,
   ArrowUpCircle,
   CalendarClock,
   CircleAlert,
@@ -74,6 +76,21 @@ export default function CollectorsPage() {
   );
 
   const [adding, setAdding] = useState(false);
+  const [addingStandbyFor, setAddingStandbyFor] = useState<CollectorSummary | null>(null);
+  const [activating, setActivating] = useState<string | null>(null);
+
+  const makeActive = async (c: CollectorSummary) => {
+    setUpdateError(null);
+    setActivating(c.id);
+    try {
+      await api.makeCollectorActive(c.id);
+      await refresh();
+    } catch (e) {
+      setUpdateError(`${c.name}: ${(e as Error).message}`);
+    } finally {
+      setActivating(null);
+    }
+  };
   const [enrollment, setEnrollment] = useState<
     | {
         name: string;
@@ -251,7 +268,27 @@ export default function CollectorsPage() {
                           className="border-b last:border-0 transition-colors hover:bg-primary/[0.04]"
                         >
                           <td className="px-4 py-3.5 align-top">
-                            <div className="font-medium">{c.name}</div>
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium">{c.name}</span>
+                              {c.ha_role && (
+                                <Badge
+                                  variant={c.ha_role === "active" ? "success" : "secondary"}
+                                  className="uppercase text-[10px]"
+                                  title={
+                                    c.ha_role === "active"
+                                      ? "Polling this group's devices"
+                                      : "Idle, ready to take over"
+                                  }
+                                >
+                                  {c.ha_role === "active" ? "Active" : "Standby"}
+                                </Badge>
+                              )}
+                            </div>
+                            {c.standby_for_name && (
+                              <div className="text-xs text-muted-foreground mt-0.5">
+                                Standby for {c.standby_for_name}
+                              </div>
+                            )}
                             {c.bridge_collector_id && (
                               <div className="text-xs text-muted-foreground mt-0.5 font-mono">
                                 {c.bridge_collector_id}
@@ -397,6 +434,33 @@ export default function CollectorsPage() {
                                     )}
                                   />
                                 </Button>
+                                {!c.standby_for && (
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    aria-label="Add standby collector"
+                                    title="Add a standby: another machine that takes over this collector's devices if it stops reporting"
+                                    onClick={() => setAddingStandbyFor(c)}
+                                  >
+                                    <ShieldPlus className="h-3.5 w-3.5" />
+                                  </Button>
+                                )}
+                                {c.ha_role === "standby" && c.status === "online" && (
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    aria-label="Make active"
+                                    title="Make active: move the devices to this machine (the active machine stops first)"
+                                    disabled={activating === c.id}
+                                    onClick={() => makeActive(c)}
+                                  >
+                                    {activating === c.id ? (
+                                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                    ) : (
+                                      <Power className="h-3.5 w-3.5" />
+                                    )}
+                                  </Button>
+                                )}
                                 {c.device_count > 0 && (
                                   <Button
                                     variant="ghost"
@@ -461,6 +525,30 @@ export default function CollectorsPage() {
             });
           }}
         />
+      </Modal>
+
+      <Modal
+        open={addingStandbyFor !== null}
+        onClose={() => setAddingStandbyFor(null)}
+        title="Add standby collector"
+        wide={false}
+      >
+        {addingStandbyFor && (
+          <NewCollectorForm
+            standbyFor={addingStandbyFor}
+            onCancel={() => setAddingStandbyFor(null)}
+            onCreated={(res) => {
+              setAddingStandbyFor(null);
+              refresh();
+              setEnrollment({
+                name: res.name,
+                bridgeCollectorID: res.bridge_collector_id,
+                token: res.enrollment_token,
+                expiresAt: res.expires_at,
+              });
+            }}
+          />
+        )}
       </Modal>
 
       <Modal
@@ -1108,11 +1196,15 @@ function ReissueTokenButton({
 function NewCollectorForm({
   onCancel,
   onCreated,
+  standbyFor,
 }: {
   onCancel: () => void;
   onCreated: (res: CreateCollectorResponse & { name: string }) => void;
+  // When set, the new collector is a warm standby for this one: same
+  // building, and it takes over its devices if it stops reporting.
+  standbyFor?: CollectorSummary;
 }) {
-  const [name, setName] = useState("");
+  const [name, setName] = useState(standbyFor ? `${standbyFor.name} standby` : "");
   const [buildings, setBuildings] = useState<BuildingRow[] | null>(null);
   const [buildingID, setBuildingID] = useState<string>("");
   const [bridgeCollectorID, setBridgeCollectorID] = useState("");
@@ -1136,8 +1228,9 @@ function NewCollectorForm({
     try {
       const res = await api.createCollector({
         name: name.trim(),
-        building_id: buildingID || null,
+        building_id: standbyFor ? undefined : buildingID || null,
         bridge_collector_id: bridgeCollectorID.trim() || undefined,
+        standby_for: standbyFor?.id,
       });
       onCreated({ ...res, name: name.trim() });
     } catch (e) {
@@ -1148,6 +1241,15 @@ function NewCollectorForm({
 
   return (
     <form onSubmit={submit} className="flex flex-col gap-4 text-sm">
+      {standbyFor && (
+        <p className="text-xs text-muted-foreground">
+          Install this on a second machine that can reach the same devices as{" "}
+          <span className="font-medium text-foreground">{standbyFor.name}</span>.
+          It stays idle while {standbyFor.name} is reporting, and takes over its
+          devices within about a minute and a half if it stops. Only one machine
+          polls the devices at a time.
+        </p>
+      )}
       <div className="flex flex-col gap-1.5">
         <label htmlFor="collector-name" className="text-xs font-medium text-muted-foreground">
           Display name
@@ -1167,6 +1269,7 @@ function NewCollectorForm({
         </p>
       </div>
 
+      {!standbyFor && (
       <div className="flex flex-col gap-1.5">
         <label htmlFor="collector-building" className="text-xs font-medium text-muted-foreground">
           Building (optional)
@@ -1189,6 +1292,7 @@ function NewCollectorForm({
           Devices auto-inherit this building unless you place them in specific rooms.
         </p>
       </div>
+      )}
 
       <details className="rounded-md border border-input bg-muted/20 px-3 py-2 text-xs">
         <summary className="cursor-pointer select-none text-muted-foreground">

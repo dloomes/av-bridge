@@ -126,6 +126,9 @@ func fromConfig(c config.DeviceConfig) wireDevice {
 
 type getResp struct {
 	Devices []wireDevice `json:"devices"`
+	// HA: the collector is in a warm-standby group. It then never starts
+	// on a cached device list — it waits for the cloud's lease.
+	HA bool `json:"ha,omitempty"`
 }
 
 type putReq struct {
@@ -157,6 +160,15 @@ type Poller struct {
 	// changed (the command long-poll's resync flag). Buffered 1 so
 	// repeated signals coalesce into one pull.
 	resync chan struct{}
+	// serving, when set, must be true for a pulled device list to be
+	// applied (see internal/ha): stops an in-flight pull from undoing a
+	// standby or fenced state.
+	serving func() bool
+}
+
+// SetServingGate installs the warm-standby gate. Set before Run.
+func (p *Poller) SetServingGate(fn func() bool) {
+	p.serving = fn
 }
 
 func NewPoller(cloudCfg config.CloudConfig, interval time.Duration, collectorID, version, buildTime, cachePath string, h *hub.Hub) *Poller {
@@ -225,14 +237,24 @@ func (p *Poller) Run(ctx context.Context) {
 }
 
 func (p *Poller) syncOnce(ctx context.Context) {
-	devices, err := p.fetch(ctx)
+	resp, err := p.fetch(ctx)
 	if err != nil {
 		slog.Warn("config fetch failed", "error", err)
 		return
 	}
+	devices := resp.Devices
 	if p.cachePath != "" {
-		if err := saveCache(p.cachePath, p.cfg.HMACSecret, devices); err != nil {
+		if err := saveCache(p.cachePath, p.cfg.HMACSecret, devices, resp.HA); err != nil {
 			slog.Warn("device cache write failed", "path", p.cachePath, "error", err)
+		}
+	}
+	if resp.HA {
+		// In a group the cloud owns the device set outright: never seed,
+		// and only apply the list while this machine is serving.
+		p.seeded = true
+		if p.serving != nil && !p.serving() && len(devices) > 0 {
+			slog.Info("config pull ignored: this collector is on standby")
+			return
 		}
 	}
 
@@ -267,7 +289,7 @@ func (p *Poller) syncOnce(ctx context.Context) {
 	p.hub.Reconcile(cfgs)
 }
 
-func (p *Poller) fetch(ctx context.Context) ([]wireDevice, error) {
+func (p *Poller) fetch(ctx context.Context) (getResp, error) {
 	body, _ := json.Marshal(map[string]any{
 		"collector_id":      p.collectorID,
 		"bridge_version":    p.version,
@@ -276,18 +298,18 @@ func (p *Poller) fetch(ctx context.Context) ([]wireDevice, error) {
 	})
 	resp, err := p.signedRequest(ctx, http.MethodPost, "/bridge/config", body)
 	if err != nil {
-		return nil, err
+		return getResp{}, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return nil, fmt.Errorf("fetch status %d: %s", resp.StatusCode, string(b))
+		return getResp{}, fmt.Errorf("fetch status %d: %s", resp.StatusCode, string(b))
 	}
 	var out getResp
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, fmt.Errorf("decode: %w", err)
+		return getResp{}, fmt.Errorf("decode: %w", err)
 	}
-	return out.Devices, nil
+	return out, nil
 }
 
 func (p *Poller) seed(ctx context.Context, local []config.DeviceConfig) error {

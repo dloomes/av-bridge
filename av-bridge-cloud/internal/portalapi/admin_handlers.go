@@ -1255,9 +1255,11 @@ func (h *Handler) CreateDevice(w http.ResponseWriter, r *http.Request) {
 	)
 	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
 		// Confirm the collector belongs to this customer (RLS-aware).
+		// Must exist in this tenant (RLS) and not be a standby — a
+		// group's devices live on its primary.
 		var collectorExists bool
 		if err := tx.QueryRow(ctx,
-			`SELECT EXISTS (SELECT 1 FROM collectors WHERE id = $1)`, req.CollectorID,
+			`SELECT EXISTS (SELECT 1 FROM collectors WHERE id = $1 AND standby_for IS NULL)`, req.CollectorID,
 		).Scan(&collectorExists); err != nil {
 			return err
 		}
@@ -1473,7 +1475,7 @@ func (h *Handler) CreateDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if collectorBad {
-		writeErr(w, http.StatusBadRequest, "collector_id not found in this customer")
+		writeErr(w, http.StatusBadRequest, "collector_id not found in this customer, or it's a standby collector")
 		return
 	}
 	if roomBad {

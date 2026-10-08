@@ -227,6 +227,13 @@ func (h *Handler) ListCollectors(w http.ResponseWriter, r *http.Request) {
 		// TimeZone; empty = manual updates only.
 		UpdateWindow string `json:"update_window,omitempty"`
 		TimeZone     string `json:"time_zone"`
+
+		// Warm standby. StandbyFor is set on a standby (its primary's id
+		// and name). HARole is "active" / "standby" for machines in a
+		// group (a primary with standbys, or a standby), empty otherwise.
+		StandbyFor     string `json:"standby_for,omitempty"`
+		StandbyForName string `json:"standby_for_name,omitempty"`
+		HARole         string `json:"ha_role,omitempty"`
 	}
 	out := []item{}
 	release := h.collectorUpdates.Release()
@@ -247,8 +254,20 @@ func (h *Handler) ListCollectors(w http.ResponseWriter, r *http.Request) {
 			       COALESCE(c.bridge_platform, ''), c.update_capable, COALESCE(c.update_blocker, ''),
 			       c.update_state, COALESCE(c.update_target_version, ''), COALESCE(c.update_message, ''),
 			       c.update_state_at, c.update_window_start,
-			       COALESCE(NULLIF(b.timezone, ''), 'Europe/London')
+			       COALESCE(NULLIF(b.timezone, ''), 'Europe/London'),
+			       COALESCE(c.standby_for::text, ''), COALESCE(g.name, ''),
+			       CASE
+			         WHEN c.standby_for IS NULL
+			          AND NOT EXISTS (SELECT 1 FROM collectors s WHERE s.standby_for = c.id)
+			           THEN ''
+			         WHEN lg.lease_holder = c.id AND lg.lease_expires_at > now()
+			          AND (lg.lease_not_before IS NULL OR lg.lease_not_before <= now())
+			           THEN 'active'
+			         ELSE 'standby'
+			       END
 			  FROM collectors c
+			  LEFT JOIN collectors g  ON g.id  = c.standby_for
+			  LEFT JOIN collectors lg ON lg.id = COALESCE(c.standby_for, c.id)
 			  LEFT JOIN buildings b ON b.id = c.building_id
 			 ORDER BY c.name`)
 		if err != nil {
@@ -270,6 +289,7 @@ func (h *Handler) ListCollectors(w http.ResponseWriter, r *http.Request) {
 				&platform, &capable, &blocker,
 				&c.UpdateState, &c.UpdateTarget, &c.UpdateMessage,
 				&c.UpdateStateAt, &window, &c.TimeZone,
+				&c.StandbyFor, &c.StandbyForName, &c.HARole,
 			); err != nil {
 				return err
 			}
@@ -1279,8 +1299,8 @@ func (h *Handler) HelpdeskOverview(w http.ResponseWriter, r *http.Request) {
 		  LEFT JOIN collectors dc ON dc.id = dv.collector_id
 		  CROSS JOIN LATERAL (
 		    SELECT CASE
-		      WHEN dc.last_seen_at IS NULL
-		        OR dc.last_seen_at < now() - interval '5 minutes'
+		      WHEN GREATEST(dc.last_seen_at, dc.serving_seen_at) IS NULL
+		        OR GREATEST(dc.last_seen_at, dc.serving_seen_at) < now() - interval '5 minutes'
 		        THEN 'unknown'
 		      ELSE COALESCE(dv.latest_status, 'unknown')
 		    END AS status

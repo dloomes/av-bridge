@@ -152,6 +152,13 @@ export interface CollectorSummary {
   // when updates are manual only.
   update_window?: string;
   time_zone: string;
+
+  // Warm standby. standby_for / standby_for_name are set on a standby.
+  // ha_role is "active" or "standby" for machines in a group (a primary
+  // with standbys, or a standby); absent for a collector on its own.
+  standby_for?: string;
+  standby_for_name?: string;
+  ha_role?: "active" | "standby";
 }
 
 export type CollectorUpdateState =
@@ -180,6 +187,8 @@ export interface CreateCollectorBody {
   name: string;
   building_id?: string | null;
   bridge_collector_id?: string;
+  // Makes the new collector a warm standby for this collector id.
+  standby_for?: string;
 }
 
 export interface CreateCollectorResponse {

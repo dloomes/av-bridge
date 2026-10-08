@@ -1353,6 +1353,14 @@ export const api = {
       target_collector_id: targetCollectorID,
     }),
 
+  // Hand a collector group's devices to this machine (warm standby).
+  // The current active machine stops first; this one starts ~10s later.
+  makeCollectorActive: (id: string) =>
+    request<{ state: string }>(
+      `/api/v1/collectors/${encodeURIComponent(id)}/make-active`,
+      { method: "POST" }
+    ),
+
   // Ask a collector to update itself to the release bundled with the
   // cloud. 409 with a reason when it can't (blocked, up to date, busy).
   requestCollectorUpdate: (id: string) =>

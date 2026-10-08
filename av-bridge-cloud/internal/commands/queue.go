@@ -203,7 +203,7 @@ func WaitForTerminalNotified(ctx context.Context, l *db.Listener, get func(conte
 // collector's row) is ignored and we keep waiting. The listener MUST have
 // been opened BEFORE the caller's most-recent ClaimPending so no signal
 // is missed between "empty claim" and "start waiting".
-func WaitForPending(ctx context.Context, l *db.Listener, collectorID string, maxHold time.Duration) error {
+func WaitForPending(ctx context.Context, l *db.Listener, maxHold time.Duration, collectorIDs ...string) error {
 	waitCtx, cancel := context.WithTimeout(ctx, maxHold)
 	defer cancel()
 	for {
@@ -219,8 +219,10 @@ func WaitForPending(ctx context.Context, l *db.Listener, collectorID string, max
 			}
 			return err
 		}
-		if payload == collectorID {
-			return nil
+		for _, id := range collectorIDs {
+			if payload == id {
+				return nil
+			}
 		}
 	}
 }

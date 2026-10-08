@@ -14,6 +14,7 @@ import (
 	"net/http"
 
 	"github.com/dloomes/av-bridge-cloud/internal/bridgeauth"
+	"github.com/dloomes/av-bridge-cloud/internal/collectorha"
 	"github.com/dloomes/av-bridge-cloud/internal/db"
 	"github.com/dloomes/av-bridge-cloud/internal/secrets"
 	"github.com/jackc/pgx/v5"
@@ -58,6 +59,13 @@ type Handler struct {
 	auth   *bridgeauth.Authenticator
 	cipher secrets.Cipher
 	log    *slog.Logger
+	ha     *collectorha.Manager // nil: every collector serves itself
+}
+
+// SetHA makes the config pull group-aware (warm standby): only the
+// machine holding the group lease receives the devices.
+func (h *Handler) SetHA(mgr *collectorha.Manager) {
+	h.ha = mgr
 }
 
 func NewHandler(store *db.Store, cipher secrets.Cipher, log *slog.Logger) *Handler {
@@ -82,6 +90,10 @@ type getReq struct {
 
 type getResp struct {
 	Devices []Device `json:"devices"`
+	// HA is true when the collector is part of a group (warm standby).
+	// The bridge then never restarts on a cached device list: it waits for
+	// the cloud to confirm it holds the lease.
+	HA bool `json:"ha,omitempty"`
 }
 
 // Get returns the current device config for the requesting collector, with
@@ -99,6 +111,21 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 	var req getReq
 	_ = json.Unmarshal(body, &req)
 
+	// Group-aware: a standby serves its primary's devices, and only the
+	// machine holding the group lease gets them — the others get an empty
+	// set, which makes their bridge stop polling.
+	groupID := col.GroupID()
+	grouped, serving := false, true
+	if h.ha != nil {
+		var err error
+		grouped, serving, err = h.ha.IsActive(r.Context(), *col)
+		if err != nil {
+			h.log.Error("config get: lease check failed", "collector", col.ID, "error", err)
+			bridgeauth.WriteErr(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+	}
+
 	var (
 		devices       []Device
 		configVersion int64
@@ -110,9 +137,12 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 		// the other order could record a version whose changes we never
 		// served.
 		if err := tx.QueryRow(r.Context(),
-			`SELECT config_version FROM collectors WHERE id = $1`, col.ID,
+			`SELECT config_version FROM collectors WHERE id = $1`, groupID,
 		).Scan(&configVersion); err != nil {
 			return err
+		}
+		if !serving {
+			return nil
 		}
 		rows, err := tx.Query(r.Context(), `
 			SELECT COALESCE(reported_id,''), COALESCE(name,''), COALESCE(type,''),
@@ -125,7 +155,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 			 WHERE collector_id = $1
 			   AND deleted_at IS NULL
 			 ORDER BY reported_id`,
-			col.ID)
+			groupID)
 		if err != nil {
 			return err
 		}
@@ -189,7 +219,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 	if err := h.store.TouchCollectorConfigPull(r.Context(), col.ID, configVersion, req.BridgeVersion, req.BridgeBuildTime, req.BridgeOS); err != nil {
 		h.log.Warn("touch collector config pull failed", "collector", col.ID, "error", err)
 	}
-	bridgeauth.WriteJSON(w, http.StatusOK, getResp{Devices: devices})
+	bridgeauth.WriteJSON(w, http.StatusOK, getResp{Devices: devices, HA: grouped})
 }
 
 type putReq struct {
@@ -219,6 +249,12 @@ func (h *Handler) Put(w http.ResponseWriter, r *http.Request) {
 	var req putReq
 	if err := json.Unmarshal(body, &req); err != nil {
 		bridgeauth.WriteErr(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	// A standby never seeds: the group's devices belong to its primary.
+	// 409 is what the bridge already treats as "seeded, stop trying".
+	if col.StandbyFor != "" {
+		bridgeauth.WriteErr(w, http.StatusConflict, "standby collectors don't seed devices")
 		return
 	}
 

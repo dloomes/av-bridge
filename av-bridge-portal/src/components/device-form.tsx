@@ -655,11 +655,15 @@ export function DeviceForm({
             required
           >
             <option value="">— Select —</option>
-            {collectors.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name} ({c.bridge_collector_id})
-              </option>
-            ))}
+            {collectors
+              // A standby serves its primary's devices; devices are
+              // always attached to the primary.
+              .filter((c) => !c.standby_for)
+              .map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name} ({c.bridge_collector_id})
+                </option>
+              ))}
           </select>
           {isEdit && initial && form.collector_id !== initial.collector_id && (
             <p className="mt-1 text-xs text-muted-foreground">

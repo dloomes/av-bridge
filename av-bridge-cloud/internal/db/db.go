@@ -189,6 +189,18 @@ type Collector struct {
 	ID         string
 	CustomerID string
 	SecretEnc  []byte
+	// StandbyFor is the primary collector's id when this machine is a
+	// warm standby (migration 0051); empty for a primary.
+	StandbyFor string
+}
+
+// GroupID is the collector that owns the devices this machine serves:
+// the primary's id for a standby, its own id otherwise.
+func (c Collector) GroupID() string {
+	if c.StandbyFor != "" {
+		return c.StandbyFor
+	}
+	return c.ID
 }
 
 // TouchCollector stamps last_seen_at = now() for the given collector. Called
@@ -254,12 +266,17 @@ func (s *Store) TouchCollectorConfigPull(ctx context.Context, id string, configV
 	return err
 }
 
-// CollectorNeedsResync reports whether the collector's device config has
-// changed since its bridge last pulled it.
+// CollectorNeedsResync reports whether the device config this machine
+// serves has changed since its bridge last pulled it. For a standby the
+// config belongs to its primary (the group); the pulled version is the
+// machine's own.
 func (s *Store) CollectorNeedsResync(ctx context.Context, id string) (bool, error) {
 	var stale bool
-	err := s.admin.QueryRow(ctx,
-		`SELECT config_version > config_version_pulled FROM collectors WHERE id = $1`, id,
+	err := s.admin.QueryRow(ctx, `
+		SELECT g.config_version > m.config_version_pulled
+		  FROM collectors m
+		  JOIN collectors g ON g.id = COALESCE(m.standby_for, m.id)
+		 WHERE m.id = $1`, id,
 	).Scan(&stale)
 	return stale, err
 }
@@ -269,9 +286,9 @@ func (s *Store) CollectorNeedsResync(ctx context.Context, id string) (bool, erro
 func (s *Store) LookupCollectorByBridgeID(ctx context.Context, bridgeID string) (Collector, error) {
 	var c Collector
 	err := s.admin.QueryRow(ctx,
-		`SELECT id::text, customer_id::text, hmac_secret_enc
+		`SELECT id::text, customer_id::text, hmac_secret_enc, COALESCE(standby_for::text, '')
 		   FROM collectors WHERE bridge_collector_id = $1`,
-		bridgeID).Scan(&c.ID, &c.CustomerID, &c.SecretEnc)
+		bridgeID).Scan(&c.ID, &c.CustomerID, &c.SecretEnc, &c.StandbyFor)
 	return c, err
 }
 

@@ -229,6 +229,7 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 		mux.Handle("PATCH /api/v1/collectors/{id}", wrapPerm(portalauth.PermCollectorCRUD, portal.Portal.UpdateCollector))
 		mux.Handle("DELETE /api/v1/collectors/{id}", wrapPerm(portalauth.PermCollectorCRUD, portal.Portal.DeleteCollector))
 		mux.Handle("POST /api/v1/collectors/{id}/replace", wrapPerm(portalauth.PermCollectorCRUD, portal.Portal.ReplaceCollector))
+		mux.Handle("POST /api/v1/collectors/{id}/make-active", wrapPerm(portalauth.PermCollectorCRUD, portal.Portal.MakeCollectorActive))
 		mux.Handle("POST /api/v1/collectors/{id}/update", wrapPerm(portalauth.PermCollectorCRUD, portal.Portal.RequestCollectorUpdate))
 		mux.Handle("POST /api/v1/collectors/update-all", wrapPerm(portalauth.PermCollectorCRUD, portal.Portal.RequestAllCollectorUpdates))
 		mux.Handle("GET /api/v1/devices", wrapPerm(portalauth.PermViewDashboard, portal.Portal.ListDevices))

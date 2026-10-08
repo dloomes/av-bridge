@@ -133,12 +133,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Collect newly-opened alerts so the dispatcher can fan them out to
 	// configured channels after the tx commits (don't dispatch on rollback).
 	var newAlerts []notify.AlertEvent
+	// Devices belong to the collector group: a warm standby reports for
+	// its primary's devices (see collectorha).
+	groupID := col.GroupID()
 	err = h.store.WithTenant(ctx, col.CustomerID, func(tx pgx.Tx) error {
 		newAlerts = newAlerts[:0]
 		deviceIDs := make(map[string]string, len(p.Telemetry))
 
 		for _, t := range p.Telemetry {
-			devID, err := upsertDeviceFromTelemetry(ctx, tx, col.CustomerID, col.ID, t)
+			devID, err := upsertDeviceFromTelemetry(ctx, tx, col.CustomerID, groupID, t)
 			if err != nil {
 				return err
 			}
@@ -158,7 +161,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			devID, ok := deviceIDs[e.DeviceID]
 			if !ok {
 				var err error
-				devID, err = upsertDeviceMinimal(ctx, tx, col.CustomerID, col.ID, e.DeviceID, e.DeviceName, e.DeviceType)
+				devID, err = upsertDeviceMinimal(ctx, tx, col.CustomerID, groupID, e.DeviceID, e.DeviceName, e.DeviceType)
 				if err != nil {
 					return err
 				}
