@@ -264,3 +264,46 @@ func TestPhysicalScopeRLS(t *testing.T) {
 		}
 	})
 }
+
+// A caller with no customer (vendor / helpdesk not acting as one) used to
+// make every RLS cast fail — "invalid input syntax for type uuid" and a
+// 500 on plain list reads. It now sees nothing and can write nothing.
+func TestNoCustomerReadsNothing(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set — skipping RLS integration test")
+	}
+	ctx := context.Background()
+	if err := Migrate(ctx, dsn, slog.New(slog.NewTextHandler(io.Discard, nil))); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	su, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer su.Close(ctx)
+	seedScopeFixture(t, ctx, su)
+
+	st, err := New(ctx, withUser(t, dsn, "app_admin", "app_admin_dev"), withUser(t, dsn, "app_tenant", "app_tenant_dev"))
+	if err != nil {
+		t.Fatalf("store: %v", err)
+	}
+	defer st.Close()
+
+	var n int
+	if err := st.WithTenant(ctx, "", func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT count(*) FROM buildings`).Scan(&n)
+	}); err != nil {
+		t.Fatalf("read with no customer should not error: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("no-customer read saw %d buildings, want 0", n)
+	}
+	err = st.WithTenant(ctx, "", func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `INSERT INTO regions (customer_id, name) VALUES ('00000000-0000-0000-0000-000000000000', 'x')`)
+		return err
+	})
+	if err == nil {
+		t.Fatal("a write with no customer must be refused")
+	}
+}

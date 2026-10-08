@@ -101,6 +101,10 @@ func (s *Store) WithTenantFullyScoped(ctx context.Context, customerID string, bu
 	return s.WithTenantScope(ctx, customerID, Scope{Buildings: buildingScope, BusinessUnits: businessUnitScope}, fn)
 }
 
+// noCustomer is the tenant id used when a caller has no customer: the nil
+// UUID, which no customer row has.
+const noCustomer = "00000000-0000-0000-0000-000000000000"
+
 // WithTenantScope runs fn in a tenant transaction restricted to scope.
 //
 // For a scoped caller it first resolves the ancestors of every granted
@@ -119,6 +123,13 @@ func (s *Store) WithTenantScope(ctx context.Context, customerID string, scope Sc
 	}
 	defer tx.Rollback(ctx) // no-op after a successful Commit
 
+	// No customer (a vendor / helpdesk user who isn't acting as one): an
+	// empty string would make every RLS policy's ::uuid cast fail, so a
+	// plain list read 500s. The nil UUID matches no customer instead —
+	// reads come back empty and writes are refused by RLS.
+	if customerID == "" {
+		customerID = noCustomer
+	}
 	if _, err := tx.Exec(ctx, "SELECT set_config('app.current_customer', $1, true)", customerID); err != nil {
 		return fmt.Errorf("set tenant scope: %w", err)
 	}
