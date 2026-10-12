@@ -114,6 +114,11 @@ func TestPersistence_SurvivesReopen(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Updates are written by Run / Close, not on every call.
+	if err := s1.Close(); err != nil {
+		t.Fatal(err)
+	}
+
 	// Re-open the store from the same file
 	s2, err := store.New(path)
 	if err != nil {

@@ -332,6 +332,7 @@ func (p *program) run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("open state store %s: %w", cfg.Hub.StorePath, err)
 	}
+	go st.Run(ctx)
 
 	cloudClient := cloud.NewClient(cfg.Cloud, cfg.Hub.CollectorID, cfg.Hub.SiteID, version, buildTime)
 
@@ -498,6 +499,9 @@ func (p *program) run(ctx context.Context) error {
 	defer shutCancel()
 	_ = apiServer.Shutdown(shutCtx)
 	h.Stop()
+	if err := st.Close(); err != nil {
+		slog.Warn("state store final write failed", "error", err)
+	}
 	slog.Info("av-bridge stopped cleanly", "version", version)
 	if restarting {
 		return errRestartForUpdate
