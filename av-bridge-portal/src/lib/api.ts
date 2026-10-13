@@ -432,6 +432,11 @@ export interface NightlyRoomRow {
   excluded_until?: string;            // YYYY-MM-DD, if excluded through a date
   excluded_reason?: ExclusionReason;
   excluded_note?: string;
+  // Test routine: the room's own, when set; otherwise the customer
+  // default's. effective_* is what tonight's run uses (absent = none).
+  override_test_routine_id?: string;
+  effective_test_routine_id?: string;
+  effective_test_routine_name?: string;
 }
 
 // ExclusionReason mirrors the CHECK constraint on
@@ -468,6 +473,7 @@ export interface UpdateRoomOverrideBody {
   excluded_until?: string | null;              // YYYY-MM-DD
   excluded_reason?: ExclusionReason | null;
   excluded_note?: string | null;
+  test_routine_id?: string | null;             // null = use the customer default
 }
 
 // DeferTonightBody — optional operator-supplied note explaining why the
@@ -845,6 +851,33 @@ export const api = {
       "/api/v1/nightly/runs" + (q ? `?${q}` : ""),
       { signal }
     );
+  },
+
+  // Run history as CSV, one row per step result, with the same filters
+  // as listNightlyRuns (no limit). Returns the raw text for download.
+  exportNightlyRunsCSV: async (
+    opts?: Omit<ListRunsOpts, "limit">
+  ): Promise<string> => {
+    const params = new URLSearchParams();
+    if (opts?.from) params.set("from", opts.from);
+    if (opts?.to) params.set("to", opts.to);
+    if (opts?.room_id) params.set("room_id", opts.room_id);
+    if (opts?.status) params.set("status", opts.status);
+    const q = params.toString();
+    const path = "/api/v1/nightly/runs/export.csv" + (q ? `?${q}` : "");
+    const res = await fetch(`${API_BASE}${path}`, {
+      headers: authHeaders(),
+      cache: "no-store",
+    });
+    if (!res.ok) {
+      if (res.status === 401) handle401IfSessionDeath(path);
+      const body = await res.text().catch(() => "");
+      throw new ApiError(
+        `${res.status} ${res.statusText}${body ? `: ${body}` : ""}`,
+        res.status
+      );
+    }
+    return res.text();
   },
 
   getNightlyRun: (id: string, signal?: AbortSignal) =>

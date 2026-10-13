@@ -640,8 +640,9 @@ export default function NightlySchedulePage() {
                       </h2>
                       <p className="mt-1 text-xs text-muted-foreground">
                         Runs after power-on to verify the room is ready.
-                        Leave unset to power-cycle only. The routine runner
-                        lands in Phase B; assignment is safe now.
+                        Leave unset to power-cycle only. This is the default
+                        for every room; use Customise on a room below to give
+                        it a different routine.
                       </p>
                     </div>
                     <Link
@@ -954,6 +955,29 @@ export default function NightlySchedulePage() {
                                         <span className="ml-2">
                                           {summariseDays(r.effective_days_of_week)}
                                         </span>
+                                        <div
+                                          className="mt-0.5 flex items-center gap-1"
+                                          title={
+                                            r.override_test_routine_id
+                                              ? "This room's own routine"
+                                              : "The default routine"
+                                          }
+                                        >
+                                          <FileCode2
+                                            aria-hidden="true"
+                                            className="h-3 w-3 shrink-0"
+                                          />
+                                          <span
+                                            className={
+                                              r.override_test_routine_id
+                                                ? "text-foreground"
+                                                : undefined
+                                            }
+                                          >
+                                            {r.effective_test_routine_name ??
+                                              "No test (power-cycle only)"}
+                                          </span>
+                                        </div>
                                       </td>
                                       <td className="px-3 py-2.5">
                                         {excluded ? (
@@ -1164,6 +1188,7 @@ export default function NightlySchedulePage() {
         <RoomOverrideModal
           room={editingRoom}
           customerDefault={loaded}
+          routines={routines ?? []}
           onClose={() => setEditingRoom(null)}
           onSaved={() => {
             setEditingRoom(null);
@@ -1195,11 +1220,13 @@ export default function NightlySchedulePage() {
 function RoomOverrideModal({
   room,
   customerDefault,
+  routines,
   onClose,
   onSaved,
 }: {
   room: NightlyRoomRow;
   customerDefault: NightlySchedule;
+  routines: NightlyRoutineRow[];
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -1232,6 +1259,16 @@ function RoomOverrideModal({
     room.excluded_reason ?? ""
   );
   const [excludedNote, setExcludedNote] = useState(room.excluded_note ?? "");
+  const [customRoutine, setCustomRoutine] = useState(
+    room.override_test_routine_id !== undefined
+  );
+  const [routineID, setRoutineID] = useState(
+    room.override_test_routine_id ?? routines[0]?.id ?? ""
+  );
+  const defaultRoutineName = customerDefault.test_routine_id
+    ? routines.find((r) => r.id === customerDefault.test_routine_id)?.name ??
+      "(routine)"
+    : "None (power-cycle only)";
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -1271,6 +1308,7 @@ function RoomOverrideModal({
         hasExclusion && excludedReason !== "" ? excludedReason : null,
       excluded_note:
         hasExclusion && trimmedNote !== "" ? trimmedNote : null,
+      test_routine_id: customRoutine && routineID !== "" ? routineID : null,
     };
     try {
       await api.updateRoomOverride(room.room_id, body);
@@ -1365,6 +1403,39 @@ function RoomOverrideModal({
               );
             })}
           </div>
+        </OverrideRow>
+
+        {/* Test routine */}
+        <OverrideRow
+          label="Test routine"
+          custom={customRoutine}
+          onToggle={() => setCustomRoutine((v) => !v)}
+          inheritValue={defaultRoutineName}
+        >
+          {routines.length === 0 ? (
+            <div className="text-xs text-muted-foreground">
+              No routines yet.{" "}
+              <Link href="/nightly/routines" className="text-primary hover:underline">
+                Create one
+              </Link>{" "}
+              first.
+            </div>
+          ) : (
+            <select
+              aria-label="Test routine for this room"
+              value={routineID}
+              onChange={(e) => setRoutineID(e.target.value)}
+              disabled={saving}
+              className="w-full rounded-md border bg-background px-3 py-2 text-sm disabled:opacity-50"
+            >
+              {routines.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.name} ({r.step_count}{" "}
+                  {r.step_count === 1 ? "step" : "steps"})
+                </option>
+              ))}
+            </select>
+          )}
         </OverrideRow>
 
         {/* Exclusion — orthogonal to the schedule fields. */}

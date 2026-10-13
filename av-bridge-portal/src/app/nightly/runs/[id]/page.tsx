@@ -27,7 +27,7 @@ import type {
 //   - Phase timeline with the current phase highlighted (or "failed" red)
 //   - Routine reference (link back to the editor)
 //   - Failure reason (if any)
-//   - Step results table (empty until Phase B populates it)
+//   - Step results table (empty for power-cycle-only runs)
 
 // Every phase, in the order the runner walks them. The two terminal
 // phases (ready / failed) are called out as their own final position;
@@ -222,9 +222,12 @@ export default function NightlyRunDetailPage() {
                   {loaded.steps.length === 0 ? (
                     <div className="rounded-md border border-dashed p-6 text-center">
                       <div className="text-sm text-muted-foreground">
-                        {loaded.routine_id
-                          ? "No step results yet — the routine runner lands in Phase B."
-                          : "No routine was assigned when this run executed."}
+                        {!loaded.routine_id
+                          ? "No routine was assigned when this run executed."
+                          : loaded.status === "pending" ||
+                              loaded.status === "in_progress"
+                            ? "No step results yet — they appear here as the routine runs."
+                            : "The routine didn't run: this run ended before the test stage."}
                       </div>
                     </div>
                   ) : (

@@ -6,6 +6,7 @@ import {
   ArrowLeft,
   CheckCircle2,
   ChevronRight,
+  Download,
   Loader2,
   Moon,
   RefreshCcw,
@@ -15,6 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { api } from "@/lib/api";
+import { useToast } from "@/components/toast";
 import type {
   NightlyRoomRow,
   NightlyRunRow,
@@ -112,6 +114,8 @@ export default function NightlyRunsPage() {
   const [rooms, setRooms] = useState<NightlyRoomRow[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const { toast } = useToast();
 
   const loadRuns = useCallback(async (signal?: AbortSignal) => {
     try {
@@ -164,6 +168,36 @@ export default function NightlyRunsPage() {
     }
   };
 
+  // Export the current filter as CSV — one row per step result.
+  const handleExport = async () => {
+    setExporting(true);
+    try {
+      const csv = await api.exportNightlyRunsCSV({
+        from: toRFC3339Start(from),
+        to: toRFC3339End(to),
+        room_id: roomFilter || undefined,
+        status: statusFilter === "all" ? undefined : statusFilter,
+      });
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `room-readiness-runs-${from}-to-${to}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      toast({
+        title: "Export failed",
+        description: (e as Error).message,
+        variant: "destructive",
+      });
+    } finally {
+      setExporting(false);
+    }
+  };
+
   // Stats over the current filter — computed client-side to avoid a
   // second round-trip.
   const stats = useMemo(() => {
@@ -196,6 +230,20 @@ export default function NightlyRunsPage() {
               Every scheduled nightly cycle, most recent first.
             </p>
           </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={handleExport}
+            disabled={exporting}
+            title="Download the runs in this filter as CSV, one row per step"
+          >
+            {exporting ? (
+              <Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" />
+            ) : (
+              <Download aria-hidden="true" className="h-4 w-4" />
+            )}
+            Export CSV
+          </Button>
           <Button
             variant="ghost"
             size="sm"
