@@ -100,7 +100,9 @@ function emptyForm(): FormState {
     baud_rate: "",
     username: "",
     password: "",
-    poll_rate_seconds: "60",
+    // Blank = the adapter's own default (60s for most devices, 5 minutes
+    // for ATEN PDUs, which log in for every reading).
+    poll_rate_seconds: "",
     power_watts_on: "",
     power_watts_standby: "",
     room_id: "",
@@ -808,6 +810,7 @@ export function DeviceForm({
             value={form.poll_rate_seconds}
             onChange={(e) => set("poll_rate_seconds", e.target.value)}
             min={1}
+            placeholder="Default for this device type"
           />
         </div>
         <div>

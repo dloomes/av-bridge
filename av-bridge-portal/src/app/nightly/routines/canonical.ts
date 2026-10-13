@@ -3,14 +3,17 @@
 // standard template" — encodes the VC + audio-loopback flow discussed
 // with the product team.
 //
-// The SIP URI is a placeholder; the customer edits it to point at their
-// own loopback bridge. Kept as a string constant here (not fetched) so
+// Device types match the catalogue ("conferencing", "audio"), which is
+// what the runner matches on. The SIP URI is a placeholder; the customer
+// edits it to point at their own loopback bridge. The DSP metric and
+// preset command are placeholders too: Tesira readings and commands are
+// whatever is configured on each device. Kept as a string constant here (not fetched) so
 // the template is available offline / when the routines list is empty.
 
 export const CANONICAL_ROUTINE = {
   name: "Standard room readiness — VC + audio loopback",
   description:
-    "Powers on every device, dials a SIP loopback from the video codec, verifies the mics hear the returning audio, then hangs up and resets the DSP.",
+    "Powers on every device, dials a SIP loopback from the video codec, verifies the mics hear the returning audio, then hangs up and resets the DSP. Edit the SIP address, and the DSP reading and preset command to match the names set up on your DSP.",
   steps: [
     {
       name: "Power on all room devices",
@@ -27,7 +30,7 @@ export const CANONICAL_ROUTINE = {
     {
       name: "Dial test bridge",
       type: "device_command",
-      target: { device_type: "vc" },
+      target: { device_type: "conferencing" },
       command: "dial",
       parameters: { uri: "sip:loopback@customer-provided.example" },
       expected: { call_state: "connected" },
@@ -42,7 +45,7 @@ export const CANONICAL_ROUTINE = {
     {
       name: "Check microphones hear audio",
       type: "check_metric",
-      target: { device_type: "dsp" },
+      target: { device_type: "audio" },
       metric: "input_level_dbfs",
       operator: "gt",
       threshold: -40,
@@ -52,14 +55,14 @@ export const CANONICAL_ROUTINE = {
     {
       name: "Hang up",
       type: "device_command",
-      target: { device_type: "vc" },
-      command: "disconnect",
+      target: { device_type: "conferencing" },
+      command: "hangup",
       on_failure: "continue",
     },
     {
       name: "Reset DSP to default preset",
       type: "device_command",
-      target: { device_type: "dsp" },
+      target: { device_type: "audio" },
       command: "recall_preset",
       parameters: { preset: "default" },
     },
