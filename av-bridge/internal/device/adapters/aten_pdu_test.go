@@ -26,6 +26,10 @@ type fakeATEN struct {
 	busyFor   time.Duration
 	refuseAll bool
 	password  string // when set, a different password is rejected
+	// hangUpOnBadPassword: reject by closing the session, not re-prompting.
+	hangUpOnBadPassword bool
+	// junk: logged-in sessions reply with text that holds no readings.
+	junk      bool
 	lastClose time.Time
 	refused   atomic.Int64
 }
@@ -76,6 +80,9 @@ func (f *fakeATEN) serve(c net.Conn) {
 		return
 	}
 	if f.password != "" && strings.TrimSpace(pw) != f.password {
+		if f.hangUpOnBadPassword {
+			return
+		}
 		// Like the real PDU: reject and ask again. Whatever is sent next
 		// is taken as a username.
 		c.Write([]byte("\r\nLogin incorrect\r\nLogin: "))
@@ -110,6 +117,9 @@ func (f *fakeATEN) serve(c net.Conn) {
 		reply = "power: 880 W"
 	default:
 		reply = "PE6108G"
+	}
+	if f.junk {
+		reply = "Main Menu"
 	}
 	c.Write([]byte(reply + "\r\n> "))
 }
@@ -256,5 +266,30 @@ func TestATENRejectedLoginIsReported(t *testing.T) {
 		if s, ok := v.(string); ok && strings.Contains(strings.ToLower(s), "password") {
 			t.Errorf("prompt reported as a reading: %s = %q", k, s)
 		}
+	}
+}
+
+// Some firmware rejects a bad login by hanging up. Empty sessions must not
+// count as readings and leave the PDU online.
+func TestATENHangUpOnBadPasswordIsOffline(t *testing.T) {
+	f := newFakeATEN(t)
+	f.password = "telpwd"
+	f.hangUpOnBadPassword = true
+	a := newTestATEN(f, nil)
+	tel, _ := a.Poll(context.Background())
+	if tel.Status != device.StatusOffline || !strings.Contains(tel.Error, "login rejected") {
+		t.Fatalf("status %s error %q, want offline with login rejected", tel.Status, tel.Error)
+	}
+}
+
+// Replies that hold no readings at all: offline with a reason, not online
+// with only outlet_count and response_ms.
+func TestATENNoReadingsIsOffline(t *testing.T) {
+	f := newFakeATEN(t)
+	f.junk = true
+	a := newTestATEN(f, nil)
+	tel, _ := a.Poll(context.Background())
+	if tel.Status != device.StatusOffline || !strings.Contains(tel.Error, "no readings") {
+		t.Fatalf("status %s error %q, want offline with no readings", tel.Status, tel.Error)
 	}
 }

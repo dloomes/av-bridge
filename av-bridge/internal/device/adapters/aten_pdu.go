@@ -238,9 +238,31 @@ func (a *ATENPDUAdapter) Poll(ctx context.Context) (*device.Telemetry, error) {
 		}
 	}
 
+	// Names don't count: any text parses as a name (a "Password:" prompt
+	// once did), so only state and meter values prove the PDU answered.
+	readings := 0
+	for k := range metrics {
+		if !strings.HasSuffix(k, "_name") {
+			readings++
+		}
+	}
+
 	metrics["response_ms"] = time.Since(start).Milliseconds()
 	metrics["outlet_count"] = a.outletCount
 	t.Metrics = metrics
+	if readings == 0 && failed < reads {
+		// Every reply was unreadable: whatever answered isn't the PDU's
+		// command prompt (a login screen, a menu). Don't call that online.
+		t.Error = fmt.Sprintf("the PDU replied but no readings could be read from %d replies; check the Telnet username and password", reads-failed)
+		slog.Warn("aten_pdu no readings", "device", a.Cfg.ID, "replies", reads-failed)
+		t.Metrics = map[string]any{"response_ms": metrics["response_ms"], "outlet_count": a.outletCount}
+		a.namesMu.Lock()
+		a.names = nil // whatever was read as names is suspect; re-read next time
+		a.namesMu.Unlock()
+		a.SetStatus(device.StatusOffline)
+		t.Status = device.StatusOffline
+		return t, nil
+	}
 	if failed > 0 {
 		metrics["failed_reads"] = failed
 		t.Error = fmt.Sprintf("%d of %d readings failed: %v", failed, reads, firstErr)
@@ -448,6 +470,11 @@ func (a *ATENPDUAdapter) execRaw(ctx context.Context, cmd string) (string, error
 				continue
 			}
 			// EOF / broken pipe here is normal — ATEN just told us it's done.
+			// But a session closed with nothing said is a failed reading
+			// (seen with wrong credentials), not an empty one.
+			if strings.TrimSpace(buf.String()) == "" {
+				return "", fmt.Errorf("aten_pdu: session closed without a reply to %q", cmd)
+			}
 			return strings.TrimSpace(buf.String()), nil
 		}
 		if isATENPrompt(line) {
@@ -548,6 +575,13 @@ func (a *ATENPDUAdapter) dialAndLogin(ctx context.Context) (net.Conn, *bufio.Rea
 		return nil, nil, errATENLoginRejected
 	}
 	if perr != nil {
+		var ne net.Error
+		if !errors.As(perr, &ne) && !strings.HasPrefix(perr.Error(), "timeout waiting") {
+			// The PDU hung up straight after the password: some firmware
+			// rejects a bad login that way instead of asking again.
+			conn.Close()
+			return nil, nil, errATENLoginRejected
+		}
 		// No recognisable prompt: some firmware prints a menu instead.
 		// Carry on as before rather than fail the session.
 		postLogin += drainAndReturn(conn, reader, 300*time.Millisecond)
