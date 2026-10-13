@@ -101,7 +101,7 @@ var catalogue = []Info{
 		Name:        "ATEN eco PDU",
 		Vendor:      "ATEN",
 		Kind:        KindVendor,
-		Description: "ATEN eco PDU range (PE6108G and siblings) over the Telnet CLI on port 23. Per-outlet on/off/reboot control and per-outlet power metering; device-level voltage and total power draw.",
+		Description: "ATEN eco PDU range (PE6108G and siblings) over the Telnet CLI on port 23. Per-outlet on/off/reboot control and per-outlet power metering; device-level voltage and total power draw. Polled every 5 minutes by default.",
 		DeviceTypes: []string{"control"},
 		Power:       PowerCapability{On: false, Off: false},
 		Commands:    []string{"outlet_on", "outlet_off", "outlet_reboot"},
@@ -118,9 +118,9 @@ var catalogue = []Info{
 		},
 		ConfigSchema: []ConfigField{
 			{Name: "address", Required: true, Description: "PDU IP or host. Port 23 is the ATEN Telnet default; append :port to override.", Example: "192.168.90.10"},
-			{Name: "username", Required: true, Description: "Admin username configured on the PDU.", Example: "administrator"},
-			{Name: "password", Required: true, Description: "Admin password.", Example: "${ATEN_PASSWORD}"},
-			{Name: "poll_rate", Required: false, Description: "How often to sample outlet state and power. 30s is a good default — every outlet is queried each poll.", Example: "30s"},
+			{Name: "username", Required: true, Description: "The PDU's Telnet username. This is a separate account from the web interface login; PE-series PDUs typically ship with teladmin.", Example: "teladmin"},
+			{Name: "password", Required: true, Description: "That Telnet user's password (typically telpwd until changed). Wrong credentials show the PDU offline with \"login rejected\".", Example: "${ATEN_PASSWORD}"},
+			{Name: "poll_rate", Required: false, Description: "How often to read outlet state and power. Leave blank for every 5 minutes. Each reading is its own Telnet login, so faster polling adds load on the PDU; outlet names are re-read hourly.", Example: "300s"},
 			{Name: "tags.outlet_count", Required: false, Description: "Override the outlet count for non-PE6108G models. Defaults to 8.", Example: "16"},
 			{Name: "tags.outlet_N_name", Required: false, Description: "Optional per-outlet label override (e.g. tags.outlet_1_name: 'Codec'). Wins over the name configured on the PDU itself.", Example: "Codec"},
 		},
@@ -129,9 +129,9 @@ var catalogue = []Info{
   type: control
   protocol: aten_pdu
   address: 192.168.90.10
-  username: administrator
+  username: teladmin
   password: ${ATEN_PASSWORD}
-  poll_rate: 30s`,
+  poll_rate: 300s`,
 	},
 
 	{
