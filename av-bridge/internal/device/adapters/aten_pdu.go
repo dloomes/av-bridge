@@ -56,13 +56,31 @@ type ATENPDUAdapter struct {
 	// cmdMu serialises exec calls so we don't open two Telnet sessions to
 	// the same PDU at once — some ATEN firmwares cap concurrent sessions.
 	cmdMu sync.Mutex
+
+	// Outlet names are user labels that rarely change, and each read
+	// costs a full Telnet login. They're re-read every atenNameRefresh,
+	// not every poll.
+	namesMu   sync.Mutex
+	names     map[int]string
+	namesRead time.Time
 }
 
 const (
 	atenPDUDefaultPort    = 23
 	atenPDUDefaultOutlets = 8
 	atenPDUReadTimeout    = 800 * time.Millisecond
+
+	// atenPDUDefaultPollRate applies when a PDU has no poll rate set.
+	// Every reading is a separate Telnet login (see the type doc), and
+	// power readings don't need minute-by-minute resolution.
+	atenPDUDefaultPollRate = 5 * time.Minute
+
+	// atenNameRefresh is how often outlet names are re-read.
+	atenNameRefresh = time.Hour
 )
+
+// DefaultPollRate implements device.PollRateDefaulter.
+func (a *ATENPDUAdapter) DefaultPollRate() time.Duration { return atenPDUDefaultPollRate }
 
 func NewATENPDUAdapter(cfg config.DeviceConfig) *ATENPDUAdapter {
 	addr := cfg.Address
@@ -108,14 +126,8 @@ func (a *ATENPDUAdapter) Disconnect() error {
 
 // ── Poll ──────────────────────────────────────────────────────────────────────
 
-// Heartbeat implements device.Heartbeater. Sends the same cheap
-// "read dev info" query used at Connect to keep the persistent TCP
-// session warm between polls so a command doesn't have to reconnect
-// after a NAT idle timeout.
-func (a *ATENPDUAdapter) Heartbeat(ctx context.Context) error {
-	_, err := a.exec(ctx, "read dev info")
-	return err
-}
+// No Heartbeat: there's no persistent session to keep warm (each command
+// is its own login), so a heartbeat would only add a login every 30s.
 
 // Poll samples per-outlet state + power draw and device-level voltage and
 // total power. Each query is best-effort: a parse miss on one outlet leaves
@@ -124,6 +136,13 @@ func (a *ATENPDUAdapter) Poll(ctx context.Context) (*device.Telemetry, error) {
 	t := a.BaseTelemetry()
 	metrics := map[string]any{}
 	start := time.Now()
+
+	a.namesMu.Lock()
+	refreshNames := a.names == nil || time.Since(a.namesRead) >= atenNameRefresh
+	if a.names == nil {
+		a.names = map[int]string{}
+	}
+	a.namesMu.Unlock()
 
 	for i := 1; i <= a.outletCount; i++ {
 		outlet := fmt.Sprintf("o%02d", i)
@@ -149,11 +168,28 @@ func (a *ATENPDUAdapter) Poll(ctx context.Context) (*device.Telemetry, error) {
 		nameKey := fmt.Sprintf("outlet_%d_name", i)
 		if override := a.Cfg.Tags[nameKey]; override != "" {
 			metrics[nameKey] = override
-		} else if resp, err := a.exec(ctx, "read status "+outlet+" name"); err == nil {
-			if name := parseOutletName(resp, outlet); name != "" {
+		} else {
+			if refreshNames {
+				if resp, err := a.exec(ctx, "read status "+outlet+" name"); err == nil {
+					if name := parseOutletName(resp, outlet); name != "" {
+						a.namesMu.Lock()
+						a.names[i] = name
+						a.namesMu.Unlock()
+					}
+				}
+			}
+			a.namesMu.Lock()
+			name := a.names[i]
+			a.namesMu.Unlock()
+			if name != "" {
 				metrics[nameKey] = name
 			}
 		}
+	}
+	if refreshNames {
+		a.namesMu.Lock()
+		a.namesRead = time.Now()
+		a.namesMu.Unlock()
 	}
 
 	if resp, err := a.exec(ctx, "read meter dev volt simple"); err == nil {
@@ -386,7 +422,7 @@ func (a *ATENPDUAdapter) dialAndLogin(ctx context.Context) (net.Conn, *bufio.Rea
 	reader := bufio.NewReader(newTelnetFilter(conn))
 
 	banner, err := readUntilPrompt(conn, reader, []string{"login:", "username:"}, 5*time.Second)
-	log.Info("aten_pdu login banner", "banner", collapse(banner))
+	log.Debug("aten_pdu login banner", "banner", collapse(banner))
 	if err != nil {
 		conn.Close()
 		return nil, nil, fmt.Errorf("aten_pdu: login prompt: %w (saw %q)", err, collapse(banner))
@@ -397,7 +433,7 @@ func (a *ATENPDUAdapter) dialAndLogin(ctx context.Context) (net.Conn, *bufio.Rea
 	}
 
 	pwPrompt, err := readUntilPrompt(conn, reader, []string{"password:"}, 5*time.Second)
-	log.Info("aten_pdu after username", "text", collapse(pwPrompt))
+	log.Debug("aten_pdu after username", "text", collapse(pwPrompt))
 	if err != nil {
 		conn.Close()
 		return nil, nil, fmt.Errorf("aten_pdu: password prompt: %w (saw %q)", err, collapse(pwPrompt))
@@ -412,7 +448,7 @@ func (a *ATENPDUAdapter) dialAndLogin(ctx context.Context) (net.Conn, *bufio.Rea
 	// the real command. Logged so we can spot menu shells that need an
 	// extra keystroke to enter command mode.
 	postLogin := drainAndReturn(conn, reader, 500*time.Millisecond)
-	log.Info("aten_pdu post-login", "text", collapse(postLogin))
+	log.Debug("aten_pdu post-login", "text", collapse(postLogin))
 	return conn, reader, nil
 }
 

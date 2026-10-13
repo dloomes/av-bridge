@@ -286,7 +286,10 @@ func (h *Hub) manageDevice(ctx context.Context, dev device.Device) {
 		break
 	}
 
-	pollTicker := time.NewTicker(info.PollRate)
+	// PollRateFor never returns zero: a device saved without a poll rate
+	// reaches us as 0, and time.NewTicker(0) panics (crashing the whole
+	// collector). It falls back to the adapter's default instead.
+	pollTicker := time.NewTicker(device.PollRateFor(dev))
 	defer pollTicker.Stop()
 
 	heartbeat := time.NewTicker(h.cfg.Hub.HeartbeatPeriod)

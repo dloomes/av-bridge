@@ -141,6 +141,29 @@ type Base struct {
 	eventsCh chan *Event
 }
 
+// PollRateDefaulter is implemented by adapters whose devices should be
+// polled at something other than DefaultPollRate when no poll rate is set.
+type PollRateDefaulter interface {
+	DefaultPollRate() time.Duration
+}
+
+// DefaultPollRate applies to a device with no poll rate set.
+const DefaultPollRate = 60 * time.Second
+
+// PollRateFor is the device's configured poll rate, or its adapter's
+// default when none is set. Never zero: a zero ticker interval panics.
+func PollRateFor(d Device) time.Duration {
+	if r := d.Info().PollRate; r > 0 {
+		return r
+	}
+	if pd, ok := d.(PollRateDefaulter); ok {
+		if r := pd.DefaultPollRate(); r > 0 {
+			return r
+		}
+	}
+	return DefaultPollRate
+}
+
 func NewBase(cfg config.DeviceConfig) Base {
 	return Base{
 		Cfg:      cfg,
