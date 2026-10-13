@@ -342,6 +342,7 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 		mux.Handle("DELETE /api/v1/nightly/routines/{id}", wrapPerm(portalauth.PermNightlyManage, portal.Portal.DeleteNightlyRoutine))
 		// Run history — slice 4. Read only; the scheduler is the writer.
 		mux.Handle("GET /api/v1/nightly/runs", wrapPerm(portalauth.PermNightlyView, portal.Portal.ListNightlyRuns))
+		mux.Handle("GET /api/v1/nightly/runs/export.csv", wrapPerm(portalauth.PermNightlyView, portal.Portal.ExportNightlyRuns))
 		mux.Handle("GET /api/v1/nightly/runs/{id}", wrapPerm(portalauth.PermNightlyView, portal.Portal.GetNightlyRun))
 		// Morning digest — slice 5. The goroutine sends automatically; this
 		// endpoint lets an operator trigger a preview send on demand.

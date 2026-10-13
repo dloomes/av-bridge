@@ -135,7 +135,23 @@ func (h *Handler) UpdateNightlySchedule(w http.ResponseWriter, r *http.Request) 
 
 	p, _ := portalauth.From(r.Context())
 
+	badRoutine := false
 	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
+		// The routine must be one of this customer's: the FK alone would
+		// accept another tenant's id (FK checks ignore RLS).
+		if req.TestRoutineID != nil && *req.TestRoutineID != "" {
+			var exists bool
+			if err := tx.QueryRow(ctx,
+				`SELECT EXISTS (SELECT 1 FROM nightly_test_routine WHERE id::text = $1)`, *req.TestRoutineID,
+			).Scan(&exists); err != nil {
+				return err
+			}
+			if !exists {
+				badRoutine = true
+				return nil
+			}
+		}
+
 		// Ensure a row exists before we UPDATE so a first-time save doesn't
 		// silently no-op.
 		if _, err := loadSchedule(ctx, tx); errors.Is(err, pgx.ErrNoRows) {
@@ -235,6 +251,10 @@ func (h *Handler) UpdateNightlySchedule(w http.ResponseWriter, r *http.Request) 
 		}))
 	})
 	if !ok {
+		return
+	}
+	if badRoutine {
+		writeErr(w, http.StatusBadRequest, "test_routine_id is not one of your routines")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

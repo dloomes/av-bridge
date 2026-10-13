@@ -42,8 +42,8 @@ type roomOverrideRow struct {
 	BuildingName        string  `json:"building_name"`
 	LocationName        string  `json:"location_name,omitempty"`
 	RegionName          string  `json:"region_name,omitempty"`
-	EffectivePowerOff   string  `json:"effective_power_off_time"`  // HH:MM
-	EffectivePowerOn    string  `json:"effective_power_on_time"`   // HH:MM
+	EffectivePowerOff   string  `json:"effective_power_off_time"` // HH:MM
+	EffectivePowerOn    string  `json:"effective_power_on_time"`  // HH:MM
 	EffectiveDaysOfWeek []int   `json:"effective_days_of_week"`
 	HasOverride         bool    `json:"has_override"`
 	OverridePowerOff    *string `json:"override_power_off_time,omitempty"`
@@ -52,6 +52,11 @@ type roomOverrideRow struct {
 	ExcludedUntil       *string `json:"excluded_until,omitempty"` // YYYY-MM-DD
 	ExcludedReason      *string `json:"excluded_reason,omitempty"`
 	ExcludedNote        *string `json:"excluded_note,omitempty"`
+	// Test routine: the room's own (override) or, when unset, the
+	// customer default's. Effective* is what tonight's run will use.
+	OverrideRoutineID    *string `json:"override_test_routine_id,omitempty"`
+	EffectiveRoutineID   *string `json:"effective_test_routine_id,omitempty"`
+	EffectiveRoutineName *string `json:"effective_test_routine_name,omitempty"`
 }
 
 // validExclusionReasons enumerates the allowed values for
@@ -107,13 +112,17 @@ func (h *Handler) ListNightlyRooms(w http.ResponseWriter, r *http.Request) {
 			  rnc.days_of_week,
 			  rnc.excluded_until,
 			  rnc.excluded_reason,
-			  rnc.excluded_note
+			  rnc.excluded_note,
+			  rnc.test_routine_id::text,
+			  tr.id::text                                         AS eff_routine_id,
+			  tr.name                                             AS eff_routine_name
 			FROM rooms r
 			LEFT JOIN buildings b               ON b.id = r.building_id
 			LEFT JOIN locations loc             ON loc.id = b.location_id
 			LEFT JOIN regions   reg             ON reg.id = loc.region_id
 			LEFT JOIN room_nightly_config rnc   ON rnc.room_id = r.id
 			LEFT JOIN nightly_schedule ns       ON ns.customer_id = r.customer_id
+			LEFT JOIN nightly_test_routine tr   ON tr.id = COALESCE(rnc.test_routine_id, ns.test_routine_id)
 			ORDER BY reg.name NULLS LAST,
 			         loc.name NULLS LAST,
 			         b.name   NULLS LAST,
@@ -125,14 +134,14 @@ func (h *Handler) ListNightlyRooms(w http.ResponseWriter, r *http.Request) {
 		defer rows.Close()
 		for rows.Next() {
 			var (
-				row                       roomOverrideRow
-				loc, reg                  *string
-				effOff, effOn             time.Time
-				effDays                   []int32
-				overOff, overOn           *time.Time
-				overDays                  []int32
-				excludedUntil             *time.Time
-				excludedReason, excNote   *string
+				row                     roomOverrideRow
+				loc, reg                *string
+				effOff, effOn           time.Time
+				effDays                 []int32
+				overOff, overOn         *time.Time
+				overDays                []int32
+				excludedUntil           *time.Time
+				excludedReason, excNote *string
 			)
 			if err := rows.Scan(
 				&row.RoomID, &row.RoomName,
@@ -143,6 +152,7 @@ func (h *Handler) ListNightlyRooms(w http.ResponseWriter, r *http.Request) {
 				&overOff, &overOn, &overDays,
 				&excludedUntil,
 				&excludedReason, &excNote,
+				&row.OverrideRoutineID, &row.EffectiveRoutineID, &row.EffectiveRoutineName,
 			); err != nil {
 				return err
 			}
@@ -200,6 +210,8 @@ type updateRoomOverrideReq struct {
 	ExcludedUntil  json.RawMessage `json:"excluded_until"`
 	ExcludedReason json.RawMessage `json:"excluded_reason"`
 	ExcludedNote   json.RawMessage `json:"excluded_note"`
+	// test_routine_id: a routine id, or null to inherit the default.
+	TestRoutineID json.RawMessage `json:"test_routine_id"`
 }
 
 // UpdateRoomOverride — PATCH /api/v1/nightly/rooms/{id}
@@ -338,6 +350,14 @@ func (h *Handler) UpdateRoomOverride(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "excluded_note "+err.Error())
 		return
 	}
+	routine, err := parseNote(req.TestRoutineID) // same shape: string or null
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "test_routine_id "+err.Error())
+		return
+	}
+	if routine.set && !routine.clear && routine.v == "" {
+		routine.clear = true // "" also means inherit, as on the schedule
+	}
 	// If both times end up set (either via override or would-be-clear +
 	// existing stored value), we can't check off != on here without a DB
 	// round-trip. The migration's CHECK handles same-value; we fall back
@@ -351,7 +371,23 @@ func (h *Handler) UpdateRoomOverride(w http.ResponseWriter, r *http.Request) {
 	// a sentinel error for the 404 path — capture the state instead and
 	// respond after withTenant closes cleanly.
 	notFound := false
+	badRoutine := false
 	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
+		// The routine must be one of this customer's: the FK alone would
+		// accept another tenant's id (FK checks ignore RLS).
+		if routine.set && !routine.clear {
+			var exists bool
+			if err := tx.QueryRow(ctx,
+				`SELECT EXISTS (SELECT 1 FROM nightly_test_routine WHERE id::text = $1)`, routine.v,
+			).Scan(&exists); err != nil {
+				return err
+			}
+			if !exists {
+				badRoutine = true
+				return nil
+			}
+		}
+
 		// Verify the room exists inside the caller's scope before writing —
 		// RLS on rooms will hide out-of-scope rows, so a lookup that finds
 		// nothing means the room isn't visible. Deliberately not
@@ -408,6 +444,9 @@ func (h *Handler) UpdateRoomOverride(w http.ResponseWriter, r *http.Request) {
 			}
 			if note.set && !note.clear {
 				addCol("excluded_note", note.v)
+			}
+			if routine.set && !routine.clear {
+				addCol("test_routine_id", routine.v)
 			}
 			sql := fmt.Sprintf(
 				"INSERT INTO room_nightly_config (%s) VALUES (%s)",
@@ -470,6 +509,13 @@ func (h *Handler) UpdateRoomOverride(w http.ResponseWriter, r *http.Request) {
 					add("excluded_note", note.v)
 				}
 			}
+			if routine.set {
+				if routine.clear {
+					add("test_routine_id", nil)
+				} else {
+					add("test_routine_id", routine.v)
+				}
+			}
 			if len(set) == 0 {
 				return nil
 			}
@@ -524,6 +570,13 @@ func (h *Handler) UpdateRoomOverride(w http.ResponseWriter, r *http.Request) {
 				payload["excluded_note"] = note.v
 			}
 		}
+		if routine.set {
+			if routine.clear {
+				payload["test_routine_id"] = nil
+			} else {
+				payload["test_routine_id"] = routine.v
+			}
+		}
 		return audit.Record(ctx, tx, p.CustomerID, stampActor(p, audit.Entry{
 			Action:     "nightly.room_override.update",
 			TargetKind: "room", TargetID: roomID,
@@ -531,6 +584,10 @@ func (h *Handler) UpdateRoomOverride(w http.ResponseWriter, r *http.Request) {
 		}))
 	})
 	if !ok {
+		return
+	}
+	if badRoutine {
+		writeErr(w, http.StatusBadRequest, "test_routine_id is not one of your routines")
 		return
 	}
 	if notFound {

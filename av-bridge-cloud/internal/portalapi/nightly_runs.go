@@ -26,22 +26,22 @@ import (
 // computed server-side so the portal doesn't need to know that a NULL
 // completed_at means "still in progress".
 type nightlyRunRow struct {
-	ID              string  `json:"id"`
-	RoomID          string  `json:"room_id"`
-	RoomName        string  `json:"room_name"`
-	BuildingID      string  `json:"building_id"`
-	BuildingName    string  `json:"building_name"`
-	LocationName    string  `json:"location_name,omitempty"`
-	RegionName      string  `json:"region_name,omitempty"`
-	RoutineID        string  `json:"routine_id,omitempty"`
-	RoutineName      string  `json:"routine_name,omitempty"`
-	Phase           string  `json:"phase"`
-	Status          string  `json:"status"`
-	ScheduledAt     string  `json:"scheduled_at"`
-	StartedAt       string  `json:"started_at,omitempty"`
-	CompletedAt     string  `json:"completed_at,omitempty"`
-	DurationSeconds *int    `json:"duration_seconds,omitempty"`
-	FailureReason   string  `json:"failure_reason,omitempty"`
+	ID              string `json:"id"`
+	RoomID          string `json:"room_id"`
+	RoomName        string `json:"room_name"`
+	BuildingID      string `json:"building_id"`
+	BuildingName    string `json:"building_name"`
+	LocationName    string `json:"location_name,omitempty"`
+	RegionName      string `json:"region_name,omitempty"`
+	RoutineID       string `json:"routine_id,omitempty"`
+	RoutineName     string `json:"routine_name,omitempty"`
+	Phase           string `json:"phase"`
+	Status          string `json:"status"`
+	ScheduledAt     string `json:"scheduled_at"`
+	StartedAt       string `json:"started_at,omitempty"`
+	CompletedAt     string `json:"completed_at,omitempty"`
+	DurationSeconds *int   `json:"duration_seconds,omitempty"`
+	FailureReason   string `json:"failure_reason,omitempty"`
 }
 
 // ListNightlyRuns — GET /api/v1/nightly/runs
@@ -57,28 +57,13 @@ type nightlyRunRow struct {
 //	            not paginated for MVP — big estates + long windows will
 //	            get truncated at the limit rather than 502ing.
 func (h *Handler) ListNightlyRuns(w http.ResponseWriter, r *http.Request) {
-	// Sensible defaults keep the endpoint useful on a bare curl too.
+	f, msg := parseNightlyRunsFilter(r)
+	if msg != "" {
+		writeErr(w, http.StatusBadRequest, msg)
+		return
+	}
+	from, to, roomFilter, statusFilter := f.from, f.to, f.room, f.statuses
 	q := r.URL.Query()
-	from := time.Now().Add(-30 * 24 * time.Hour)
-	to := time.Now().Add(24 * time.Hour)
-	if v := q.Get("from"); v != "" {
-		t, err := time.Parse(time.RFC3339, v)
-		if err != nil {
-			writeErr(w, http.StatusBadRequest, "from must be an RFC 3339 timestamp")
-			return
-		}
-		from = t
-	}
-	if v := q.Get("to"); v != "" {
-		t, err := time.Parse(time.RFC3339, v)
-		if err != nil {
-			writeErr(w, http.StatusBadRequest, "to must be an RFC 3339 timestamp")
-			return
-		}
-		to = t
-	}
-	roomFilter := q.Get("room_id")
-	statusFilter := parseStatusFilter(q.Get("status"))
 
 	limit := 200
 	if v := q.Get("limit"); v != "" {
@@ -136,12 +121,12 @@ func (h *Handler) ListNightlyRuns(w http.ResponseWriter, r *http.Request) {
 		defer rows.Close()
 		for rows.Next() {
 			var (
-				row                          nightlyRunRow
+				row                           nightlyRunRow
 				locName, regName, routineName *string
 				routineID                     *string
-				sched                        time.Time
-				started, completed           *time.Time
-				failure                      *string
+				sched                         time.Time
+				started, completed            *time.Time
+				failure                       *string
 			)
 			if err := rows.Scan(
 				&row.ID,
@@ -226,9 +211,9 @@ func (h *Handler) GetNightlyRun(w http.ResponseWriter, r *http.Request) {
 		var (
 			locName, regName, routineName *string
 			routineID                     *string
-			sched                        time.Time
-			started, completed           *time.Time
-			failure                      *string
+			sched                         time.Time
+			started, completed            *time.Time
+			failure                       *string
 		)
 		err := tx.QueryRow(ctx, `
 			SELECT nr.id::text,
@@ -309,14 +294,14 @@ func (h *Handler) GetNightlyRun(w http.ResponseWriter, r *http.Request) {
 		defer stepRows.Close()
 		for stepRows.Next() {
 			var (
-				step         nightlyStepRow
-				deviceID     *string
-				deviceName   *string
-				expected     []byte
-				actual       []byte
-				errStr       *string
-				stepStarted  *time.Time
-				stepDone     *time.Time
+				step        nightlyStepRow
+				deviceID    *string
+				deviceName  *string
+				expected    []byte
+				actual      []byte
+				errStr      *string
+				stepStarted *time.Time
+				stepDone    *time.Time
 			)
 			if err := stepRows.Scan(
 				&step.StepIndex, &step.StepName, &step.StepType,
