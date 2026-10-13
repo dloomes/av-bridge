@@ -191,7 +191,7 @@ SUPPLEMENT: dict[str, dict] = {
         "models": "ATEN eco PDU range, such as the PE6108G.",
         "connection": "Telnet CLI (TCP 23)",
         "before": [
-            "Enable Telnet on the PDU and note an admin username and password.",
+            "Enable Telnet on the PDU and note its Telnet username and password. These are separate from the web interface login; PE-series PDUs typically ship with `teladmin` / `telpwd`.",
             "For models with more than 8 outlets, set the `outlet_count` tag on the device.",
         ],
         "notes": [
@@ -326,7 +326,7 @@ def page_markdown(a: dict, sup: dict) -> str:
         "## Add the device", "",
         "1. In the portal, go to **Devices** and select **New device**.",
         f"2. Choose the **Collector** that can reach the device, and set **Protocol** to **{md_cell(a['name'])}**.",
-        "3. Enter the settings below and save. The Collector picks up the new device within five minutes.",
+        "3. Enter the settings below and save. The Collector picks up the new device within seconds.",
         "",
         "| Setting | Required | What to enter | Example |", "|---|---|---|---|",
     ]
