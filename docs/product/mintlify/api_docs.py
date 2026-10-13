@@ -45,6 +45,7 @@ TAGS = [
     ("Alerts", "Alerts", "bell"),
     ("Events", "Events", "wave-square"),
     ("Audit", "Audit", "clipboard-list"),
+    ("Room Readiness", "Room Readiness", "moon"),
 ]
 
 # Plain-English description of each token scope, as offered in the portal.
@@ -52,6 +53,7 @@ SCOPE_LABEL = {
     "view.dashboard": "Read fleet + devices",
     "view.assets": "Read assets (CMDB)",
     "view.audit": "Read audit log",
+    "nightly.view": "Read Room Readiness",
 }
 
 
@@ -144,7 +146,7 @@ def guide_pages(spec: dict, ops: list[dict], scopes: dict[str, str | None], api_
         scope_rows.append(f"| `{s}` | {SCOPE_LABEL.get(s, '')} | {labels} |")
     scope_table = "\n".join(["| Scope | Shown in the portal as | Grants |", "|---|---|---|", *scope_rows])
 
-    intro = f"""The M.A.R.C.U.S. Public API gives other systems read-only access to your estate: sync devices and assets into a CMDB, mirror alerts into an incident tool, feed dashboards, or send the audit trail to a SIEM.
+    intro = f"""The M.A.R.C.U.S. Public API gives other systems read-only access to your estate: sync devices and assets into a CMDB, mirror alerts into an incident tool, feed dashboards, report on which rooms are ready each morning, or send the audit trail to a SIEM.
 
 Every request is scoped to the customer the token belongs to, and the API never changes anything — it only reads.
 

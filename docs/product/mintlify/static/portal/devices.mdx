@@ -75,6 +75,8 @@ Each device runs the command if it has it, and the summary shows how many were q
 
 Administrators with the **Manage devices** permission can select **New device** on the **Devices** page, or **Edit** on a device page. See [Supported devices](/devices/overview) for what to enter for each kind of device.
 
+Leave **Poll rate (seconds)** blank to use the default for the kind of device: every 60 seconds for most, every 5 minutes for power distribution units, which log in for each reading. Set a value only where you need faster or slower updates.
+
 ### Move a device to another Collector
 
 Edit the device and choose a different **Collector**. When you save, the device moves with its history, alerts and settings, and both Collectors pick up the change within seconds. The move is refused if the other Collector already has a device with the same **Reported ID**.

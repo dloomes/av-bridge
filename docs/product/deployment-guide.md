@@ -147,23 +147,67 @@ The cloud does not use this port. Allow it only from your internal network.
 
 ## 4. Size the host
 
-These figures are per Collector, on typical host specifications:
+### Compute
 
-| Host | Comfortable | Stretch (relaxed poll rates) |
-|---|---|---|
-| 2 vCPU · 4 GB RAM · 10 GB disk | 250 – 500 devices | Up to 1,000 devices |
-| 4 vCPU · 8 GB RAM · 10 GB disk | 500 – 1,000 devices | Up to 2,000 devices |
-| Codec-heavy estates (many video-conferencing endpoints) | Around 60% of the above | Around 75% of the above |
+The Collector is light. In a two-hour load test, one Collector served 5,000 devices polled every 60 seconds, including encrypted video-codec sessions, and used:
 
-Capacity depends on poll rates, WAN latency to each site and the mix of adapters. Involve confirms sizing for your estate during onboarding.
+| | Measured at 5,000 devices |
+|---|---|
+| CPU | 0.13 cores sustained |
+| Memory | 430 MB steady, 500 MB peak |
+
+Use grows roughly in line with the number of devices. We recommend:
+
+| Host | Devices per Collector |
+|---|---|
+| **Recommended:** 4 vCPU · 8 GB RAM · 50 GB disk | Up to 5,000 |
+| Minimum: 2 vCPU · 4 GB RAM · 20 GB disk | Up to 5,000 |
+| Small sites: 1 vCPU · 2 GB RAM · 20 GB disk | Up to 1,000 |
+
+The recommended host leaves ample headroom for slower cloud vCPUs, heavier device types and WAN latency, and room for logs and the telemetry buffered during an outage (up to 256 MB; §13). In Google Cloud, for example, that's an `e2-custom-4-8192` or `n4-highcpu-4` with a 50 GB balanced persistent disk.
 
 ### When to add another Collector
 
-- A single host serves more than 500 devices.
+Compute is rarely the limit. Add Collectors to match your network and how much you're prepared to lose to one host failure:
+
+- A Collector would serve more than 5,000 devices.
 - A remote site is more than 50 ms away and has dozens of devices.
 - You want to isolate business units or environments from each other.
+- You want automatic failover: add a standby of the same size (§13).
 
-Packaging doesn't affect sizing: a container with 2 vCPU and 4 GB behaves the same as a VM with 2 vCPU and 4 GB.
+Packaging doesn't affect sizing: a container with 4 vCPU and 8 GB behaves the same as a VM with 4 vCPU and 8 GB.
+
+### Bandwidth
+
+**Collector to M.A.R.C.U.S. Cloud** (outbound HTTPS 443): about 0.11 Mbps per 1,000 devices at the default 60-second poll rate, covering telemetry, configuration sync and the command channel. A 5,000-device Collector sends about 0.6 Mbps. Allow twice that for estates with many devices that report in detail. Traffic from the cloud to the Collector is small, about 0.02 Mbps. After an outage, a Collector sends its buffered telemetry (up to 256 MB) as a one-off burst.
+
+**Collector to devices** depends on the device type:
+
+| Device type | Per device, at the default poll rate |
+|---|---|
+| Cameras and ping-only devices | Under 0.1 kbps |
+| Displays, DSPs and control processors | About 0.1 kbps |
+| AV-over-IP (such as Aurora VPX) | About 0.3 kbps |
+| Power distribution units (ATEN), polled every 5 minutes | About 0.6 kbps |
+| Network switches (NETGEAR) | 1 – 2 kbps |
+| Poly codecs | 1 – 2 kbps |
+| Cisco codecs | About 14 kbps |
+
+Video codecs dominate: without them, a typical estate averages about 0.2 kbps per device, so a 5,000-device Collector exchanges about 1 Mbps with its devices. Each Cisco codec adds about 14 kbps.
+
+For an on-premises Collector this traffic stays on the local network. For a cloud-hosted or central Collector it crosses each site's WAN link, so size each link for its own devices: a site of 200 devices without codecs needs about 40 kbps.
+
+Halving the poll rate halves these figures. The display, AV-over-IP and Cisco figures were measured in the load test (the Cisco figure assumes a 100 KB status response); the others are calculated from how each adapter polls.
+
+### Cloud-hosted Collectors and egress
+
+When Collectors run in a public cloud, the provider usually charges for traffic leaving it:
+
+- **Collector to M.A.R.C.U.S. Cloud** is egress: about 0.6 Mbps, or roughly 0.2 TB a month, per 5,000-device Collector.
+- **Polling requests to devices** over a VPN or interconnect are egress, but small: requests are a fraction of the device-side figures above.
+- **Device replies** arrive as ingress, which is usually free.
+
+As a guide, an estate of 50,000 devices without codecs, on ten Collectors, comes to about 2–3 TB of chargeable egress a month.
 
 ## 5. Install on Linux
 
@@ -352,9 +396,9 @@ The configuration contains the Collector's HMAC key, so mount it from a `Secret`
 
 To run the image without operating a container platform, use your cloud's managed option. You need the image and enrolled configuration described in §7.
 
-- **AWS ECS on Fargate:** a task of 0.5 vCPU and 1 GB runs one Collector. Keep state on Amazon EFS so it survives task replacement. Reference the configuration from AWS Secrets Manager in the task definition's `secrets` block, and set `desiredCount: 1`.
+- **AWS ECS on Fargate:** a task of 0.5 vCPU and 1 GB runs a Collector of up to 1,000 devices; use 2 vCPU and 4 GB for up to 5,000 (§4). Keep state on Amazon EFS so it survives task replacement. Reference the configuration from AWS Secrets Manager in the task definition's `secrets` block, and set `desiredCount: 1`.
 - **Azure Container Instances:** run a single container group with `--restart-policy Always`, and mount the configuration from Azure Files.
-- **Google Compute Engine:** run the image on Container-Optimized OS, one container per VM, with `--container-restart-policy=always`.
+- **Google Compute Engine:** run the image on Container-Optimized OS, one container per VM, with `--container-restart-policy=always`. Size the VM as in §4.
 
 For any cloud-hosted Collector, choose a UK region (AWS `eu-west-2`, Azure UK South or Google `europe-west2`) unless your own policy requires otherwise. The Collector also needs routed reach into each site's AV VLAN (§3).
 

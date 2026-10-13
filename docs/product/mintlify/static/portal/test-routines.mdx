@@ -1,0 +1,63 @@
+---
+title: "Test routines"
+sidebarTitle: "Test routines"
+description: "Build the checks Room Readiness runs after power-on to prove a room works."
+icon: "list-check"
+---
+
+A test routine is a list of steps that runs after a room powers on each morning: power devices on, wait for them to boot, check they're online, check a reading such as a microphone level, send a command such as dialling a test call. If every step passes, the room is ready.
+
+One routine can serve many rooms. Set a default for every room in [Room Readiness](/portal/room-readiness), and give particular rooms their own with **Customise**.
+
+You need **Manage Room Readiness** to create or change routines.
+
+## Create a routine
+
+1. In **Room Readiness**, select **Manage routines**.
+2. Select **Blank routine**, or **From standard template** for a worked example that powers the room on, dials a test call from the codec, checks the microphones hear the returning audio, then hangs up. Edit its SIP address, and the DSP reading and preset command to match the names set up on your DSP.
+3. Give it a **Name** and a one-line **Description**.
+4. Add steps from the list on the right, then fill in each one. Drag steps to reorder them.
+5. Select **Save changes**.
+
+The room picker above the step list is only a preview: it greys out step types that no device in that room supports, so you can see what a room can do. A routine isn't tied to a room.
+
+## Steps
+
+| Step | What it does | Passes when |
+|---|---|---|
+| **Section** | A heading to group the steps that follow. | Always |
+| **Wait** | Pauses for a number of seconds, for example while a codec boots. | Always |
+| **Power on** / **Power off** | Sends power on or off to the target devices. | Every device accepts the command |
+| **Device command** | Sends a named command, such as `dial` or `recall_preset`, with optional parameters. The commands offered are the ones the target devices support. | Every device completes the command |
+| **Expect status** | Checks the target devices report online, or offline. | Every device has that status |
+| **Check metric** | Compares a reading, such as a microphone input level, against a threshold: greater than, at least, less than, at most or equal to. Uses the latest reading from the last few seconds (the **Sample window**, 30 by default). | Every device's reading meets the threshold |
+
+### Choose the devices
+
+Every step except **Section** and **Wait** has a **Target**:
+
+- **Whole room**: every device in the room;
+- **By device type**: every display, camera, video codec, DSP or control panel in the room;
+- **Specific device**: one named device.
+
+Steps only ever reach devices in the room being tested. Targeting by type lets one routine work across rooms with different equipment.
+
+### When a step fails
+
+Set **On failure** on each step:
+
+| Option | Effect |
+|---|---|
+| **abort** | Stops the routine. Use it where later steps depend on this one, such as powering on. |
+| **continue** | Records the failure and carries on, so one run shows every problem. |
+| **retry:1**, **retry:3** | Tries the step again up to that many times before failing it. |
+
+Any failed step marks the room as **Failed**, whichever option you choose. A step that runs past its **Timeout (seconds)** fails.
+
+### Advanced JSON
+
+Select **Advanced JSON** to edit the steps as JSON, for example to copy a routine between environments. Switch back to **Builder** to carry on visually.
+
+## Try it on a room
+
+Select **Test on a room**, pick a room and start. The routine runs straight away against that room, whatever routine it normally uses, and you're taken to the run to watch each step's result arrive. Save your changes first.

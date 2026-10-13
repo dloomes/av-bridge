@@ -51,7 +51,8 @@ PAGES: dict[str, dict] = {}
 # copied without a place in the navigation.
 STATIC_GROUPS: list[dict] = [
     {"group": "Using the portal", "icon": "computer-mouse", "folder": "portal",
-     "pages": ["getting-around", "overview-and-map", "devices", "alerts"]},
+     "pages": ["getting-around", "overview-and-map", "devices", "alerts",
+               "room-readiness", "test-routines"]},
     {"group": "Administration", "icon": "user-gear", "folder": "admin",
      "pages": ["users-and-access", "roles", "single-sign-on", "notifications",
                "api-tokens", "branding", "audit-log"]},
@@ -80,7 +81,7 @@ GUIDES: dict[str, dict] = {
                     description="The single outbound firewall rule, device protocols and the "
                                 "optional local port."),
             4: dict(slug="sizing", title="Size the host", nav="Plan", icon="gauge",
-                    description="Host specifications per Collector and when to add another."),
+                    description="Compute and bandwidth per Collector, and when to add another."),
             5: dict(slug="install-linux", title="Install on Linux", sidebarTitle="Linux",
                     nav="Install", icon="linux",
                     description="Install the Collector as a systemd service with one command."),

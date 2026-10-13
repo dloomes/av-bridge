@@ -126,13 +126,15 @@ M.A.R.C.U.S. is built for organisations where "who can do what" isn't a one-size
 
 ### 6. Automation & routines
 
-- **Nightly lifecycle routines** — health checks, weekend power-downs, Monday-morning warm-ups, room-open sequences, scheduled reboots.
-- **Configurable per room** — per-room exclusion (with documented reason) and one-click "defer tonight" for rooms in active use.
+- **Room Readiness** — rooms power down overnight and back up before the working day, then a test routine proves each one works: devices online, a test call connects, microphones hear audio. A morning digest reports every room.
+- **Test routines without code** — a visual builder for power, command, status and reading checks, with a standard template to start from and a one-click test against any room.
+- **Configurable per room** — per-room times, days and test routine; exclusion with a documented reason; one-click "defer tonight" for rooms in active use.
+- **Results everywhere** — run history in the portal, CSV export, and the Public API for dashboards and service-management tools.
 - **Configuration sync** — the desired configuration for every device lives in the cloud; the Collector reconciles it and flags drift.
 
 ### 7. Extensibility & integrations
 
-- **Vendor-native adapters** — Poly VideoOS, Sony Bravia Professional, Biamp Tesira, ATEN eco PDU, Aurora RXT touch panels, Aurora VPX AV-over-IP, VISCA-over-IP PTZ cameras.
+- **Vendor-native adapters** — Cisco RoomOS, Poly VideoOS, Philips Professional Displays, Sony Bravia Professional, Biamp Tesira, ATEN eco PDU, NETGEAR M4250 / M4350 switches, Aurora RXT touch panels, Aurora VPX AV-over-IP, VISCA-over-IP PTZ cameras.
 - **Custom devices via generic transports** — REST, WebSocket, Telnet, and RS-232 serial adapters cover any device with a documented control interface.
 - **Public REST API v1** with **OpenAPI 3.1 + Swagger UI** — every field visible in the portal is available via the API.
 - **Bearer-token authentication**, cursor pagination, versioned endpoints — designed for machine consumption at scale.
@@ -157,7 +159,9 @@ Ideal for **managed service providers** presenting M.A.R.C.U.S. as their own ope
 
 - **Cross-platform Collector** — Linux (Ubuntu 20.04 LTS+, RHEL 8+, Debian 11+), Windows Server 2019+, Linux ARM64.
 - **One-line install** — the portal generates a signed install command; enrolment and initial configuration happen in the same step.
-- **Automatic configuration sync** — device configuration cascades from the cloud to every Collector on a five-minute reconciliation cycle (configurable per Collector); no manual roll-out.
+- **Automatic configuration sync** — device changes made in the portal reach the Collector within seconds; no manual roll-out.
+- **Self-updating Collectors** — signed updates from the portal, on demand or on a schedule, with automatic rollback if an update fails its health check.
+- **Resilient by design** — a Collector keeps polling through a cloud outage and sends its buffered telemetry when the link returns; an optional standby Collector takes over automatically if the primary fails.
 - **UK-hosted** exclusively on AWS London (`eu-west-2`). Customer data never leaves the United Kingdom. Multi-tenant with row-level tenant isolation enforced by the database engine.
 - **Terraform-managed infrastructure** — every environment reproducible from source.
 

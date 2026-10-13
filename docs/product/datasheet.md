@@ -40,7 +40,7 @@ M.A.R.C.U.S. is a UK-hosted, cloud-managed monitoring, control, and automation p
 - **Live device monitoring** across every room and site, vendor-agnostic.
 - **Fleet-wide command dispatch** with sub-second portal-to-device round-trip.
 - **Alerts and escalation** with configurable thresholds and flap suppression, delivered via email, Microsoft Teams, or webhooks.
-- **Nightly and scheduled routines** — health checks, power sequences, config sync, room-open flows.
+- **Room Readiness** — overnight power-down, morning power-on and a test routine that proves each room is ready, with a morning digest, CSV export and API access to the results.
 - **Warranty, utilisation, and power reporting** — first-class asset lifecycle without a separate CMDB.
 - **Public REST API v1** for downstream ITSM, CMDB, BI, and dashboards.
 - **Multi-tenant, row-level isolation** for MSPs and multi-BU enterprises.
@@ -101,15 +101,24 @@ Full architecture and network flow diagrams are available separately (see *M.A.R
 
 ## Sizing guidance
 
-Per Collector, on the recommended host specification:
+Per Collector, at the default 60-second poll rate:
 
-| Host | Comfortable | Stretch (relaxed poll rates) |
-|---|---|---|
-| 2 vCPU · 4 GB RAM | 250 – 500 devices | up to ~1,000 devices |
-| 4 vCPU · 8 GB RAM | 500 – 1,000 devices | up to ~2,000 devices |
-| Heavy-adapter mix (many session-based VC codecs) | ~60% of the above | ~75% of the above |
+| Host | Devices per Collector |
+|---|---|
+| **Recommended:** 4 vCPU · 8 GB RAM · 50 GB disk | Up to 5,000 |
+| Minimum: 2 vCPU · 4 GB RAM · 20 GB disk | Up to 5,000 |
+| Small sites: 1 vCPU · 2 GB RAM · 20 GB disk | Up to 1,000 |
 
-Numbers depend on poll rate, WAN latency, and adapter mix. Firm sizing for a specific fleet is available on request via load-test against the target host — contact commercial@involve.vc.
+In a two-hour load test, one Collector serving 5,000 devices, including encrypted video-codec sessions, used 0.13 CPU cores and at most 500 MB of memory. Larger estates add Collectors per site or region rather than larger hosts.
+
+**Bandwidth**
+
+| Path | Typical |
+|---|---|
+| Collector → M.A.R.C.U.S. Cloud (HTTPS 443) | ~0.11 Mbps per 1,000 devices (~0.6 Mbps per 5,000-device Collector) |
+| Collector → devices | ~0.1 kbps per display, DSP or control processor; ~0.3 kbps per AV-over-IP endpoint; ~0.6 kbps per PDU (5-minute polling); 1–2 kbps per network switch or Poly codec; ~14 kbps per Cisco codec |
+
+Example: 50,000 devices without video codecs, across ten Collectors, needs about 6 Mbps to the cloud in total and about 1 Mbps between each Collector and its devices. Firm sizing for a specific fleet is available on request — contact commercial@involve.vc.
 
 ## Collector host requirements
 
@@ -118,7 +127,7 @@ Numbers depend on poll rate, WAN latency, and adapter mix. Firm sizing for a spe
 | OS | Ubuntu 20.04 LTS+, RHEL 8+, Debian 11+ | Windows Server 2019, 2022 |
 | CPU | 2 vCPU minimum, 4 vCPU recommended | Same |
 | RAM | 4 GB minimum, 8 GB recommended | Same |
-| Disk | 10 GB for logs and local state | Same |
+| Disk | 20 GB minimum, 50 GB recommended, for logs, local state and outage buffering | Same |
 | Network | Outbound HTTPS (TCP 443) to `*.involvecloud.com` | Same |
 | Privileges | Systemd service, non-root user | Windows service |
 | ARM64 support | Yes (Ubuntu / Debian) | — |

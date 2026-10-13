@@ -4,7 +4,7 @@
     "name": "ATEN eco PDU",
     "vendor": "ATEN",
     "kind": "vendor",
-    "description": "ATEN eco PDU range (PE6108G and siblings) over the Telnet CLI on port 23. Per-outlet on/off/reboot control and per-outlet power metering; device-level voltage and total power draw.",
+    "description": "ATEN eco PDU range (PE6108G and siblings) over the Telnet CLI on port 23. Per-outlet on/off/reboot control and per-outlet power metering; device-level voltage and total power draw. Polled every 5 minutes by default.",
     "device_types": [
       "control"
     ],
@@ -65,20 +65,20 @@
       {
         "name": "username",
         "required": true,
-        "description": "Admin username configured on the PDU.",
-        "example": "administrator"
+        "description": "The PDU's Telnet username. This is a separate account from the web interface login; PE-series PDUs typically ship with teladmin.",
+        "example": "teladmin"
       },
       {
         "name": "password",
         "required": true,
-        "description": "Admin password.",
+        "description": "That Telnet user's password (typically telpwd until changed). Wrong credentials show the PDU offline with \"login rejected\".",
         "example": "${ATEN_PASSWORD}"
       },
       {
         "name": "poll_rate",
         "required": false,
-        "description": "How often to sample outlet state and power. 30s is a good default — every outlet is queried each poll.",
-        "example": "30s"
+        "description": "How often to read outlet state and power. Leave blank for every 5 minutes. Each reading is its own Telnet login, so faster polling adds load on the PDU; outlet names are re-read hourly.",
+        "example": "300s"
       },
       {
         "name": "tags.outlet_count",
@@ -93,7 +93,7 @@
         "example": "Codec"
       }
     ],
-    "example_config": "- id: rack-a-pdu\n  name: Rack A PDU\n  type: control\n  protocol: aten_pdu\n  address: 192.168.90.10\n  username: administrator\n  password: ${ATEN_PASSWORD}\n  poll_rate: 30s",
+    "example_config": "- id: rack-a-pdu\n  name: Rack A PDU\n  type: control\n  protocol: aten_pdu\n  address: 192.168.90.10\n  username: teladmin\n  password: ${ATEN_PASSWORD}\n  poll_rate: 300s",
     "device_count": 0
   },
   {

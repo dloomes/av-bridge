@@ -1,0 +1,85 @@
+---
+title: "Room Readiness"
+sidebarTitle: "Room Readiness"
+description: "Power rooms down overnight, bring them back up before the day starts, and prove each one is ready."
+icon: "moon"
+---
+
+Room Readiness powers your rooms off each evening and back on each morning. After power-on it can run a **test routine** that checks the room actually works: the codec is online, the microphones hear audio, the display came up. Each morning you get a digest of how every room did, so problems are found before the first meeting rather than during it.
+
+Open **Room Readiness** in the sidebar. You need **View Room Readiness** to see it, and **Manage Room Readiness** to change anything.
+
+## How a night runs
+
+For each room, on each scheduled day:
+
+1. **Power off** at the power-off time.
+2. **Power on** at the power-on time.
+3. **Warm up**: a short pause while devices boot and report in.
+4. **Test**: the room's test routine runs, if it has one (see [Test routines](/portal/test-routines)).
+5. **Ready** or **Failed**: a room is ready when every step passed.
+
+A room with no routine is power-cycled only, and is ready once it powers back on.
+
+## Set the schedule
+
+The top of the page holds the schedule every room follows unless you customise it.
+
+| Setting | What it does |
+|---|---|
+| **Enable** | Turns the nightly cycle on for every room. Off until you switch it on, so you can set everything up first. |
+| **Power off at** / **Power on at** | The times, in the timezone below: for example off at 19:00 and back on at 07:30 the next morning. |
+| **Days** | The days the cycle runs. On other days rooms stay on overnight. |
+| **Timezone** | The timezone the times are in. |
+| **Assigned routine** | The default test routine. Leave it as none to power-cycle only. |
+| **Helpdesk email** | Copies the morning digest to your helpdesk, so incidents are picked up without anyone forwarding them. Optional. |
+| **Keep detailed step results for (days)** | How long each step's result is kept. At least 30 days. The pass or fail of each run is kept for good. |
+
+Select **Save changes** when you're done.
+
+## Customise a room
+
+The rooms table lists every room by building, with the times it runs and the test routine it uses. A room's own routine is shown in darker text than the default.
+
+Select **Customise** on a room to give it its own settings. Tick **Customise** next to any of these to override the default for that room; leave it unticked to keep following the default:
+
+- **Power off at** and **Power on at**, for a room used later or earlier than the rest;
+- **Days of week**, for a room used at weekends;
+- **Test routine**, for a room that needs different checks, such as a video-conferencing room with a codec to dial out from.
+
+You can also **exclude** a room up to and including a date, with a reason such as planned maintenance or a device awaiting replacement. An excluded room isn't powered down or tested, and has no runs for those nights.
+
+Customised rooms show **Customised**. Select **Reset** to return a room to the defaults.
+
+### Defer tonight
+
+If a room is in use this evening, select **Defer tonight**. The room skips tonight's power-down and returns to its schedule tomorrow. You need **Defer tonight's power-down**, which operators have by default.
+
+### Run now
+
+Select **Run now** on a room to run its test routine straight away, without the power cycle. Use it to check a room after a fix, or to try out a new routine.
+
+## Check the results
+
+Select **View runs** for the run history: one row per room per night, with when it was scheduled, its status and how long it took. Filter by date, room and status.
+
+Select a run for its details: how far it got, and every routine step with what it checked, on which device, what it expected, what it found and any error.
+
+| Status | Meaning |
+|---|---|
+| **Succeeded** | The room powered back on and every step passed. |
+| **Failed** | A step failed, or the room didn't come back. The run shows which step and why. |
+| **In progress** | Running now. |
+| **Pending** | Scheduled for later tonight. |
+
+### Export
+
+Select **Export CSV** on the run history to download the runs in your current filter, with one row per routine step and the run's details repeated on each row, ready to pivot in a spreadsheet. Runs with no steps still get a row.
+
+### The morning digest
+
+Every morning, 30 minutes after power-on, a summary of last night's runs is emailed to every enabled email channel in [Notifications](/admin/notifications), and copied to the helpdesk address if you set one. Select **Send test digest** to send one now and check who receives it.
+
+### Through the API
+
+Integrations can read the same results through the Public API, including each room's latest run and every routine step. Create a token with the **Read Room Readiness** scope; see [API tokens](/admin/api-tokens) and the API reference.
