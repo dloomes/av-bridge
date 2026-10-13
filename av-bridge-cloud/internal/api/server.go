@@ -510,6 +510,9 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 			"/pub/v1/alerts",
 			"/pub/v1/events",
 			"/pub/v1/audit",
+			"/pub/v1/room-readiness/rooms",
+			"/pub/v1/room-readiness/runs",
+			"/pub/v1/room-readiness/runs/{id}",
 		} {
 			mux.Handle("OPTIONS "+p, optionsPreflight)
 		}
@@ -551,6 +554,15 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 		// without device data, and a dashboard token can't read the trail.
 		mux.Handle("GET /pub/v1/audit",
 			pubWrapScope(portalauth.PermViewAudit, pubAPI.Handler.ListAudit))
+
+		// Room Readiness — nightly run results, including each test
+		// routine step. Its own scope (nightly.view), as in the portal.
+		mux.Handle("GET /pub/v1/room-readiness/rooms",
+			pubWrapScope(portalauth.PermNightlyView, pubAPI.Handler.ListReadinessRooms))
+		mux.Handle("GET /pub/v1/room-readiness/runs",
+			pubWrapScope(portalauth.PermNightlyView, pubAPI.Handler.ListReadinessRuns))
+		mux.Handle("GET /pub/v1/room-readiness/runs/{id}",
+			pubWrapScope(portalauth.PermNightlyView, pubAPI.Handler.GetReadinessRun))
 	}
 
 	// Bridge-side command channel — HMAC-authenticated, same scheme as /ingest.

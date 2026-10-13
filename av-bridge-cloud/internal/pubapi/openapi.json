@@ -14,7 +14,8 @@
     { "name": "Assets", "description": "The CMDB inventory — every physical thing the tenant owns, monitored or not. Broader than Devices: includes mounts, cables, spares, retired gear." },
     { "name": "Alerts", "description": "Open + historical incidents raised on devices and collectors." },
     { "name": "Events", "description": "Device-emitted events — state changes, adapter messages, telemetry deltas." },
-    { "name": "Audit", "description": "The tenant's audit trail of changes and commands. Needs the view.audit scope." }
+    { "name": "Audit", "description": "The tenant's audit trail of changes and commands. Needs the view.audit scope." },
+    { "name": "Room Readiness", "description": "Results of the nightly power-cycle and test routine for each room, down to every routine step. Needs the nightly.view scope." }
   ],
   "paths": {
     "/pub/v1/ping": {
@@ -323,6 +324,73 @@
           "403": { "$ref": "#/components/responses/Forbidden" }
         }
       }
+    },
+    "/pub/v1/room-readiness/rooms": {
+      "get": {
+        "tags": ["Room Readiness"],
+        "summary": "List rooms with their latest run",
+        "description": "Every room with the test routine it runs (its own, or the customer default) and its most recent run, so one call answers \"is every room ready this morning?\". `latest_run` is null for a room that hasn't run yet. Not paginated. Requires the `nightly.view` scope.",
+        "responses": {
+          "200": {
+            "description": "Rooms, ordered by building then room.",
+            "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/ReadinessRoom" } } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+    "/pub/v1/room-readiness/runs": {
+      "get": {
+        "tags": ["Room Readiness"],
+        "summary": "List runs",
+        "description": "Nightly runs, most recent first, each with a count of passed and failed routine steps. Fetch a run by id for the individual steps. Requires the `nightly.view` scope.",
+        "parameters": [
+          { "$ref": "#/components/parameters/RoomID" },
+          { "name": "status", "in": "query", "description": "One or more statuses, comma-separated, e.g. `failed` or `succeeded,failed`.", "schema": { "type": "string" } },
+          { "name": "since", "in": "query", "description": "Runs scheduled at or after this time (RFC 3339).", "schema": { "type": "string", "format": "date-time" } },
+          { "name": "until", "in": "query", "description": "Runs scheduled before this time (RFC 3339).", "schema": { "type": "string", "format": "date-time" } },
+          { "$ref": "#/components/parameters/Limit" },
+          { "$ref": "#/components/parameters/Cursor" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Page of runs.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    { "$ref": "#/components/schemas/Page" },
+                    { "type": "object", "properties": { "data": { "type": "array", "items": { "$ref": "#/components/schemas/ReadinessRun" } } } }
+                  ]
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+    "/pub/v1/room-readiness/runs/{id}": {
+      "get": {
+        "tags": ["Room Readiness"],
+        "summary": "Get a run with its steps",
+        "description": "One run with every step of its test routine, in order: what was checked, on which device, what was expected and what was found. Requires the `nightly.view` scope.",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "description": "Run id (UUID).", "schema": { "type": "string", "format": "uuid" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "The run and its steps.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ReadinessRunDetail" } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
     }
   },
   "components": {
@@ -592,6 +660,66 @@
           "before": { "type": "object", "additionalProperties": true, "description": "The record before the change, where applicable." },
           "after": { "type": "object", "additionalProperties": true, "description": "The record after the change, where applicable." },
           "metadata": { "type": "object", "additionalProperties": true }
+        }
+      },
+      "ReadinessRun": {
+        "type": "object",
+        "required": ["id", "room_id", "room", "building_id", "building", "status", "phase", "scheduled_at", "steps_total", "steps_passed", "steps_failed"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "room_id": { "type": "string", "format": "uuid" },
+          "room": { "type": "string" },
+          "building_id": { "type": "string", "format": "uuid" },
+          "building": { "type": "string" },
+          "routine_id": { "type": ["string", "null"], "format": "uuid", "description": "The test routine the run used; null for a power-cycle-only run." },
+          "routine": { "type": ["string", "null"] },
+          "status": { "type": "string", "enum": ["pending", "in_progress", "succeeded", "failed", "skipped"] },
+          "phase": { "type": "string", "enum": ["pending", "scheduled_off", "off", "scheduled_on", "waking", "warming", "testing", "ready", "failed"], "description": "How far the run got. `ready` means the room passed." },
+          "scheduled_at": { "type": "string", "format": "date-time" },
+          "started_at": { "type": ["string", "null"], "format": "date-time" },
+          "completed_at": { "type": ["string", "null"], "format": "date-time" },
+          "duration_seconds": { "type": ["integer", "null"] },
+          "failure_reason": { "type": ["string", "null"] },
+          "steps_total": { "type": "integer", "description": "Routine steps recorded so far." },
+          "steps_passed": { "type": "integer" },
+          "steps_failed": { "type": "integer" }
+        }
+      },
+      "ReadinessStep": {
+        "type": "object",
+        "required": ["index", "name", "type", "passed"],
+        "properties": {
+          "index": { "type": "integer", "description": "Position in the routine, from 0." },
+          "name": { "type": "string" },
+          "type": { "type": "string", "description": "e.g. `wait`, `power_on`, `expect_status`, `check_metric`, `device_command`." },
+          "device_id": { "type": ["string", "null"], "format": "uuid", "description": "Null for steps that aren't about one device." },
+          "device": { "type": ["string", "null"] },
+          "passed": { "type": "boolean" },
+          "expected": { "description": "What the step checked for, as configured in the routine." },
+          "actual": { "description": "What the step found." },
+          "error": { "type": ["string", "null"] },
+          "started_at": { "type": ["string", "null"], "format": "date-time" },
+          "completed_at": { "type": ["string", "null"], "format": "date-time" }
+        }
+      },
+      "ReadinessRunDetail": {
+        "allOf": [
+          { "$ref": "#/components/schemas/ReadinessRun" },
+          { "type": "object", "required": ["steps"], "properties": { "steps": { "type": "array", "items": { "$ref": "#/components/schemas/ReadinessStep" } } } }
+        ]
+      },
+      "ReadinessRoom": {
+        "type": "object",
+        "required": ["room_id", "room", "building_id", "building"],
+        "properties": {
+          "room_id": { "type": "string", "format": "uuid" },
+          "room": { "type": "string" },
+          "building_id": { "type": "string", "format": "uuid" },
+          "building": { "type": "string" },
+          "routine_id": { "type": ["string", "null"], "format": "uuid", "description": "The routine tonight's run will use; null means power-cycle only." },
+          "routine": { "type": ["string", "null"] },
+          "excluded_until": { "type": ["string", "null"], "format": "date", "description": "The room is left out of the nightly cycle up to and including this date." },
+          "latest_run": { "oneOf": [{ "$ref": "#/components/schemas/ReadinessRun" }, { "type": "null" }] }
         }
       }
     }
