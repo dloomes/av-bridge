@@ -63,6 +63,11 @@ type ATENPDUAdapter struct {
 	namesMu   sync.Mutex
 	names     map[int]string
 	namesRead time.Time
+
+	// lastClose is when the previous session ended (guarded by cmdMu).
+	// The PDU needs a moment to free its Telnet slot; a new session
+	// opened straight after is refused (see atenSessionGap).
+	lastClose time.Time
 }
 
 const (
@@ -77,6 +82,15 @@ const (
 
 	// atenNameRefresh is how often outlet names are re-read.
 	atenNameRefresh = time.Hour
+
+	// atenSessionGap is the pause between one session closing and the
+	// next opening. Back-to-back sessions were refused by a PE6108G in
+	// the field: every reading after the first failed in milliseconds.
+	atenSessionGap = 300 * time.Millisecond
+
+	// atenRetryDelay is the wait before the single retry of a session
+	// that failed to open (refused, reset, or no login prompt).
+	atenRetryDelay = time.Second
 )
 
 // DefaultPollRate implements device.PollRateDefaulter.
@@ -137,6 +151,26 @@ func (a *ATENPDUAdapter) Poll(ctx context.Context) (*device.Telemetry, error) {
 	metrics := map[string]any{}
 	start := time.Now()
 
+	// Every reading is best-effort, but failures must be visible: count
+	// them, keep the first error, and report the PDU offline if nothing
+	// at all could be read.
+	var (
+		reads, failed int
+		firstErr      error
+	)
+	execRead := func(cmd string) (string, bool) {
+		reads++
+		resp, err := a.exec(ctx, cmd)
+		if err != nil {
+			failed++
+			if firstErr == nil {
+				firstErr = err
+			}
+			return "", false
+		}
+		return resp, true
+	}
+
 	a.namesMu.Lock()
 	refreshNames := a.names == nil || time.Since(a.namesRead) >= atenNameRefresh
 	if a.names == nil {
@@ -147,12 +181,12 @@ func (a *ATENPDUAdapter) Poll(ctx context.Context) (*device.Telemetry, error) {
 	for i := 1; i <= a.outletCount; i++ {
 		outlet := fmt.Sprintf("o%02d", i)
 
-		if resp, err := a.exec(ctx, "read status "+outlet+" simple"); err == nil {
+		if resp, ok := execRead("read status " + outlet + " simple"); ok {
 			if state := parseOutletState(resp); state != "" {
 				metrics[fmt.Sprintf("outlet_%d_state", i)] = state
 			}
 		}
-		if resp, err := a.exec(ctx, "read meter outlet "+outlet+" simple"); err == nil {
+		if resp, ok := execRead("read meter outlet " + outlet + " simple"); ok {
 			if amps, ok := parseNumericMetric(resp, `(?i)current[^0-9\-]*([\-0-9.]+)`); ok {
 				metrics[fmt.Sprintf("outlet_%d_current_a", i)] = amps
 			}
@@ -170,7 +204,7 @@ func (a *ATENPDUAdapter) Poll(ctx context.Context) (*device.Telemetry, error) {
 			metrics[nameKey] = override
 		} else {
 			if refreshNames {
-				if resp, err := a.exec(ctx, "read status "+outlet+" name"); err == nil {
+				if resp, ok := execRead("read status " + outlet + " name"); ok {
 					if name := parseOutletName(resp, outlet); name != "" {
 						a.namesMu.Lock()
 						a.names[i] = name
@@ -192,12 +226,12 @@ func (a *ATENPDUAdapter) Poll(ctx context.Context) (*device.Telemetry, error) {
 		a.namesMu.Unlock()
 	}
 
-	if resp, err := a.exec(ctx, "read meter dev volt simple"); err == nil {
+	if resp, ok := execRead("read meter dev volt simple"); ok {
 		if v, ok := parseNumericMetric(resp, `(?i)volt[^0-9\-]*([\-0-9.]+)`); ok {
 			metrics["voltage_v"] = v
 		}
 	}
-	if resp, err := a.exec(ctx, "read meter dev power simple"); err == nil {
+	if resp, ok := execRead("read meter dev power simple"); ok {
 		if w, ok := parseNumericMetric(resp, `(?i)power[^0-9\-]*([\-0-9.]+)`); ok {
 			metrics["total_power_w"] = w
 		}
@@ -205,9 +239,20 @@ func (a *ATENPDUAdapter) Poll(ctx context.Context) (*device.Telemetry, error) {
 
 	metrics["response_ms"] = time.Since(start).Milliseconds()
 	metrics["outlet_count"] = a.outletCount
+	t.Metrics = metrics
+	if failed > 0 {
+		metrics["failed_reads"] = failed
+		t.Error = fmt.Sprintf("%d of %d readings failed: %v", failed, reads, firstErr)
+		slog.Warn("aten_pdu readings failed", "device", a.Cfg.ID,
+			"failed", failed, "of", reads, "first_error", firstErr)
+	}
+	if reads > 0 && failed == reads {
+		a.SetStatus(device.StatusOffline)
+		t.Status = device.StatusOffline
+		return t, nil
+	}
 	a.SetStatus(device.StatusOnline)
 	t.Status = device.StatusOnline
-	t.Metrics = metrics
 	return t, nil
 }
 
@@ -351,11 +396,14 @@ func (a *ATENPDUAdapter) exec(ctx context.Context, cmd string) (string, error) {
 	a.cmdMu.Lock()
 	defer a.cmdMu.Unlock()
 
-	conn, reader, err := a.dialAndLogin(ctx)
+	conn, reader, err := a.openSession(ctx)
 	if err != nil {
 		return "", err
 	}
-	defer conn.Close()
+	defer func() {
+		conn.Close()
+		a.lastClose = time.Now()
+	}()
 
 	if err := writeCRLF(conn, cmd); err != nil {
 		return "", fmt.Errorf("aten_pdu write %q: %w", cmd, err)
@@ -399,6 +447,42 @@ func (a *ATENPDUAdapter) exec(ctx context.Context, cmd string) (string, error) {
 		return "", fmt.Errorf("aten_pdu: no response within %s", timeout)
 	}
 	return strings.TrimSpace(buf.String()), nil
+}
+
+// openSession waits out atenSessionGap since the last session closed,
+// then dials and logs in, retrying once after atenRetryDelay if the PDU
+// refuses or drops the session. Caller holds cmdMu.
+func (a *ATENPDUAdapter) openSession(ctx context.Context) (net.Conn, *bufio.Reader, error) {
+	if wait := atenSessionGap - time.Since(a.lastClose); wait > 0 {
+		if err := sleepCtx(ctx, wait); err != nil {
+			return nil, nil, err
+		}
+	}
+	conn, reader, err := a.dialAndLogin(ctx)
+	if err == nil {
+		return conn, reader, nil
+	}
+	a.lastClose = time.Now()
+	slog.Debug("aten_pdu session failed, retrying", "device", a.Cfg.ID, "error", err)
+	if serr := sleepCtx(ctx, atenRetryDelay); serr != nil {
+		return nil, nil, err
+	}
+	conn, reader, err = a.dialAndLogin(ctx)
+	if err != nil {
+		a.lastClose = time.Now()
+	}
+	return conn, reader, err
+}
+
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
 }
 
 // dialAndLogin opens a fresh Telnet session and runs the login handshake.

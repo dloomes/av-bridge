@@ -21,6 +21,12 @@ type fakeATEN struct {
 	logins atomic.Int64
 	mu     sync.Mutex
 	cmds   map[string]int
+	// busyFor: a connection arriving this soon after the previous
+	// session closed is dropped at once, as a PE6108G in the field did.
+	busyFor   time.Duration
+	refuseAll bool
+	lastClose time.Time
+	refused   atomic.Int64
 }
 
 func newFakeATEN(t *testing.T) *fakeATEN {
@@ -44,7 +50,20 @@ func newFakeATEN(t *testing.T) *fakeATEN {
 }
 
 func (f *fakeATEN) serve(c net.Conn) {
-	defer c.Close()
+	f.mu.Lock()
+	busy := f.refuseAll || (!f.lastClose.IsZero() && time.Since(f.lastClose) < f.busyFor)
+	f.mu.Unlock()
+	if busy {
+		f.refused.Add(1)
+		c.Close()
+		return
+	}
+	defer func() {
+		c.Close()
+		f.mu.Lock()
+		f.lastClose = time.Now()
+		f.mu.Unlock()
+	}()
 	r := bufio.NewReader(c)
 	c.Write([]byte("\r\nATEN PE6108G\r\nLogin: "))
 	if _, err := r.ReadString('\n'); err != nil {
@@ -173,5 +192,35 @@ func TestPollRateNeverZero(t *testing.T) {
 	d := NewPingAdapter(config.DeviceConfig{ID: "p"})
 	if r := device.PollRateFor(d); r != device.DefaultPollRate {
 		t.Fatalf("unset poll rate = %v, want %v", r, device.DefaultPollRate)
+	}
+}
+
+// A PDU that needs a moment between sessions: every reading must still
+// succeed (the adapter paces sessions and retries once).
+func TestATENPacesSessionsForBusyPDU(t *testing.T) {
+	f := newFakeATEN(t)
+	f.busyFor = 250 * time.Millisecond
+	a := newTestATEN(f, nil)
+	tel, _ := a.Poll(context.Background())
+	if tel.Status != device.StatusOnline || tel.Error != "" {
+		t.Fatalf("status %s, error %q — want every reading to succeed", tel.Status, tel.Error)
+	}
+	if tel.Metrics["outlet_1_power_w"] == nil || tel.Metrics["voltage_v"] == nil {
+		t.Errorf("readings missing: %v", tel.Metrics)
+	}
+}
+
+// A PDU that refuses every session is offline, with the reason shown —
+// not "online" with an empty Device Information panel.
+func TestATENAllReadsFailingIsOfflineWithReason(t *testing.T) {
+	f := newFakeATEN(t)
+	f.refuseAll = true
+	a := newTestATEN(f, nil)
+	tel, _ := a.Poll(context.Background())
+	if tel.Status != device.StatusOffline {
+		t.Errorf("status %s, want offline", tel.Status)
+	}
+	if !strings.Contains(tel.Error, "readings failed") || tel.Metrics["failed_reads"] == nil {
+		t.Errorf("want the failure reported, got error %q metrics %v", tel.Error, tel.Metrics)
 	}
 }
