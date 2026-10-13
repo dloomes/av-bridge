@@ -25,6 +25,7 @@ type fakeATEN struct {
 	// session closed is dropped at once, as a PE6108G in the field did.
 	busyFor   time.Duration
 	refuseAll bool
+	password  string // when set, a different password is rejected
 	lastClose time.Time
 	refused   atomic.Int64
 }
@@ -70,7 +71,19 @@ func (f *fakeATEN) serve(c net.Conn) {
 		return
 	}
 	c.Write([]byte("Password: "))
-	if _, err := r.ReadString('\n'); err != nil {
+	pw, err := r.ReadString('\n')
+	if err != nil {
+		return
+	}
+	if f.password != "" && strings.TrimSpace(pw) != f.password {
+		// Like the real PDU: reject and ask again. Whatever is sent next
+		// is taken as a username.
+		c.Write([]byte("\r\nLogin incorrect\r\nLogin: "))
+		if _, err := r.ReadString('\n'); err != nil {
+			return
+		}
+		c.Write([]byte("Password: "))
+		r.ReadString('\n')
 		return
 	}
 	f.logins.Add(1)
@@ -222,5 +235,26 @@ func TestATENAllReadsFailingIsOfflineWithReason(t *testing.T) {
 	}
 	if !strings.Contains(tel.Error, "readings failed") || tel.Metrics["failed_reads"] == nil {
 		t.Errorf("want the failure reported, got error %q metrics %v", tel.Error, tel.Metrics)
+	}
+}
+
+// Wrong Telnet credentials: the PDU re-prompts for the login. That must
+// be reported as a rejected login and the PDU shown offline — not a
+// "Password:" prompt turning up as an outlet name.
+func TestATENRejectedLoginIsReported(t *testing.T) {
+	f := newFakeATEN(t)
+	f.password = "telpwd"
+	a := newTestATEN(f, nil) // sends "pw"
+	if err := a.Connect(context.Background()); err == nil || !strings.Contains(err.Error(), "login rejected") {
+		t.Fatalf("connect with wrong password: %v, want login rejected", err)
+	}
+	tel, _ := a.Poll(context.Background())
+	if tel.Status != device.StatusOffline || !strings.Contains(tel.Error, "login rejected") {
+		t.Fatalf("status %s error %q, want offline with login rejected", tel.Status, tel.Error)
+	}
+	for k, v := range tel.Metrics {
+		if s, ok := v.(string); ok && strings.Contains(strings.ToLower(s), "password") {
+			t.Errorf("prompt reported as a reading: %s = %q", k, s)
+		}
 	}
 }

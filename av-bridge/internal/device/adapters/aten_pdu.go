@@ -3,6 +3,7 @@ package adapters
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -393,6 +394,16 @@ func (a *ATENPDUAdapter) Capabilities() device.Capabilities {
 // SendCommand don't open two sessions to the PDU simultaneously (some ATEN
 // firmwares cap concurrent sessions and reject the second).
 func (a *ATENPDUAdapter) exec(ctx context.Context, cmd string) (string, error) {
+	resp, err := a.execRaw(ctx, cmd)
+	if err == nil && endsWithAny(resp, []string{"login:", "username:", "password:"}) {
+		// The PDU wanted a login, not a command: never report a prompt
+		// as a reading (it showed up as an outlet name).
+		return "", errATENLoginRejected
+	}
+	return resp, err
+}
+
+func (a *ATENPDUAdapter) execRaw(ctx context.Context, cmd string) (string, error) {
 	a.cmdMu.Lock()
 	defer a.cmdMu.Unlock()
 
@@ -527,14 +538,30 @@ func (a *ATENPDUAdapter) dialAndLogin(ctx context.Context) (net.Conn, *bufio.Rea
 		return nil, nil, fmt.Errorf("aten_pdu: send password: %w", err)
 	}
 
-	// Read whatever the PDU prints after login — welcome banner, main menu,
-	// command prompt — so we know we've reached a stable state before firing
-	// the real command. Logged so we can spot menu shells that need an
-	// extra keystroke to enter command mode.
-	postLogin := drainAndReturn(conn, reader, 500*time.Millisecond)
+	// Wait for the command prompt — or for the PDU to ask for the login
+	// again, which means it rejected the credentials. Without this check a
+	// rejected login went unnoticed: the command was taken as the next
+	// username and the "Password:" prompt came back as the reading.
+	postLogin, perr := readUntilPrompt(conn, reader, []string{">", "login:", "username:", "password:"}, 3*time.Second)
+	if perr == nil && endsWithAny(postLogin, []string{"login:", "username:", "password:"}) || atenLoginFailedRE.MatchString(postLogin) {
+		conn.Close()
+		return nil, nil, errATENLoginRejected
+	}
+	if perr != nil {
+		// No recognisable prompt: some firmware prints a menu instead.
+		// Carry on as before rather than fail the session.
+		postLogin += drainAndReturn(conn, reader, 300*time.Millisecond)
+	}
 	log.Debug("aten_pdu post-login", "text", collapse(postLogin))
 	return conn, reader, nil
 }
+
+// errATENLoginRejected: the PDU asked for the login again after the
+// password, i.e. the Telnet credentials are wrong. ATEN eco PDUs have a
+// Telnet account separate from the web login.
+var errATENLoginRejected = errors.New("aten_pdu: login rejected; check the Telnet username and password (separate from the web login; PE-series default is teladmin / telpwd)")
+
+var atenLoginFailedRE = regexp.MustCompile(`(?i)login (incorrect|failed)|invalid (user|password|login)|authentication fail`)
 
 // collapse turns a possibly multi-line captured buffer into a single-line
 // visible string suitable for logging. Newlines/tabs → spaces, control
