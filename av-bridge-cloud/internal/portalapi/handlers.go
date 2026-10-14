@@ -413,6 +413,10 @@ func (h *Handler) ListDevices(w http.ResponseWriter, r *http.Request) {
 		// listing so the routine builder's palette can gate step types
 		// against what's actually available in the picked room.
 		Capabilities json.RawMessage `json:"capabilities,omitempty"`
+		// PowerStatus: the device's own power state, as its adapter
+		// reports it (e.g. Sony "active" / "standby"); empty when it
+		// doesn't report one. The portal shows it as a pill.
+		PowerStatus string `json:"power_status,omitempty"`
 	}
 	out := []item{}
 	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
@@ -435,7 +439,8 @@ func (h *Handler) ListDevices(w http.ResponseWriter, r *http.Request) {
 			       ` + devicestatus.CollectorStatusSQL + `,
 			       COALESCE(c.local_url, ''),
 			       d.tags,
-			       d.capabilities
+			       d.capabilities,
+			       COALESCE(d.latest_metrics->>'power_status', '')
 			  FROM devices d
 			  LEFT JOIN rooms r      ON r.id   = d.room_id
 			  LEFT JOIN buildings b  ON b.id   = r.building_id
@@ -462,7 +467,7 @@ func (h *Handler) ListDevices(w http.ResponseWriter, r *http.Request) {
 			if err := rows.Scan(&it.ID, &it.Name, &it.Type, &it.Protocol,
 				&it.Location, &it.Region, &it.LocationName, &it.Building,
 				&it.RoomID, &it.CollectorID, &it.Address, &it.Status,
-				&it.CollectorStatus, &it.CollectorLocalURL, &tags, &caps); err != nil {
+				&it.CollectorStatus, &it.CollectorLocalURL, &tags, &caps, &it.PowerStatus); err != nil {
 				return err
 			}
 			if len(tags) > 0 {
