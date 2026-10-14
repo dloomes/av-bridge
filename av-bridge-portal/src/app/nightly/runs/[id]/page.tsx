@@ -359,7 +359,9 @@ function StepRow({ step }: { step: NightlyStepRow }) {
   return (
     <tr className="border-b last:border-0">
       <td className="px-3 py-2.5 align-top text-xs font-mono text-muted-foreground">
-        {step.step_index + 1}
+        {/* Negative indexes are the scheduled power-off / power-on, which
+            come before the routine's own numbered steps. */}
+        {step.step_index < 0 ? "—" : step.step_index + 1}
       </td>
       <td className="px-3 py-2.5 align-top">
         <div className="font-medium text-sm">{step.step_name}</div>
