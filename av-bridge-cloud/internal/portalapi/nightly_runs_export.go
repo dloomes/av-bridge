@@ -24,7 +24,7 @@ const nightlyRunsExportMaxRows = 500_000
 var nightlyRunsExportColumns = []string{
 	"scheduled_at", "region", "location", "building", "room", "routine",
 	"run_status", "run_phase", "failure_reason",
-	"run_started_at", "run_completed_at", "run_duration_seconds",
+	"run_started_at", "run_powered_on_at", "run_completed_at", "run_duration_seconds",
 	"step_index", "step_name", "step_type", "device",
 	"step_passed", "expected", "actual", "step_error",
 	"step_started_at", "step_completed_at",
@@ -52,7 +52,7 @@ func (h *Handler) ExportNightlyRuns(w http.ResponseWriter, r *http.Request) {
 			       COALESCE(b.name, ''), r.name,
 			       COALESCE(tr.name, ''),
 			       nr.status, nr.phase, COALESCE(nr.failure_reason, ''),
-			       nr.started_at, nr.completed_at,
+			       nr.started_at, nr.powered_on_at, nr.completed_at,
 			       sr.step_index, COALESCE(sr.step_name, ''), COALESCE(sr.step_type, ''),
 			       COALESCE(d.name, ''),
 			       sr.passed, sr.expected::text, sr.actual::text, COALESCE(sr.error, ''),
@@ -88,7 +88,7 @@ func (h *Handler) ExportNightlyRuns(w http.ResponseWriter, r *http.Request) {
 				sched                            time.Time
 				region, location, building, room string
 				routine, status, phase, failure  string
-				started, completed               *time.Time
+				started, poweredOn, completed    *time.Time
 				stepIndex                        *int
 				stepName, stepType, device       string
 				passed                           *bool
@@ -99,7 +99,7 @@ func (h *Handler) ExportNightlyRuns(w http.ResponseWriter, r *http.Request) {
 			if err := rows.Scan(&sched,
 				&region, &location, &building, &room, &routine,
 				&status, &phase, &failure,
-				&started, &completed,
+				&started, &poweredOn, &completed,
 				&stepIndex, &stepName, &stepType, &device,
 				&passed, &expected, &actual, &stepErr,
 				&stepStarted, &stepCompleted,
@@ -111,8 +111,8 @@ func (h *Handler) ExportNightlyRuns(w http.ResponseWriter, r *http.Request) {
 				return nil
 			}
 			duration := ""
-			if started != nil && completed != nil {
-				duration = strconv.Itoa(int(completed.Sub(*started).Seconds()))
+			if from := durationFrom(started, poweredOn); from != nil && completed != nil {
+				duration = strconv.Itoa(int(completed.Sub(*from).Seconds()))
 			}
 			idx, pass := "", ""
 			if stepIndex != nil {
@@ -125,7 +125,7 @@ func (h *Handler) ExportNightlyRuns(w http.ResponseWriter, r *http.Request) {
 				sched.UTC().Format(time.RFC3339),
 				csvText(region), csvText(location), csvText(building), csvText(room), csvText(routine),
 				status, phase, csvText(failure),
-				csvTime(started), csvTime(completed), duration,
+				csvTime(started), csvTime(poweredOn), csvTime(completed), duration,
 				idx, csvText(stepName), stepType, csvText(device),
 				pass, csvText(deref(expected)), csvText(deref(actual)), csvText(stepErr),
 				csvTime(stepStarted), csvTime(stepCompleted),
@@ -205,4 +205,15 @@ func csvText(s string) string {
 		return "'" + s
 	}
 	return s
+}
+
+// durationFrom is where a run's duration is measured from: the morning
+// power-on, so it says how long the room took to be ready, not how long it
+// was off overnight. Runs without a power cycle (Run now) measure from
+// their start.
+func durationFrom(started, poweredOn *time.Time) *time.Time {
+	if poweredOn != nil {
+		return poweredOn
+	}
+	return started
 }

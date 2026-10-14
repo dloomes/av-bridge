@@ -210,6 +210,10 @@ func TestSchedulerRealPowerDispatch(t *testing.T) {
 	if _, phase, _, _ = runOf(okRoom); phase != "waking" {
 		t.Fatalf("ok room after power-on: phase %s, want waking", phase)
 	}
+	// The power-on time is recorded: durations are measured from it.
+	if q(`SELECT (powered_on_at IS NOT NULL)::text FROM nightly_run WHERE id = $1`, okRun) != "true" {
+		t.Error("powered_on_at not recorded at power-on")
+	}
 	inPhaseFor(okRun, 10*time.Second)
 	s.tick(ctx)
 	if _, phase, _, _ = runOf(okRoom); phase != "waking" {
@@ -249,5 +253,15 @@ func TestSchedulerRealPowerDispatch(t *testing.T) {
 	}
 	if passed, e, ok := step(run3, powerOffStepIndex); !ok || passed || !strings.Contains(e, "no response from the Collector") {
 		t.Errorf("stuck power-off step: ok=%v passed=%v error=%q", ok, passed, e)
+	}
+
+	// Times changed mid-cycle: the room's run is still in progress (off),
+	// so the new power-off time doesn't start a second run that would send
+	// the same power commands alongside it.
+	exec(`INSERT INTO room_nightly_config (customer_id, room_id, power_off_time) VALUES ($1, $2, '19:30')`, cust, room3)
+	clock = time.Date(2030, 1, 8, 19, 31, 0, 0, time.UTC)
+	s.tick(ctx)
+	if n := q(`SELECT count(*)::text FROM nightly_run WHERE room_id = $1`, room3); n != "1" {
+		t.Errorf("room with a run in progress got %s runs, want 1", n)
 	}
 }

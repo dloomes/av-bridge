@@ -39,6 +39,7 @@ type nightlyRunRow struct {
 	Status          string `json:"status"`
 	ScheduledAt     string `json:"scheduled_at"`
 	StartedAt       string `json:"started_at,omitempty"`
+	PoweredOnAt     string `json:"powered_on_at,omitempty"` // when the morning power-on began
 	CompletedAt     string `json:"completed_at,omitempty"`
 	DurationSeconds *int   `json:"duration_seconds,omitempty"`
 	FailureReason   string `json:"failure_reason,omitempty"`
@@ -92,7 +93,7 @@ func (h *Handler) ListNightlyRuns(w http.ResponseWriter, r *http.Request) {
 			       reg.name AS region_name,
 			       nr.routine_id::text, tr.name AS routine_name,
 			       nr.phase, nr.status,
-			       nr.scheduled_at, nr.started_at, nr.completed_at,
+			       nr.scheduled_at, nr.started_at, nr.completed_at, nr.powered_on_at,
 			       nr.failure_reason
 			  FROM nightly_run nr
 			  JOIN rooms r                       ON r.id = nr.room_id
@@ -125,7 +126,7 @@ func (h *Handler) ListNightlyRuns(w http.ResponseWriter, r *http.Request) {
 				locName, regName, routineName *string
 				routineID                     *string
 				sched                         time.Time
-				started, completed            *time.Time
+				started, completed, poweredOn *time.Time
 				failure                       *string
 			)
 			if err := rows.Scan(
@@ -135,7 +136,7 @@ func (h *Handler) ListNightlyRuns(w http.ResponseWriter, r *http.Request) {
 				&locName, &regName,
 				&routineID, &routineName,
 				&row.Phase, &row.Status,
-				&sched, &started, &completed,
+				&sched, &started, &completed, &poweredOn,
 				&failure,
 			); err != nil {
 				return err
@@ -156,10 +157,13 @@ func (h *Handler) ListNightlyRuns(w http.ResponseWriter, r *http.Request) {
 			if started != nil {
 				row.StartedAt = started.UTC().Format(time.RFC3339)
 			}
+			if poweredOn != nil {
+				row.PoweredOnAt = poweredOn.UTC().Format(time.RFC3339)
+			}
 			if completed != nil {
 				row.CompletedAt = completed.UTC().Format(time.RFC3339)
-				if started != nil {
-					secs := int(completed.Sub(*started).Seconds())
+				if from := durationFrom(started, poweredOn); from != nil {
+					secs := int(completed.Sub(*from).Seconds())
 					row.DurationSeconds = &secs
 				}
 			}
@@ -212,7 +216,7 @@ func (h *Handler) GetNightlyRun(w http.ResponseWriter, r *http.Request) {
 			locName, regName, routineName *string
 			routineID                     *string
 			sched                         time.Time
-			started, completed            *time.Time
+			started, completed, poweredOn *time.Time
 			failure                       *string
 		)
 		err := tx.QueryRow(ctx, `
@@ -222,7 +226,7 @@ func (h *Handler) GetNightlyRun(w http.ResponseWriter, r *http.Request) {
 			       loc.name, reg.name,
 			       nr.routine_id::text, tr.name,
 			       nr.phase, nr.status,
-			       nr.scheduled_at, nr.started_at, nr.completed_at,
+			       nr.scheduled_at, nr.started_at, nr.completed_at, nr.powered_on_at,
 			       nr.failure_reason
 			  FROM nightly_run nr
 			  JOIN rooms r                       ON r.id = nr.room_id
@@ -238,7 +242,7 @@ func (h *Handler) GetNightlyRun(w http.ResponseWriter, r *http.Request) {
 			&locName, &regName,
 			&routineID, &routineName,
 			&out.Phase, &out.Status,
-			&sched, &started, &completed,
+			&sched, &started, &completed, &poweredOn,
 			&failure,
 		)
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -264,10 +268,13 @@ func (h *Handler) GetNightlyRun(w http.ResponseWriter, r *http.Request) {
 		if started != nil {
 			out.StartedAt = started.UTC().Format(time.RFC3339)
 		}
+		if poweredOn != nil {
+			out.PoweredOnAt = poweredOn.UTC().Format(time.RFC3339)
+		}
 		if completed != nil {
 			out.CompletedAt = completed.UTC().Format(time.RFC3339)
-			if started != nil {
-				secs := int(completed.Sub(*started).Seconds())
+			if from := durationFrom(started, poweredOn); from != nil {
+				secs := int(completed.Sub(*from).Seconds())
 				out.DurationSeconds = &secs
 			}
 		}

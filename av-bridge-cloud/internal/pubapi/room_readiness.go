@@ -29,6 +29,7 @@ type publicReadinessRun struct {
 	Phase           string     `json:"phase"`
 	ScheduledAt     time.Time  `json:"scheduled_at"`
 	StartedAt       *time.Time `json:"started_at"`
+	PoweredOnAt     *time.Time `json:"powered_on_at"`
 	CompletedAt     *time.Time `json:"completed_at"`
 	DurationSeconds *int       `json:"duration_seconds"`
 	FailureReason   *string    `json:"failure_reason"`
@@ -55,7 +56,7 @@ type publicReadinessStep struct {
 const publicRunColumns = `
 	SELECT nr.id::text, nr.room_id::text, r.name, b.id::text, b.name,
 	       nr.routine_id::text, tr.name,
-	       nr.status, nr.phase, nr.scheduled_at, nr.started_at, nr.completed_at,
+	       nr.status, nr.phase, nr.scheduled_at, nr.started_at, nr.powered_on_at, nr.completed_at,
 	       nr.failure_reason,
 	       COALESCE(sc.total, 0), COALESCE(sc.passed, 0)
 	  FROM nightly_run nr
@@ -71,14 +72,20 @@ func scanPublicRun(row pgx.Row) (publicReadinessRun, error) {
 	var run publicReadinessRun
 	err := row.Scan(&run.ID, &run.RoomID, &run.Room, &run.BuildingID, &run.Building,
 		&run.RoutineID, &run.Routine,
-		&run.Status, &run.Phase, &run.ScheduledAt, &run.StartedAt, &run.CompletedAt,
+		&run.Status, &run.Phase, &run.ScheduledAt, &run.StartedAt, &run.PoweredOnAt, &run.CompletedAt,
 		&run.FailureReason, &run.StepsTotal, &run.StepsPassed)
 	if err != nil {
 		return run, err
 	}
 	run.StepsFailed = run.StepsTotal - run.StepsPassed
-	if run.StartedAt != nil && run.CompletedAt != nil {
-		d := int(run.CompletedAt.Sub(*run.StartedAt).Seconds())
+	// Measured from the morning power-on (how long the room took to be
+	// ready), or from the start for a run without a power cycle.
+	from := run.StartedAt
+	if run.PoweredOnAt != nil {
+		from = run.PoweredOnAt
+	}
+	if from != nil && run.CompletedAt != nil {
+		d := int(run.CompletedAt.Sub(*from).Seconds())
 		run.DurationSeconds = &d
 	}
 	return run, nil

@@ -264,15 +264,20 @@ func (s *Scheduler) createDueRuns(ctx context.Context) error {
 		if rv.testRoutineID != nil && *rv.testRoutineID != "" {
 			routineArg = *rv.testRoutineID
 		}
+		// One run per room at a time: if the room still has a run in
+		// progress (say its times were changed mid-cycle), don't start a
+		// second one that would send the same power commands alongside it.
 		var runID string
 		err = s.pool.QueryRow(ctx, `
 			INSERT INTO nightly_run (customer_id, room_id, routine_id, scheduled_at, phase, status, started_at, phase_changed_at)
-			VALUES ($1, $2, $3, $4, 'scheduled_off', 'in_progress', now(), now())
+			SELECT $1::uuid, $2::uuid, $3::uuid, $4::timestamptz, 'scheduled_off', 'in_progress', now(), now()
+			 WHERE NOT EXISTS (
+			   SELECT 1 FROM nightly_run WHERE room_id = $2::uuid AND status = 'in_progress')
 			ON CONFLICT (room_id, scheduled_at) DO NOTHING
 			RETURNING id::text
 		`, rv.customerID, rv.roomID, routineArg, scheduledUTC).Scan(&runID)
 		if errors.Is(err, pgx.ErrNoRows) {
-			continue // dedup — run already existed for this cycle
+			continue // this cycle's run exists, or another run is still in progress
 		}
 		if err != nil {
 			s.log.Warn("nightly: insert run failed",
@@ -539,8 +544,13 @@ func hasBeenIn(_ string, phaseSince, now time.Time, want time.Duration) bool {
 
 // setPhase moves a run to a new phase while keeping status = in_progress.
 func (s *Scheduler) setPhase(ctx context.Context, runID, phase string) error {
-	_, err := s.pool.Exec(ctx,
-		`UPDATE nightly_run SET phase = $2, phase_changed_at = now() WHERE id = $1`, runID, phase)
+	// powered_on_at marks the start of the morning power-on: a run's
+	// duration is measured from it.
+	_, err := s.pool.Exec(ctx, `
+		UPDATE nightly_run
+		   SET phase = $2, phase_changed_at = now(),
+		       powered_on_at = CASE WHEN $2 = 'scheduled_on' THEN now() ELSE powered_on_at END
+		 WHERE id = $1`, runID, phase)
 	if err == nil && !asleepPhases[phase] {
 		err = wakeDevices(ctx, s.pool, runID)
 	}

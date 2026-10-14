@@ -213,6 +213,12 @@ func TestNightlyRoomRoutineAndExport(t *testing.T) {
 		          RETURNING id::text`, cust, roomID, routineID, status)
 	}
 	runA := run(cust, roomA, vcRoutine, "succeeded")
+	// An overnight run: started (power-off) 10 hours ago, powered on 5
+	// minutes ago, ready 4 minutes ago. Its duration is the morning's
+	// minute, not the 10 hours.
+	q(`INSERT INTO nightly_run (customer_id, room_id, phase, status, scheduled_at, started_at, powered_on_at, completed_at)
+	                VALUES ($1, $2, 'ready', 'succeeded', now() - interval '10 hours', now() - interval '10 hours',
+	                        now() - interval '5 minutes', now() - interval '4 minutes') RETURNING id::text`, cust, roomA)
 	run(cust, roomB, "", "failed") // no steps: still one row
 	run(other, otherRoom, otherRoutine, "succeeded")
 	for i, name := range []string{"Wait for codec", "Codec online"} {
@@ -229,14 +235,14 @@ func TestNightlyRoomRoutineAndExport(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse csv: %v", err)
 	}
-	if len(recs) != 4 { // header + 2 steps + 1 step-less run
-		t.Fatalf("want 4 lines, got %d:\n%s", len(recs), body)
+	if len(recs) != 5 { // header + 2 steps + 2 step-less runs
+		t.Fatalf("want 5 lines, got %d:\n%s", len(recs), body)
 	}
 	col := map[string]int{}
 	for i, c := range recs[0] {
 		col[c] = i
 	}
-	var sawFormula, sawSteps bool
+	var sawFormula, sawSteps, sawOvernight bool
 	for _, r := range recs[1:] {
 		if r[col["room"]] == "Elsewhere" {
 			t.Error("another customer's run is in the export")
@@ -245,6 +251,14 @@ func TestNightlyRoomRoutineAndExport(t *testing.T) {
 			sawFormula = true
 			if r[col["step_index"]] != "" || r[col["run_status"]] != "failed" {
 				t.Errorf("step-less run row: %v", r)
+			}
+		}
+		if r[col["room"]] == "Boardroom" && r[col["step_index"]] == "" {
+			// The overnight run: measured from power-on, not power-off.
+			sawOvernight = true
+			if r[col["run_duration_seconds"]] != "60" || r[col["run_powered_on_at"]] == "" {
+				t.Errorf("overnight run: duration %q powered on %q, want 60 and set",
+					r[col["run_duration_seconds"]], r[col["run_powered_on_at"]])
 			}
 		}
 		if r[col["step_name"]] == "Codec online" {
@@ -258,9 +272,12 @@ func TestNightlyRoomRoutineAndExport(t *testing.T) {
 	if !sawSteps {
 		t.Error("step row missing or incomplete")
 	}
+	if !sawOvernight {
+		t.Error("overnight run missing from the export")
+	}
 
 	// Filters apply, and bad input is a 400 rather than a broken file.
-	if code, body := call("GET", "/runs/export.csv?status=succeeded&room_id="+roomA, nil); code != http.StatusOK || strings.Count(body, "\n") != 3 {
+	if code, body := call("GET", "/runs/export.csv?status=succeeded&room_id="+roomA, nil); code != http.StatusOK || strings.Count(body, "\n") != 4 {
 		t.Errorf("filtered export: %d\n%s", code, body)
 	}
 	if code, _ := call("GET", "/runs/export.csv?from=yesterday", nil); code != http.StatusBadRequest {
