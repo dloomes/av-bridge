@@ -37,6 +37,11 @@ import (
 // side; values must match.
 const CommandReconnectName = "_reconnect"
 
+// CommandPollName is the reserved command the cloud uses to get a fresh
+// reading of a device (Room Readiness checks): the device is polled now and
+// the reading comes back as the command result. Mirrors the cloud constant.
+const CommandPollName = "_poll"
+
 // Poller polls the cloud for pending commands on a tick, dispatches them
 // through the local hub, and posts results back. Uses the same HMAC signing
 // scheme as the ingest push (X-Signature: sha256=<hex>) so the bridge only has
@@ -252,6 +257,21 @@ func (p *Poller) execute(ctx context.Context, cmd bridgeCommand) {
 			return
 		}
 		p.report(ctx, cmd.ID, &device.CommandResponse{Raw: "reconnected"}, nil)
+		return
+	}
+
+	if cmd.Name == CommandPollName {
+		tel, err := p.hub.PollNow(ctx, cmd.ReportedID)
+		if err != nil {
+			p.report(ctx, cmd.ID, nil, err)
+			return
+		}
+		p.report(ctx, cmd.ID, &device.CommandResponse{Raw: "polled", Parsed: map[string]any{
+			"status":    tel.Status,
+			"metrics":   tel.Metrics,
+			"error":     tel.Error,
+			"timestamp": tel.Timestamp,
+		}}, nil)
 		return
 	}
 

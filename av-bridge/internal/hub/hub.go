@@ -2,6 +2,8 @@ package hub
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"reflect"
 	"sync"
@@ -49,6 +51,14 @@ type DeviceEntry struct {
 	Dev    device.Device
 	Cfg    config.DeviceConfig
 	Cancel context.CancelFunc
+	// polls carries PollNow requests to the device's own goroutine, so an
+	// on-demand poll never runs alongside a scheduled one.
+	polls chan pollRequest
+}
+
+// pollRequest asks a device's goroutine to poll now and reply.
+type pollRequest struct {
+	reply chan *device.Telemetry
 }
 
 // EventBroadcaster is satisfied by *api.Server (and by the notify engine via
@@ -228,11 +238,12 @@ func (h *Hub) spawnDevice(dcfg config.DeviceConfig) {
 		ctx = context.Background()
 	}
 	devCtx, cancel := context.WithCancel(ctx)
+	polls := make(chan pollRequest)
 	h.mu.Lock()
-	h.devices[dcfg.ID] = &DeviceEntry{Dev: dev, Cfg: dcfg, Cancel: cancel}
+	h.devices[dcfg.ID] = &DeviceEntry{Dev: dev, Cfg: dcfg, Cancel: cancel, polls: polls}
 	h.mu.Unlock()
 	slog.Info("reconcile: starting device", "device", dcfg.ID, "protocol", dcfg.Protocol)
-	go h.manageDevice(devCtx, dev)
+	go h.manageDevice(devCtx, dev, polls)
 }
 
 // configEqual is a value-equality test on DeviceConfig. reflect.DeepEqual
@@ -244,7 +255,7 @@ func configEqual(a, b config.DeviceConfig) bool {
 }
 
 // manageDevice handles connect-with-retry, polling, event draining, and state persistence.
-func (h *Hub) manageDevice(ctx context.Context, dev device.Device) {
+func (h *Hub) manageDevice(ctx context.Context, dev device.Device, polls <-chan pollRequest) {
 	info := dev.Info()
 	log := slog.With("device", info.ID, "type", info.Type, "protocol", info.Protocol)
 
@@ -271,15 +282,13 @@ func (h *Hub) manageDevice(ctx context.Context, dev device.Device) {
 		if err := dev.Connect(ctx); err != nil {
 			log.Warn("connection failed, retrying", "error", err, "backoff", backoff)
 			h.cloud.EnqueueTelemetry(newOfflineHeartbeat(dev, err))
-			select {
-			case <-ctx.Done():
+			if !waitBackoff(ctx, backoff, polls, func() *device.Telemetry { return newOfflineHeartbeat(dev, err) }) {
 				return
-			case <-time.After(backoff):
-				if backoff < 2*time.Minute {
-					backoff *= 2
-				}
-				continue
 			}
+			if backoff < 2*time.Minute {
+				backoff *= 2
+			}
+			continue
 		}
 		backoff = 5 * time.Second
 		log.Info("device connected")
@@ -307,32 +316,16 @@ func (h *Hub) manageDevice(ctx context.Context, dev device.Device) {
 			log.Debug("event received", "type", e.EventType)
 
 		case <-pollTicker.C:
-			tel, err := dev.Poll(ctx)
-			if err != nil {
-				log.Warn("poll error", "error", err)
-				continue
-			}
-			// Attach static capabilities from the adapter — done here
-			// (once per poll) rather than in every adapter's Poll so
-			// each vendor implementation stays focused on state, not
-			// declaration. Cloud writes this to devices.capabilities
-			// on ingest; the portal routine builder + executor read
-			// it to know what actions the device can accept.
-			if tel.Capabilities == nil {
-				caps := dev.Capabilities()
-				tel.Capabilities = &caps
-			}
-			h.cloud.EnqueueTelemetry(tel)
-			log.Debug("polled device", "status", tel.Status)
+			h.pollOnce(ctx, dev, log)
 
-			// Persist updated state
-			state = h.store.GetDevice(info.ID)
-			state.LastStatus = string(tel.Status)
-			state.LastMetrics = tel.Metrics
-			if tel.Status == device.StatusOnline {
-				state.LastSeen = time.Now().UTC()
+		case req := <-polls:
+			// On demand (the cloud's _poll command): a fresh reading for
+			// a Room Readiness check, without waiting for the next tick.
+			tel := h.pollOnce(ctx, dev, log)
+			if tel == nil {
+				tel = newOfflineHeartbeat(dev, errors.New("poll failed"))
 			}
-			_ = h.store.UpsertDevice(state)
+			req.reply <- tel
 
 		case <-heartbeat.C:
 			if dev.Status() == device.StatusOffline {
@@ -354,6 +347,78 @@ func (h *Hub) manageDevice(ctx context.Context, dev device.Device) {
 				cancel()
 			}
 		}
+	}
+}
+
+// pollOnce polls the device, sends the reading to the cloud and keeps the
+// local state. Returns nil if the poll failed outright.
+func (h *Hub) pollOnce(ctx context.Context, dev device.Device, log *slog.Logger) *device.Telemetry {
+	tel, err := dev.Poll(ctx)
+	if err != nil {
+		log.Warn("poll error", "error", err)
+		return nil
+	}
+	// Attach static capabilities from the adapter — done here
+	// (once per poll) rather than in every adapter's Poll so
+	// each vendor implementation stays focused on state, not
+	// declaration. Cloud writes this to devices.capabilities
+	// on ingest; the portal routine builder + executor read
+	// it to know what actions the device can accept.
+	if tel.Capabilities == nil {
+		caps := dev.Capabilities()
+		tel.Capabilities = &caps
+	}
+	h.cloud.EnqueueTelemetry(tel)
+	log.Debug("polled device", "status", tel.Status)
+
+	// Persist updated state
+	state := h.store.GetDevice(dev.Info().ID)
+	state.LastStatus = string(tel.Status)
+	state.LastMetrics = tel.Metrics
+	if tel.Status == device.StatusOnline {
+		state.LastSeen = time.Now().UTC()
+	}
+	_ = h.store.UpsertDevice(state)
+	return tel
+}
+
+// waitBackoff waits d between connection attempts, answering on-demand
+// polls with offline() meanwhile. False when ctx is cancelled.
+func waitBackoff(ctx context.Context, d time.Duration, polls <-chan pollRequest, offline func() *device.Telemetry) bool {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-t.C:
+			return true
+		case req := <-polls:
+			req.reply <- offline()
+		}
+	}
+}
+
+// PollNow polls one device straight away, on its own goroutine, and returns
+// the reading. A device still trying to connect answers offline at once.
+func (h *Hub) PollNow(ctx context.Context, id string) (*device.Telemetry, error) {
+	h.mu.RLock()
+	entry := h.devices[id]
+	h.mu.RUnlock()
+	if entry == nil || entry.polls == nil {
+		return nil, fmt.Errorf("device not present on this collector: %s", id)
+	}
+	req := pollRequest{reply: make(chan *device.Telemetry, 1)}
+	select {
+	case entry.polls <- req:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	select {
+	case tel := <-req.reply:
+		return tel, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	}
 }
 
