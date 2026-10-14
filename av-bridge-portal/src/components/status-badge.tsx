@@ -6,18 +6,24 @@ const dotColors: Record<DeviceStatus, string> = {
   online: "bg-success",
   offline: "bg-destructive",
   unknown: "bg-muted-foreground/40",
+  switched_off: "bg-sky-500",
 };
 
-const variants: Record<DeviceStatus, "success" | "warning" | "offline" | "secondary"> = {
+const variants: Record<
+  DeviceStatus,
+  "success" | "warning" | "offline" | "secondary" | "switchedOff"
+> = {
   online: "success",
   offline: "offline",
   unknown: "secondary",
+  switched_off: "switchedOff",
 };
 
 const labels: Record<DeviceStatus, string> = {
   online: "Online",
   offline: "Offline",
   unknown: "Unknown",
+  switched_off: "Switched off",
 };
 
 interface Props {
@@ -42,7 +48,15 @@ export function StatusBadge({ status, className, collectorStatus }: Props) {
   const dot = isCollectorFault ? "bg-warning" : dotColors[status];
 
   return (
-    <Badge variant={variant} className={cn("gap-1.5", className)}>
+    <Badge
+      variant={variant}
+      className={cn("gap-1.5", className)}
+      title={
+        status === "switched_off"
+          ? "Switched off for the night by Room Readiness"
+          : undefined
+      }
+    >
       <span
         className={cn(
           "inline-block h-1.5 w-1.5 rounded-full",

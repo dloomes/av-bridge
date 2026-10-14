@@ -18,6 +18,7 @@ const dotColor: Record<DeviceStatus, string> = {
   online: "bg-success",
   offline: "bg-destructive",
   unknown: "bg-muted-foreground/40",
+  switched_off: "bg-sky-500",
 };
 
 export function LocationNav() {

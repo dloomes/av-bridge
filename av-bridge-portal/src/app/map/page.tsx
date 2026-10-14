@@ -77,6 +77,7 @@ const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN ?? "";
 function worstOf(devices: DeviceSummary[]): DeviceStatus {
   if (devices.some((d) => d.status === "offline")) return "offline";
   if (devices.some((d) => d.status === "unknown")) return "unknown";
+  if (devices.some((d) => d.status === "switched_off")) return "switched_off";
   return "online";
 }
 
@@ -127,10 +128,11 @@ export default function MapPage() {
             acc.total += 1;
             if (d.status === "online") acc.online += 1;
             else if (d.status === "offline") acc.offline += 1;
+            else if (d.status === "switched_off") acc.switchedOff += 1;
             else acc.unknown += 1;
             return acc;
           },
-          { total: 0, online: 0, offline: 0, unknown: 0 }
+          { total: 0, online: 0, offline: 0, unknown: 0, switchedOff: 0 }
         );
         return { building: b, worst: worstOf(devs), totals };
       })

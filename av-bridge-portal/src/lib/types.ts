@@ -1,4 +1,4 @@
-export type DeviceStatus = "online" | "offline" | "unknown";
+export type DeviceStatus = "online" | "offline" | "unknown" | "switched_off";
 
 export type DeviceType = "display" | "conferencing" | "audio" | "camera" | "control";
 
@@ -393,6 +393,7 @@ export interface FleetStatus {
   online: number;
   offline: number;
   unknown: number;
+  switched_off?: number; // switched off for the night by Room Readiness
   time: string;
 }
 

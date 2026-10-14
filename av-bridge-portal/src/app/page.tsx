@@ -11,6 +11,7 @@ import {
   CircleSlash,
   DoorOpen,
   MapPin,
+  Moon,
   RefreshCcw,
   Server,
   ServerCrash,
@@ -52,6 +53,7 @@ interface BuildingStatus {
   online: number;
   offline: number;
   unknown: number;
+  switchedOff: number;
 }
 
 function tone(b: BuildingStatus): "destructive" | "warning" | "success" | "neutral" {
@@ -133,10 +135,11 @@ export default function DashboardPage() {
         (acc, d) => {
           if (d.status === "online") acc.online += 1;
           else if (d.status === "offline") acc.offline += 1;
+          else if (d.status === "switched_off") acc.switchedOff += 1;
           else acc.unknown += 1;
           return acc;
         },
-        { online: 0, offline: 0, unknown: 0 }
+        { online: 0, offline: 0, unknown: 0, switchedOff: 0 }
       );
       // Unassigned devices don't get a building filter link — the URL
       // param would be a literal "Unassigned" that matches nothing.
@@ -153,6 +156,7 @@ export default function DashboardPage() {
         online: counts.online,
         offline: counts.offline,
         unknown: counts.unknown,
+        switchedOff: counts.switchedOff,
       };
     });
   }, [devices.data]);
@@ -313,6 +317,17 @@ export default function DashboardPage() {
                       }
                       href="/devices?status=unknown"
                     />
+                    {/* Only overnight: devices Room Readiness switched off.
+                        Expected, so a calm tile, not an alarm. */}
+                    {(fleet.data?.switched_off ?? 0) > 0 && (
+                      <StatCard
+                        label="Switched off"
+                        value={fleet.data?.switched_off ?? 0}
+                        icon={Moon}
+                        hint="For the night, by Room Readiness"
+                        href="/devices?status=switched_off"
+                      />
+                    )}
                   </>
                 )}
               </div>
@@ -481,13 +496,16 @@ function BuildingTile({ b }: { b: BuildingStatus }) {
         <div
           className="flex h-1.5 w-full overflow-hidden rounded-full bg-muted"
           role="img"
-          aria-label={`${b.offline} offline, ${b.unknown} unknown, ${b.online} online`}
+          aria-label={`${b.offline} offline, ${b.unknown} unknown, ${b.switchedOff} switched off, ${b.online} online`}
         >
           {b.offline > 0 && (
             <div className="h-full bg-destructive" style={{ width: `${seg(b.offline)}%` }} />
           )}
           {b.unknown > 0 && (
             <div className="h-full bg-muted-foreground/40" style={{ width: `${seg(b.unknown)}%` }} />
+          )}
+          {b.switchedOff > 0 && (
+            <div className="h-full bg-sky-500" style={{ width: `${seg(b.switchedOff)}%` }} />
           )}
           {b.online > 0 && (
             <div className="h-full bg-success" style={{ width: `${seg(b.online)}%` }} />
@@ -500,6 +518,9 @@ function BuildingTile({ b }: { b: BuildingStatus }) {
           )}
           {b.unknown > 0 && (
             <StatusDot color="bg-muted-foreground/40" label={`${b.unknown} unknown`} />
+          )}
+          {b.switchedOff > 0 && (
+            <StatusDot color="bg-sky-500" label={`${b.switchedOff} switched off`} />
           )}
           {b.online > 0 && (
             <StatusDot color="bg-success" label={`${b.online} online`} />

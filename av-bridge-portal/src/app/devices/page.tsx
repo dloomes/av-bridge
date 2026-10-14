@@ -8,6 +8,7 @@ import {
   CircleAlert,
   HelpCircle,
   Loader2,
+  Moon,
   Plus,
   Radio,
   Search,
@@ -51,11 +52,12 @@ import type {
 
 const STATUS_TONE: Record<
   DeviceStatus,
-  { label: string; variant: "success" | "warning" | "destructive" | "secondary"; icon: React.ComponentType<{ className?: string }> }
+  { label: string; variant: "success" | "warning" | "destructive" | "secondary" | "switchedOff"; icon: React.ComponentType<{ className?: string }> }
 > = {
   online:   { label: "Online",   variant: "success",     icon: Signal },
   offline:  { label: "Offline", variant: "destructive", icon: CircleAlert },
   unknown:  { label: "Unknown",  variant: "secondary",   icon: HelpCircle },
+  switched_off: { label: "Switched off", variant: "switchedOff", icon: Moon },
 };
 
 const TYPE_LABEL: Record<DeviceType, string> = {
@@ -82,7 +84,8 @@ export default function DevicesPage() {
   const statusFilter: StatusFilter =
     rawStatus === "online" ||
     rawStatus === "offline" ||
-    rawStatus === "unknown"
+    rawStatus === "unknown" ||
+    rawStatus === "switched_off"
       ? rawStatus
       : "all";
   const buildingFilter = searchParams.get("building") ?? "";
@@ -178,16 +181,17 @@ export default function DevicesPage() {
   }, [data, search, statusFilter, typeFilter, buildingFilter, roomFilter]);
 
   const counts = useMemo(() => {
-    if (!data) return { total: 0, online: 0, offline: 0, unknown: 0 };
+    if (!data) return { total: 0, online: 0, offline: 0, unknown: 0, switchedOff: 0 };
     return data.reduce(
       (acc, d) => {
         acc.total += 1;
         if (d.status === "online") acc.online += 1;
         else if (d.status === "offline") acc.offline += 1;
         else if (d.status === "unknown") acc.unknown += 1;
+        else if (d.status === "switched_off") acc.switchedOff += 1;
         return acc;
       },
-      { total: 0, online: 0, offline: 0, unknown: 0 }
+      { total: 0, online: 0, offline: 0, unknown: 0, switchedOff: 0 }
     );
   }, [data]);
 
@@ -209,6 +213,7 @@ export default function DevicesPage() {
               <p className="text-sm text-muted-foreground leading-tight">
                 {counts.total} total · {counts.online} online · {counts.offline} offline
                 {counts.unknown > 0 && ` · ${counts.unknown} unknown`}
+                {counts.switchedOff > 0 && ` · ${counts.switchedOff} switched off`}
               </p>
             </div>
           </div>
@@ -306,6 +311,7 @@ export default function DevicesPage() {
               <option value="online">Online</option>
               <option value="offline">Offline</option>
               <option value="unknown">Unknown</option>
+              <option value="switched_off">Switched off</option>
             </select>
             <select
               value={typeFilter}

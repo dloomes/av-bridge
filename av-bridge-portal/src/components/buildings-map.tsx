@@ -39,6 +39,11 @@ const STATUS_TINT: Record<WorstStatus, { pin: string; ring: string; label: strin
     ring: "ring-border",
     label: "Unknown",
   },
+  switched_off: {
+    pin: "bg-sky-500 text-white",
+    ring: "ring-sky-500/40",
+    label: "Switched off",
+  },
   online: {
     pin: "bg-success text-success-foreground",
     ring: "ring-success/40",

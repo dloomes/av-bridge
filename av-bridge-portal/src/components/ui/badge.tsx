@@ -20,6 +20,9 @@ const badgeVariants = cva(
           "border-transparent bg-warning/15 text-warning-foreground/90 ring-1 ring-warning/30 [color:hsl(var(--warning))]",
         offline:
           "border-transparent bg-destructive/15 ring-1 ring-destructive/30 [color:hsl(var(--destructive))]",
+        // Switched off for the night by Room Readiness: expected, calm.
+        switchedOff:
+          "border-transparent bg-sky-500/10 ring-1 ring-sky-500/30 text-sky-700 dark:text-sky-300",
       },
     },
     defaultVariants: { variant: "default" },
