@@ -23,7 +23,7 @@ import type {
 //
 // Slice 4. Shows:
 //   - Room + hierarchy breadcrumb
-//   - Timing: scheduled / started / completed / duration
+//   - Timing: scheduled / started / powered on / duration (from power-on)
 //   - Phase timeline with the current phase highlighted (or "failed" red)
 //   - Routine reference (link back to the editor)
 //   - Failure reason (if any)
@@ -182,9 +182,10 @@ export default function NightlyRunDetailPage() {
                     )}
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 border-t">
+                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 pt-2 border-t">
                     <TimingBlock label="Scheduled" value={loaded.scheduled_at} />
                     <TimingBlock label="Started" value={loaded.started_at} />
+                    <TimingBlock label="Powered on" value={loaded.powered_on_at} />
                     <TimingBlock
                       label="Duration"
                       value={fmtDuration(loaded.duration_seconds)}

@@ -402,7 +402,13 @@ export default function NightlyRunsPage() {
                         <th scope="col" className="px-4 py-3 font-medium">Room</th>
                         <th scope="col" className="px-4 py-3 font-medium">Scheduled</th>
                         <th scope="col" className="px-4 py-3 font-medium">Status</th>
-                        <th scope="col" className="px-4 py-3 font-medium">Duration</th>
+                        <th
+                          scope="col"
+                          className="px-4 py-3 font-medium"
+                          title="From the morning power-on to ready (or failed). Run now: from its start."
+                        >
+                          Duration
+                        </th>
                         <th scope="col" className="px-4 py-3 font-medium">
                           <span className="sr-only">Details</span>
                         </th>

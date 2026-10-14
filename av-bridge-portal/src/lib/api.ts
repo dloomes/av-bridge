@@ -539,8 +539,9 @@ export interface NightlyRunRow {
   status: NightlyStatus;
   scheduled_at: string;
   started_at?: string;
+  powered_on_at?: string;      // when the morning power-on began
   completed_at?: string;
-  duration_seconds?: number;
+  duration_seconds?: number;   // from power-on (or from the start, for Run now)
   failure_reason?: string;
 }
 
