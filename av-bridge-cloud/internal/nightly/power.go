@@ -177,3 +177,29 @@ func recordPowerStep(ctx context.Context, pool *pgxpool.Pool, runID, customerID,
 		customerID, runID, idx, name, action, expected, act, len(failures) == 0, errArg, started)
 	return err
 }
+
+// asleepPhases are the phases in which devices the run switched off count
+// as switched off: from power-off until the morning warm-up is over.
+var asleepPhases = map[string]bool{"off": true, "scheduled_on": true, "waking": true, "warming": true}
+
+// markSwitchedOff records which devices the run switched off: those whose
+// scheduled power-off succeeded. Their status then reads 'switched_off'
+// and their offline alerts are held back (see devicestatus, ingest).
+func markSwitchedOff(ctx context.Context, pool *pgxpool.Pool, runID string) error {
+	_, err := pool.Exec(ctx, `
+		UPDATE devices d SET switched_off_by_run = $1::uuid
+		  FROM commands c
+		 WHERE c.device_id = d.id
+		   AND c.name = 'power_off'
+		   AND c.status = 'succeeded'
+		   AND c.submitted_by = $2`, runID, scheduleSubmitter(runID))
+	return err
+}
+
+// wakeDevices clears the switched-off mark the run set, once the run is
+// past its warm-up or over.
+func wakeDevices(ctx context.Context, pool *pgxpool.Pool, runID string) error {
+	_, err := pool.Exec(ctx,
+		`UPDATE devices SET switched_off_by_run = NULL WHERE switched_off_by_run = $1::uuid`, runID)
+	return err
+}

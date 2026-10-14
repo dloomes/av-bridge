@@ -22,6 +22,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/dloomes/av-bridge-cloud/internal/db"
+	"github.com/dloomes/av-bridge-cloud/internal/devicestatus"
 )
 
 func TestSchedulerRealPowerDispatch(t *testing.T) {
@@ -83,10 +84,18 @@ func TestSchedulerRealPowerDispatch(t *testing.T) {
 			cust, col, roomID, name, caps)
 	}
 	both := `{"power":{"on":true,"off":true}}`
-	device(failRoom, "Display", both)
+	display := device(failRoom, "Display", both)
 	device(failRoom, "PDU", `{"power":{"on":false,"off":false}}`) // can't power: left out
 	device(failRoom, "Camera", "")                                // no capabilities reported
-	device(okRoom, "Screen", both)
+	screen := device(okRoom, "Screen", both)
+	// What the portal shows: effective status, with a live collector and
+	// the devices reporting offline (as switched-off devices do).
+	exec(`UPDATE collectors SET last_seen_at = now() WHERE id = $1`, col)
+	exec(`UPDATE devices SET latest_status = 'offline', last_seen_at = now() WHERE collector_id = $1`, col)
+	effective := func(dev string) string {
+		return q(`SELECT `+devicestatus.EffectiveStatusSQL+` FROM devices d
+		          LEFT JOIN collectors c ON c.id = d.collector_id WHERE d.id = $1`, dev)
+	}
 
 	clock := time.Date(2030, 1, 7, 19, 1, 0, 0, time.UTC)
 	s := NewScheduler(pool, Config{TickInterval: time.Minute, GraceWindow: 30 * time.Minute, WarmupSeconds: 60}, quiet)
@@ -169,6 +178,14 @@ func TestSchedulerRealPowerDispatch(t *testing.T) {
 	if passed, _, ok := step(okRun, powerOffStepIndex); !ok || !passed {
 		t.Errorf("ok room power-off step: ok=%v passed=%v", ok, passed)
 	}
+	// The screen switched off: it reads switched_off, not offline. The
+	// display refused, so it's just offline.
+	if got := effective(screen); got != "switched_off" {
+		t.Errorf("switched-off screen reads %q, want switched_off", got)
+	}
+	if got := effective(display); got != "offline" {
+		t.Errorf("display whose power-off failed reads %q, want offline", got)
+	}
 
 	// 07:31 next morning — power-on queued.
 	clock = time.Date(2030, 1, 8, 7, 31, 0, 0, time.UTC)
@@ -203,10 +220,17 @@ func TestSchedulerRealPowerDispatch(t *testing.T) {
 	if _, phase, _, _ = runOf(okRoom); phase != "warming" {
 		t.Fatalf("phase %s, want warming", phase)
 	}
+	if got := effective(screen); got != "switched_off" {
+		t.Errorf("during the warm-up the screen reads %q, want switched_off", got)
+	}
 	inPhaseFor(okRun, 31*time.Second)
 	s.tick(ctx)
 	if _, phase, status, _ := runOf(okRoom); phase != "ready" || status != "succeeded" {
 		t.Errorf("ok room: phase %s status %s, want ready / succeeded", phase, status)
+	}
+	// Still switched off through the warm-up; awake once the room is ready.
+	if got := effective(screen); got != "offline" {
+		t.Errorf("after the warm-up the screen reads %q, want offline (it's still not reporting)", got)
 	}
 
 	// A collector that never answers: past the settle timeout the

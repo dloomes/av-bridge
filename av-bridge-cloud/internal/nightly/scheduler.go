@@ -541,6 +541,9 @@ func hasBeenIn(_ string, phaseSince, now time.Time, want time.Duration) bool {
 func (s *Scheduler) setPhase(ctx context.Context, runID, phase string) error {
 	_, err := s.pool.Exec(ctx,
 		`UPDATE nightly_run SET phase = $2, phase_changed_at = now() WHERE id = $1`, runID, phase)
+	if err == nil && !asleepPhases[phase] {
+		err = wakeDevices(ctx, s.pool, runID)
+	}
 	return err
 }
 
@@ -558,6 +561,9 @@ func (s *Scheduler) finish(ctx context.Context, runID, phase, status, reason str
 		   SET phase = $2, status = $3, completed_at = now(), failure_reason = $4
 		 WHERE id = $1
 	`, runID, phase, status, reasonArg)
+	if err == nil {
+		err = wakeDevices(ctx, s.pool, runID)
+	}
 	return err
 }
 
@@ -625,6 +631,11 @@ func (s *Scheduler) settlePower(ctx context.Context, runID, customerID, roomID, 
 	if len(failures) > 0 {
 		s.log.Warn("nightly: some devices didn't power off", "run", runID, "room", roomID,
 			"failures", strings.Join(failures, "; "))
+	}
+	if action == "power_off" {
+		if err := markSwitchedOff(ctx, s.pool, runID); err != nil {
+			s.log.Warn("nightly: marking devices switched off failed", "run", runID, "error", err)
+		}
 	}
 	if err := s.setPhase(ctx, runID, next); err != nil {
 		s.log.Warn("nightly: phase update failed", "run", runID, "error", err)

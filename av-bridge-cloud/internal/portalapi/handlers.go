@@ -151,7 +151,9 @@ func (h *Handler) Status(w http.ResponseWriter, r *http.Request) {
 		Online  int    `json:"online"`
 		Offline int    `json:"offline"`
 		Unknown int    `json:"unknown"`
-		Time    string `json:"time"`
+		// SwitchedOff: switched off for the night by Room Readiness.
+		SwitchedOff int    `json:"switched_off"`
+		Time        string `json:"time"`
 	}
 	var o out
 	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
@@ -166,8 +168,9 @@ func (h *Handler) Status(w http.ResponseWriter, r *http.Request) {
 			  count(*),
 			  count(*) FILTER (WHERE status = 'online'),
 			  count(*) FILTER (WHERE status = 'offline'),
-			  count(*) FILTER (WHERE status = 'unknown')
-			FROM eff`).Scan(&o.Total, &o.Online, &o.Offline, &o.Unknown)
+			  count(*) FILTER (WHERE status = 'unknown'),
+			  count(*) FILTER (WHERE status = 'switched_off')
+			FROM eff`).Scan(&o.Total, &o.Online, &o.Offline, &o.Unknown, &o.SwitchedOff)
 	})
 	if !ok {
 		return
@@ -1264,6 +1267,9 @@ func (h *Handler) HelpdeskOverview(w http.ResponseWriter, r *http.Request) {
 		DevicesOnline   int        `json:"devices_online"`
 		DevicesOffline  int        `json:"devices_offline"`
 		DevicesUnknown  int        `json:"devices_unknown"`
+		// Switched off for the night by Room Readiness: expected, so not
+		// counted as offline.
+		DevicesSwitchedOff int        `json:"devices_switched_off"`
 		AlertsOpen      int        `json:"alerts_open"`
 		AlertsCritical  int        `json:"alerts_critical"`
 		CollectorsTotal int        `json:"collectors_total"`
@@ -1284,6 +1290,7 @@ func (h *Handler) HelpdeskOverview(w http.ResponseWriter, r *http.Request) {
 		  COALESCE(d.online, 0),
 		  COALESCE(d.offline, 0),
 		  COALESCE(d.unknown, 0),
+		  COALESCE(d.switched_off, 0),
 		  COALESCE(a.open, 0),
 		  COALESCE(a.critical, 0),
 		  COALESCE(col.total, 0),
@@ -1294,7 +1301,8 @@ func (h *Handler) HelpdeskOverview(w http.ResponseWriter, r *http.Request) {
 		    COUNT(*)::int AS total,
 		    COUNT(*) FILTER (WHERE eff.status = 'online')::int AS online,
 		    COUNT(*) FILTER (WHERE eff.status = 'offline')::int AS offline,
-		    COUNT(*) FILTER (WHERE eff.status = 'unknown')::int AS unknown
+		    COUNT(*) FILTER (WHERE eff.status = 'unknown')::int AS unknown,
+		    COUNT(*) FILTER (WHERE eff.status = 'switched_off')::int AS switched_off
 		  FROM devices dv
 		  LEFT JOIN collectors dc ON dc.id = dv.collector_id
 		  CROSS JOIN LATERAL (
@@ -1302,6 +1310,11 @@ func (h *Handler) HelpdeskOverview(w http.ResponseWriter, r *http.Request) {
 		      WHEN GREATEST(dc.last_seen_at, dc.serving_seen_at) IS NULL
 		        OR GREATEST(dc.last_seen_at, dc.serving_seen_at) < now() - interval '5 minutes'
 		        THEN 'unknown'
+		      -- Same rule as devicestatus.EffectiveStatusSQL.
+		      WHEN dv.switched_off_by_run IS NOT NULL
+		        AND (dv.latest_status IS DISTINCT FROM 'online'
+		             OR dv.last_seen_at < now() - interval '15 minutes')
+		        THEN 'switched_off'
 		      ELSE COALESCE(dv.latest_status, 'unknown')
 		    END AS status
 		  ) eff
@@ -1330,7 +1343,7 @@ func (h *Handler) HelpdeskOverview(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var it item
 		if err := rows.Scan(&it.ID, &it.Name, &it.EntraTenantID, &it.Slug,
-			&it.DevicesTotal, &it.DevicesOnline, &it.DevicesOffline, &it.DevicesUnknown,
+			&it.DevicesTotal, &it.DevicesOnline, &it.DevicesOffline, &it.DevicesUnknown, &it.DevicesSwitchedOff,
 			&it.AlertsOpen, &it.AlertsCritical,
 			&it.CollectorsTotal, &it.LastBridgeSeen); err != nil {
 			h.log.Error("helpdesk overview scan", "error", err)

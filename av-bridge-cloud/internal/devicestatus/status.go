@@ -34,6 +34,13 @@ const OfflineAfter = 5 * time.Minute
 //      'online' from before the device moved networks / was
 //      unplugged).
 //
+// Switched off for the night: a device Room Readiness switched off
+// (devices.switched_off_by_run, set from power-off to the end of the
+// morning warm-up) reads 'switched_off' rather than offline, unless it
+// still reports online (some displays stay reachable in standby). The
+// collector check still comes first: if we can't see the collector, we
+// don't know.
+//
 // Warm standby: when a standby is serving the devices, the primary row's
 // serving_seen_at is stamped on each of its polls, so the freshness check
 // uses the later of that and the primary's own last_seen_at — devices
@@ -50,6 +57,10 @@ const EffectiveStatusSQL = `CASE
   WHEN GREATEST(c.last_seen_at, c.serving_seen_at) IS NULL
     OR GREATEST(c.last_seen_at, c.serving_seen_at) < now() - interval '5 minutes'
     THEN 'unknown'
+  WHEN d.switched_off_by_run IS NOT NULL
+    AND (d.latest_status IS DISTINCT FROM 'online'
+         OR d.last_seen_at < now() - interval '15 minutes')
+    THEN 'switched_off'
   WHEN d.last_seen_at IS NOT NULL
     AND d.last_seen_at < now() - interval '15 minutes'
     THEN 'offline'

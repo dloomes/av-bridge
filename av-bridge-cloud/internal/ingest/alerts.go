@@ -54,6 +54,20 @@ func handleAlertEvent(ctx context.Context, tx pgx.Tx, customerID, deviceID strin
 		return alertOutcome{}, err
 	}
 
+	if alertKey == "device_offline" {
+		asleep, err := switchedOffOvernight(ctx, tx, deviceID)
+		if err != nil {
+			return alertOutcome{}, err
+		}
+		if asleep {
+			// Expected: Room Readiness switched it off. The event is still
+			// stored; just no alert. If it doesn't come back, the run says
+			// so, and the Collector's next repeat of this alert (every 30
+			// minutes) opens it once the night's cycle is over.
+			return alertOutcome{}, nil
+		}
+	}
+
 	severity, _ := e.Payload["severity"].(string)
 	if severity == "" {
 		severity = "warning"
@@ -119,4 +133,19 @@ func handleAlertEvent(ctx context.Context, tx pgx.Tx, customerID, deviceID strin
 			Payload:    e.Payload,
 		},
 	}, nil
+}
+
+// switchedOffOvernight reports whether Room Readiness has this device
+// switched off: it accepted tonight's scheduled power-off and the morning
+// warm-up isn't over (the scheduler sets and clears switched_off_by_run).
+// Devices that weren't switched off (no power control, or the power-off
+// failed) still alert as usual.
+func switchedOffOvernight(ctx context.Context, tx pgx.Tx, deviceID string) (bool, error) {
+	var asleep bool
+	err := tx.QueryRow(ctx,
+		`SELECT switched_off_by_run IS NOT NULL FROM devices WHERE id = $1`, deviceID).Scan(&asleep)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	return asleep, err
 }
