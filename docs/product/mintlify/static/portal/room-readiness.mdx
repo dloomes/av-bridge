@@ -13,13 +13,15 @@ Open **Room Readiness** in the sidebar. You need **View Room Readiness** to see 
 
 For each room, on each scheduled day:
 
-1. **Power off** at the power-off time.
+1. **Power off** at the power-off time: every device in the room that supports it, such as displays, is switched off.
 2. **Power on** at the power-on time.
 3. **Warm up**: a short pause while devices boot and report in.
 4. **Test**: the room's test routine runs, if it has one (see [Test routines](/portal/test-routines)).
 5. **Ready** or **Failed**: a room is ready when every step passed.
 
-A room with no routine is power-cycled only, and is ready once it powers back on.
+A room with no routine is power-cycled only, and is ready once it powers back on. If a device doesn't switch back on, the room fails, with the device named. A device that doesn't switch off is recorded in the run, but the night carries on.
+
+Devices without power control, such as PDUs and devices monitored by ping, are left as they are.
 
 ## Set the schedule
 
@@ -63,7 +65,7 @@ Select **Run now** on a room to run its test routine straight away, without the 
 
 Select **View runs** for the run history: one row per room per night, with when it was scheduled, its status and how long it took. Filter by date, room and status.
 
-Select a run for its details: how far it got, and every routine step with what it checked, on which device, what it expected, what it found and any error.
+Select a run for its details: how far it got, which devices switched off and back on, and every routine step with what it checked, on which device, what it expected, what it found and any error.
 
 | Status | Meaning |
 |---|---|

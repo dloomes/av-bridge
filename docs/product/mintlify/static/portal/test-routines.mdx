@@ -27,7 +27,7 @@ The room picker above the step list is only a preview: it greys out step types t
 |---|---|---|
 | **Section** | A heading to group the steps that follow. | Always |
 | **Wait** | Pauses for a number of seconds, for example while a codec boots. | Always |
-| **Power on** / **Power off** | Sends power on or off to the target devices. | Every device accepts the command |
+| **Power on** / **Power off** | Sends power on or off to the target devices that support it; others, such as PDUs, are skipped. | Every device accepts the command |
 | **Device command** | Sends a named command, such as `dial` or `recall_preset`, with optional parameters. The commands offered are the ones the target devices support. | Every device completes the command |
 | **Expect status** | Checks the target devices report online, or offline. | Every device has that status |
 | **Check metric** | Compares a reading, such as a microphone input level, against a threshold: greater than, at least, less than, at most or equal to. Uses the latest reading from the last few seconds (the **Sample window**, 30 by default). | Every device's reading meets the threshold |
