@@ -27,6 +27,9 @@ export interface DeviceSummary {
   collector_local_url?: string;
   address?: string;
   status: DeviceStatus;
+  // The device's own power state as its adapter reports it (e.g. Sony
+  // "active" / "standby"), when it reports one. See PowerBadge.
+  power_status?: string;
   tags?: Record<string, string>;
   // Adapter-declared capabilities. Populated by the ingest handler
   // from the bridge's per-device Capabilities() output. Used by the

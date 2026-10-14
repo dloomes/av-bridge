@@ -17,6 +17,7 @@ import {
   X,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { PowerBadge } from "@/components/power-badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -455,6 +456,12 @@ export default function DevicesPage() {
                               <StatusIcon aria-hidden="true" className="h-3 w-3" />
                               {tone.label}
                             </Badge>
+                            <PowerBadge
+                              protocol={d.protocol}
+                              powerStatus={d.power_status}
+                              status={d.status}
+                              className="ml-1.5 uppercase text-[10px]"
+                            />
                           </td>
                           <td className="px-4 py-3.5 align-top text-right">
                             <Link href={`/devices/${d.id}`}>
