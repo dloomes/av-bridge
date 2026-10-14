@@ -66,6 +66,9 @@ function fmtDuration(seconds: number | undefined): string {
   return s === 0 ? `${m}m` : `${m}m ${s}s`;
 }
 
+// How often a running run is refreshed.
+const RUN_REFRESH_MS = 3000;
+
 export default function NightlyRunDetailPage() {
   const params = useParams<{ id: string }>();
   const runID = params.id;
@@ -73,17 +76,32 @@ export default function NightlyRunDetailPage() {
   const [loaded, setLoaded] = useState<NightlyRunDetail | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
+  // Load the run, and keep refreshing it every few seconds while it's
+  // still going, so steps and the final status appear without a reload.
+  // Stops once the run has finished.
   useEffect(() => {
     const ctrl = new AbortController();
-    api
-      .getNightlyRun(runID, ctrl.signal)
-      .then((r) => {
-        if (!ctrl.signal.aborted) setLoaded(r);
-      })
-      .catch((e) => {
-        if (!ctrl.signal.aborted) setLoadError((e as Error).message);
-      });
-    return () => ctrl.abort();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const load = async () => {
+      try {
+        const r = await api.getNightlyRun(runID, ctrl.signal);
+        if (ctrl.signal.aborted) return;
+        setLoaded(r);
+        setLoadError(null);
+        if (r.status === "pending" || r.status === "in_progress") {
+          timer = setTimeout(load, RUN_REFRESH_MS);
+        }
+      } catch (e) {
+        if (ctrl.signal.aborted) return;
+        setLoadError((e as Error).message);
+        timer = setTimeout(load, RUN_REFRESH_MS); // try again; may be a blip
+      }
+    };
+    void load();
+    return () => {
+      ctrl.abort();
+      if (timer) clearTimeout(timer);
+    };
   }, [runID]);
 
   return (
