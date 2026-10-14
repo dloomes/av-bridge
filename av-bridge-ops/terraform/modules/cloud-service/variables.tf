@@ -152,6 +152,12 @@ variable "nightly_exec_enabled" {
   default = true
 }
 
+variable "nightly_dry_run" {
+  description = "Room Readiness only logs the power and device commands it would send (true), or sends them (false)."
+  type        = bool
+  default     = true
+}
+
 variable "log_retention_days" {
   type    = number
   default = 30

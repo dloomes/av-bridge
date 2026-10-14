@@ -136,6 +136,11 @@ module "cloud_service" {
   memory        = 1024
   desired_count = 1
 
+  # Room Readiness sends real power commands: rooms with the nightly
+  # schedule enabled are switched off and on at their scheduled times.
+  # true = the scheduler only logs what it would send.
+  nightly_dry_run = false
+
   db_master_secret_arn = module.db.master_secret_arn
   db_host              = module.db.address
   db_port              = module.db.port

@@ -162,6 +162,7 @@ resource "aws_ecs_task_definition" "this" {
         { name = "VENDOR_ADMIN_EMAIL", value = var.vendor_admin_email },
         { name = "VENDOR_ADMIN_NAME", value = var.vendor_admin_name },
         { name = "NIGHTLY_EXEC_ENABLED", value = tostring(var.nightly_exec_enabled) },
+        { name = "NIGHTLY_DRY_RUN", value = tostring(var.nightly_dry_run) },
       ],
       # Origin Collectors are told to use for /ingest + /bridge/*. Without
       # it the install script bakes in whichever host served it — the
