@@ -583,6 +583,20 @@ func (e *Executor) stepPowerAction(ctx context.Context, run RunContext, s step, 
 	if err != nil {
 		return failedResult(started, "resolve target: "+err.Error())
 	}
+	// Only devices that can do it: a PDU or ping probe in a "whole room"
+	// target would just fail the command, and the step with it.
+	if devices, err = powerCapableIn(ctx, e.pool, devices, action); err != nil {
+		return failedResult(started, "check power support: "+err.Error())
+	}
+	if len(devices) == 0 {
+		return stepResult{
+			Passed:    true,
+			Expected:  map[string]any{"action": action, "target_devices": 0},
+			Actual:    map[string]any{"dispatched": false, "devices": 0, "note": "no device in the target supports " + action},
+			StartedAt: started,
+			EndedAt:   time.Now(),
+		}
+	}
 	if e.cfg.DryRun && !run.ForceRealDispatch {
 		for _, d := range devices {
 			e.log.Info("[dry-run] step:"+action, "run", run.RunID, "device", d.id, "device_name", d.name)

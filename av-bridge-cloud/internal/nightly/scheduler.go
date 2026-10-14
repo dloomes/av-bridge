@@ -2,12 +2,11 @@
 // power-off / power-on cycles per room and (eventually) executing test
 // routines after warm-up.
 //
-// Slice 3 (this file): the scheduler + state-machine skeleton. Dispatches
-// power commands in DRY-RUN mode by default — logs "would send X to
-// device Y" but doesn't hit the device or its adapter. Real command
-// dispatch is a follow-up slice; the split lets us prove timing +
-// state-machine correctness against real customer data first, without
-// risking a stray reboot on someone's boardroom display.
+// The scheduler queues power-off and power-on commands for each room's
+// power-capable devices through the command queue, waits for them to
+// finish, and records the outcome as steps of the run. With DryRun (the
+// default) it only logs what it would send, and the state machine moves
+// on as if every command had succeeded.
 //
 // Design reference: docs/nightly-lifecycle-spec.md
 //
@@ -20,8 +19,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -173,11 +174,11 @@ func (s *Scheduler) collectEnabledRooms(ctx context.Context) ([]roomView, error)
 	var out []roomView
 	for rows.Next() {
 		var (
-			rv                     roomView
-			off, on                time.Time
-			days                   []int32
-			excludedUntil          *time.Time
-			routineID              *string
+			rv            roomView
+			off, on       time.Time
+			days          []int32
+			excludedUntil *time.Time
+			routineID     *string
 		)
 		if err := rows.Scan(
 			&rv.customerID, &rv.roomID, &rv.roomName,
@@ -224,7 +225,7 @@ func (s *Scheduler) createDueRuns(ctx context.Context) error {
 		if rv.excludedUntil != nil {
 			// excluded_until is inclusive: today or earlier means still
 			// excluded. Compare dates (not instants).
-			if !nowLocal.Truncate(24*time.Hour).After(rv.excludedUntil.Truncate(24 * time.Hour)) {
+			if !nowLocal.Truncate(24 * time.Hour).After(rv.excludedUntil.Truncate(24 * time.Hour)) {
 				continue
 			}
 		}
@@ -263,18 +264,20 @@ func (s *Scheduler) createDueRuns(ctx context.Context) error {
 		if rv.testRoutineID != nil && *rv.testRoutineID != "" {
 			routineArg = *rv.testRoutineID
 		}
-		res, err := s.pool.Exec(ctx, `
-			INSERT INTO nightly_run (customer_id, room_id, routine_id, scheduled_at, phase, status, started_at)
-			VALUES ($1, $2, $3, $4, 'scheduled_off', 'in_progress', now())
+		var runID string
+		err = s.pool.QueryRow(ctx, `
+			INSERT INTO nightly_run (customer_id, room_id, routine_id, scheduled_at, phase, status, started_at, phase_changed_at)
+			VALUES ($1, $2, $3, $4, 'scheduled_off', 'in_progress', now(), now())
 			ON CONFLICT (room_id, scheduled_at) DO NOTHING
-		`, rv.customerID, rv.roomID, routineArg, scheduledUTC)
+			RETURNING id::text
+		`, rv.customerID, rv.roomID, routineArg, scheduledUTC).Scan(&runID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			continue // dedup — run already existed for this cycle
+		}
 		if err != nil {
 			s.log.Warn("nightly: insert run failed",
 				"room", rv.roomID, "scheduled_at", scheduledUTC, "error", err)
 			continue
-		}
-		if res.RowsAffected() == 0 {
-			continue // dedup — run already existed for this cycle
 		}
 		s.log.Info("nightly: new run created",
 			"customer", rv.customerID, "room", rv.roomID, "room_name", rv.roomName,
@@ -283,10 +286,9 @@ func (s *Scheduler) createDueRuns(ctx context.Context) error {
 			"dry_run", s.cfg.DryRun,
 		)
 
-		// Dispatch power-off commands. In dry-run we just log; in real
-		// mode this'd enqueue commands via the command queue and let
-		// the runner poll for completion.
-		s.dispatchPower(ctx, rv, "power_off")
+		// Queue the power-off commands; advanceRuns moves the run on once
+		// they've finished (in dry-run, straight away).
+		s.dispatchPowerByRoom(ctx, runID, rv.customerID, rv.roomID, rv.roomName, "power_off")
 	}
 	return nil
 }
@@ -294,15 +296,15 @@ func (s *Scheduler) createDueRuns(ctx context.Context) error {
 // advanceRuns walks every in-progress run through its state machine.
 // The transition logic is:
 //
-//   scheduled_off  — commands dispatched, awaiting device confirmation
-//                    (in dry-run: instant → off)
-//   off            — powered off; wait until power_on time
-//   scheduled_on   — commands dispatched, awaiting confirmation
-//                    (in dry-run: instant → waking)
-//   waking         — waiting for warm-up half (in dry-run: instant → warming)
-//   warming        — final warm-up window before ready
-//   ready          — terminal success
-//   failed         — terminal failure
+//	scheduled_off  — commands dispatched, awaiting device confirmation
+//	                 (in dry-run: instant → off)
+//	off            — powered off; wait until power_on time
+//	scheduled_on   — commands dispatched, awaiting confirmation
+//	                 (in dry-run: instant → waking)
+//	waking         — waiting for warm-up half (in dry-run: instant → warming)
+//	warming        — final warm-up window before ready
+//	ready          — terminal success
+//	failed         — terminal failure
 func (s *Scheduler) advanceRuns(ctx context.Context) error {
 	rows, err := s.pool.Query(ctx, `
 		SELECT nr.id::text, nr.customer_id::text, nr.room_id::text, r.name,
@@ -310,7 +312,8 @@ func (s *Scheduler) advanceRuns(ctx context.Context) error {
 		       COALESCE(rnc.power_on_time, ns.power_on_time) AS eff_power_on,
 		       COALESCE(rnc.days_of_week,  ns.days_of_week)  AS eff_days,
 		       ns.timezone,
-		       nr.routine_id::text
+		       nr.routine_id::text,
+		       COALESCE(nr.phase_changed_at, nr.started_at, nr.created_at)
 		  FROM nightly_run nr
 		  JOIN rooms r                       ON r.id = nr.room_id
 		  JOIN nightly_schedule ns           ON ns.customer_id = nr.customer_id
@@ -324,6 +327,7 @@ func (s *Scheduler) advanceRuns(ctx context.Context) error {
 		id, customerID, roomID, roomName string
 		phase                            string
 		scheduledAt, startedAt           time.Time
+		phaseSince                       time.Time // when the run entered its current phase
 		powerOnTime                      time.Duration
 		daysOfWeek                       []int
 		timezone                         string
@@ -332,17 +336,17 @@ func (s *Scheduler) advanceRuns(ctx context.Context) error {
 	var runs []liveRun
 	for rows.Next() {
 		var (
-			r          liveRun
-			startedAt  *time.Time
-			powerOn    time.Time
-			days       []int32
-			routineID  *string
+			r         liveRun
+			startedAt *time.Time
+			powerOn   time.Time
+			days      []int32
+			routineID *string
 		)
 		if err := rows.Scan(
 			&r.id, &r.customerID, &r.roomID, &r.roomName,
 			&r.phase, &r.scheduledAt, &startedAt,
 			&powerOn, &days, &r.timezone,
-			&routineID,
+			&routineID, &r.phaseSince,
 		); err != nil {
 			rows.Close()
 			return err
@@ -362,7 +366,12 @@ func (s *Scheduler) advanceRuns(ctx context.Context) error {
 
 	nowUTC := s.wallNow().UTC()
 	for _, r := range runs {
-		next, reason, ok := s.decideTransition(r.phase, r.scheduledAt, r.startedAt,
+		// Real dispatch: a power phase ends when its commands have finished.
+		if !s.cfg.DryRun && (r.phase == "scheduled_off" || r.phase == "scheduled_on") {
+			s.settlePower(ctx, r.id, r.customerID, r.roomID, r.phase, r.phaseSince)
+			continue
+		}
+		next, reason, ok := s.decideTransition(r.phase, r.scheduledAt, r.phaseSince,
 			r.powerOnTime, r.daysOfWeek, r.timezone, nowUTC)
 		if !ok {
 			continue // no transition due yet
@@ -384,7 +393,7 @@ func (s *Scheduler) advanceRuns(ctx context.Context) error {
 				s.log.Warn("nightly: phase update failed", "run", r.id, "error", err)
 				continue
 			}
-			s.dispatchPowerByRoom(ctx, r.customerID, r.roomID, r.roomName, "power_on")
+			s.dispatchPowerByRoom(ctx, r.id, r.customerID, r.roomID, r.roomName, "power_on")
 		case "waking":
 			s.log.Debug("nightly: room waking", "run", r.id, "room", r.roomID)
 			if err := s.setPhase(ctx, r.id, next); err != nil {
@@ -444,7 +453,7 @@ func (s *Scheduler) advanceRuns(ctx context.Context) error {
 // the run stays in its current phase.
 func (s *Scheduler) decideTransition(
 	phase string,
-	scheduledAt, startedAt time.Time,
+	scheduledAt, phaseSince time.Time,
 	powerOnTime time.Duration,
 	daysOfWeek []int,
 	timezone string,
@@ -454,13 +463,10 @@ func (s *Scheduler) decideTransition(
 	case "scheduled_off":
 		// In dry-run, power commands complete instantly → the run rolls
 		// from scheduled_off to off on the very next tick after creation.
-		// In real mode this transition would wait for command queue acks.
+		// With real dispatch advanceRuns settles this phase (settlePower).
 		if s.cfg.DryRun {
 			return "off", "dry-run: power-off dispatched instantly", true
 		}
-		// Non-dry-run: wait for the command queue to confirm. For slice 3
-		// we don't have that wiring yet, so leave the run in scheduled_off
-		// (it'll never advance). Follow-up slice will read command results.
 		return "", "", false
 
 	case "off":
@@ -502,7 +508,7 @@ func (s *Scheduler) decideTransition(
 		if s.cfg.WarmupSeconds <= 0 {
 			return "warming", "no warm-up configured", true
 		}
-		if !hasBeenIn(phase, startedAt, nowUTC, time.Duration(s.cfg.WarmupSeconds/2)*time.Second) {
+		if !hasBeenIn(phase, phaseSince, nowUTC, time.Duration(s.cfg.WarmupSeconds/2)*time.Second) {
 			return "", "", false
 		}
 		return "warming", fmt.Sprintf("waking finished (%ds)", s.cfg.WarmupSeconds/2), true
@@ -513,7 +519,8 @@ func (s *Scheduler) decideTransition(
 		if s.cfg.WarmupSeconds <= 0 {
 			return "ready", "no warm-up configured", true
 		}
-		if !hasBeenIn(phase, startedAt, nowUTC, time.Duration(s.cfg.WarmupSeconds)*time.Second) {
+		rest := s.cfg.WarmupSeconds - s.cfg.WarmupSeconds/2
+		if !hasBeenIn(phase, phaseSince, nowUTC, time.Duration(rest)*time.Second) {
 			return "", "", false
 		}
 		return "ready", fmt.Sprintf("warm-up finished (%ds)", s.cfg.WarmupSeconds), true
@@ -521,22 +528,19 @@ func (s *Scheduler) decideTransition(
 	return "", "", false
 }
 
-// hasBeenIn is a rough proxy: we don't have per-phase timestamps, only
-// startedAt (when the run began). For slice 3 we treat "time-in-phase" as
-// "time since the run started", so warm-up starts at power-off time. Not
-// perfectly accurate but never fires early. A follow-up slice will add
-// per-phase timestamps for finer-grained gating.
-func hasBeenIn(_ string, startedAt, now time.Time, want time.Duration) bool {
-	if startedAt.IsZero() {
+// hasBeenIn reports whether the run has been in its current phase (since
+// phaseSince) for at least want.
+func hasBeenIn(_ string, phaseSince, now time.Time, want time.Duration) bool {
+	if phaseSince.IsZero() {
 		return false
 	}
-	return now.Sub(startedAt) >= want
+	return now.Sub(phaseSince) >= want
 }
 
 // setPhase moves a run to a new phase while keeping status = in_progress.
 func (s *Scheduler) setPhase(ctx context.Context, runID, phase string) error {
 	_, err := s.pool.Exec(ctx,
-		`UPDATE nightly_run SET phase = $2 WHERE id = $1`, runID, phase)
+		`UPDATE nightly_run SET phase = $2, phase_changed_at = now() WHERE id = $1`, runID, phase)
 	return err
 }
 
@@ -557,65 +561,74 @@ func (s *Scheduler) finish(ctx context.Context, runID, phase, status, reason str
 	return err
 }
 
-// dispatchPower is the seam for real command dispatch. In slice 3 it's
-// dry-run: log the intended action and move on. Follow-up slice replaces
-// the log line with an INSERT into the command queue.
-func (s *Scheduler) dispatchPower(ctx context.Context, rv roomView, action string) {
-	s.dispatchPowerByRoom(ctx, rv.customerID, rv.roomID, rv.roomName, action)
+// dispatchPowerByRoom queues the power action for every device in the
+// room that supports it. In dry-run it only logs what it would send. A
+// room with no capable devices still moves on: there's nothing to switch.
+func (s *Scheduler) dispatchPowerByRoom(ctx context.Context, runID, customerID, roomID, roomName, action string) {
+	if s.cfg.DryRun {
+		all, err := queryDevices(ctx, s.pool, roomID, ``, nil)
+		if err == nil {
+			all, err = powerCapableIn(ctx, s.pool, all, action)
+		}
+		if err != nil {
+			s.log.Warn("nightly: dispatch device lookup failed", "room", roomID, "error", err)
+			return
+		}
+		for _, d := range all {
+			s.log.Info("[dry-run] "+action, "device", d.id, "device_name", d.name, "room", roomName)
+		}
+		return
+	}
+	n, err := submitRoomPower(ctx, s.pool, runID, customerID, roomID, action)
+	if err != nil {
+		// Nothing was queued (one transaction). The phase settles with no
+		// commands and moves on; the error is in the log.
+		s.log.Warn("nightly: power dispatch failed",
+			"run", runID, "room", roomID, "action", action, "error", err)
+		return
+	}
+	s.log.Info("nightly: power dispatched",
+		"run", runID, "room", roomName, "action", action, "devices", n)
 }
 
-func (s *Scheduler) dispatchPowerByRoom(ctx context.Context, customerID, roomID, roomName, action string) {
-	// Look up which devices in this room support the power action. Rooms
-	// with zero capable devices still succeed the phase — the "room" is
-	// notionally "powered off" even if we can't literally turn everything
-	// off. That's the honest thing to log; alternatives lead to false
-	// failure reports.
-	rows, err := s.pool.Query(ctx, `
-		SELECT id::text, name, capabilities->>$2 AS supported
-		  FROM devices
-		 WHERE customer_id = $1
-		   AND room_id     = $3
-		   AND deleted_at IS NULL
-	`, customerID, action, roomID)
+// settlePower moves a run out of scheduled_off / scheduled_on once that
+// phase's power commands have finished, recording how they went as a step.
+// A failed power-off is recorded but doesn't stop the night: the room can
+// still be ready in the morning. A failed power-on fails the run, because
+// the room isn't ready.
+func (s *Scheduler) settlePower(ctx context.Context, runID, customerID, roomID, phase string, since time.Time) {
+	action, next := "power_off", "off"
+	if phase == "scheduled_on" {
+		action, next = "power_on", "waking"
+	}
+	done, failures, actual, err := powerOutcome(ctx, s.pool, runID, action)
 	if err != nil {
-		s.log.Warn("nightly: dispatch device lookup failed",
-			"customer", customerID, "room", roomID, "error", err)
+		s.log.Warn("nightly: reading power results failed", "run", runID, "error", err)
 		return
 	}
-	defer rows.Close()
-	var total, capable int
-	for rows.Next() {
-		var (
-			id, name string
-			supRaw   *string
-		)
-		if err := rows.Scan(&id, &name, &supRaw); err != nil {
-			continue
-		}
-		total++
-		if supRaw == nil {
-			// Adapter hasn't declared capabilities yet — treat as "we
-			// don't know if it supports this", don't try. Once the
-			// adapter capability slice lands, this branch will shrink.
-			continue
-		}
-		capable++
-		tag := "[dry-run]"
-		if !s.cfg.DryRun {
-			tag = "[dispatch]"
-		}
-		s.log.Info(tag+" "+action, "device", id, "device_name", name, "room", roomName)
-		// Real command insert lives here in the follow-up slice:
-		//   INSERT INTO commands (customer_id, device_id, action, status) VALUES (...)
-	}
-	if err := rows.Err(); err != nil {
-		s.log.Warn("nightly: dispatch scan failed", "error", err)
+	if !done {
 		return
 	}
-	s.log.Info("nightly: dispatch summary",
-		"action", action, "room", roomName,
-		"total_devices", total, "capable_devices", capable,
-		"dry_run", s.cfg.DryRun)
+	if actual["devices"] != 0 {
+		if err := recordPowerStep(ctx, s.pool, runID, customerID, action, failures, actual, since); err != nil {
+			s.log.Warn("nightly: recording power step failed", "run", runID, "error", err)
+		}
+	}
+	if action == "power_on" && len(failures) > 0 {
+		reason := "power-on failed: " + strings.Join(failures, "; ")
+		s.log.Warn("nightly: run failed", "run", runID, "room", roomID, "reason", reason)
+		if err := s.finish(ctx, runID, "failed", "failed", reason); err != nil {
+			s.log.Warn("nightly: finish failed", "run", runID, "error", err)
+		}
+		return
+	}
+	if len(failures) > 0 {
+		s.log.Warn("nightly: some devices didn't power off", "run", runID, "room", roomID,
+			"failures", strings.Join(failures, "; "))
+	}
+	if err := s.setPhase(ctx, runID, next); err != nil {
+		s.log.Warn("nightly: phase update failed", "run", runID, "error", err)
+	}
 }
 
 // ── helpers ────────────────────────────────────────────────────────────
@@ -674,15 +687,15 @@ func int32sToIntSlice(xs []int32) []int {
 // come back on.
 //
 // Two cases:
-//   1. Power-on time falls later on the same day as power-off (unusual in
-//      prod — typical is 19:00 off / 07:30 on next morning — but valid,
-//      and essential for testing). Return the same-day instant regardless
-//      of whether today is in daysOfWeek: it's part of the cycle we
-//      already committed to.
-//   2. Same-day power-on time has already passed (the overnight case).
-//      Walk forward day-by-day until we hit one in daysOfWeek. That
-//      spans weekends correctly (Fri 19:00 off → Mon 07:30 on when
-//      daysOfWeek = Mon-Fri).
+//  1. Power-on time falls later on the same day as power-off (unusual in
+//     prod — typical is 19:00 off / 07:30 on next morning — but valid,
+//     and essential for testing). Return the same-day instant regardless
+//     of whether today is in daysOfWeek: it's part of the cycle we
+//     already committed to.
+//  2. Same-day power-on time has already passed (the overnight case).
+//     Walk forward day-by-day until we hit one in daysOfWeek. That
+//     spans weekends correctly (Fri 19:00 off → Mon 07:30 on when
+//     daysOfWeek = Mon-Fri).
 //
 // If daysOfWeek is empty (invalid config but don't panic), fall back to
 // the next calendar day.
