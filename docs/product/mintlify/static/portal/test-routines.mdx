@@ -1,19 +1,19 @@
 ---
 title: "Test routines"
 sidebarTitle: "Test routines"
-description: "Build the checks Room Readiness runs after power-on to prove a room works."
+description: "Build the checks Room Readiness runs to prove a room works."
 icon: "list-check"
 ---
 
-A test routine is a list of steps that runs after a room powers on each morning: power devices on, wait for them to boot, check they're online, check a reading such as a microphone level, send a command such as dialling a test call. If every step passes, the room is ready.
+A test routine is a list of steps that a readiness check runs in a room at its set time each morning: power devices on, wait for them to boot, check they're online, check a reading such as a microphone level, send a command such as dialling a test call. If every step passes, the room is ready.
 
-One routine can serve many rooms. Set a default for every room in [Room Readiness](/portal/room-readiness), and give particular rooms their own with **Customise**.
+One routine can serve many rooms. Set the default on the **Readiness checks** tab of [Room Readiness](/portal/room-readiness#readiness-checks), and give particular rooms their own with **Customise**.
 
 You need **Manage Room Readiness** to create or change routines.
 
 ## Create a routine
 
-1. In **Room Readiness**, select **Manage routines**.
+1. In **Room Readiness**, open the **Readiness checks** tab and select **Manage routines**.
 2. Select **Blank routine**, or **From standard template** for a worked example that powers the room on, dials a test call from the codec, checks the microphones hear the returning audio, then hangs up. Edit its SIP address, and the DSP reading and preset command to match the names set up on your DSP.
 3. Give it a **Name** and a one-line **Description**.
 4. Add steps from the list on the right, then fill in each one. Drag steps to reorder them.

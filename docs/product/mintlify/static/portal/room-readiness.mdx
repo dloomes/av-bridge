@@ -1,93 +1,117 @@
 ---
 title: "Room Readiness"
 sidebarTitle: "Room Readiness"
-description: "Power rooms down overnight, bring them back up before the day starts, and prove each one is ready."
+description: "Switch rooms off overnight, and prove each one is ready before the day starts."
 icon: "moon"
 ---
 
-Room Readiness powers your rooms off each evening and back on each morning. After power-on it can run a **test routine** that checks the room actually works: the codec is online, the microphones hear audio, the display came up. Each morning you get a digest of how every room did, so problems are found before the first meeting rather than during it.
+Room Readiness does two separate jobs. Use either, or both:
 
-Open **Room Readiness** in the sidebar. You need **View Room Readiness** to see it, and **Manage Room Readiness** to change anything.
+- **Power schedule** switches your rooms off each evening and back on each morning, saving energy and giving the equipment a daily restart.
+- **Readiness checks** run a **test routine** in each room at a set time, to prove it actually works: the displays are on, the codec is online, the microphones hear audio. Problems are found before the first meeting rather than during it.
 
-## How a night runs
+A room can have either, both or neither. Each morning you get one digest covering both.
+
+Open **Room Readiness** in the sidebar. It has three tabs: **Power schedule**, **Readiness checks** and **Settings**. You need **View Room Readiness** to see it, and **Manage Room Readiness** to change anything.
+
+## Power schedule
+
+### How a night runs
 
 For each room, on each scheduled day:
 
 1. **Power off** at the power-off time: every device in the room that supports it, such as displays, is switched off.
 2. **Power on** at the power-on time.
 3. **Warm up**: a short pause while devices boot and report in.
-4. **Test**: the room's test routine runs, if it has one (see [Test routines](/portal/test-routines)).
-5. **Ready** or **Failed**: a room is ready when every step passed.
+4. **Ready** or **Failed**: the room is ready once every device has switched back on.
 
-A room with no routine is power-cycled only, and is ready once it powers back on. If a device doesn't switch back on, the room fails, with the device named. A device that doesn't switch off is recorded in the run, but the night carries on.
+If a device doesn't switch back on, the room fails, with the device named. A device that doesn't switch off is recorded in the run, but the night carries on. Devices without power control, such as PDUs and devices monitored by ping, are left as they are.
 
-Devices without power control, such as PDUs and devices monitored by ping, are left as they are.
-
-### Overnight status and alerts
-
-A device that Room Readiness has switched off shows as **Switched off**, not offline, from power-off until the morning warm-up is over. A device that stays reachable in standby keeps showing **Online**.
-
-It also doesn't raise an offline alert while the room is powered down, or during the morning warm-up. If it's still offline after the warm-up, it alerts as usual, within 30 minutes, and the run shows which device didn't come back. Devices that weren't switched off, including any whose power-off failed, alert overnight as normal.
-
-## Set the schedule
-
-The top of the page holds the schedule every room follows unless you customise it.
+### Set the schedule
 
 | Setting | What it does |
 |---|---|
-| **Enable** | Turns the nightly cycle on for every room. Off until you switch it on, so you can set everything up first. |
-| **Power off at** / **Power on at** | The times, in the timezone below: for example off at 19:00 and back on at 07:30 the next morning. |
+| **Enable** | Turns the power schedule on for every room. Off until you switch it on, so you can set everything up first. |
+| **Power off at** / **Power on at** | For example off at 19:00 and back on at 07:30 the next morning, in the timezone on the Settings tab. |
 | **Days** | The days the cycle runs. On other days rooms stay on overnight. |
-| **Timezone** | The timezone the times are in. |
-| **Assigned routine** | The default test routine. Leave it as none to power-cycle only. |
-| **Helpdesk email** | Copies the morning digest to your helpdesk, so incidents are picked up without anyone forwarding them. Optional. |
-| **Keep detailed step results for (days)** | How long each step's result is kept. At least 30 days. The pass or fail of each run is kept for good. |
 
 Select **Save changes** when you're done.
 
-## Customise a room
+### Customise a room
 
-The rooms table lists every room by building, with the times it runs and the test routine it uses. A room's own routine is shown in darker text than the default.
+The rooms table lists every room by building, with the times it's switched off and on. Select **Customise** on a room and tick **Customise** next to **Power off at**, **Power on at** or **Days of week** to give it its own; leave a field unticked to follow the default.
 
-Select **Customise** on a room to give it its own settings. Tick **Customise** next to any of these to override the default for that room; leave it unticked to keep following the default:
-
-- **Power off at** and **Power on at**, for a room used later or earlier than the rest;
-- **Days of week**, for a room used at weekends;
-- **Test routine**, for a room that needs different checks, such as a video-conferencing room with a codec to dial out from.
-
-You can also **exclude** a room up to and including a date, with a reason such as planned maintenance or a device awaiting replacement. An excluded room isn't powered down or tested, and has no runs for those nights.
+You can also **exclude** a room up to and including a date, with a reason such as planned maintenance or a device awaiting replacement. An excluded room is neither switched off nor checked, and has no runs for those days.
 
 Customised rooms show **Customised**. Select **Reset** to return a room to the defaults.
 
 ### Defer tonight
 
-If a room is in use this evening, select **Defer tonight**. The room skips tonight's power-down and returns to its schedule tomorrow. You need **Defer tonight's power-down**, which operators have by default.
+If a room is in use this evening, select **Defer tonight**. The room skips tonight's power-down and returns to its schedule tomorrow; its readiness check the next morning is unaffected. You need **Defer tonight's power-down**, which operators have by default.
+
+### Overnight status and alerts
+
+A device that the power schedule has switched off shows as **Switched off**, not offline, from power-off until the morning warm-up is over. A device that stays reachable in standby keeps showing **Online**.
+
+It also doesn't raise an offline alert while the room is powered down, or during the morning warm-up. If it's still offline after the warm-up, it alerts as usual, within 30 minutes, and the run shows which device didn't come back. Devices that weren't switched off, including any whose power-off failed, alert overnight as normal.
+
+## Readiness checks
+
+### Set the default check
+
+| Setting | What it does |
+|---|---|
+| **Readiness checks** switch | Turns checks on for every room. You need a routine first. |
+| **Default routine** | The test routine every room runs unless it has its own. See [Test routines](/portal/test-routines) to build one. |
+| **Run at** | When the check runs, for example 07:45, in the timezone on the Settings tab. |
+| **Days** | The days it runs. |
+
+Select **Save changes** when you're done.
+
+If a room's power cycle is still running at its check time, for example still warming up, the check waits for it to finish, for up to 30 minutes, so a room is never tested while it's still starting up. The run records how long it waited.
+
+### Customise a room
+
+The rooms table shows each room's routine, time and days. Select **Customise** to give a room its own **Routine**, **Run at** time or **Days**, such as a different routine for a video-conferencing room, or a later time for a room that powers on later. A room's own routine is shown in darker text than the default. Select **Reset** to return it to the default.
+
+A room whose check time falls while its power schedule has it switched off shows **Room switched off then**. Move the check after the power-on time, or it will fail.
 
 ### Run now
 
-Select **Run now** on a room to run its test routine straight away, without the power cycle. Use it to check a room after a fix, or to try out a new routine.
+Select **Run now** on a room to run its check straight away. Use it to check a room after a fix, or to try out a routine. You're taken to the run to watch each step's result arrive.
+
+## Settings
+
+Settings shared by both:
+
+| Setting | What it does |
+|---|---|
+| **Timezone** | The timezone the power schedule and readiness checks run in. |
+| **Helpdesk email** | Copies the morning digest to your helpdesk, so incidents are picked up without anyone forwarding them. Optional. |
+| **Morning digest** | Select **Send test digest** to send one now and check who receives it. |
+| **Keep detailed step results for (days)** | How long each step's result is kept. At least 30 days. The pass or fail of each run is kept for good. |
 
 ## Check the results
 
-Select **View runs** for the run history: one row per room per night, with when it was scheduled, its status, and how long the room took to be ready after power-on. Filter by date, room and status.
+Select **View runs** for the run history: one row per room for each power cycle and each readiness check, with its type, when it was scheduled, its status, and how long it took. A power run's duration is how long the room took to be ready after power-on; a readiness run's is how long its routine took. Filter by date, room, type and status.
 
-Select a run for its details: how far it got, which devices switched off and back on, and every routine step with what it checked, on which device, what it expected, what it found and any error.
+Select a run for its details: how far it got, and every step, with what it checked, on which device, what it expected, what it found and any error. For a power run, the steps are which devices switched off and back on.
 
 | Status | Meaning |
 |---|---|
-| **Succeeded** | The room powered back on and every step passed. |
-| **Failed** | A step failed, or the room didn't come back. The run shows which step and why. |
+| **Succeeded** | The room came back on (power), or every step passed (readiness). |
+| **Failed** | A device didn't come back, or a step failed. The run shows which and why. |
 | **In progress** | Running now. |
-| **Pending** | Scheduled for later tonight. |
+| **Pending** | Scheduled, or waiting for the room's power cycle to finish. |
 
 ### Export
 
-Select **Export CSV** on the run history to download the runs in your current filter, with one row per routine step and the run's details repeated on each row, ready to pivot in a spreadsheet. Runs with no steps still get a row.
+Select **Export CSV** on the run history to download the runs in your current filter, with one row per step and the run's details, including its type, repeated on each row, ready to pivot in a spreadsheet. Runs with no steps still get a row.
 
 ### The morning digest
 
-Every morning, 30 minutes after power-on, a summary of last night's runs is emailed to every enabled email channel in [Notifications](/admin/notifications), and copied to the helpdesk address if you set one. Select **Send test digest** to send one now and check who receives it.
+Each morning, 30 minutes after the later of the power-on time and the readiness check time, a summary is emailed to every enabled email channel in [Notifications](/admin/notifications), and copied to the helpdesk address if you set one. It has a section for the power schedule and one for readiness checks.
 
 ### Through the API
 
-Integrations can read the same results through the Public API, including each room's latest run and every routine step. Create a token with the **Read Room Readiness** scope; see [API tokens](/admin/api-tokens) and the API reference.
+Integrations can read the same results through the Public API: each room's readiness check and its latest power and readiness runs, every run with its type, and every step. Create a token with the **Read Room Readiness** scope; see [API tokens](/admin/api-tokens) and the API reference.
