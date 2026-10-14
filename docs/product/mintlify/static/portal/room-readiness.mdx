@@ -23,6 +23,12 @@ A room with no routine is power-cycled only, and is ready once it powers back on
 
 Devices without power control, such as PDUs and devices monitored by ping, are left as they are.
 
+### Overnight status and alerts
+
+A device that Room Readiness has switched off shows as **Switched off**, not offline, from power-off until the morning warm-up is over. A device that stays reachable in standby keeps showing **Online**.
+
+It also doesn't raise an offline alert while the room is powered down, or during the morning warm-up. If it's still offline after the warm-up, it alerts as usual, within 30 minutes, and the run shows which device didn't come back. Devices that weren't switched off, including any whose power-off failed, alert overnight as normal.
+
 ## Set the schedule
 
 The top of the page holds the schedule every room follows unless you customise it.
