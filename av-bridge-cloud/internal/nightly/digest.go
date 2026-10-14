@@ -112,30 +112,68 @@ func (s *DigestSender) SendForCustomer(ctx context.Context, customerID string) e
 
 // customerInfo bundles every field the digest needs about the customer.
 type customerInfo struct {
-	customerID       string
-	customerName     string
-	timezone         string
-	powerOnTime      time.Duration
-	helpdeskEmail    string
-	digestLastSent   *time.Time // date-only, midnight-aligned
-	enabled          bool
+	customerID     string
+	customerName   string
+	timezone       string
+	powerOnTime    time.Duration
+	helpdeskEmail  string
+	digestLastSent *time.Time // date-only, midnight-aligned
+	enabled        bool       // the power schedule
+
+	// Readiness checks, separate from the power schedule.
+	readinessEnabled bool
+	readinessTime    time.Duration
 }
 
-// findDueCustomers returns customers whose lifecycle window has finished
-// today and who haven't been sent a digest yet for the local calendar day.
-func (s *DigestSender) findDueCustomers(ctx context.Context) ([]customerInfo, error) {
-	rows, err := s.pool.Query(ctx, `
+// sendAfter is the time of day the morning's work is over: the later of
+// the power-on (if the power schedule is on) and the readiness check time
+// (if readiness checks are on). The digest goes out SendAfterOffset later.
+func (c customerInfo) sendAfter() time.Duration {
+	var t time.Duration
+	if c.enabled {
+		t = c.powerOnTime
+	}
+	if c.readinessEnabled && c.readinessTime > t {
+		t = c.readinessTime
+	}
+	return t
+}
+
+// digestCustomerColumns / digestCustomerFrom select a customer's digest
+// settings: the shared settings row, plus the readiness schedule if any.
+const digestCustomerColumns = `
 		SELECT ns.customer_id::text,
 		       COALESCE(c.name, ''),
 		       ns.timezone,
 		       ns.power_on_time,
 		       COALESCE(ns.helpdesk_email, ''),
 		       ns.digest_last_sent_for,
-		       ns.enabled
+		       ns.enabled,
+		       COALESCE(rs.enabled, false),
+		       COALESCE(rs.run_time, '00:00'::time)`
+const digestCustomerFrom = `
 		  FROM nightly_schedule ns
 		  JOIN customers c ON c.id = ns.customer_id
-		 WHERE ns.enabled = true
-	`)
+		  LEFT JOIN readiness_schedule rs ON rs.customer_id = ns.customer_id`
+
+func scanDigestCustomer(row pgx.Row) (customerInfo, error) {
+	var (
+		c                customerInfo
+		powerOn, runTime time.Time
+	)
+	err := row.Scan(&c.customerID, &c.customerName, &c.timezone,
+		&powerOn, &c.helpdeskEmail, &c.digestLastSent, &c.enabled,
+		&c.readinessEnabled, &runTime)
+	c.powerOnTime = timeOfDayToDuration(powerOn)
+	c.readinessTime = timeOfDayToDuration(runTime)
+	return c, err
+}
+
+// findDueCustomers returns customers whose lifecycle window has finished
+// today and who haven't been sent a digest yet for the local calendar day.
+func (s *DigestSender) findDueCustomers(ctx context.Context) ([]customerInfo, error) {
+	rows, err := s.pool.Query(ctx, digestCustomerColumns+digestCustomerFrom+`
+		 WHERE ns.enabled = true OR rs.enabled = true`)
 	if err != nil {
 		return nil, err
 	}
@@ -143,19 +181,10 @@ func (s *DigestSender) findDueCustomers(ctx context.Context) ([]customerInfo, er
 
 	var all []customerInfo
 	for rows.Next() {
-		var (
-			c            customerInfo
-			powerOn      time.Time
-			lastSent     *time.Time
-		)
-		if err := rows.Scan(
-			&c.customerID, &c.customerName, &c.timezone,
-			&powerOn, &c.helpdeskEmail, &lastSent, &c.enabled,
-		); err != nil {
+		c, err := scanDigestCustomer(rows)
+		if err != nil {
 			return nil, err
 		}
-		c.powerOnTime = timeOfDayToDuration(powerOn)
-		c.digestLastSent = lastSent
 		all = append(all, c)
 	}
 	if err := rows.Err(); err != nil {
@@ -181,12 +210,13 @@ func (s *DigestSender) isDue(c customerInfo, nowUTC time.Time) bool {
 	}
 	nowLocal := nowUTC.In(loc)
 
-	// Guard against clock-skew: if the sender fires before power-on-time in
-	// the customer tz, we shouldn't be sending anything yet today.
+	// Not before the morning's work is over (power-on and readiness
+	// checks) in the customer tz.
+	after := c.sendAfter()
 	sendAtLocal := time.Date(
 		nowLocal.Year(), nowLocal.Month(), nowLocal.Day(),
-		int(c.powerOnTime/time.Hour),
-		int((c.powerOnTime%time.Hour)/time.Minute),
+		int(after/time.Hour),
+		int((after%time.Hour)/time.Minute),
 		0, 0, loc,
 	).Add(s.cfg.SendAfterOffset)
 	if nowLocal.Before(sendAtLocal) {
@@ -205,34 +235,15 @@ func (s *DigestSender) isDue(c customerInfo, nowUTC time.Time) bool {
 }
 
 func (s *DigestSender) loadCustomer(ctx context.Context, customerID string) (customerInfo, error) {
-	var (
-		c        customerInfo
-		powerOn  time.Time
-		lastSent *time.Time
-	)
-	err := s.pool.QueryRow(ctx, `
-		SELECT ns.customer_id::text,
-		       COALESCE(c.name, ''),
-		       ns.timezone,
-		       ns.power_on_time,
-		       COALESCE(ns.helpdesk_email, ''),
-		       ns.digest_last_sent_for,
-		       ns.enabled
-		  FROM nightly_schedule ns
-		  JOIN customers c ON c.id = ns.customer_id
-		 WHERE ns.customer_id = $1
-	`, customerID).Scan(
-		&c.customerID, &c.customerName, &c.timezone,
-		&powerOn, &c.helpdeskEmail, &lastSent, &c.enabled,
-	)
+	c, err := scanDigestCustomer(s.pool.QueryRow(ctx,
+		digestCustomerColumns+digestCustomerFrom+`
+		 WHERE ns.customer_id = $1`, customerID))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) || errors.Is(err, sql.ErrNoRows) {
 			return c, ErrNoSchedule
 		}
 		return c, err
 	}
-	c.powerOnTime = timeOfDayToDuration(powerOn)
-	c.digestLastSent = lastSent
 	return c, nil
 }
 
@@ -244,6 +255,7 @@ var ErrNoSchedule = errors.New("nightly schedule not found for customer")
 // runRow is the aggregated view of one nightly_run used by the digest.
 type runRow struct {
 	runID          string
+	kind           string // power | readiness
 	roomID         string
 	roomName       string
 	buildingName   string
@@ -268,6 +280,7 @@ func (s *DigestSender) collectRuns(ctx context.Context, customerID string, nowUT
 	windowStart := nowUTC.Add(-24 * time.Hour)
 	rows, err := s.pool.Query(ctx, `
 		SELECT nr.id::text,
+		       nr.kind,
 		       nr.room_id::text,
 		       COALESCE(r.name, ''),
 		       COALESCE(b.name, ''),
@@ -295,7 +308,7 @@ func (s *DigestSender) collectRuns(ctx context.Context, customerID string, nowUT
 		var r runRow
 		var completed *time.Time
 		if err := rows.Scan(
-			&r.runID, &r.roomID, &r.roomName,
+			&r.runID, &r.kind, &r.roomID, &r.roomName,
 			&r.buildingName, &r.locationName, &r.regionName,
 			&r.phase, &r.status, &r.scheduledAt, &completed, &r.failureReason,
 		); err != nil {
@@ -482,6 +495,38 @@ type digestSummary struct {
 	inProgress int
 }
 
+// digestSection is one feature's part of the digest.
+type digestSection struct {
+	title string
+	runs  []runRow
+	sum   digestSummary
+	// readyText says what passing means for this kind of run.
+	readyText string
+}
+
+// sectionsOf splits the runs by kind, power first; a kind with no runs
+// gets no section.
+func sectionsOf(runs []runRow) []digestSection {
+	var power, readiness []runRow
+	for _, r := range runs {
+		if r.kind == "readiness" {
+			readiness = append(readiness, r)
+		} else {
+			power = append(power, r)
+		}
+	}
+	var out []digestSection
+	if len(power) > 0 {
+		out = append(out, digestSection{title: "Power schedule", runs: power, sum: summariseRuns(power),
+			readyText: "%d rooms switched off overnight and back on."})
+	}
+	if len(readiness) > 0 {
+		out = append(out, digestSection{title: "Readiness checks", runs: readiness, sum: summariseRuns(readiness),
+			readyText: "%d rooms passed their readiness checks."})
+	}
+	return out
+}
+
 func summariseRuns(runs []runRow) digestSummary {
 	var s digestSummary
 	for _, r := range runs {
@@ -530,39 +575,39 @@ func renderText(c customerInfo, runs, excluded []runRow, sum digestSummary, nowU
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "Room Readiness — %s — %s\n\n", c.customerName, date)
-	fmt.Fprintf(&b, "%d ready · %d failed · %d in-progress · %d excluded\n\n",
+	fmt.Fprintf(&b, "Overall: %d ready · %d failed · %d in-progress · %d excluded\n\n",
 		sum.ready, sum.failed, sum.inProgress, len(excluded))
 
-	if sum.failed > 0 {
-		b.WriteString("FAILED ROOMS\n")
-		b.WriteString(strings.Repeat("-", 40))
-		b.WriteString("\n")
-		for _, r := range runs {
-			if r.status != "failed" {
-				continue
+	for _, sec := range sectionsOf(runs) {
+		fmt.Fprintf(&b, "%s\n%s\n", strings.ToUpper(sec.title), strings.Repeat("=", 40))
+		fmt.Fprintf(&b, "%d ready · %d failed · %d in-progress\n\n", sec.sum.ready, sec.sum.failed, sec.sum.inProgress)
+		if sec.sum.failed > 0 {
+			b.WriteString("Failed rooms\n")
+			for _, r := range sec.runs {
+				if r.status != "failed" {
+					continue
+				}
+				fmt.Fprintf(&b, "· %s (%s)\n", r.roomName, roomBreadcrumbText(r))
+				fmt.Fprintf(&b, "  Phase reached: %s\n", r.phase)
+				if r.failureReason != "" {
+					fmt.Fprintf(&b, "  Reason: %s\n", r.failureReason)
+				}
+				fmt.Fprintf(&b, "\n")
 			}
-			fmt.Fprintf(&b, "· %s (%s)\n", r.roomName, roomBreadcrumbText(r))
-			fmt.Fprintf(&b, "  Phase reached: %s\n", r.phase)
-			if r.failureReason != "" {
-				fmt.Fprintf(&b, "  Reason: %s\n", r.failureReason)
+		}
+		if sec.sum.inProgress > 0 {
+			b.WriteString("In progress (may complete after this digest)\n")
+			for _, r := range sec.runs {
+				if r.status == "succeeded" || r.status == "failed" {
+					continue
+				}
+				fmt.Fprintf(&b, "· %s — %s\n", r.roomName, r.phase)
 			}
 			fmt.Fprintf(&b, "\n")
 		}
-	}
-	if sum.inProgress > 0 {
-		b.WriteString("IN-PROGRESS (may complete after this digest)\n")
-		b.WriteString(strings.Repeat("-", 40))
-		b.WriteString("\n")
-		for _, r := range runs {
-			if r.status == "succeeded" || r.status == "failed" {
-				continue
-			}
-			fmt.Fprintf(&b, "· %s — %s\n", r.roomName, r.phase)
+		if sec.sum.ready > 0 {
+			fmt.Fprintf(&b, sec.readyText+"\n\n", sec.sum.ready)
 		}
-		fmt.Fprintf(&b, "\n")
-	}
-	if sum.ready > 0 {
-		fmt.Fprintf(&b, "%d rooms ready.\n\n", sum.ready)
 	}
 	if len(excluded) > 0 {
 		b.WriteString("EXCLUDED ROOMS\n")
@@ -611,50 +656,51 @@ func renderHTML(c customerInfo, runs, excluded []runRow, sum digestSummary, nowU
 	fmt.Fprintf(&b, `<div style="font-size:16px;font-weight:500;margin-top:14px;">%s</div>`, html.EscapeString(statusLine))
 	b.WriteString(`</td></tr>`)
 
-	// Summary strip.
-	b.WriteString(`<tr><td style="padding:16px 32px;border-bottom:1px solid #e2e8f0;">`)
-	b.WriteString(`<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>`)
-	writeStat(&b, "Ready", sum.ready, "#0f766e")
-	writeStat(&b, "Failed", sum.failed, "#b91c1c")
-	writeStat(&b, "In-progress", sum.inProgress, "#a16207")
-	writeStat(&b, "Excluded", len(excluded), "#334155")
-	b.WriteString(`</tr></table></td></tr>`)
+	for _, sec := range sectionsOf(runs) {
+		fmt.Fprintf(&b, `<tr><td style="padding:20px 32px 4px;"><div style="font-size:16px;font-weight:600;color:#0f172a;">%s</div></td></tr>`,
+			html.EscapeString(sec.title))
 
-	// Failed rooms — the reason the customer opens the email.
-	if sum.failed > 0 {
-		b.WriteString(`<tr><td style="padding:24px 32px 8px;">`)
-		b.WriteString(`<div style="font-size:14px;font-weight:600;color:#b91c1c;text-transform:uppercase;letter-spacing:0.08em;">Failed rooms</div>`)
-		b.WriteString(`</td></tr>`)
-		for _, r := range runs {
-			if r.status != "failed" {
-				continue
+		// Summary strip.
+		b.WriteString(`<tr><td style="padding:8px 32px 16px;border-bottom:1px solid #e2e8f0;">`)
+		b.WriteString(`<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>`)
+		writeStat(&b, "Ready", sec.sum.ready, "#0f766e")
+		writeStat(&b, "Failed", sec.sum.failed, "#b91c1c")
+		writeStat(&b, "In-progress", sec.sum.inProgress, "#a16207")
+		b.WriteString(`</tr></table></td></tr>`)
+
+		// Failed rooms — the reason the customer opens the email.
+		if sec.sum.failed > 0 {
+			b.WriteString(`<tr><td style="padding:16px 32px 8px;">`)
+			b.WriteString(`<div style="font-size:14px;font-weight:600;color:#b91c1c;text-transform:uppercase;letter-spacing:0.08em;">Failed rooms</div>`)
+			b.WriteString(`</td></tr>`)
+			for _, r := range sec.runs {
+				if r.status != "failed" {
+					continue
+				}
+				writeFailedRoom(&b, r)
 			}
-			writeFailedRoom(&b, r)
 		}
-	}
 
-	// In-progress — likely to complete after the digest fires; called out so
-	// the customer knows the digest isn't the final word for the day.
-	if sum.inProgress > 0 {
-		b.WriteString(`<tr><td style="padding:16px 32px 8px;">`)
-		b.WriteString(`<div style="font-size:14px;font-weight:600;color:#a16207;text-transform:uppercase;letter-spacing:0.08em;">In progress</div>`)
-		b.WriteString(`<div style="font-size:13px;color:#475569;margin-top:4px;">These rooms hadn't finished when the digest was generated.</div>`)
-		b.WriteString(`</td></tr>`)
-		for _, r := range runs {
-			if r.status == "succeeded" || r.status == "failed" {
-				continue
+		// In-progress — likely to complete after the digest fires.
+		if sec.sum.inProgress > 0 {
+			b.WriteString(`<tr><td style="padding:16px 32px 8px;">`)
+			b.WriteString(`<div style="font-size:14px;font-weight:600;color:#a16207;text-transform:uppercase;letter-spacing:0.08em;">In progress</div>`)
+			b.WriteString(`<div style="font-size:13px;color:#475569;margin-top:4px;">These rooms hadn't finished when the digest was generated.</div>`)
+			b.WriteString(`</td></tr>`)
+			for _, r := range sec.runs {
+				if r.status == "succeeded" || r.status == "failed" {
+					continue
+				}
+				writeInProgressRoom(&b, r)
 			}
-			writeInProgressRoom(&b, r)
 		}
-	}
 
-	// Ready count — collapsed by design (the spec calls this out). The
-	// portal is the right place to browse the full list.
-	if sum.ready > 0 {
-		b.WriteString(`<tr><td style="padding:16px 32px;">`)
-		b.WriteString(`<div style="font-size:14px;font-weight:600;color:#0f766e;text-transform:uppercase;letter-spacing:0.08em;">Ready</div>`)
-		fmt.Fprintf(&b, `<div style="font-size:15px;color:#0f172a;margin-top:6px;">%d rooms passed their overnight checks.</div>`, sum.ready)
-		b.WriteString(`</td></tr>`)
+		// Ready count — collapsed by design; the portal has the full list.
+		if sec.sum.ready > 0 {
+			b.WriteString(`<tr><td style="padding:12px 32px;">`)
+			fmt.Fprintf(&b, `<div style="font-size:15px;color:#0f766e;">`+html.EscapeString(sec.readyText)+`</div>`, sec.sum.ready)
+			b.WriteString(`</td></tr>`)
+		}
 	}
 
 	if len(excluded) > 0 {

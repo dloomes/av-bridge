@@ -59,11 +59,10 @@ type Scheduler struct {
 	cfg  Config
 	log  *slog.Logger
 
-	// executor — the routine runner. When set (non-nil) AND enabled in
-	// its own config, a warming-phase run whose routine has steps
-	// delegates to the executor instead of finishing as ready
-	// directly. Absent executor keeps existing warming → ready
-	// behaviour. See internal/nightly/executor.go.
+	// executor — the routine runner, used by readiness runs (see
+	// readiness.go). Power runs never run a routine: they end at ready
+	// after the warm-up. Nil, or disabled in its own config, means
+	// readiness runs fail with that reason.
 	executor *Executor
 
 	// now overrides time.Now for tests. Nil in prod → uses time.Now().
@@ -132,6 +131,13 @@ func (s *Scheduler) tick(ctx context.Context) {
 	if err := s.advanceRuns(ctx); err != nil {
 		s.log.Warn("nightly scheduler advance-runs error", "error", err)
 	}
+	// Readiness checks: separate from the power cycle, on their own time.
+	if err := s.createDueReadinessRuns(ctx); err != nil {
+		s.log.Warn("readiness create-runs error", "error", err)
+	}
+	if err := s.startReadinessRuns(ctx); err != nil {
+		s.log.Warn("readiness start-runs error", "error", err)
+	}
 }
 
 // roomView is a de-nested view of every enabled room's effective schedule
@@ -147,7 +153,6 @@ type roomView struct {
 	daysOfWeek    []int // ISO 1-7
 	timezone      string
 	excludedUntil *time.Time // if non-nil AND today or later → skip
-	testRoutineID *string    // effective routine for this room (per-room override ∪ customer default)
 }
 
 func (s *Scheduler) collectEnabledRooms(ctx context.Context) ([]roomView, error) {
@@ -160,8 +165,7 @@ func (s *Scheduler) collectEnabledRooms(ctx context.Context) ([]roomView, error)
 		  COALESCE(rnc.power_on_time,  ns.power_on_time)    AS eff_power_on,
 		  COALESCE(rnc.days_of_week,   ns.days_of_week)     AS eff_days,
 		  ns.timezone,
-		  rnc.excluded_until,
-		  COALESCE(rnc.test_routine_id, ns.test_routine_id)::text AS eff_routine
+		  rnc.excluded_until
 		FROM nightly_schedule ns
 		JOIN rooms r                        ON r.customer_id = ns.customer_id
 		LEFT JOIN room_nightly_config rnc   ON rnc.room_id = r.id
@@ -178,11 +182,10 @@ func (s *Scheduler) collectEnabledRooms(ctx context.Context) ([]roomView, error)
 			off, on       time.Time
 			days          []int32
 			excludedUntil *time.Time
-			routineID     *string
 		)
 		if err := rows.Scan(
 			&rv.customerID, &rv.roomID, &rv.roomName,
-			&off, &on, &days, &rv.timezone, &excludedUntil, &routineID,
+			&off, &on, &days, &rv.timezone, &excludedUntil,
 		); err != nil {
 			return nil, err
 		}
@@ -190,7 +193,6 @@ func (s *Scheduler) collectEnabledRooms(ctx context.Context) ([]roomView, error)
 		rv.powerOnTime = timeOfDayToDuration(on)
 		rv.daysOfWeek = int32sToIntSlice(days)
 		rv.excludedUntil = excludedUntil
-		rv.testRoutineID = routineID
 		out = append(out, rv)
 	}
 	return out, rows.Err()
@@ -256,26 +258,19 @@ func (s *Scheduler) createDueRuns(ctx context.Context) error {
 			continue
 		}
 
-		// Insert the run row. Uniqueness on (room_id, scheduled_at) keeps
-		// duplicate ticks harmless. Snapshot the effective routine at
-		// creation time so the executor still has a reference even if
-		// the customer changes their schedule mid-cycle.
-		var routineArg any
-		if rv.testRoutineID != nil && *rv.testRoutineID != "" {
-			routineArg = *rv.testRoutineID
-		}
-		// One run per room at a time: if the room still has a run in
+		// One power run per room at a time: if the room still has one in
 		// progress (say its times were changed mid-cycle), don't start a
-		// second one that would send the same power commands alongside it.
+		// second that would send the same power commands alongside it.
 		var runID string
 		err = s.pool.QueryRow(ctx, `
-			INSERT INTO nightly_run (customer_id, room_id, routine_id, scheduled_at, phase, status, started_at, phase_changed_at)
-			SELECT $1::uuid, $2::uuid, $3::uuid, $4::timestamptz, 'scheduled_off', 'in_progress', now(), now()
+			INSERT INTO nightly_run (customer_id, room_id, kind, scheduled_at, phase, status, started_at, phase_changed_at)
+			SELECT $1::uuid, $2::uuid, 'power', $3::timestamptz, 'scheduled_off', 'in_progress', now(), now()
 			 WHERE NOT EXISTS (
-			   SELECT 1 FROM nightly_run WHERE room_id = $2::uuid AND status = 'in_progress')
-			ON CONFLICT (room_id, scheduled_at) DO NOTHING
+			   SELECT 1 FROM nightly_run
+			    WHERE room_id = $2::uuid AND kind = 'power' AND status = 'in_progress')
+			ON CONFLICT (room_id, kind, scheduled_at) DO NOTHING
 			RETURNING id::text
-		`, rv.customerID, rv.roomID, routineArg, scheduledUTC).Scan(&runID)
+		`, rv.customerID, rv.roomID, scheduledUTC).Scan(&runID)
 		if errors.Is(err, pgx.ErrNoRows) {
 			continue // this cycle's run exists, or another run is still in progress
 		}
@@ -324,6 +319,7 @@ func (s *Scheduler) advanceRuns(ctx context.Context) error {
 		  JOIN nightly_schedule ns           ON ns.customer_id = nr.customer_id
 		  LEFT JOIN room_nightly_config rnc  ON rnc.room_id = nr.room_id
 		 WHERE nr.status = 'in_progress'
+		   AND nr.kind = 'power'
 	`)
 	if err != nil {
 		return err
@@ -410,33 +406,8 @@ func (s *Scheduler) advanceRuns(ctx context.Context) error {
 				s.log.Warn("nightly: phase update failed", "run", r.id, "error", err)
 			}
 		case "ready":
-			// Warming just finished. If a routine is assigned AND the
-			// executor is wired, transition into the `testing` phase
-			// and let the executor own the run from here — it'll
-			// finish the run itself (ready or failed) when it's
-			// walked all the steps. If the executor declines (no
-			// routine / no steps / disabled), fall through to the
-			// existing ready-finish behaviour.
-			if s.executor != nil {
-				runCtx := RunContext{
-					RunID: r.id, CustomerID: r.customerID,
-					RoomID: r.roomID, RoomName: r.roomName,
-					RoutineID: r.routineID,
-				}
-				took, err := s.executor.MaybeStart(ctx, runCtx)
-				if err != nil {
-					s.log.Warn("nightly executor: MaybeStart failed",
-						"run", r.id, "error", err)
-				} else if took {
-					s.log.Info("nightly executor: entered testing phase",
-						"run", r.id, "room", r.roomID, "reason", reason)
-					if err := s.setPhase(ctx, r.id, "testing"); err != nil {
-						s.log.Warn("nightly: phase update failed",
-							"run", r.id, "error", err)
-					}
-					continue
-				}
-			}
+			// Power runs end here; readiness checks run separately, on
+			// their own schedule (readiness.go).
 			s.log.Info("nightly: room ready", "run", r.id, "room", r.roomID, "reason", reason)
 			if err := s.finish(ctx, r.id, "ready", "succeeded", ""); err != nil {
 				s.log.Warn("nightly: finish failed", "run", r.id, "error", err)

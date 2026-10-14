@@ -86,7 +86,9 @@ func TestNightlyRoomRoutineAndExport(t *testing.T) {
 	defRoutine := routine(cust, "Standard check")
 	vcRoutine := routine(cust, "VC room check")
 	otherRoutine := routine(other, "Not yours")
-	exec(`INSERT INTO nightly_schedule (customer_id, test_routine_id) VALUES ($1, $2)`, cust, defRoutine)
+	// The power schedule is on (19:00 → 07:30), so readiness rooms report
+	// their power times.
+	exec(`INSERT INTO nightly_schedule (customer_id, enabled, power_off_time, power_on_time) VALUES ($1, true, '19:00', '07:30')`, cust)
 
 	all := map[string]struct{}{}
 	for p := range portalauth.KnownPermissions {
@@ -96,10 +98,12 @@ func TestNightlyRoomRoutineAndExport(t *testing.T) {
 
 	h := New(st, nil, nil, nil, nil, quiet)
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /rooms", h.ListNightlyRooms)
-	mux.HandleFunc("PATCH /rooms/{id}", h.UpdateRoomOverride)
+	mux.HandleFunc("GET /readiness/schedule", h.GetReadinessSchedule)
+	mux.HandleFunc("PATCH /readiness/schedule", h.UpdateReadinessSchedule)
+	mux.HandleFunc("GET /readiness/rooms", h.ListReadinessRooms)
+	mux.HandleFunc("PATCH /readiness/rooms/{id}", h.UpdateReadinessRoom)
+	mux.HandleFunc("DELETE /readiness/rooms/{id}", h.ResetReadinessRoom)
 	mux.HandleFunc("GET /runs/export.csv", h.ExportNightlyRuns)
-	mux.HandleFunc("PATCH /schedule", h.UpdateNightlySchedule)
 	call := func(method, path string, body any) (int, string) {
 		t.Helper()
 		var rd io.Reader
@@ -113,17 +117,17 @@ func TestNightlyRoomRoutineAndExport(t *testing.T) {
 		mux.ServeHTTP(rec, req)
 		return rec.Code, rec.Body.String()
 	}
-	effective := func() map[string]roomOverrideRow {
+	rooms := func() map[string]readinessRoomRow {
 		t.Helper()
-		code, body := call("GET", "/rooms", nil)
+		code, body := call("GET", "/readiness/rooms", nil)
 		if code != http.StatusOK {
 			t.Fatalf("list rooms: %d %s", code, body)
 		}
-		var rows []roomOverrideRow
+		var rows []readinessRoomRow
 		if err := json.Unmarshal([]byte(body), &rows); err != nil {
 			t.Fatal(err)
 		}
-		out := map[string]roomOverrideRow{}
+		out := map[string]readinessRoomRow{}
 		for _, r := range rows {
 			out[r.RoomID] = r
 		}
@@ -135,75 +139,73 @@ func TestNightlyRoomRoutineAndExport(t *testing.T) {
 		}
 		return *p
 	}
-	// What the scheduler will actually run for a room (scheduler.go).
-	schedulerRoutine := func(roomID string) string {
-		return q(`SELECT COALESCE(COALESCE(rnc.test_routine_id, ns.test_routine_id)::text, '')
-		            FROM rooms r
-		            LEFT JOIN room_nightly_config rnc ON rnc.room_id = r.id
-		            LEFT JOIN nightly_schedule ns ON ns.customer_id = r.customer_id
-		           WHERE r.id = $1`, roomID)
+	patch := func(path string, body any, want int) {
+		t.Helper()
+		if code, resp := call("PATCH", path, body); code != want {
+			t.Errorf("PATCH %s %v: %d %s, want %d", path, body, code, resp, want)
+		}
 	}
 
-	// Both rooms start on the customer default.
-	rows := effective()
+	// ── The default readiness check ──────────────────────────────────────
+	// Can't switch on with no routine anywhere; another customer's routine
+	// is refused.
+	patch("/readiness/schedule", map[string]any{"enabled": true}, http.StatusBadRequest)
+	patch("/readiness/schedule", map[string]any{"test_routine_id": otherRoutine}, http.StatusBadRequest)
+	patch("/readiness/schedule", map[string]any{"test_routine_id": defRoutine, "run_time": "08:15", "enabled": true}, http.StatusNoContent)
+	patch("/readiness/schedule", map[string]any{"run_time": "8am"}, http.StatusBadRequest)
+	var sched readinessScheduleOut
+	if code, body := call("GET", "/readiness/schedule", nil); code != http.StatusOK || json.Unmarshal([]byte(body), &sched) != nil {
+		t.Fatalf("get schedule: %d %s", code, body)
+	}
+	if !sched.Enabled || sched.TestRoutineName != "Standard check" || sched.RunTime != "08:15" || sched.Timezone == "" {
+		t.Errorf("schedule: %+v", sched)
+	}
+
+	// Every room inherits it, and shows its power times.
+	rows := rooms()
 	if _, ok := rows[otherRoom]; ok {
 		t.Error("another customer's room is listed")
 	}
-	if got := str(rows[roomA].EffectiveRoutineID); got != defRoutine || str(rows[roomA].EffectiveRoutineName) != "Standard check" {
-		t.Errorf("room A effective routine = %q, want the default", got)
+	if a := rows[roomA]; str(a.EffectiveRoutineID) != defRoutine || a.EffectiveRunTime != "08:15" || a.HasOverride ||
+		!a.PowerEnabled || a.PowerOffTime != "19:00" || a.PowerOnTime != "07:30" {
+		t.Errorf("room A inheriting: %+v", a)
 	}
 
-	// Give room A its own routine.
-	if code, body := call("PATCH", "/rooms/"+roomA, map[string]any{"test_routine_id": vcRoutine}); code != http.StatusNoContent {
-		t.Fatalf("set room routine: %d %s", code, body)
+	// ── A room's own check ───────────────────────────────────────────────
+	patch("/readiness/rooms/"+roomA, map[string]any{"test_routine_id": vcRoutine, "run_time": "09:00", "days_of_week": []int{1, 3}}, http.StatusNoContent)
+	rows = rooms()
+	if a := rows[roomA]; !a.HasOverride || str(a.EffectiveRoutineName) != "VC room check" || a.EffectiveRunTime != "09:00" ||
+		len(a.EffectiveDays) != 2 || str(a.OverrideRoutineID) != vcRoutine {
+		t.Errorf("room A with its own check: %+v", a)
 	}
-	rows = effective()
-	if str(rows[roomA].OverrideRoutineID) != vcRoutine || str(rows[roomA].EffectiveRoutineName) != "VC room check" || !rows[roomA].HasOverride {
-		t.Errorf("room A after override: %+v", rows[roomA])
+	if b := rows[roomB]; str(b.EffectiveRoutineID) != defRoutine || b.HasOverride {
+		t.Errorf("room B should still inherit: %+v", b)
 	}
-	if str(rows[roomB].EffectiveRoutineID) != defRoutine || rows[roomB].OverrideRoutineID != nil {
-		t.Errorf("room B should still inherit the default: %+v", rows[roomB])
+	for _, bad := range []map[string]any{
+		{"test_routine_id": otherRoutine},
+		{"test_routine_id": "not-a-uuid"},
+		{"run_time": "25:00"},
+		{"days_of_week": []int{0}},
+	} {
+		patch("/readiness/rooms/"+roomA, bad, http.StatusBadRequest)
 	}
-	if schedulerRoutine(roomA) != vcRoutine || schedulerRoutine(roomB) != defRoutine {
-		t.Error("scheduler would not run the per-room routine")
-	}
-
-	// Another customer's routine, or nonsense, is refused.
-	for _, bad := range []string{otherRoutine, "not-a-uuid"} {
-		if code, body := call("PATCH", "/rooms/"+roomA, map[string]any{"test_routine_id": bad}); code != http.StatusBadRequest {
-			t.Errorf("routine %q: %d %s, want 400", bad, code, body)
-		}
-	}
-	if schedulerRoutine(roomA) != vcRoutine {
+	if a := rooms()[roomA]; str(a.EffectiveRoutineID) != vcRoutine {
 		t.Error("a refused change altered the room's routine")
 	}
-	if code, body := call("PATCH", "/schedule", map[string]any{"test_routine_id": otherRoutine}); code != http.StatusBadRequest {
-		t.Errorf("default routine from another customer: %d %s, want 400", code, body)
+	// null inherits one field; the rest stay the room's own.
+	patch("/readiness/rooms/"+roomA, map[string]any{"run_time": nil}, http.StatusNoContent)
+	if a := rooms()[roomA]; a.EffectiveRunTime != "08:15" || str(a.EffectiveRoutineID) != vcRoutine {
+		t.Errorf("after clearing the time: %+v", a)
 	}
-	if schedulerRoutine(roomB) != defRoutine {
-		t.Error("a refused default change altered the default routine")
+	// Reset: back to the default entirely.
+	if code, body := call("DELETE", "/readiness/rooms/"+roomA, nil); code != http.StatusNoContent {
+		t.Fatalf("reset: %d %s", code, body)
 	}
-
-	// Other fields don't disturb the routine, and null reverts it.
-	if code, body := call("PATCH", "/rooms/"+roomA, map[string]any{"power_off_time": "20:00"}); code != http.StatusNoContent {
-		t.Fatalf("set time: %d %s", code, body)
+	if a := rooms()[roomA]; a.HasOverride || str(a.EffectiveRoutineID) != defRoutine {
+		t.Errorf("after reset: %+v", a)
 	}
-	if schedulerRoutine(roomA) != vcRoutine {
-		t.Error("changing the time cleared the routine")
-	}
-	if code, body := call("PATCH", "/rooms/"+roomA, map[string]any{"test_routine_id": nil}); code != http.StatusNoContent {
-		t.Fatalf("clear routine: %d %s", code, body)
-	}
-	if schedulerRoutine(roomA) != defRoutine {
-		t.Error("null should revert the room to the default routine")
-	}
-
-	// Routine set on a room with no override row yet (insert path).
-	if code, body := call("PATCH", "/rooms/"+roomB, map[string]any{"test_routine_id": vcRoutine}); code != http.StatusNoContent {
-		t.Fatalf("set room B routine: %d %s", code, body)
-	}
-	if schedulerRoutine(roomB) != vcRoutine {
-		t.Error("insert path didn't store the routine")
+	if code, _ := call("PATCH", "/readiness/rooms/"+otherRoom, map[string]any{"run_time": "09:00"}); code != http.StatusNotFound {
+		t.Errorf("another customer's room: %d, want 404", code)
 	}
 
 	// ── CSV export ────────────────────────────────────────────────────────
@@ -262,7 +264,7 @@ func TestNightlyRoomRoutineAndExport(t *testing.T) {
 			}
 		}
 		if r[col["step_name"]] == "Codec online" {
-			sawSteps = r[col["routine"]] == "VC room check" && r[col["step_passed"]] == "true" &&
+			sawSteps = r[col["routine"]] == "VC room check" && r[col["step_passed"]] == "true" && r[col["kind"]] == "power" &&
 				r[col["run_duration_seconds"]] == "600" && strings.Contains(r[col["actual"]], "online")
 		}
 	}
@@ -279,6 +281,13 @@ func TestNightlyRoomRoutineAndExport(t *testing.T) {
 	// Filters apply, and bad input is a 400 rather than a broken file.
 	if code, body := call("GET", "/runs/export.csv?status=succeeded&room_id="+roomA, nil); code != http.StatusOK || strings.Count(body, "\n") != 4 {
 		t.Errorf("filtered export: %d\n%s", code, body)
+	}
+	// The kind filter: these are all power runs.
+	if code, body := call("GET", "/runs/export.csv?kind=readiness", nil); code != http.StatusOK || strings.Count(body, "\n") != 1 {
+		t.Errorf("kind=readiness export: %d\n%s", code, body)
+	}
+	if code, _ := call("GET", "/runs/export.csv?kind=both", nil); code != http.StatusBadRequest {
+		t.Errorf("bad kind: %d, want 400", code)
 	}
 	if code, _ := call("GET", "/runs/export.csv?from=yesterday", nil); code != http.StatusBadRequest {
 		t.Errorf("bad from: %d, want 400", code)

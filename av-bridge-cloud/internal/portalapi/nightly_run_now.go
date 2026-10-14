@@ -87,8 +87,8 @@ func (h *Handler) SendRoutineRunNow(w http.ResponseWriter, r *http.Request) {
 
 		// Resolve the effective routine. Priority:
 		//   1. Explicit routine_id in the request body
-		//   2. Per-room override's test_routine_id
-		//   3. Customer default's test_routine_id
+		//   2. The room's own readiness routine (room_readiness_config)
+		//   3. The default readiness routine (readiness_schedule)
 		// A room with no routine at any tier → 400 (no point running).
 		if req.RoutineID != "" {
 			// Sanity-check the routine exists inside the caller's
@@ -107,10 +107,10 @@ func (h *Handler) SendRoutineRunNow(w http.ResponseWriter, r *http.Request) {
 		} else {
 			var resolved *string
 			if err := tx.QueryRow(ctx, `
-				SELECT COALESCE(rnc.test_routine_id, ns.test_routine_id)::text
-				  FROM nightly_schedule ns
-				  LEFT JOIN room_nightly_config rnc ON rnc.room_id = $1
-				 WHERE ns.customer_id = current_setting('app.current_customer', true)::uuid
+				SELECT COALESCE(rrc.test_routine_id, rs.test_routine_id)::text
+				  FROM readiness_schedule rs
+				  LEFT JOIN room_readiness_config rrc ON rrc.room_id = $1
+				 WHERE rs.customer_id = current_setting('app.current_customer', true)::uuid
 			`, roomID).Scan(&resolved); err != nil {
 				if errors.Is(err, pgx.ErrNoRows) {
 					noRoutine = true
@@ -132,11 +132,11 @@ func (h *Handler) SendRoutineRunNow(w http.ResponseWriter, r *http.Request) {
 		// constraint would reject with a clear error.
 		if err := tx.QueryRow(ctx, `
 			INSERT INTO nightly_run (
-			  customer_id, room_id, routine_id,
+			  customer_id, room_id, kind, routine_id,
 			  scheduled_at, started_at, phase, status
 			) VALUES (
 			  current_setting('app.current_customer', true)::uuid,
-			  $1, $2, now(), now(), 'testing', 'in_progress'
+			  $1, 'readiness', $2, now(), now(), 'testing', 'in_progress'
 			)
 			RETURNING id::text
 		`, roomID, routineID).Scan(&newRunID); err != nil {

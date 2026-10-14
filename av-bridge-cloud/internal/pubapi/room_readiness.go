@@ -19,6 +19,7 @@ import (
 // routine was assigned, its test.
 type publicReadinessRun struct {
 	ID              string     `json:"id"`
+	Kind            string     `json:"kind"` // power | readiness
 	RoomID          string     `json:"room_id"`
 	Room            string     `json:"room"`
 	BuildingID      string     `json:"building_id"`
@@ -54,7 +55,7 @@ type publicReadinessStep struct {
 }
 
 const publicRunColumns = `
-	SELECT nr.id::text, nr.room_id::text, r.name, b.id::text, b.name,
+	SELECT nr.id::text, nr.kind, nr.room_id::text, r.name, b.id::text, b.name,
 	       nr.routine_id::text, tr.name,
 	       nr.status, nr.phase, nr.scheduled_at, nr.started_at, nr.powered_on_at, nr.completed_at,
 	       nr.failure_reason,
@@ -70,7 +71,7 @@ const publicRunColumns = `
 
 func scanPublicRun(row pgx.Row) (publicReadinessRun, error) {
 	var run publicReadinessRun
-	err := row.Scan(&run.ID, &run.RoomID, &run.Room, &run.BuildingID, &run.Building,
+	err := row.Scan(&run.ID, &run.Kind, &run.RoomID, &run.Room, &run.BuildingID, &run.Building,
 		&run.RoutineID, &run.Routine,
 		&run.Status, &run.Phase, &run.ScheduledAt, &run.StartedAt, &run.PoweredOnAt, &run.CompletedAt,
 		&run.FailureReason, &run.StepsTotal, &run.StepsPassed)
@@ -142,6 +143,13 @@ func (h *Handler) ListReadinessRuns(w http.ResponseWriter, r *http.Request) {
 			statuses = append(statuses, s)
 		}
 		sql += " AND nr.status = ANY(" + arg(statuses) + "::text[])"
+	}
+	if v := strings.TrimSpace(qv.Get("kind")); v != "" {
+		if v != "power" && v != "readiness" {
+			writeErr(w, http.StatusBadRequest, "kind must be power or readiness")
+			return
+		}
+		sql += " AND nr.kind = " + arg(v)
 	}
 	for _, p := range []struct{ name, op string }{{"since", ">="}, {"until", "<"}} {
 		v := strings.TrimSpace(qv.Get(p.name))
@@ -253,69 +261,84 @@ func (h *Handler) GetReadinessRun(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-// publicReadinessRoom is a room's Room Readiness set-up and its most
-// recent run — "is every room ready this morning?" in one call.
+// publicReadinessRoom is a room's Room Readiness set-up and its latest
+// runs — "is every room ready this morning?" in one call.
 type publicReadinessRoom struct {
-	RoomID        string              `json:"room_id"`
-	Room          string              `json:"room"`
-	BuildingID    string              `json:"building_id"`
-	Building      string              `json:"building"`
-	RoutineID     *string             `json:"routine_id"`
-	Routine       *string             `json:"routine"`
-	ExcludedUntil *string             `json:"excluded_until"`
-	LatestRun     *publicReadinessRun `json:"latest_run"`
+	RoomID     string `json:"room_id"`
+	Room       string `json:"room"`
+	BuildingID string `json:"building_id"`
+	Building   string `json:"building"`
+	// The readiness check: the routine (the room's own or the default)
+	// and when it runs. Null routine = the room isn't checked.
+	RoutineID     *string `json:"routine_id"`
+	Routine       *string `json:"routine"`
+	ReadinessTime *string `json:"readiness_time"` // HH:MM, customer's timezone
+	ExcludedUntil *string `json:"excluded_until"`
+	// Latest runs: of either kind, and of each.
+	LatestRun          *publicReadinessRun `json:"latest_run"`
+	LatestPowerRun     *publicReadinessRun `json:"latest_power_run"`
+	LatestReadinessRun *publicReadinessRun `json:"latest_readiness_run"`
 }
 
 // ListReadinessRooms — GET /pub/v1/room-readiness/rooms
 //
-// Every room with the routine it runs (its own, or the customer default)
-// and its latest run. Flat list, like /pub/v1/rooms.
+// Every room with its readiness check and its latest runs. Flat list,
+// like /pub/v1/rooms.
 func (h *Handler) ListReadinessRooms(w http.ResponseWriter, r *http.Request) {
 	out := []publicReadinessRoom{}
 	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `
 			SELECT r.id::text, r.name, b.id::text, b.name,
 			       tr.id::text, tr.name,
+			       CASE WHEN tr.id IS NOT NULL
+			            THEN to_char(COALESCE(rrc.run_time, rs.run_time), 'HH24:MI') END,
 			       to_char(rnc.excluded_until, 'YYYY-MM-DD'),
-			       latest.id::text
+			       lp.id::text, lr.id::text
 			  FROM rooms r
-			  JOIN buildings b                  ON b.id = r.building_id
-			  LEFT JOIN room_nightly_config rnc ON rnc.room_id = r.id
-			  LEFT JOIN nightly_schedule ns     ON ns.customer_id = r.customer_id
-			  LEFT JOIN nightly_test_routine tr ON tr.id = COALESCE(rnc.test_routine_id, ns.test_routine_id)
+			  JOIN buildings b                    ON b.id = r.building_id
+			  LEFT JOIN room_nightly_config rnc   ON rnc.room_id = r.id
+			  LEFT JOIN readiness_schedule rs     ON rs.customer_id = r.customer_id
+			  LEFT JOIN room_readiness_config rrc ON rrc.room_id = r.id
+			  LEFT JOIN nightly_test_routine tr   ON tr.id = COALESCE(rrc.test_routine_id, rs.test_routine_id)
 			  LEFT JOIN LATERAL (
-			        SELECT id FROM nightly_run
-			         WHERE room_id = r.id
-			         ORDER BY scheduled_at DESC, id DESC LIMIT 1
-			  ) latest ON true
+			        SELECT id FROM nightly_run WHERE room_id = r.id AND kind = 'power'
+			         ORDER BY scheduled_at DESC, id DESC LIMIT 1) lp ON true
+			  LEFT JOIN LATERAL (
+			        SELECT id FROM nightly_run WHERE room_id = r.id AND kind = 'readiness'
+			         ORDER BY scheduled_at DESC, id DESC LIMIT 1) lr ON true
 			 ORDER BY b.name, r.name`)
 		if err != nil {
 			return err
 		}
-		var latestIDs []string
-		at := map[string]int{}
+		type latest struct{ power, readiness *string }
+		var ids []string
+		latestOf := make([]latest, 0)
 		for rows.Next() {
 			var room publicReadinessRoom
-			var latest *string
+			var l latest
 			if err := rows.Scan(&room.RoomID, &room.Room, &room.BuildingID, &room.Building,
-				&room.RoutineID, &room.Routine, &room.ExcludedUntil, &latest); err != nil {
+				&room.RoutineID, &room.Routine, &room.ReadinessTime, &room.ExcludedUntil,
+				&l.power, &l.readiness); err != nil {
 				rows.Close()
 				return err
 			}
-			if latest != nil {
-				at[*latest] = len(out)
-				latestIDs = append(latestIDs, *latest)
+			for _, id := range []*string{l.power, l.readiness} {
+				if id != nil {
+					ids = append(ids, *id)
+				}
 			}
 			out = append(out, room)
+			latestOf = append(latestOf, l)
 		}
 		rows.Close()
 		if err := rows.Err(); err != nil {
 			return err
 		}
-		if len(latestIDs) == 0 {
+		if len(ids) == 0 {
 			return nil
 		}
-		runs, err := tx.Query(ctx, publicRunColumns+" WHERE nr.id = ANY($1::uuid[])", latestIDs)
+		byID := map[string]*publicReadinessRun{}
+		runs, err := tx.Query(ctx, publicRunColumns+" WHERE nr.id = ANY($1::uuid[])", ids)
 		if err != nil {
 			return err
 		}
@@ -325,9 +348,26 @@ func (h *Handler) ListReadinessRooms(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				return err
 			}
-			out[at[run.ID]].LatestRun = &run
+			byID[run.ID] = &run
 		}
-		return runs.Err()
+		if err := runs.Err(); err != nil {
+			return err
+		}
+		for i, l := range latestOf {
+			if l.power != nil {
+				out[i].LatestPowerRun = byID[*l.power]
+			}
+			if l.readiness != nil {
+				out[i].LatestReadinessRun = byID[*l.readiness]
+			}
+			// The more recent of the two.
+			out[i].LatestRun = out[i].LatestPowerRun
+			if p, rd := out[i].LatestPowerRun, out[i].LatestReadinessRun; rd != nil &&
+				(p == nil || rd.ScheduledAt.After(p.ScheduledAt)) {
+				out[i].LatestRun = rd
+			}
+		}
+		return nil
 	})
 	if !ok {
 		return

@@ -22,7 +22,7 @@ const nightlyRunsExportMaxRows = 500_000
 // step results (power-cycle only, or skipped) still gets one row with the
 // step columns empty, so every run is in the file.
 var nightlyRunsExportColumns = []string{
-	"scheduled_at", "region", "location", "building", "room", "routine",
+	"scheduled_at", "kind", "region", "location", "building", "room", "routine",
 	"run_status", "run_phase", "failure_reason",
 	"run_started_at", "run_powered_on_at", "run_completed_at", "run_duration_seconds",
 	"step_index", "step_name", "step_type", "device",
@@ -47,7 +47,7 @@ func (h *Handler) ExportNightlyRuns(w http.ResponseWriter, r *http.Request) {
 	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
 		args := []any{f.from, f.to}
 		sql := `
-			SELECT nr.scheduled_at,
+			SELECT nr.scheduled_at, nr.kind,
 			       COALESCE(reg.name, ''), COALESCE(loc.name, ''),
 			       COALESCE(b.name, ''), r.name,
 			       COALESCE(tr.name, ''),
@@ -75,6 +75,10 @@ func (h *Handler) ExportNightlyRuns(w http.ResponseWriter, r *http.Request) {
 			args = append(args, f.statuses)
 			sql += " AND nr.status = ANY($" + strconv.Itoa(len(args)) + "::text[])"
 		}
+		if f.kind != "" {
+			args = append(args, f.kind)
+			sql += " AND nr.kind = $" + strconv.Itoa(len(args))
+		}
 		args = append(args, nightlyRunsExportMaxRows+1)
 		sql += " ORDER BY nr.scheduled_at DESC, r.name, nr.id, sr.step_index LIMIT $" + strconv.Itoa(len(args))
 
@@ -86,6 +90,7 @@ func (h *Handler) ExportNightlyRuns(w http.ResponseWriter, r *http.Request) {
 		for rows.Next() {
 			var (
 				sched                            time.Time
+				kind                             string
 				region, location, building, room string
 				routine, status, phase, failure  string
 				started, poweredOn, completed    *time.Time
@@ -96,7 +101,7 @@ func (h *Handler) ExportNightlyRuns(w http.ResponseWriter, r *http.Request) {
 				stepErr                          string
 				stepStarted, stepCompleted       *time.Time
 			)
-			if err := rows.Scan(&sched,
+			if err := rows.Scan(&sched, &kind,
 				&region, &location, &building, &room, &routine,
 				&status, &phase, &failure,
 				&started, &poweredOn, &completed,
@@ -122,7 +127,7 @@ func (h *Handler) ExportNightlyRuns(w http.ResponseWriter, r *http.Request) {
 				pass = strconv.FormatBool(*passed)
 			}
 			records = append(records, []string{
-				sched.UTC().Format(time.RFC3339),
+				sched.UTC().Format(time.RFC3339), kind,
 				csvText(region), csvText(location), csvText(building), csvText(room), csvText(routine),
 				status, phase, csvText(failure),
 				csvTime(started), csvTime(poweredOn), csvTime(completed), duration,
@@ -155,6 +160,7 @@ type nightlyRunsFilter struct {
 	from, to time.Time
 	room     string
 	statuses []string
+	kind     string // power | readiness; empty = both
 }
 
 // parseNightlyRunsFilter reads from / to / room_id / status. A non-empty
@@ -166,6 +172,10 @@ func parseNightlyRunsFilter(r *http.Request) (nightlyRunsFilter, string) {
 		to:       time.Now().Add(24 * time.Hour),
 		room:     q.Get("room_id"),
 		statuses: parseStatusFilter(q.Get("status")),
+		kind:     q.Get("kind"),
+	}
+	if f.kind != "" && f.kind != "power" && f.kind != "readiness" {
+		return f, "kind must be power or readiness"
 	}
 	if v := q.Get("from"); v != "" {
 		t, err := time.Parse(time.RFC3339, v)

@@ -29,6 +29,7 @@ type nightlyRunRow struct {
 	ID              string `json:"id"`
 	RoomID          string `json:"room_id"`
 	RoomName        string `json:"room_name"`
+	Kind            string `json:"kind"` // power | readiness
 	BuildingID      string `json:"building_id"`
 	BuildingName    string `json:"building_name"`
 	LocationName    string `json:"location_name,omitempty"`
@@ -54,6 +55,7 @@ type nightlyRunRow struct {
 //	            so still-in-progress runs at midnight boundaries show.
 //	room_id     uuid; if set, only that room.
 //	status      csv of pending|in_progress|succeeded|failed|skipped.
+//	kind        power | readiness.
 //	limit       default 200, cap 1000. Runs list is a heatmap feed,
 //	            not paginated for MVP — big estates + long windows will
 //	            get truncated at the limit rather than 502ing.
@@ -63,7 +65,7 @@ func (h *Handler) ListNightlyRuns(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, msg)
 		return
 	}
-	from, to, roomFilter, statusFilter := f.from, f.to, f.room, f.statuses
+	from, to, roomFilter, statusFilter, kindFilter := f.from, f.to, f.room, f.statuses, f.kind
 	q := r.URL.Query()
 
 	limit := 200
@@ -86,7 +88,7 @@ func (h *Handler) ListNightlyRuns(w http.ResponseWriter, r *http.Request) {
 		// optional status array, then limit.
 		args := []any{from, to}
 		sql := `
-			SELECT nr.id::text,
+			SELECT nr.id::text, nr.kind,
 			       nr.room_id::text, r.name AS room_name,
 			       b.id::text, b.name AS building_name,
 			       loc.name AS location_name,
@@ -106,6 +108,10 @@ func (h *Handler) ListNightlyRuns(w http.ResponseWriter, r *http.Request) {
 		if roomFilter != "" {
 			args = append(args, roomFilter)
 			sql += " AND nr.room_id = $3"
+		}
+		if kindFilter != "" {
+			args = append(args, kindFilter)
+			sql += " AND nr.kind = $" + strconv.Itoa(len(args))
 		}
 		if len(statusFilter) > 0 {
 			args = append(args, statusFilter)
@@ -130,7 +136,7 @@ func (h *Handler) ListNightlyRuns(w http.ResponseWriter, r *http.Request) {
 				failure                       *string
 			)
 			if err := rows.Scan(
-				&row.ID,
+				&row.ID, &row.Kind,
 				&row.RoomID, &row.RoomName,
 				&row.BuildingID, &row.BuildingName,
 				&locName, &regName,
@@ -220,7 +226,7 @@ func (h *Handler) GetNightlyRun(w http.ResponseWriter, r *http.Request) {
 			failure                       *string
 		)
 		err := tx.QueryRow(ctx, `
-			SELECT nr.id::text,
+			SELECT nr.id::text, nr.kind,
 			       nr.room_id::text, r.name,
 			       b.id::text, b.name,
 			       loc.name, reg.name,
@@ -236,7 +242,7 @@ func (h *Handler) GetNightlyRun(w http.ResponseWriter, r *http.Request) {
 			  LEFT JOIN nightly_test_routine tr   ON tr.id = nr.routine_id
 			 WHERE nr.id = $1
 		`, runID).Scan(
-			&out.ID,
+			&out.ID, &out.Kind,
 			&out.RoomID, &out.RoomName,
 			&out.BuildingID, &out.BuildingName,
 			&locName, &regName,

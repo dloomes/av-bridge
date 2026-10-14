@@ -30,7 +30,6 @@ type scheduleOut struct {
 	PowerOnTime   string `json:"power_on_time"`   // HH:MM
 	DaysOfWeek    []int  `json:"days_of_week"`    // ISO 1-7
 	Timezone      string `json:"timezone"`        // IANA
-	TestRoutineID  string `json:"test_routine_id,omitempty"`
 	HelpdeskEmail string `json:"helpdesk_email,omitempty"`
 	RetentionDays int    `json:"retention_days"`
 	Enabled       bool   `json:"enabled"`
@@ -73,7 +72,6 @@ type updateNightlyScheduleReq struct {
 	PowerOnTime   *string `json:"power_on_time,omitempty"`
 	DaysOfWeek    *[]int  `json:"days_of_week,omitempty"`
 	Timezone      *string `json:"timezone,omitempty"`
-	TestRoutineID  *string `json:"test_routine_id,omitempty"`
 	HelpdeskEmail *string `json:"helpdesk_email,omitempty"`
 	RetentionDays *int    `json:"retention_days,omitempty"`
 	Enabled       *bool   `json:"enabled,omitempty"`
@@ -135,23 +133,7 @@ func (h *Handler) UpdateNightlySchedule(w http.ResponseWriter, r *http.Request) 
 
 	p, _ := portalauth.From(r.Context())
 
-	badRoutine := false
 	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
-		// The routine must be one of this customer's: the FK alone would
-		// accept another tenant's id (FK checks ignore RLS).
-		if req.TestRoutineID != nil && *req.TestRoutineID != "" {
-			var exists bool
-			if err := tx.QueryRow(ctx,
-				`SELECT EXISTS (SELECT 1 FROM nightly_test_routine WHERE id::text = $1)`, *req.TestRoutineID,
-			).Scan(&exists); err != nil {
-				return err
-			}
-			if !exists {
-				badRoutine = true
-				return nil
-			}
-		}
-
 		// Ensure a row exists before we UPDATE so a first-time save doesn't
 		// silently no-op.
 		if _, err := loadSchedule(ctx, tx); errors.Is(err, pgx.ErrNoRows) {
@@ -183,13 +165,6 @@ func (h *Handler) UpdateNightlySchedule(w http.ResponseWriter, r *http.Request) 
 		}
 		if req.Timezone != nil {
 			add("timezone", *req.Timezone)
-		}
-		if req.TestRoutineID != nil {
-			if *req.TestRoutineID == "" {
-				add("test_routine_id", nil)
-			} else {
-				add("test_routine_id", *req.TestRoutineID)
-			}
 		}
 		if req.HelpdeskEmail != nil {
 			if *req.HelpdeskEmail == "" {
@@ -227,9 +202,6 @@ func (h *Handler) UpdateNightlySchedule(w http.ResponseWriter, r *http.Request) 
 		if req.Timezone != nil {
 			payload["timezone"] = *req.Timezone
 		}
-		if req.TestRoutineID != nil {
-			payload["test_routine_id"] = *req.TestRoutineID
-		}
 		if req.HelpdeskEmail != nil {
 			// Log presence, not value — helpdesk email is arguably PII.
 			if *req.HelpdeskEmail == "" {
@@ -253,10 +225,6 @@ func (h *Handler) UpdateNightlySchedule(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
-	if badRoutine {
-		writeErr(w, http.StatusBadRequest, "test_routine_id is not one of your routines")
-		return
-	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -269,18 +237,17 @@ func loadSchedule(ctx context.Context, tx pgx.Tx) (scheduleOut, error) {
 		powerOff     time.Time
 		powerOn      time.Time
 		days         []int32
-		routineID    *string
 		helpdeskAddr *string
 		updatedAt    time.Time
 	)
 	err := tx.QueryRow(ctx, `
 		SELECT power_off_time, power_on_time, days_of_week, timezone,
-		       test_routine_id, helpdesk_email, retention_days, enabled,
+		       helpdesk_email, retention_days, enabled,
 		       updated_at
 		  FROM nightly_schedule LIMIT 1
 	`).Scan(
 		&powerOff, &powerOn, &days, &out.Timezone,
-		&routineID, &helpdeskAddr, &out.RetentionDays, &out.Enabled,
+		&helpdeskAddr, &out.RetentionDays, &out.Enabled,
 		&updatedAt,
 	)
 	if err != nil {
@@ -292,9 +259,6 @@ func loadSchedule(ctx context.Context, tx pgx.Tx) (scheduleOut, error) {
 	out.DaysOfWeek = make([]int, len(days))
 	for i, d := range days {
 		out.DaysOfWeek[i] = int(d)
-	}
-	if routineID != nil {
-		out.TestRoutineID = *routineID
 	}
 	if helpdeskAddr != nil {
 		out.HelpdeskEmail = *helpdeskAddr

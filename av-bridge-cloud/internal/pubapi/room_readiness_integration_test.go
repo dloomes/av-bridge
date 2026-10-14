@@ -67,16 +67,16 @@ func TestRoomReadinessEndpoints(t *testing.T) {
 	theirs := room(other, "Elsewhere")
 	std := q(`INSERT INTO nightly_test_routine (customer_id, name) VALUES ($1, 'Standard check') RETURNING id::text`, cust)
 	vc := q(`INSERT INTO nightly_test_routine (customer_id, name) VALUES ($1, 'VC check') RETURNING id::text`, cust)
-	q(`INSERT INTO nightly_schedule (customer_id, test_routine_id) VALUES ($1, $2) RETURNING id::text`, cust, std)
-	q(`INSERT INTO room_nightly_config (customer_id, room_id, test_routine_id) VALUES ($1, $2, $3) RETURNING id::text`, cust, boardroom, vc)
+	q(`INSERT INTO readiness_schedule (customer_id, enabled, test_routine_id, run_time) VALUES ($1, true, $2, '07:45') RETURNING customer_id::text`, cust, std)
+	q(`INSERT INTO room_readiness_config (customer_id, room_id, test_routine_id) VALUES ($1, $2, $3) RETURNING id::text`, cust, boardroom, vc)
 	col := q(`INSERT INTO collectors (customer_id, bridge_collector_id, name, hmac_secret_enc)
 	          VALUES ($1::uuid, 'readiness-' || $1::uuid::text, 'c', '\x00') RETURNING id::text`, cust)
 	codec := q(`INSERT INTO devices (customer_id, collector_id, reported_id, name, protocol)
 	            VALUES ($1, $2, 'codec-1', 'Codec', 'ping') RETURNING id::text`, cust, col)
 
 	run := func(cust, roomID, routineID, status, daysAgo string) string {
-		return q(`INSERT INTO nightly_run (customer_id, room_id, routine_id, phase, status, scheduled_at, started_at, completed_at, failure_reason)
-		          VALUES ($1, $2, NULLIF($3,'')::uuid, CASE WHEN $4 = 'failed' THEN 'failed' ELSE 'ready' END, $4,
+		return q(`INSERT INTO nightly_run (customer_id, room_id, kind, routine_id, phase, status, scheduled_at, started_at, completed_at, failure_reason)
+		          VALUES ($1, $2, 'readiness', NULLIF($3,'')::uuid, CASE WHEN $4 = 'failed' THEN 'failed' ELSE 'ready' END, $4,
 		                  '2026-10-10T06:00:00Z'::timestamptz - ($5 || ' days')::interval,
 		                  '2026-10-10T06:00:00Z'::timestamptz - ($5 || ' days')::interval,
 		                  '2026-10-10T06:05:00Z'::timestamptz - ($5 || ' days')::interval,
@@ -160,13 +160,15 @@ func TestRoomReadinessEndpoints(t *testing.T) {
 		{"/runs?room_id=" + boardroom, 2},
 		{"/runs?since=2026-10-09T00:00:00Z", 2},
 		{"/runs?until=2026-10-09T00:00:00Z", 1},
+		{"/runs?kind=readiness", 3},
+		{"/runs?kind=power", 0},
 	} {
 		var pg page
 		if code := get(tc.path, &pg); code != http.StatusOK || len(pg.Data) != tc.want {
 			t.Errorf("%s: %d, %d rows, want %d", tc.path, code, len(pg.Data), tc.want)
 		}
 	}
-	for _, bad := range []string{"/runs?status=done", "/runs?room_id=x", "/runs?since=yesterday", "/runs?cursor=junk"} {
+	for _, bad := range []string{"/runs?status=done", "/runs?room_id=x", "/runs?since=yesterday", "/runs?cursor=junk", "/runs?kind=both"} {
 		if code := get(bad, nil); code != http.StatusBadRequest {
 			t.Errorf("%s: %d, want 400", bad, code)
 		}
@@ -197,6 +199,11 @@ func TestRoomReadinessEndpoints(t *testing.T) {
 		}
 	}
 
+	// A power run for the boardroom, older than its readiness runs.
+	powerRun := q(`INSERT INTO nightly_run (customer_id, room_id, kind, phase, status, scheduled_at, started_at, powered_on_at, completed_at)
+	               VALUES ($1, $2, 'power', 'ready', 'succeeded', '2026-10-05T19:00:00Z', '2026-10-05T19:00:00Z',
+	                       '2026-10-06T07:30:00Z', '2026-10-06T07:31:30Z') RETURNING id::text`, cust, boardroom)
+
 	// Rooms: routine per room and the latest run.
 	var rooms []publicReadinessRoom
 	if code := get("/rooms", &rooms); code != http.StatusOK || len(rooms) != 3 {
@@ -206,7 +213,10 @@ func TestRoomReadinessEndpoints(t *testing.T) {
 	for _, r := range rooms {
 		byID[r.RoomID] = r
 	}
-	if r := byID[boardroom]; r.Routine == nil || *r.Routine != "VC check" || r.LatestRun == nil || r.LatestRun.ID != latest || r.LatestRun.StepsFailed != 1 {
+	if r := byID[boardroom]; r.Routine == nil || *r.Routine != "VC check" || r.LatestRun == nil || r.LatestRun.ID != latest || r.LatestRun.StepsFailed != 1 ||
+		r.ReadinessTime == nil || *r.ReadinessTime != "07:45" || r.LatestReadinessRun == nil || r.LatestReadinessRun.ID != latest ||
+		r.LatestPowerRun == nil || r.LatestPowerRun.ID != powerRun || r.LatestPowerRun.Kind != "power" ||
+		r.LatestPowerRun.DurationSeconds == nil || *r.LatestPowerRun.DurationSeconds != 90 {
 		t.Errorf("boardroom: %+v", r)
 	}
 	if r := byID[huddle]; r.Routine == nil || *r.Routine != "Standard check" || r.LatestRun == nil || r.LatestRun.ID != huddleRun {

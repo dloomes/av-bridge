@@ -333,6 +333,13 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 		// FR39 quick "room in use tonight" defer — operators can use this
 		// without needing the full nightly.manage grant.
 		mux.Handle("POST /api/v1/nightly/rooms/{id}/defer-tonight", wrapPerm(portalauth.PermNightlyDefer, portal.Portal.DeferTonight))
+		// Readiness checks — the routine half of Room Readiness, on its own
+		// schedule, separate from the power schedule above.
+		mux.Handle("GET /api/v1/readiness/schedule", wrapPerm(portalauth.PermNightlyView, portal.Portal.GetReadinessSchedule))
+		mux.Handle("PATCH /api/v1/readiness/schedule", wrapPerm(portalauth.PermNightlyManage, portal.Portal.UpdateReadinessSchedule))
+		mux.Handle("GET /api/v1/readiness/rooms", wrapPerm(portalauth.PermNightlyView, portal.Portal.ListReadinessRooms))
+		mux.Handle("PATCH /api/v1/readiness/rooms/{id}", wrapPerm(portalauth.PermNightlyManage, portal.Portal.UpdateReadinessRoom))
+		mux.Handle("DELETE /api/v1/readiness/rooms/{id}", wrapPerm(portalauth.PermNightlyManage, portal.Portal.ResetReadinessRoom))
 		// Test routines — slice 2B. Read gated on nightly.view (viewers
 		// can browse existing routines); writes on nightly.manage.
 		mux.Handle("GET /api/v1/nightly/routines", wrapPerm(portalauth.PermNightlyView, portal.Portal.ListNightlyRoutines))
