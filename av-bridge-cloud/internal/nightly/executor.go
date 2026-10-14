@@ -448,7 +448,9 @@ func (e *Executor) stepSection(s step) stepResult {
 }
 
 // stepExpectStatus — real. Resolves the target device set and asserts
-// each device's latest_status matches. Fails if any device is out.
+// each device's status matches, using a fresh poll of each device where
+// its Collector can give one (see freshReadings) and the last report
+// otherwise. Fails if any device is out.
 func (e *Executor) stepExpectStatus(ctx context.Context, run RunContext, s step) stepResult {
 	started := time.Now()
 	var body struct {
@@ -468,13 +470,18 @@ func (e *Executor) stepExpectStatus(ctx context.Context, run RunContext, s step)
 	if len(devices) == 0 {
 		return failedResult(started, "target resolved to no devices")
 	}
+	fresh := e.freshReadings(ctx, run, devices)
 	var mismatches []string
 	actual := map[string]string{}
 	for _, d := range devices {
-		actual[d.name] = d.latestStatus
-		if !strings.EqualFold(d.latestStatus, body.Status) {
+		status, note := d.latestStatus, " (last report; no fresh reading)"
+		if r, ok := fresh[d.id]; ok {
+			status, note = r.status, ""
+		}
+		actual[d.name] = status
+		if !strings.EqualFold(status, body.Status) {
 			mismatches = append(mismatches,
-				fmt.Sprintf("%s is %q (want %q)", d.name, d.latestStatus, body.Status))
+				fmt.Sprintf("%s is %q (want %q)%s", d.name, status, body.Status, note))
 		}
 	}
 	if len(mismatches) > 0 {
@@ -496,10 +503,10 @@ func (e *Executor) stepExpectStatus(ctx context.Context, run RunContext, s step)
 	}
 }
 
-// stepCheckMetric — real. For each target device, pulls the latest
-// telemetry within sample_window_seconds and compares the requested
-// metric against the threshold using the operator. Failing devices
-// are aggregated into the error string.
+// stepCheckMetric — real. For each target device, takes the metric from a
+// fresh poll (see freshReadings) or, without one, from the latest telemetry
+// within sample_window_seconds, and compares it against the threshold using
+// the operator. Failing devices are aggregated into the error string.
 func (e *Executor) stepCheckMetric(ctx context.Context, run RunContext, s step) stepResult {
 	started := time.Now()
 	var body struct {
@@ -528,9 +535,21 @@ func (e *Executor) stepCheckMetric(ctx context.Context, run RunContext, s step) 
 	if len(devices) == 0 {
 		return failedResult(started, "target resolved to no devices")
 	}
+	fresh := e.freshReadings(ctx, run, devices)
 	var mismatches []string
 	actual := map[string]any{}
 	for _, d := range devices {
+		if r, ok := fresh[d.id]; ok {
+			if v, ok := toFloat64(r.metrics[body.Metric]); ok {
+				actual[d.name] = v
+				if !compareMetric(v, body.Operator, body.Threshold) {
+					mismatches = append(mismatches,
+						fmt.Sprintf("%s: %s = %.4g (want %s %.4g)",
+							d.name, body.Metric, v, body.Operator, body.Threshold))
+				}
+				continue
+			}
+		}
 		val, ok, terr := readLatestMetric(ctx, e.pool, d.id, body.Metric, body.SampleWindowSecs)
 		if terr != nil {
 			mismatches = append(mismatches, fmt.Sprintf("%s: telemetry read error: %s", d.name, terr.Error()))
