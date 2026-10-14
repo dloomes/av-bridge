@@ -78,6 +78,8 @@ resource "aws_db_parameter_group" "this" {
   parameter {
     name  = "rds.force_ssl"
     value = "1"
+    # How RDS records this parameter; without it every plan shows a change.
+    apply_method = "pending-reboot"
   }
 }
 
