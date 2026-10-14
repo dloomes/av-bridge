@@ -390,7 +390,6 @@ export interface NightlySchedule {
   power_on_time: string;       // HH:MM (24h)
   days_of_week: number[];      // ISO weekdays 1 (Mon) … 7 (Sun)
   timezone: string;            // IANA name
-  test_routine_id?: string;     // routine not yet wired — slice 2 territory
   helpdesk_email?: string;
   retention_days: number;      // floor of 30
   enabled: boolean;
@@ -405,7 +404,6 @@ export interface UpdateNightlyScheduleBody {
   power_on_time?: string;
   days_of_week?: number[];
   timezone?: string;
-  test_routine_id?: string;
   helpdesk_email?: string;
   retention_days?: number;
   enabled?: boolean;
@@ -432,11 +430,6 @@ export interface NightlyRoomRow {
   excluded_until?: string;            // YYYY-MM-DD, if excluded through a date
   excluded_reason?: ExclusionReason;
   excluded_note?: string;
-  // Test routine: the room's own, when set; otherwise the customer
-  // default's. effective_* is what tonight's run uses (absent = none).
-  override_test_routine_id?: string;
-  effective_test_routine_id?: string;
-  effective_test_routine_name?: string;
 }
 
 // ExclusionReason mirrors the CHECK constraint on
@@ -473,7 +466,6 @@ export interface UpdateRoomOverrideBody {
   excluded_until?: string | null;              // YYYY-MM-DD
   excluded_reason?: ExclusionReason | null;
   excluded_note?: string | null;
-  test_routine_id?: string | null;             // null = use the customer default
 }
 
 // DeferTonightBody — optional operator-supplied note explaining why the
@@ -525,8 +517,13 @@ export interface UpdateNightlyRoutineBody {
 
 // Nightly run — one row per scheduled cycle. Written by the scheduler
 // (see internal/nightly.Scheduler); the portal is read-only here.
+// power: the room switched off at night and back on. readiness: a test
+// routine, on its own schedule (or Run now).
+export type NightlyRunKind = "power" | "readiness";
+
 export interface NightlyRunRow {
   id: string;
+  kind: NightlyRunKind;
   room_id: string;
   room_name: string;
   building_id: string;
@@ -591,7 +588,58 @@ export interface ListRunsOpts {
   to?: string;           // RFC 3339
   room_id?: string;
   status?: string;       // csv of NightlyStatus values
+  kind?: NightlyRunKind;
   limit?: number;
+}
+
+// Readiness checks — the routine half of Room Readiness, on its own
+// schedule. GET/PATCH /api/v1/readiness/schedule.
+export interface ReadinessSchedule {
+  enabled: boolean;
+  test_routine_id?: string;
+  test_routine_name?: string;
+  run_time: string;         // HH:MM
+  days_of_week: number[];   // ISO 1-7
+  timezone: string;         // shared, from the Settings tab
+  updated_at?: string;
+}
+
+export interface UpdateReadinessScheduleBody {
+  enabled?: boolean;
+  test_routine_id?: string; // "" clears
+  run_time?: string;
+  days_of_week?: number[];
+}
+
+// One room's readiness check, resolved against the default, plus its
+// power times (when the power schedule is on) for the clash warning.
+export interface ReadinessRoomRow {
+  room_id: string;
+  room_name: string;
+  building_id: string;
+  building_name: string;
+  location_name?: string;
+  region_name?: string;
+  effective_test_routine_id?: string;
+  effective_test_routine_name?: string;
+  effective_run_time: string;
+  effective_days_of_week: number[];
+  has_override: boolean;
+  override_test_routine_id?: string;
+  override_run_time?: string;
+  override_days_of_week?: number[];
+  excluded_until?: string;
+  power_enabled: boolean;
+  power_off_time?: string;
+  power_on_time?: string;
+}
+
+// Three-state like UpdateRoomOverrideBody: undefined = leave, null =
+// inherit the default, value = the room's own.
+export interface UpdateReadinessRoomBody {
+  test_routine_id?: string | null;
+  run_time?: string | null;
+  days_of_week?: number[] | null;
 }
 
 // pollCommandUntilTerminal polls GET /api/v1/commands/{id} until the row
@@ -840,12 +888,36 @@ export const api = {
       method: "DELETE",
     }),
 
+  getReadinessSchedule: (signal?: AbortSignal) =>
+    request<ReadinessSchedule>("/api/v1/readiness/schedule", { signal }),
+
+  updateReadinessSchedule: (body: UpdateReadinessScheduleBody) =>
+    request<void>("/api/v1/readiness/schedule", {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+
+  listReadinessRooms: (signal?: AbortSignal) =>
+    request<ReadinessRoomRow[]>("/api/v1/readiness/rooms", { signal }),
+
+  updateReadinessRoom: (roomID: string, body: UpdateReadinessRoomBody) =>
+    request<void>(`/api/v1/readiness/rooms/${encodeURIComponent(roomID)}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+
+  resetReadinessRoom: (roomID: string) =>
+    request<void>(`/api/v1/readiness/rooms/${encodeURIComponent(roomID)}`, {
+      method: "DELETE",
+    }),
+
   listNightlyRuns: (opts?: ListRunsOpts, signal?: AbortSignal) => {
     const params = new URLSearchParams();
     if (opts?.from) params.set("from", opts.from);
     if (opts?.to) params.set("to", opts.to);
     if (opts?.room_id) params.set("room_id", opts.room_id);
     if (opts?.status) params.set("status", opts.status);
+    if (opts?.kind) params.set("kind", opts.kind);
     if (opts?.limit) params.set("limit", String(opts.limit));
     const q = params.toString();
     return request<NightlyRunRow[]>(
@@ -864,6 +936,7 @@ export const api = {
     if (opts?.to) params.set("to", opts.to);
     if (opts?.room_id) params.set("room_id", opts.room_id);
     if (opts?.status) params.set("status", opts.status);
+    if (opts?.kind) params.set("kind", opts.kind);
     const q = params.toString();
     const path = "/api/v1/nightly/runs/export.csv" + (q ? `?${q}` : "");
     const res = await fetch(`${API_BASE}${path}`, {

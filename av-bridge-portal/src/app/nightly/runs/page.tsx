@@ -19,9 +19,15 @@ import { api } from "@/lib/api";
 import { useToast } from "@/components/toast";
 import type {
   NightlyRoomRow,
+  NightlyRunKind,
   NightlyRunRow,
   NightlyStatus,
 } from "@/lib/api";
+
+const KIND_LABELS: Record<NightlyRunKind, string> = {
+  power: "Power schedule",
+  readiness: "Readiness check",
+};
 
 // Room Readiness — run history list.
 //
@@ -109,6 +115,7 @@ export default function NightlyRunsPage() {
   const [to, setTo] = useState(isoDaysAgo(0));
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [roomFilter, setRoomFilter] = useState<string>("");
+  const [kindFilter, setKindFilter] = useState<"" | NightlyRunKind>("");
 
   const [runs, setRuns] = useState<NightlyRunRow[] | null>(null);
   const [rooms, setRooms] = useState<NightlyRoomRow[]>([]);
@@ -125,6 +132,7 @@ export default function NightlyRunsPage() {
           to: toRFC3339End(to),
           room_id: roomFilter || undefined,
           status: statusFilter === "all" ? undefined : statusFilter,
+          kind: kindFilter || undefined,
           limit: 500,
         },
         signal
@@ -135,7 +143,7 @@ export default function NightlyRunsPage() {
     } catch (e) {
       if (!signal?.aborted) setLoadError((e as Error).message);
     }
-  }, [from, to, statusFilter, roomFilter]);
+  }, [from, to, statusFilter, roomFilter, kindFilter]);
 
   useEffect(() => {
     const ctrl = new AbortController();
@@ -177,6 +185,7 @@ export default function NightlyRunsPage() {
         to: toRFC3339End(to),
         room_id: roomFilter || undefined,
         status: statusFilter === "all" ? undefined : statusFilter,
+        kind: kindFilter || undefined,
       });
       const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
       const url = URL.createObjectURL(blob);
@@ -310,6 +319,21 @@ export default function NightlyRunsPage() {
                 </select>
               </div>
               <div className="space-y-1">
+                <label htmlFor="kind" className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground block">
+                  Type
+                </label>
+                <select
+                  id="kind"
+                  value={kindFilter}
+                  onChange={(e) => setKindFilter(e.target.value as "" | NightlyRunKind)}
+                  className="rounded-md border bg-background px-3 py-2 text-sm"
+                >
+                  <option value="">All</option>
+                  <option value="power">Power schedule</option>
+                  <option value="readiness">Readiness checks</option>
+                </select>
+              </div>
+              <div className="space-y-1">
                 <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground block">
                   Status
                 </span>
@@ -378,15 +402,15 @@ export default function NightlyRunsPage() {
                   No runs in this window
                 </div>
                 <p className="mx-auto max-w-md text-sm text-muted-foreground">
-                  Widen the date range, or enable the nightly lifecycle on
-                  the{" "}
+                  Widen the date range, or switch on the power schedule or
+                  readiness checks on the{" "}
                   <Link
                     href="/nightly/schedule"
                     className="text-primary hover:underline"
                   >
-                    schedule page
-                  </Link>{" "}
-                  if it isn't running yet.
+                    Room Readiness page
+                  </Link>
+                  .
                 </p>
               </CardContent>
             </Card>
@@ -400,6 +424,7 @@ export default function NightlyRunsPage() {
                     <thead>
                       <tr className="border-b bg-muted/40 text-left text-[10px] uppercase tracking-wider text-muted-foreground">
                         <th scope="col" className="px-4 py-3 font-medium">Room</th>
+                        <th scope="col" className="px-4 py-3 font-medium">Type</th>
                         <th scope="col" className="px-4 py-3 font-medium">Scheduled</th>
                         <th scope="col" className="px-4 py-3 font-medium">Status</th>
                         <th
@@ -432,6 +457,9 @@ export default function NightlyRunsPage() {
                                 .filter(Boolean)
                                 .join(" · ")}
                             </div>
+                          </td>
+                          <td className="px-4 py-3.5 align-top text-xs text-muted-foreground">
+                            {KIND_LABELS[r.kind] ?? r.kind}
                           </td>
                           <td className="px-4 py-3.5 align-top text-xs text-muted-foreground">
                             {new Date(r.scheduled_at).toLocaleString()}

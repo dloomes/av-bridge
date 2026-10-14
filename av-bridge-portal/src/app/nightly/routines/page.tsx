@@ -112,11 +112,11 @@ export default function RoutinesListPage() {
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
               <Link
-                href="/nightly/schedule"
+                href="/nightly/schedule?tab=readiness"
                 className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
               >
                 <ArrowLeft aria-hidden="true" className="h-3 w-3" />
-                Room Readiness
+                Readiness checks
               </Link>
             </div>
             <h1 className="text-xl font-semibold leading-tight">

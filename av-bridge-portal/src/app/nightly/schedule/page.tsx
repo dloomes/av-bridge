@@ -2,16 +2,14 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   CalendarOff,
   ChevronDown,
   ChevronRight,
   CircleSlash,
-  FileCode2,
   Loader2,
   Moon,
-  Play,
   RotateCcw,
   Settings2,
 } from "lucide-react";
@@ -25,20 +23,22 @@ import { api } from "@/lib/api";
 import { hasPermission } from "@/lib/session";
 import type {
   ExclusionReason,
-  NightlyRoutineRow,
   NightlyRoomRow,
   NightlySchedule,
   UpdateNightlyScheduleBody,
   UpdateRoomOverrideBody,
 } from "@/lib/api";
 import { EXCLUSION_REASON_LABELS } from "@/lib/api";
+import { ReadinessPanel } from "./readiness-panel";
+import { DAY_BUTTONS, isFutureDate, summariseDays } from "./shared";
 
-// Room Readiness — customer-level schedule editor + per-room overrides.
-//
-// Slice 2C shipped the customer default; slice 2A adds the per-room
-// override list + editor modal below. Routine editor + runs heatmap still
-// live in later slices; the placeholder card at the bottom lists what's
-// coming next.
+// Room Readiness, in three tabs:
+//   Power schedule    switch rooms off at night and on in the morning, with
+//                     per-room times, exclusions and Defer tonight.
+//   Readiness checks  run a test routine at its own time (readiness-panel).
+//   Settings          shared by both: timezone, helpdesk email and morning
+//                     digest, how long step results are kept.
+// The tab is in the URL (?tab=readiness) so it survives refresh and links.
 
 // Curated timezone options. The customer's stored value is added
 // dynamically if it doesn't appear in this list, so bespoke IANA names set
@@ -56,47 +56,6 @@ const COMMON_TIMEZONES = [
   "America/Denver",
   "America/Los_Angeles",
 ];
-
-// ISO weekday order: 1 = Mon … 7 = Sun. Rendered left-to-right.
-const DAY_BUTTONS: { iso: number; label: string; full: string }[] = [
-  { iso: 1, label: "Mon", full: "Monday" },
-  { iso: 2, label: "Tue", full: "Tuesday" },
-  { iso: 3, label: "Wed", full: "Wednesday" },
-  { iso: 4, label: "Thu", full: "Thursday" },
-  { iso: 5, label: "Fri", full: "Friday" },
-  { iso: 6, label: "Sat", full: "Saturday" },
-  { iso: 7, label: "Sun", full: "Sunday" },
-];
-
-// Shorthand ISO-day-to-label lookup used in the compact per-row summary.
-const DAY_LABELS_SHORT = ["", "Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
-
-function summariseDays(days: number[]): string {
-  const s = [...days].sort((a, b) => a - b);
-  // Recognise Mon-Fri as the common weekday shorthand.
-  if (
-    s.length === 5 &&
-    s[0] === 1 &&
-    s[1] === 2 &&
-    s[2] === 3 &&
-    s[3] === 4 &&
-    s[4] === 5
-  ) {
-    return "Weekdays";
-  }
-  if (s.length === 7) return "Every day";
-  return s.map((d) => DAY_LABELS_SHORT[d]).join(" · ");
-}
-
-// isFutureDate — true if the YYYY-MM-DD string is today or later. Used to
-// decide whether the excluded_until date is still active. Backend keeps
-// past values but the UI treats them as "not excluded" for display.
-function isFutureDate(iso: string): boolean {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const d = new Date(iso + "T00:00:00");
-  return d.getTime() >= today.getTime();
-}
 
 export default function NightlySchedulePage() {
   const session = useSession();
@@ -118,13 +77,7 @@ export default function NightlySchedulePage() {
   const [timezone, setTimezone] = useState("Europe/London");
   const [helpdeskEmail, setHelpdeskEmail] = useState("");
   const [retentionDays, setRetentionDays] = useState(90);
-  const [testRoutineID, setTestRoutineID] = useState<string>("");
   const [saving, setSaving] = useState(false);
-
-  // Routine list — small, loaded once, refreshed after any edit that
-  // might create/delete routines (in slice 2B: just page mount + when
-  // returning to /nightly/schedule from the routines list).
-  const [routines, setRoutines] = useState<NightlyRoutineRow[] | null>(null);
 
   // ── Room overrides state ───────────────────────────────────────────────
 
@@ -148,20 +101,8 @@ export default function NightlySchedulePage() {
       setTimezone(s.timezone);
       setHelpdeskEmail(s.helpdesk_email ?? "");
       setRetentionDays(s.retention_days);
-      setTestRoutineID(s.test_routine_id ?? "");
     } catch (e) {
       if (!signal?.aborted) setLoadError((e as Error).message);
-    }
-  }, []);
-
-  const loadRoutines = useCallback(async (signal?: AbortSignal) => {
-    try {
-      const list = await api.listNightlyRoutines(signal);
-      if (signal?.aborted) return;
-      setRoutines(list);
-    } catch {
-      // Non-fatal — routine picker just shows "none available" if the
-      // fetch fails; the rest of the page still functions.
     }
   }, []);
 
@@ -180,9 +121,8 @@ export default function NightlySchedulePage() {
     const ctrl = new AbortController();
     void loadCustomerSchedule(ctrl.signal);
     void loadRooms(ctrl.signal);
-    void loadRoutines(ctrl.signal);
     return () => ctrl.abort();
-  }, [loadCustomerSchedule, loadRooms, loadRoutines]);
+  }, [loadCustomerSchedule, loadRooms]);
 
   const toggleDay = (iso: number) => {
     setDays((prev) =>
@@ -201,8 +141,7 @@ export default function NightlySchedulePage() {
         JSON.stringify([...loaded.days_of_week].sort((a, b) => a - b)) ||
       timezone !== loaded.timezone ||
       helpdeskEmail !== (loaded.helpdesk_email ?? "") ||
-      retentionDays !== loaded.retention_days ||
-      testRoutineID !== (loaded.test_routine_id ?? ""));
+      retentionDays !== loaded.retention_days);
 
   const handleSave = async () => {
     if (!loaded) return;
@@ -222,11 +161,6 @@ export default function NightlySchedulePage() {
     }
     if (retentionDays !== loaded.retention_days) {
       body.retention_days = retentionDays;
-    }
-    if (testRoutineID !== (loaded.test_routine_id ?? "")) {
-      // Empty string clears the routine assignment on the backend; a
-      // non-empty UUID sets it. Backend normalises "" → NULL.
-      body.test_routine_id = testRoutineID;
     }
     if (Object.keys(body).length === 0) return;
 
@@ -274,36 +208,6 @@ export default function NightlySchedulePage() {
     } finally {
       setSendingDigest(false);
     }
-  };
-
-  // Run-now — fires an ad-hoc routine execution against a specific
-  // room, bypassing the schedule. The backend inserts a run directly in
-  // the `testing` phase (skipping the power-cycle preamble) and hands
-  // it to the executor. On success we navigate to the run detail so the
-  // operator can watch step_results appear live.
-  const router = useRouter();
-  const [runningRoomID, setRunningRoomID] = useState<string | null>(null);
-  const handleRunNow = async (row: NightlyRoomRow) => {
-    setRunningRoomID(row.room_id);
-    try {
-      const res = await api.runRoutineNow(row.room_id);
-      toast({
-        title: `Started routine on "${row.room_name}"`,
-        description: "Navigating to the run detail so you can watch it live.",
-        variant: "success",
-      });
-      router.push(`/nightly/runs/${res.run_id}`);
-    } catch (e) {
-      toast({
-        title: "Run failed to start",
-        description: (e as Error).message,
-        variant: "destructive",
-      });
-      setRunningRoomID(null);
-    }
-    // Deliberately don't clear runningRoomID on success — the router
-    // push unmounts the page anyway, and clearing early would let the
-    // user re-click during navigation.
   };
 
   // "Defer tonight" — quick action for "this room is in use tonight, skip
@@ -361,6 +265,19 @@ export default function NightlySchedulePage() {
     : [timezone, ...COMMON_TIMEZONES];
 
   const inputsDisabled = !canManage || saving;
+
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const rawTab = searchParams.get("tab");
+  const tab: "power" | "readiness" | "settings" =
+    rawTab === "readiness" || rawTab === "settings" ? rawTab : "power";
+  const TABS = [
+    { key: "power", label: "Power schedule" },
+    { key: "readiness", label: "Readiness checks" },
+    { key: "settings", label: "Settings" },
+  ] as const;
+  const setTab = (t: string) =>
+    router.replace(t === "power" ? "/nightly/schedule" : `/nightly/schedule?tab=${t}`);
 
   // Group rooms by building — makes a table with dozens of rows scannable.
   // Region · location · building forms the section header; rooms within a
@@ -460,10 +377,28 @@ export default function NightlySchedulePage() {
               Room Readiness
             </h1>
             <p className="text-sm text-muted-foreground leading-tight">
-              Nightly power-cycle and readiness testing for every room in the
-              tenant.
+              Switch rooms off overnight, and check they&rsquo;re ready before
+              the day starts.
             </p>
           </div>
+        </div>
+        <div role="tablist" aria-label="Room Readiness" className="mt-4 -mb-4 flex gap-1">
+          {TABS.map((t) => (
+            <button
+              key={t.key}
+              type="button"
+              role="tab"
+              aria-selected={tab === t.key}
+              onClick={() => setTab(t.key)}
+              className={`border-b-2 px-3 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+                tab === t.key
+                  ? "border-primary text-foreground"
+                  : "border-transparent text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
         </div>
       </header>
 
@@ -482,8 +417,12 @@ export default function NightlySchedulePage() {
             </div>
           )}
 
-          {loaded !== null && (
+          {tab === "readiness" && <ReadinessPanel canManage={canManage} />}
+
+          {loaded !== null && tab !== "readiness" && (
             <>
+              {tab === "power" && (
+              <>
               {/* ── Master enable ─────────────────────────────────────── */}
               <Card>
                 <CardContent className="p-6 space-y-4">
@@ -601,183 +540,7 @@ export default function NightlySchedulePage() {
                     </p>
                   </div>
 
-                  <div className="space-y-1 max-w-sm">
-                    <label htmlFor="timezone" className="text-xs font-medium">
-                      Timezone
-                    </label>
-                    <select
-                      id="timezone"
-                      value={timezone}
-                      onChange={(e) => setTimezone(e.target.value)}
-                      disabled={inputsDisabled}
-                      className="w-full rounded-md border bg-background px-3 py-2 text-sm disabled:opacity-50"
-                    >
-                      {timezoneOptions.map((tz) => (
-                        <option key={tz} value={tz}>
-                          {tz}
-                        </option>
-                      ))}
-                    </select>
-                    <p className="text-xs text-muted-foreground">
-                      Schedules resolve in this timezone. Per-building
-                      timezones are on the roadmap.
-                    </p>
-                  </div>
-                </CardContent>
-              </Card>
 
-              {/* ── Test routine ────────────────────────────────────── */}
-              <Card>
-                <CardContent className="p-6 space-y-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <h2 className="text-sm font-semibold flex items-center gap-1.5">
-                        <FileCode2
-                          aria-hidden="true"
-                          className="h-3.5 w-3.5 text-muted-foreground"
-                        />
-                        Test routine
-                      </h2>
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        Runs after power-on to verify the room is ready.
-                        Leave unset to power-cycle only. This is the default
-                        for every room; use Customise on a room below to give
-                        it a different routine.
-                      </p>
-                    </div>
-                    <Link
-                      href="/nightly/routines"
-                      className="text-xs text-primary hover:underline shrink-0"
-                    >
-                      Manage routines →
-                    </Link>
-                  </div>
-                  <div className="space-y-1 max-w-md">
-                    <label htmlFor="routine" className="text-xs font-medium">
-                      Assigned routine
-                    </label>
-                    <select
-                      id="routine"
-                      value={testRoutineID}
-                      onChange={(e) => setTestRoutineID(e.target.value)}
-                      disabled={inputsDisabled}
-                      className="w-full rounded-md border bg-background px-3 py-2 text-sm disabled:opacity-50"
-                    >
-                      <option value="">
-                        {routines && routines.length === 0
-                          ? "No routines yet — leave blank or create one"
-                          : "— none (power-cycle only) —"}
-                      </option>
-                      {(routines ?? []).map((r) => (
-                        <option key={r.id} value={r.id}>
-                          {r.name} ({r.step_count}{" "}
-                          {r.step_count === 1 ? "step" : "steps"})
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </CardContent>
-              </Card>
-
-              {/* ── Notifications ─────────────────────────────────────── */}
-              <Card>
-                <CardContent className="p-6 space-y-4">
-                  <h2 className="text-sm font-semibold">Notifications</h2>
-                  <div className="space-y-1 max-w-md">
-                    <label
-                      htmlFor="helpdesk_email"
-                      className="text-xs font-medium"
-                    >
-                      Helpdesk email
-                    </label>
-                    <input
-                      id="helpdesk_email"
-                      type="email"
-                      value={helpdeskEmail}
-                      onChange={(e) => setHelpdeskEmail(e.target.value)}
-                      disabled={inputsDisabled}
-                      placeholder="helpdesk@involve.vc"
-                      className="w-full rounded-md border bg-background px-3 py-2 text-sm disabled:opacity-50"
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      The morning digest is cc'd here on behalf of the
-                      customer, so the Involve helpdesk picks up incidents
-                      proactively. Leave blank to skip.
-                    </p>
-                  </div>
-                  <div className="rounded-md border bg-muted/30 p-4 space-y-2">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <div className="text-xs font-semibold">
-                          Morning digest
-                        </div>
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          Every morning at power-on&nbsp;+&nbsp;30&nbsp;min in
-                          your timezone, an HTML digest of last night's runs
-                          is sent to every enabled email notification channel
-                          {helpdeskEmail
-                            ? ", cc'd to the helpdesk address above"
-                            : ""}
-                          .
-                        </p>
-                      </div>
-                      {canManage && (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={handleSendDigestNow}
-                          disabled={sendingDigest}
-                          className="shrink-0"
-                        >
-                          {sendingDigest && (
-                            <Loader2
-                              aria-hidden="true"
-                              className="h-3.5 w-3.5 animate-spin"
-                            />
-                          )}
-                          Send test digest
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-
-              {/* ── Retention ─────────────────────────────────────────── */}
-              <Card>
-                <CardContent className="p-6 space-y-4">
-                  <h2 className="text-sm font-semibold">History retention</h2>
-                  <div className="space-y-1 max-w-xs">
-                    <label
-                      htmlFor="retention_days"
-                      className="text-xs font-medium"
-                    >
-                      Keep detailed step results for (days)
-                    </label>
-                    <input
-                      id="retention_days"
-                      type="number"
-                      min={30}
-                      max={365}
-                      value={retentionDays}
-                      onChange={(e) =>
-                        setRetentionDays(
-                          Math.max(
-                            30,
-                            Math.min(365, parseInt(e.target.value, 10) || 30)
-                          )
-                        )
-                      }
-                      disabled={inputsDisabled}
-                      className="w-full rounded-md border bg-background px-3 py-2 text-sm disabled:opacity-50"
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Minimum 30 days. Run-level pass/fail summaries are kept
-                      forever — only the per-step debug details are trimmed
-                      after this window.
-                    </p>
-                  </div>
                 </CardContent>
               </Card>
 
@@ -955,29 +718,6 @@ export default function NightlySchedulePage() {
                                         <span className="ml-2">
                                           {summariseDays(r.effective_days_of_week)}
                                         </span>
-                                        <div
-                                          className="mt-0.5 flex items-center gap-1"
-                                          title={
-                                            r.override_test_routine_id
-                                              ? "This room's own routine"
-                                              : "The default routine"
-                                          }
-                                        >
-                                          <FileCode2
-                                            aria-hidden="true"
-                                            className="h-3 w-3 shrink-0"
-                                          />
-                                          <span
-                                            className={
-                                              r.override_test_routine_id
-                                                ? "text-foreground"
-                                                : undefined
-                                            }
-                                          >
-                                            {r.effective_test_routine_name ??
-                                              "No test (power-cycle only)"}
-                                          </span>
-                                        </div>
                                       </td>
                                       <td className="px-3 py-2.5">
                                         {excluded ? (
@@ -1045,28 +785,6 @@ export default function NightlySchedulePage() {
                                                 variant="ghost"
                                                 size="sm"
                                                 className="h-8"
-                                                disabled={runningRoomID === r.room_id}
-                                                onClick={() => handleRunNow(r)}
-                                                aria-label={`Run routine now on ${r.room_name}`}
-                                                title="Run this room's routine now (skips power-cycle)"
-                                              >
-                                                {runningRoomID === r.room_id ? (
-                                                  <Loader2
-                                                    aria-hidden="true"
-                                                    className="h-3.5 w-3.5 animate-spin"
-                                                  />
-                                                ) : (
-                                                  <Play
-                                                    aria-hidden="true"
-                                                    className="h-3.5 w-3.5"
-                                                  />
-                                                )}
-                                                Run now
-                                              </Button>
-                                              <Button
-                                                variant="ghost"
-                                                size="sm"
-                                                className="h-8"
                                                 onClick={() => setEditingRoom(r)}
                                                 aria-label={`Customise ${r.room_name}`}
                                               >
@@ -1121,6 +839,151 @@ export default function NightlySchedulePage() {
                   )}
                 </CardContent>
               </Card>
+
+              </>
+              )}
+
+              {tab === "settings" && (
+              <>
+              {/* ── Timezone ──────────────────────────────────────────── */}
+              <Card>
+                <CardContent className="p-6 space-y-4">
+                  <div>
+                    <h2 className="text-sm font-semibold">Timezone</h2>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      The power schedule and readiness checks both run in this
+                      timezone.
+                    </p>
+                  </div>
+                  <div className="space-y-1 max-w-sm">
+                    <label htmlFor="timezone" className="text-xs font-medium">
+                      Timezone
+                    </label>
+                    <select
+                      id="timezone"
+                      value={timezone}
+                      onChange={(e) => setTimezone(e.target.value)}
+                      disabled={inputsDisabled}
+                      className="w-full rounded-md border bg-background px-3 py-2 text-sm disabled:opacity-50"
+                    >
+                      {timezoneOptions.map((tz) => (
+                        <option key={tz} value={tz}>
+                          {tz}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-xs text-muted-foreground">
+                      Schedules resolve in this timezone. Per-building
+                      timezones are on the roadmap.
+                    </p>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* ── Notifications ─────────────────────────────────────── */}
+              <Card>
+                <CardContent className="p-6 space-y-4">
+                  <h2 className="text-sm font-semibold">Notifications</h2>
+                  <div className="space-y-1 max-w-md">
+                    <label
+                      htmlFor="helpdesk_email"
+                      className="text-xs font-medium"
+                    >
+                      Helpdesk email
+                    </label>
+                    <input
+                      id="helpdesk_email"
+                      type="email"
+                      value={helpdeskEmail}
+                      onChange={(e) => setHelpdeskEmail(e.target.value)}
+                      disabled={inputsDisabled}
+                      placeholder="helpdesk@involve.vc"
+                      className="w-full rounded-md border bg-background px-3 py-2 text-sm disabled:opacity-50"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      The morning digest is cc'd here on behalf of the
+                      customer, so the Involve helpdesk picks up incidents
+                      proactively. Leave blank to skip.
+                    </p>
+                  </div>
+                  <div className="rounded-md border bg-muted/30 p-4 space-y-2">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="text-xs font-semibold">
+                          Morning digest
+                        </div>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Every morning at power-on&nbsp;+&nbsp;30&nbsp;min in
+                          your timezone, an HTML digest of last night's runs
+                          is sent to every enabled email notification channel
+                          {helpdeskEmail
+                            ? ", cc'd to the helpdesk address above"
+                            : ""}
+                          .
+                        </p>
+                      </div>
+                      {canManage && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={handleSendDigestNow}
+                          disabled={sendingDigest}
+                          className="shrink-0"
+                        >
+                          {sendingDigest && (
+                            <Loader2
+                              aria-hidden="true"
+                              className="h-3.5 w-3.5 animate-spin"
+                            />
+                          )}
+                          Send test digest
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* ── Retention ─────────────────────────────────────────── */}
+              <Card>
+                <CardContent className="p-6 space-y-4">
+                  <h2 className="text-sm font-semibold">History retention</h2>
+                  <div className="space-y-1 max-w-xs">
+                    <label
+                      htmlFor="retention_days"
+                      className="text-xs font-medium"
+                    >
+                      Keep detailed step results for (days)
+                    </label>
+                    <input
+                      id="retention_days"
+                      type="number"
+                      min={30}
+                      max={365}
+                      value={retentionDays}
+                      onChange={(e) =>
+                        setRetentionDays(
+                          Math.max(
+                            30,
+                            Math.min(365, parseInt(e.target.value, 10) || 30)
+                          )
+                        )
+                      }
+                      disabled={inputsDisabled}
+                      className="w-full rounded-md border bg-background px-3 py-2 text-sm disabled:opacity-50"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Minimum 30 days. Run-level pass/fail summaries are kept
+                      forever — only the per-step debug details are trimmed
+                      after this window.
+                    </p>
+                  </div>
+                </CardContent>
+              </Card>
+
+              </>
+              )}
 
               {/* ── Run history link ─────────────────────────────────── */}
               <Card>
@@ -1188,7 +1051,6 @@ export default function NightlySchedulePage() {
         <RoomOverrideModal
           room={editingRoom}
           customerDefault={loaded}
-          routines={routines ?? []}
           onClose={() => setEditingRoom(null)}
           onSaved={() => {
             setEditingRoom(null);
@@ -1220,13 +1082,11 @@ export default function NightlySchedulePage() {
 function RoomOverrideModal({
   room,
   customerDefault,
-  routines,
   onClose,
   onSaved,
 }: {
   room: NightlyRoomRow;
   customerDefault: NightlySchedule;
-  routines: NightlyRoutineRow[];
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -1259,16 +1119,6 @@ function RoomOverrideModal({
     room.excluded_reason ?? ""
   );
   const [excludedNote, setExcludedNote] = useState(room.excluded_note ?? "");
-  const [customRoutine, setCustomRoutine] = useState(
-    room.override_test_routine_id !== undefined
-  );
-  const [routineID, setRoutineID] = useState(
-    room.override_test_routine_id ?? routines[0]?.id ?? ""
-  );
-  const defaultRoutineName = customerDefault.test_routine_id
-    ? routines.find((r) => r.id === customerDefault.test_routine_id)?.name ??
-      "(routine)"
-    : "None (power-cycle only)";
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -1308,7 +1158,6 @@ function RoomOverrideModal({
         hasExclusion && excludedReason !== "" ? excludedReason : null,
       excluded_note:
         hasExclusion && trimmedNote !== "" ? trimmedNote : null,
-      test_routine_id: customRoutine && routineID !== "" ? routineID : null,
     };
     try {
       await api.updateRoomOverride(room.room_id, body);
@@ -1403,39 +1252,6 @@ function RoomOverrideModal({
               );
             })}
           </div>
-        </OverrideRow>
-
-        {/* Test routine */}
-        <OverrideRow
-          label="Test routine"
-          custom={customRoutine}
-          onToggle={() => setCustomRoutine((v) => !v)}
-          inheritValue={defaultRoutineName}
-        >
-          {routines.length === 0 ? (
-            <div className="text-xs text-muted-foreground">
-              No routines yet.{" "}
-              <Link href="/nightly/routines" className="text-primary hover:underline">
-                Create one
-              </Link>{" "}
-              first.
-            </div>
-          ) : (
-            <select
-              aria-label="Test routine for this room"
-              value={routineID}
-              onChange={(e) => setRoutineID(e.target.value)}
-              disabled={saving}
-              className="w-full rounded-md border bg-background px-3 py-2 text-sm disabled:opacity-50"
-            >
-              {routines.map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.name} ({r.step_count}{" "}
-                  {r.step_count === 1 ? "step" : "steps"})
-                </option>
-              ))}
-            </select>
-          )}
         </OverrideRow>
 
         {/* Exclusion — orthogonal to the schedule fields. */}

@@ -14,6 +14,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { api } from "@/lib/api";
 import type {
+  NightlyRunKind,
   NightlyPhase,
   NightlyRunDetail,
   NightlyStepRow,
@@ -32,16 +33,18 @@ import type {
 // Every phase, in the order the runner walks them. The two terminal
 // phases (ready / failed) are called out as their own final position;
 // everything before them is a linear crumb.
-const PHASE_TIMELINE: NightlyPhase[] = [
-  "pending",
-  "scheduled_off",
-  "off",
-  "scheduled_on",
-  "waking",
-  "warming",
-  "testing",
-  "ready",
-];
+// The stages each kind of run goes through. Power runs: switched off at
+// night, on in the morning, warmed up. Readiness runs: wait to start (for
+// the room's power cycle, if one is running), then the routine.
+const PHASE_TIMELINES: Record<NightlyRunKind, NightlyPhase[]> = {
+  power: ["scheduled_off", "off", "scheduled_on", "waking", "warming", "ready"],
+  readiness: ["pending", "testing", "ready"],
+};
+
+const KIND_LABELS: Record<NightlyRunKind, string> = {
+  power: "Power schedule",
+  readiness: "Readiness check",
+};
 
 const PHASE_LABELS: Record<NightlyPhase, string> = {
   pending: "Pending",
@@ -105,7 +108,12 @@ export default function NightlyRunDetailPage() {
             </h1>
             {loaded && (
               <p className="text-xs text-muted-foreground leading-tight">
-                {[loaded.region_name, loaded.location_name, loaded.building_name]
+                {[
+                  KIND_LABELS[loaded.kind] ?? loaded.kind,
+                  loaded.region_name,
+                  loaded.location_name,
+                  loaded.building_name,
+                ]
                   .filter(Boolean)
                   .join(" · ")}
               </p>
@@ -210,6 +218,7 @@ export default function NightlyRunDetailPage() {
                 <CardContent className="p-6 space-y-3">
                   <h2 className="text-sm font-semibold">Phase</h2>
                   <PhaseTimeline
+                    timeline={PHASE_TIMELINES[loaded.kind] ?? PHASE_TIMELINES.power}
                     current={loaded.phase}
                     failed={loaded.status === "failed"}
                   />
@@ -223,7 +232,9 @@ export default function NightlyRunDetailPage() {
                   {loaded.steps.length === 0 ? (
                     <div className="rounded-md border border-dashed p-6 text-center">
                       <div className="text-sm text-muted-foreground">
-                        {!loaded.routine_id
+                        {loaded.kind === "power"
+                          ? "No power commands were recorded: no device in the room has power control, or the schedule was only logging (dry run)."
+                          : !loaded.routine_id
                           ? "No routine was assigned when this run executed."
                           : loaded.status === "pending" ||
                               loaded.status === "in_progress"
@@ -290,9 +301,11 @@ function TimingBlock({
 // muted. A `failed` run replaces the trailing green with red on the last
 // walked phase to signal where it went wrong.
 function PhaseTimeline({
+  timeline,
   current,
   failed,
 }: {
+  timeline: NightlyPhase[];
   current: NightlyPhase;
   failed: boolean;
 }) {
@@ -305,7 +318,7 @@ function PhaseTimeline({
   if (current === "failed") {
     return (
       <div className="flex items-center flex-wrap gap-1">
-        {PHASE_TIMELINE.slice(0, -1).map((p, i, arr) => (
+        {timeline.slice(0, -1).map((p, i, arr) => (
           <PhaseChip key={p} phase={p} state={i < arr.length ? "walked" : "future"} />
         ))}
         <PhaseChip phase="failed" state="failed" />
@@ -313,10 +326,10 @@ function PhaseTimeline({
     );
   }
 
-  const currentIdx = PHASE_TIMELINE.indexOf(current);
+  const currentIdx = timeline.indexOf(current);
   return (
     <div className="flex items-center flex-wrap gap-1">
-      {PHASE_TIMELINE.map((p, i) => (
+      {timeline.map((p, i) => (
         <PhaseChip
           key={p}
           phase={p}
