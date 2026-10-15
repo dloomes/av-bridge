@@ -28,6 +28,7 @@ import (
 	"github.com/dloomes/av-bridge/internal/ha"
 	"github.com/dloomes/av-bridge/internal/hub"
 	"github.com/dloomes/av-bridge/internal/store"
+	"github.com/dloomes/av-bridge/internal/tunnel"
 	"github.com/dloomes/av-bridge/internal/update"
 )
 
@@ -439,6 +440,13 @@ func (p *program) run(ctx context.Context) error {
 			}
 		})
 	go cmdPoller.Run(ctx)
+
+	// Remote access: an outbound tunnel the cloud uses to reach this
+	// collector's devices' web interfaces from the portal.
+	if cfg.Cloud.PortalAPI != "" && cfg.Cloud.HMACSecret != "" {
+		go tunnel.New(cfg.Cloud.PortalAPI, cfg.Hub.CollectorID, cfg.Cloud.HMACSecret,
+			cfg.Cloud.TLSSkipVerify, h).Run(ctx)
+	}
 
 	go func() {
 		var serverErr error

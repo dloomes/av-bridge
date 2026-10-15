@@ -137,6 +137,18 @@ func (h *Hub) Stop() {
 	}
 }
 
+// DeviceConfig returns a device's configuration by ID (remote access uses
+// it to find the device's address).
+func (h *Hub) DeviceConfig(id string) (config.DeviceConfig, bool) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	e, ok := h.devices[id]
+	if !ok {
+		return config.DeviceConfig{}, false
+	}
+	return e.Cfg, true
+}
+
 // GetDevice returns a device by ID, or nil if not found.
 func (h *Hub) GetDevice(id string) device.Device {
 	h.mu.RLock()
