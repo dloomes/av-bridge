@@ -50,6 +50,8 @@ type FakeAdapter struct {
 	rngMu sync.Mutex
 	rng   *rand.Rand
 
+	powerStatus string // "active" / "standby"; guarded by rngMu
+
 	stopEvents chan struct{}
 	stopOnce   sync.Once
 }
@@ -151,6 +153,21 @@ func (a *FakeAdapter) SendCommand(ctx context.Context, cmd device.CommandRequest
 		}
 	}
 	switch cmd.Name {
+	case "power_on", "power_off":
+		// Load testing Room Readiness: switch like a display would.
+		// Reported in the power_status reading; status is unchanged.
+		state := "active"
+		if cmd.Name == "power_off" {
+			state = "standby"
+		}
+		a.rngMu.Lock()
+		a.powerStatus = state
+		a.rngMu.Unlock()
+		return &device.CommandResponse{
+			Raw:     "power " + state,
+			Parsed:  map[string]any{"power_status": state},
+			Latency: time.Since(start),
+		}, nil
 	case "noop":
 		return &device.CommandResponse{
 			Raw:     "ok",
@@ -171,7 +188,7 @@ func (a *FakeAdapter) SendCommand(ctx context.Context, cmd device.CommandRequest
 		}
 		return nil, fmt.Errorf("fake adapter: set_status requires args.status")
 	default:
-		return nil, fmt.Errorf("fake adapter: unsupported command %q (supported: noop, set_status)", cmd.Name)
+		return nil, fmt.Errorf("fake adapter: unsupported command %q (supported: noop, set_status, power_on, power_off)", cmd.Name)
 	}
 }
 
@@ -214,6 +231,12 @@ func (a *FakeAdapter) synthMetrics() map[string]any {
 	m := make(map[string]any, a.metricsCount+2)
 	m["fake"] = true
 	m["response_ms"] = a.latency.Milliseconds()
+	a.rngMu.Lock()
+	if a.powerStatus == "" {
+		a.powerStatus = "active"
+	}
+	m["power_status"] = a.powerStatus
+	a.rngMu.Unlock()
 	for i := 0; i < a.metricsCount; i++ {
 		key := fmt.Sprintf("metric_%d", i+1)
 		m[key] = a.roll()
@@ -245,14 +268,17 @@ func (a *FakeAdapter) rngIntn(n int) int {
 // ── Capabilities ─────────────────────────────────────────────────────────────
 
 var fakeCapabilities = device.Capabilities{
-	Power: device.PowerCapability{On: false, Off: false},
+	Power: device.PowerCapability{On: true, Off: true},
 	Commands: []string{
 		"noop",
 		"set_status",
+		"power_on",
+		"power_off",
 	},
 	Metrics: []string{
 		"fake",
 		"response_ms",
+		"power_status",
 		"metric_1", "metric_2", "metric_3", "metric_4", "metric_5",
 	},
 }

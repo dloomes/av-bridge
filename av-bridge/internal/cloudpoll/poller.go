@@ -59,12 +59,25 @@ type Poller struct {
 	onUpdate   func(update.Instruction)
 	onPollOK   func()
 	onRole     func(role string, ttl time.Duration)
+
+	// disp runs claimed commands in parallel across devices (in order per
+	// device), so the poll loop is never held up by slow commands: it also
+	// renews a warm-standby lease and must keep its rhythm.
+	disp *dispatcher
 }
 
 func NewPoller(cfg config.CloudConfig, collectorID string, h *hub.Hub) *Poller {
 	base := strings.TrimRight(cfg.PortalAPI, "/")
+	concurrency := cfg.CommandConcurrency
+	if concurrency <= 0 {
+		concurrency = 64
+	}
 	transport := &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: cfg.TLSSkipVerify},
+		// Results are posted by up to `concurrency` commands at once:
+		// keep that many connections open rather than a TLS handshake
+		// per result.
+		MaxIdleConnsPerHost: concurrency + 2,
 	}
 	// HTTP client timeout must exceed the server's max hold window so a
 	// healthy long-poll never trips it — see CommandLongPollTimeout doc.
@@ -72,13 +85,23 @@ func NewPoller(cfg config.CloudConfig, collectorID string, h *hub.Hub) *Poller {
 	if timeout <= 0 {
 		timeout = 35 * time.Second
 	}
-	return &Poller{
+	p := &Poller{
 		cfg:         cfg,
 		collectorID: collectorID,
 		hub:         h,
 		baseURL:     base,
 		http:        &http.Client{Timeout: timeout, Transport: transport},
 	}
+	p.disp = newDispatcher(concurrency, p.execute)
+	return p
+}
+
+// backlogLimit is how many commands the poller lets queue up locally
+// before it asks the cloud for fewer: enough to keep every slot busy
+// between polls, little enough that nothing waits long enough for the
+// cloud to treat its claim as stale (COMMAND_STALE_AFTER, 5 minutes).
+func (p *Poller) backlogLimit() int {
+	return 4 * cap(p.disp.sem)
 }
 
 // Run blocks until ctx is cancelled. No-ops if portal_api or hmac_secret are
@@ -188,9 +211,19 @@ func (p *Poller) OnResync(fn func()) {
 // commands list after a long-hold), false on transport/decode/HTTP-error
 // failure. The caller uses the false result to trigger reconnect backoff.
 func (p *Poller) pollOnce(ctx context.Context) bool {
+	// Ask for no more than there's room for. Never zero: the cloud reads
+	// zero as its default, and the poll must go out regardless, since it
+	// also renews the standby lease.
+	max := p.cfg.CommandMaxBatch
+	if room := p.backlogLimit() - p.disp.load(); room < max {
+		max = room
+	}
+	if max < 1 {
+		max = 1
+	}
 	req := map[string]any{
 		"collector_id": p.collectorID,
-		"max":          p.cfg.CommandMaxBatch,
+		"max":          max,
 	}
 	if p.capability != nil {
 		capable, blocker := p.capability()
@@ -235,7 +268,7 @@ func (p *Poller) pollOnce(ctx context.Context) bool {
 		p.onUpdate(*out.Update)
 	}
 	for _, c := range out.Commands {
-		p.execute(ctx, c)
+		p.disp.submit(ctx, c)
 	}
 	return true
 }

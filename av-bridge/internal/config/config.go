@@ -67,8 +67,12 @@ type CloudConfig struct {
 	// on a healthy hold. Defaults to 35s.
 	CommandLongPollTimeout time.Duration `yaml:"command_long_poll_timeout"`
 	// CommandMaxBatch caps how many commands the bridge claims per poll.
-	// Defaults to 10.
+	// Defaults to 100 (the cloud's maximum).
 	CommandMaxBatch int `yaml:"command_max_batch"`
+	// CommandConcurrency is how many commands run at once, each on a
+	// different device (a device's own commands always run in order, one
+	// at a time). Defaults to 64.
+	CommandConcurrency int `yaml:"command_concurrency"`
 	// SpoolDir holds ingest payloads the cloud couldn't accept, replayed
 	// oldest-first once it's reachable again (store-and-forward). Defaults
 	// to a "spool" directory next to hub.store_path. Bounded by
@@ -185,7 +189,10 @@ func applyDefaults(cfg *Config) {
 		cfg.Cloud.CommandLongPollTimeout = 35 * time.Second
 	}
 	if cfg.Cloud.CommandMaxBatch == 0 {
-		cfg.Cloud.CommandMaxBatch = 10
+		cfg.Cloud.CommandMaxBatch = 100
+	}
+	if cfg.Cloud.CommandConcurrency == 0 {
+		cfg.Cloud.CommandConcurrency = 64
 	}
 	if cfg.Cloud.SpoolDir == "" {
 		cfg.Cloud.SpoolDir = filepath.Join(filepath.Dir(cfg.Hub.StorePath), "spool")
