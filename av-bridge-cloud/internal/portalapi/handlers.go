@@ -22,6 +22,7 @@ import (
 	"github.com/dloomes/av-bridge-cloud/internal/nightly"
 	"github.com/dloomes/av-bridge-cloud/internal/notify"
 	"github.com/dloomes/av-bridge-cloud/internal/portalauth"
+	"github.com/dloomes/av-bridge-cloud/internal/remote"
 	"github.com/dloomes/av-bridge-cloud/internal/secrets"
 	"github.com/jackc/pgx/v5"
 )
@@ -39,6 +40,8 @@ type Handler struct {
 	customerSSO bool
 	// collectorUpdates offers the bundled collector release; nil = off.
 	collectorUpdates *collectorupdate.Service
+	// remote is remote access to devices' web interfaces; nil = off.
+	remote *remote.Service
 }
 
 // SetCustomerSSO records whether customer Microsoft sign-in is configured.

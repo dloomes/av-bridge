@@ -55,6 +55,10 @@ const (
 	// stand up new bridges (which is more sensitive: the bridge is a
 	// long-lived HMAC-authenticated identity).
 	PermCollectorCRUD = "collector.crud"
+	// device.remote_access — open a device's web interface from the
+	// portal, relayed through its collector (internal/remote). Its own
+	// key: it reaches into the customer's network.
+	PermDeviceRemoteAccess = "device.remote_access"
 )
 
 // Outbound notifications — channel CRUD is the manage side; test is the
@@ -136,6 +140,7 @@ var KnownPermissions = map[string]struct{}{
 	PermAlertAcknowledge:   {},
 	PermAlertResolve:       {},
 	PermDeviceCRUD:         {},
+	PermDeviceRemoteAccess: {},
 	PermHierarchyCRUD:      {},
 	PermCollectorCRUD:      {},
 	PermNotificationCRUD:   {},

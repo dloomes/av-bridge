@@ -77,11 +77,23 @@ type PublicRoutes struct {
 	ServeDownload            http.HandlerFunc
 }
 
+// RemoteAccessRoutes wires remote access (internal/remote): collectors'
+// tunnels on GET /bridge/tunnel, and every request on a session address
+// (<label>.<access domain>), which Sessions answers before any route.
+// Nil skips both.
+type RemoteAccessRoutes struct {
+	Tunnel   http.HandlerFunc
+	Sessions interface {
+		http.Handler
+		IsAccessHost(host string) bool
+	}
+}
+
 // NewServer wires the routes. Go 1.22 method-aware patterns keep us dependency-free.
 // adminCollectors may be nil — registration endpoints are off when no ADMIN_API_TOKEN
 // is configured. portal may be nil — read API is off when no POC_PORTAL_TOKEN is set.
 // bridgeCommands wires POST /bridge/poll and POST /bridge/commands/{id}/result.
-func NewServer(addr string, ingest, adminCollectors http.Handler, portal *PortalRoutes, pubAPI *PubAPIRoutes, bridgeCommands BridgeCommandRoutes, bridgeConfig BridgeConfigRoutes, public PublicRoutes, log *slog.Logger) *http.Server {
+func NewServer(addr string, ingest, adminCollectors http.Handler, portal *PortalRoutes, pubAPI *PubAPIRoutes, bridgeCommands BridgeCommandRoutes, bridgeConfig BridgeConfigRoutes, public PublicRoutes, remoteAccess *RemoteAccessRoutes, log *slog.Logger) *http.Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -386,6 +398,13 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 		mux.Handle("PATCH /api/v1/devices/{id}", wrapPerm(portalauth.PermDeviceCRUD, portal.Portal.UpdateDevice))
 		mux.Handle("DELETE /api/v1/devices/{id}", wrapPerm(portalauth.PermDeviceCRUD, portal.Portal.DeleteDevice))
 
+		// Remote access — a device's web interface, relayed through its
+		// collector. Starting, listing and ending sessions share one
+		// permission (administrators by default).
+		mux.Handle("POST /api/v1/devices/{id}/remote-sessions", wrapPerm(portalauth.PermDeviceRemoteAccess, portal.Portal.StartRemoteSession))
+		mux.Handle("GET /api/v1/remote-sessions", wrapPerm(portalauth.PermDeviceRemoteAccess, portal.Portal.ListRemoteSessions))
+		mux.Handle("DELETE /api/v1/remote-sessions/{id}", wrapPerm(portalauth.PermDeviceRemoteAccess, portal.Portal.EndRemoteSession))
+
 		// Physical hierarchy CRUD — single permission for the whole tree.
 		mux.Handle("POST /api/v1/regions", wrapPerm(portalauth.PermHierarchyCRUD, portal.Portal.CreateRegion))
 		mux.Handle("POST /api/v1/locations", wrapPerm(portalauth.PermHierarchyCRUD, portal.Portal.CreateLocation))
@@ -592,9 +611,29 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 		mux.Handle("PUT /bridge/config", bridgeConfig.PutConfig)
 	}
 
+	var handler http.Handler = logging(log, mux)
+	if remoteAccess != nil {
+		if remoteAccess.Tunnel != nil {
+			mux.Handle("GET /bridge/tunnel", remoteAccess.Tunnel)
+		}
+		if remoteAccess.Sessions != nil {
+			// Session addresses go straight to the device proxy, unlogged:
+			// a device page is dozens of requests, and the session itself
+			// is in the audit log.
+			logged := handler
+			handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if remoteAccess.Sessions.IsAccessHost(r.Host) {
+					remoteAccess.Sessions.ServeHTTP(w, r)
+					return
+				}
+				logged.ServeHTTP(w, r)
+			})
+		}
+	}
+
 	return &http.Server{
 		Addr:    addr,
-		Handler: logging(log, mux),
+		Handler: handler,
 		// WriteTimeout must exceed portalCommandWait (30s) so a slow
 		// command still returns 200 with a real result rather than
 		// having the connection killed mid-write. 45s gives headroom
@@ -639,4 +678,17 @@ func (w *statusWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 		return nil, nil, fmt.Errorf("statusWriter: underlying ResponseWriter does not implement http.Hijacker")
 	}
 	return hj.Hijack()
+}
+
+// Unwrap lets http.ResponseController reach the underlying writer, so a
+// handler can lift the server's read/write timeouts for its own connection
+// (the remote-access tunnel and device sessions do).
+func (w *statusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+// Flush passes through so a streamed response (a device page proxied by
+// remote access) reaches the browser as it's written.
+func (w *statusWriter) Flush() {
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
 }

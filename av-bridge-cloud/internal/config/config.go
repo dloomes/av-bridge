@@ -168,6 +168,11 @@ type Config struct {
 	// dev — install script then falls back to whichever host the redeem
 	// request came in on.
 	CloudBaseURL string
+
+	// AccessDomain is the parent domain of remote-access session
+	// addresses (e.g. "access.uat.involvecloud.com", with a wildcard DNS
+	// record and certificate). Empty = remote access off.
+	AccessDomain string
 }
 
 func FromEnv() (Config, error) {
@@ -300,6 +305,8 @@ func FromEnv() (Config, error) {
 		EntraCustomerRedirectURI:  os.Getenv("ENTRA_CUSTOMER_REDIRECT_URI"),
 
 		CloudBaseURL: os.Getenv("CLOUD_BASE_URL"),
+
+		AccessDomain: os.Getenv("ACCESS_DOMAIN"),
 	}
 	if c.MigrationDSN == "" {
 		return c, fmt.Errorf("DATABASE_MIGRATION_URL is required")

@@ -12,6 +12,7 @@ import (
 
 	"github.com/dloomes/av-bridge-cloud/internal/admin"
 	"github.com/dloomes/av-bridge-cloud/internal/api"
+	"github.com/dloomes/av-bridge-cloud/internal/bridgeauth"
 	"github.com/dloomes/av-bridge-cloud/internal/bridgecfg"
 	"github.com/dloomes/av-bridge-cloud/internal/collectorha"
 	"github.com/dloomes/av-bridge-cloud/internal/collectorupdate"
@@ -24,6 +25,7 @@ import (
 	"github.com/dloomes/av-bridge-cloud/internal/portalapi"
 	"github.com/dloomes/av-bridge-cloud/internal/portalauth"
 	"github.com/dloomes/av-bridge-cloud/internal/pubapi"
+	"github.com/dloomes/av-bridge-cloud/internal/remote"
 	"github.com/dloomes/av-bridge-cloud/internal/publicapi"
 	"github.com/dloomes/av-bridge-cloud/internal/secrets"
 	"github.com/dloomes/av-bridge-cloud/internal/collectorhealth"
@@ -208,6 +210,17 @@ func main() {
 		log.Warn("ADMIN_API_TOKEN not set — admin endpoints disabled")
 	}
 
+	// Remote access: collectors' tunnels, and session addresses proxied
+	// through them to devices' web interfaces. Off without ACCESS_DOMAIN
+	// (tunnels are still accepted, so collectors don't retry-loop).
+	tunnels := remote.NewTunnels(bridgeauth.New(store, cipher, log), log)
+	remoteSvc := remote.NewService(store.AdminPool(), tunnels, cfg.AccessDomain, log)
+	if remoteSvc.Enabled() {
+		log.Info("remote access enabled", "domain", cfg.AccessDomain)
+	} else {
+		log.Warn("ACCESS_DOMAIN not set — remote access disabled")
+	}
+
 	var portalRoutes *api.PortalRoutes
 	if cfg.PoCPortalToken != "" {
 		// Three-tier auth. Local is checked first: session tokens have a
@@ -250,7 +263,7 @@ func main() {
 
 		portalRoutes = &api.PortalRoutes{
 			Resolver:      resolver,
-			Portal:        portalapi.New(store, cipher, dispatcher, nightlyDigest, nightlyExecutor, log).SetCustomerSSO(entraCustomer != nil).SetCollectorUpdates(collectorUpdates),
+			Portal:        portalapi.New(store, cipher, dispatcher, nightlyDigest, nightlyExecutor, log).SetCustomerSSO(entraCustomer != nil).SetCollectorUpdates(collectorUpdates).SetRemoteAccess(remoteSvc),
 			WSHub:         hub,
 			EntraVendor:   entraVendor,
 			EntraCustomer: entraCustomer,
@@ -341,7 +354,11 @@ func main() {
 		Handler:  pubapi.New(store, log),
 	}
 
-	srv := api.NewServer(cfg.ListenAddr, h, adminH, portalRoutes, pubAPIRoutes, bridgeRoutes, bridgeConfigRoutes, publicRoutes, log)
+	srv := api.NewServer(cfg.ListenAddr, h, adminH, portalRoutes, pubAPIRoutes, bridgeRoutes, bridgeConfigRoutes, publicRoutes,
+		&api.RemoteAccessRoutes{Tunnel: tunnels.Handle, Sessions: remoteSvc}, log)
+	if remoteSvc.Enabled() {
+		go remoteSvc.Run(sweeperCtx)
+	}
 
 	// Slice 3.1 — sweep stuck in_progress commands across all tenants.
 	// sweeperCtx / stopSweeper were declared earlier (before executor

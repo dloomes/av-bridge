@@ -6,7 +6,13 @@
 package bridgeauth
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
+	"strconv"
+	"time"
 	"errors"
 	"io"
 	"log/slog"
@@ -93,4 +99,49 @@ func WriteJSON(w http.ResponseWriter, status int, v any) {
 
 func WriteErr(w http.ResponseWriter, status int, msg string) {
 	WriteJSON(w, status, map[string]string{"error": msg})
+}
+
+// tunnelSkew is how far a tunnel sign-in's timestamp may be from now.
+const tunnelSkew = 5 * time.Minute
+
+// AuthenticateTunnel checks a collector's remote-access tunnel sign-in. The
+// tunnel is a websocket (a GET, with no body to sign), so the collector
+// signs "tunnel:<collector id>:<unix time>" instead, sent as X-Collector-ID,
+// X-Timestamp and X-Signature; a stamp more than tunnelSkew away is
+// refused, so a captured sign-in can't be replayed later. Writes the error
+// response itself when it returns ok=false.
+func (a *Authenticator) AuthenticateTunnel(w http.ResponseWriter, r *http.Request) (*db.Collector, bool) {
+	id := r.Header.Get("X-Collector-ID")
+	ts, err := strconv.ParseInt(r.Header.Get("X-Timestamp"), 10, 64)
+	if id == "" || err != nil {
+		WriteErr(w, http.StatusBadRequest, "X-Collector-ID and X-Timestamp are required")
+		return nil, false
+	}
+	if d := time.Since(time.Unix(ts, 0)); d > tunnelSkew || d < -tunnelSkew {
+		WriteErr(w, http.StatusUnauthorized, "authentication failed (clock skew)")
+		return nil, false
+	}
+	col, err := a.store.LookupCollectorByBridgeID(r.Context(), id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		WriteErr(w, http.StatusUnauthorized, "authentication failed")
+		return nil, false
+	} else if err != nil {
+		a.log.Error("collector lookup failed", "error", err)
+		WriteErr(w, http.StatusInternalServerError, "internal error")
+		return nil, false
+	}
+	secret, err := a.cipher.Decrypt(col.SecretEnc)
+	if err != nil {
+		a.log.Error("secret decrypt failed", "collector", col.ID, "error", err)
+		WriteErr(w, http.StatusInternalServerError, "internal error")
+		return nil, false
+	}
+	mac := hmac.New(sha256.New, secret)
+	fmt.Fprintf(mac, "tunnel:%s:%d", id, ts)
+	want := "sha256=" + hex.EncodeToString(mac.Sum(nil))
+	if !hmac.Equal([]byte(want), []byte(r.Header.Get("X-Signature"))) {
+		WriteErr(w, http.StatusUnauthorized, "authentication failed")
+		return nil, false
+	}
+	return &col, true
 }
