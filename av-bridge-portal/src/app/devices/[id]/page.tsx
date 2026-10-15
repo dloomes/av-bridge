@@ -28,6 +28,7 @@ import { DeviceEventHistory } from "@/components/device-event-history";
 import { Modal } from "@/components/modal";
 import { DeviceForm } from "@/components/device-form";
 import { AuditFeed } from "@/components/audit-feed";
+import { RemoteAccessButton } from "@/components/remote-access";
 import { usePolling } from "@/hooks/usePolling";
 import { useSession } from "@/hooks/useSession";
 import { api, API_BASE, currentToken } from "@/lib/api";
@@ -47,6 +48,7 @@ export default function DeviceDetailPage() {
   const canEditDevice   = hasPermission(session.user, "device.crud");
   const canReconnect    = hasPermission(session.user, "reconnect.device");
   const canSendCommand  = hasPermission(session.user, "command.device");
+  const canRemoteAccess = hasPermission(session.user, "device.remote_access");
 
   const [device, setDevice] = useState<DeviceDetail | null>(null);
   const [deviceError, setDeviceError] = useState<Error | null>(null);
@@ -232,6 +234,9 @@ export default function DeviceDetailPage() {
               </Button>
             );
           })()}
+          {canRemoteAccess && (
+            <RemoteAccessButton deviceId={device.id} deviceName={device.name} />
+          )}
           <Button
             variant="outline"
             size="sm"

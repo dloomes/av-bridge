@@ -77,6 +77,7 @@ export const PERMISSIONS: readonly PermissionDef[] = [
   { key: "asset.crud",          title: "Manage assets",        description: "Add, edit, and remove assets (physical inventory) in the tenant.", category: "Assets" },
   // Room Readiness (nightly lifecycle)
   { key: "nightly.view",        title: "View Room Readiness",  description: "See nightly schedules, routines, and run history.",                       category: "Room Readiness" },
+  { key: "device.remote_access", title: "Remote access", description: "Open a device's web interface from the portal, through its Collector.", category: "Device control" },
   { key: "nightly.defer",       title: "Defer tonight's power-down", description: "Keep a room powered up tonight when it's still in use; it returns to schedule the next day.", category: "Room Readiness" },
   { key: "nightly.manage",      title: "Manage Room Readiness", description: "Edit the nightly schedule, room overrides, and test routines.",         category: "Room Readiness" },
   // Public API

@@ -86,6 +86,32 @@ function handle401IfSessionDeath(path: string) {
   signOut();
 }
 
+export interface RemoteSessionStart {
+  id: string;
+  url: string;
+  scheme: "http" | "https";
+  port: number;
+  expires_at: string;
+}
+
+export interface RemoteSession {
+  id: string;
+  device_id: string;
+  device_name: string;
+  actor: string;
+  kind: string;
+  scheme: "http" | "https";
+  port: number;
+  created_at: string;
+  launched_at: string | null;
+  last_activity_at: string;
+  expires_at: string;
+  ended_at: string | null;
+  end_reason: string | null;
+  bytes_to_browser: number;
+  bytes_to_device: number;
+}
+
 class ApiError extends Error {
   status: number;
   constructor(message: string, status: number) {
@@ -1096,6 +1122,24 @@ export const api = {
       `/api/v1/devices/${encodeURIComponent(id)}/reconnect`,
       { method: "POST", signal }
     ),
+
+  // Remote access: starts a session on the device's web interface, relayed
+  // through its Collector. The url opens once, within 5 minutes.
+  startRemoteSession: (id: string, target?: { scheme?: "http" | "https"; port?: number }) =>
+    request<RemoteSessionStart>(
+      `/api/v1/devices/${encodeURIComponent(id)}/remote-sessions`,
+      { method: "POST", body: JSON.stringify(target ?? {}) }
+    ),
+
+  listRemoteSessions: (opts: { deviceId?: string; active?: boolean } = {}, signal?: AbortSignal) => {
+    const q = new URLSearchParams();
+    if (opts.deviceId) q.set("device_id", opts.deviceId);
+    if (opts.active === false) q.set("active", "false");
+    return request<{ sessions: RemoteSession[] }>(`/api/v1/remote-sessions?${q}`, { signal });
+  },
+
+  endRemoteSession: (id: string) =>
+    request<void>(`/api/v1/remote-sessions/${encodeURIComponent(id)}`, { method: "DELETE" }),
 
   // -- device CRUD (admin-only on the cloud side; the dev portal token is
   // -- admin-roled by default, so all three work locally) -----------------------
