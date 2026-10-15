@@ -126,8 +126,9 @@ module "cloud_service" {
 
   # Attach service rule to the primary listener — :443 once TLS is on. The
   # :80 listener redirects to :443, so no rule needed there.
+  # *.access.<zone> is remote access's session addresses (one per session).
   alb_listener_arn    = module.alb.primary_listener_arn
-  listener_host_names = ["api.${var.dns_zone_name}"]
+  listener_host_names = ["api.${var.dns_zone_name}", "*.access.${var.dns_zone_name}"]
 
   image_url = module.ecr_cloud.repository_url
   image_tag = "latest"
@@ -178,6 +179,34 @@ module "cloud_service" {
   entra_vendor_client_secret_arn = module.entra.client_secret_arn
   entra_portal_base_url          = "https://app.${var.dns_zone_name}"
   cloud_base_url                 = "https://api.${var.dns_zone_name}"
+  access_domain                  = "access.${var.dns_zone_name}"
+}
+
+# Remote access: each session opens a device's web interface on its own
+# address, <label>.access.<zone>, served by the cloud. The zone's wildcard
+# cert covers one level only, so the session addresses get their own.
+module "access_cert" {
+  source = "../../modules/acm-cert"
+
+  primary_domain = "*.access.${var.dns_zone_name}"
+  hosted_zone_id = module.dns.zone_id
+}
+
+resource "aws_lb_listener_certificate" "access" {
+  listener_arn    = module.alb.https_listener_arn
+  certificate_arn = module.access_cert.certificate_arn
+}
+
+resource "aws_route53_record" "access" {
+  zone_id = module.dns.zone_id
+  name    = "*.access.${var.dns_zone_name}"
+  type    = "A"
+
+  alias {
+    name                   = module.alb.dns_name
+    zone_id                = module.alb.zone_id
+    evaluate_target_health = true
+  }
 }
 
 # A alias record so browsers + bridge collectors reach the API at

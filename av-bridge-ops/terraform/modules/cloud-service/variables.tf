@@ -238,6 +238,12 @@ variable "cloud_base_url" {
   default     = ""
 }
 
+variable "access_domain" {
+  description = "Parent domain of remote access session addresses, e.g. access.uat.involvecloud.com, with a wildcard DNS record and certificate. Empty turns remote access off."
+  type        = string
+  default     = ""
+}
+
 variable "entra_portal_base_url" {
   description = "Origin the callback redirects the browser back to after minting the session, e.g. https://app.uat.involvecloud.com. Empty falls back to the callback request's own scheme+host (fine when portal and API share an origin)."
   type        = string

@@ -171,6 +171,10 @@ resource "aws_ecs_task_definition" "this" {
       var.cloud_base_url == "" ? [] : [
         { name = "CLOUD_BASE_URL", value = var.cloud_base_url }
       ],
+      # Remote access session addresses: <label>.<access_domain>.
+      var.access_domain == "" ? [] : [
+        { name = "ACCESS_DOMAIN", value = var.access_domain }
+      ],
       # Only emit VENDOR_ADMIN_PASSWORD when set — the seed step is a
       # first-boot no-op if either the email or password is blank, and the
       # value is only ever used on the first startup with an empty vendor
