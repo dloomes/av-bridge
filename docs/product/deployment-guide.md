@@ -119,9 +119,11 @@ These requirements are the same for every deployment option.
 
 | From | To | Port | Purpose |
 |---|---|---|---|
-| Collector host | `*.involvecloud.com` | TCP 443 | Long-polled command channel, telemetry push and configuration sync |
+| Collector host | `*.involvecloud.com` | TCP 443 | Long-polled command channel, telemetry push, configuration sync and the remote access tunnel |
 
 This is the only external firewall rule required. Every connection uses TLS 1.2 or higher. Each request is also signed with an HMAC-SHA256 key unique to the Collector, so messages are authenticated independently of the transport.
+
+The remote access tunnel, which lets administrators open a device's web interface from the portal, is a WebSocket on the same port. If outbound traffic passes through a proxy or TLS-inspecting firewall, it must allow WebSocket upgrades to `*.involvecloud.com`. Through the tunnel, the Collector only connects to its own devices, on web ports (80, 443, 8080, 8443, the device's own port or its `web_port` tag), never to anything else on the network.
 
 If your allow-list needs specific hostnames rather than a wildcard, Involve will give you the exact hostnames for your tenant on request.
 
@@ -179,7 +181,7 @@ Packaging doesn't affect sizing: a container with 4 vCPU and 8 GB behaves the sa
 
 ### Bandwidth
 
-**Collector to M.A.R.C.U.S. Cloud** (outbound HTTPS 443): about 0.11 Mbps per 1,000 devices at the default 60-second poll rate, covering telemetry, configuration sync and the command channel. A 5,000-device Collector sends about 0.6 Mbps. Allow twice that for estates with many devices that report in detail. Traffic from the cloud to the Collector is small, about 0.02 Mbps. After an outage, a Collector sends its buffered telemetry (up to 256 MB) as a one-off burst.
+**Collector to M.A.R.C.U.S. Cloud** (outbound HTTPS 443): about 0.11 Mbps per 1,000 devices at the default 60-second poll rate, covering telemetry, configuration sync and the command channel. A 5,000-device Collector sends about 0.6 Mbps. Allow twice that for estates with many devices that report in detail. Traffic from the cloud to the Collector is small, about 0.02 Mbps. Each open remote access session adds the device's web page traffic, typically 1 to 5 MB when a page loads and little while it's idle. After an outage, a Collector sends its buffered telemetry (up to 256 MB) as a one-off burst.
 
 **Collector to devices** depends on the device type:
 
