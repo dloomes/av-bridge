@@ -162,4 +162,27 @@ func TestChecksUseFreshReadings(t *testing.T) {
 	if !r.Passed || time.Since(start) > 3*time.Second {
 		t.Errorf("unanswered polls: passed=%v after %s (%s)", r.Passed, time.Since(start), r.Error)
 	}
+
+	// PDUs aren't polled on demand (a full PDU poll is dozens of Telnet
+	// logins): checks use their regular readings, which may be minutes old.
+	pdu := q(`INSERT INTO devices (customer_id, collector_id, room_id, reported_id, name, type, protocol, latest_status)
+	          VALUES ($1, $2, $3, 'PDU', 'PDU', 'power', 'aten_pdu', 'online') RETURNING id::text`, cust, col, room)
+	exec(`INSERT INTO telemetry (customer_id, device_id, status, metrics, ts)
+	      VALUES ($1, $2, 'online', '{"total_power_w": 240}', now() - interval '5 minutes')`, cust, pdu)
+	pduOnline := mkStep(map[string]any{"type": "expect_status", "target": map[string]any{"device_id": pdu}, "status": "online"})
+	pduDraw := mkStep(map[string]any{"type": "check_metric", "target": map[string]any{"device_id": pdu},
+		"metric": "total_power_w", "operator": "gt", "threshold": 100})
+	start = time.Now()
+	if r := e.stepExpectStatus(ctx, run, pduOnline); !r.Passed {
+		t.Errorf("PDU expect_status from its last report: %s", r.Error)
+	}
+	if r := e.stepCheckMetric(ctx, run, pduDraw); !r.Passed {
+		t.Errorf("PDU check_metric from a 5-minute-old reading: %s", r.Error)
+	}
+	if took := time.Since(start); took > 2*time.Second {
+		t.Errorf("PDU checks took %s; they shouldn't wait for a poll", took)
+	}
+	if n := q(`SELECT count(*)::text FROM commands WHERE device_id = $1 AND name = '_poll'`, pdu); n != "0" {
+		t.Errorf("PDU was polled on demand %s times, want 0", n)
+	}
 }

@@ -550,7 +550,12 @@ func (e *Executor) stepCheckMetric(ctx context.Context, run RunContext, s step) 
 				continue
 			}
 		}
-		val, ok, terr := readLatestMetric(ctx, e.pool, d.id, body.Metric, body.SampleWindowSecs)
+		window := body.SampleWindowSecs
+		if noFreshPoll[d.protocol] && window < slowDeviceSampleWindow {
+			// Not polled on demand: its regular reading is the freshest.
+			window = slowDeviceSampleWindow
+		}
+		val, ok, terr := readLatestMetric(ctx, e.pool, d.id, body.Metric, window)
 		if terr != nil {
 			mismatches = append(mismatches, fmt.Sprintf("%s: telemetry read error: %s", d.name, terr.Error()))
 			continue
@@ -877,6 +882,7 @@ type resolvedDevice struct {
 	id           string
 	name         string
 	kind         string // devices.type — 'vc' / 'dsp' / 'display' etc.
+	protocol     string // adapter, e.g. aten_pdu (see noFreshPoll)
 	latestStatus string
 }
 
@@ -915,6 +921,7 @@ func queryDevices(ctx context.Context, pool *pgxpool.Pool, roomID string, extra 
 		SELECT id::text,
 		       COALESCE(name, reported_id, ''),
 		       COALESCE(type, ''),
+		       COALESCE(protocol, ''),
 		       COALESCE(latest_status, 'unknown')
 		  FROM devices
 		 WHERE room_id = $1
@@ -928,7 +935,7 @@ func queryDevices(ctx context.Context, pool *pgxpool.Pool, roomID string, extra 
 	var out []resolvedDevice
 	for rows.Next() {
 		var d resolvedDevice
-		if err := rows.Scan(&d.id, &d.name, &d.kind, &d.latestStatus); err != nil {
+		if err := rows.Scan(&d.id, &d.name, &d.kind, &d.protocol, &d.latestStatus); err != nil {
 			return nil, err
 		}
 		out = append(out, d)

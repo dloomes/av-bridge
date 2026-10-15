@@ -24,6 +24,16 @@ var (
 	freshReadingTick    = time.Second
 )
 
+// noFreshPoll lists adapters whose devices aren't polled on demand: a
+// full poll is slow and heavy for them (an ATEN PDU is 18-26 Telnet logins
+// and up to 40 seconds), and their regular polls are recent enough for a
+// check. Checks use their last report instead.
+var noFreshPoll = map[string]bool{"aten_pdu": true}
+
+// slowDeviceSampleWindow is how old the last reading of a noFreshPoll
+// device may be for a Check metric step: two of a PDU's 5-minute polls.
+const slowDeviceSampleWindow = 600
+
 // freshReading is a device's state from an on-demand poll.
 type freshReading struct {
 	status  string
@@ -49,6 +59,9 @@ func (e *Executor) freshReadings(ctx context.Context, run RunContext, devices []
 	cmdDevice := map[string]string{} // command id -> device id
 	err := pgx.BeginFunc(ctx, e.pool, func(tx pgx.Tx) error {
 		for _, d := range devices {
+			if noFreshPoll[d.protocol] {
+				continue
+			}
 			id, err := commands.Submit(ctx, tx, run.CustomerID, d.id, pollCommand, nil, "nightly:"+run.RunID)
 			if err != nil {
 				return err
@@ -59,6 +72,9 @@ func (e *Executor) freshReadings(ctx context.Context, run RunContext, devices []
 	})
 	if err != nil {
 		e.log.Warn("nightly: fresh-reading request failed, using last reports", "run", run.RunID, "error", err)
+		return out
+	}
+	if len(cmdDevice) == 0 {
 		return out
 	}
 	ids := make([]string, 0, len(cmdDevice))
