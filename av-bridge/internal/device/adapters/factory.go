@@ -61,6 +61,10 @@ func New(cfg config.DeviceConfig, deps Deps) (device.Device, error) {
 		// Cisco RoomOS — Room Kit / Room Bar / Board / Desk / Codec series;
 		// xAPI over HTTP(S) (getxml / putxml) with Basic auth
 		return NewCiscoRoomOSAdapter(cfg), nil
+	case "cisco_tc":
+		// Cisco codecs on TC software (TC7.x: SX, MX, EX, C, Profile) —
+		// the same xAPI with older paths and TLS
+		return NewCiscoTCAdapter(cfg), nil
 	case "aurora_rxt":
 		// Aurora Multimedia RXT-x WM touch panels — JSON-RPC over Telnet (port 6975)
 		return NewAuroraAdapter(cfg), nil
@@ -85,6 +89,6 @@ func New(cfg config.DeviceConfig, deps Deps) (device.Device, error) {
 		return NewFakeAdapter(cfg), nil
 
 	default:
-		return nil, fmt.Errorf("unsupported protocol: %q (supported: rest, websocket, telnet, serial, visca_over_ip, tesira, sony_bravia, philips_sicp, poly_videoos, cisco_roomos, aurora_rxt, aurora_vpx, aten_pdu, netgear_m4250, ping, fake)", cfg.Protocol)
+		return nil, fmt.Errorf("unsupported protocol: %q (supported: rest, websocket, telnet, serial, visca_over_ip, tesira, sony_bravia, philips_sicp, poly_videoos, cisco_roomos, cisco_tc, aurora_rxt, aurora_vpx, aten_pdu, netgear_m4250, ping, fake)", cfg.Protocol)
 	}
 }

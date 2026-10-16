@@ -3,7 +3,6 @@ package adapters
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -106,9 +105,7 @@ func NewPolyVideoOSAdapter(cfg config.DeviceConfig, lensClient *lens.Client) *Po
 			Timeout: 15 * time.Second,
 			Jar:     jar,
 			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{
-					InsecureSkipVerify: skipVerify, //nolint:gosec // intentional for self-signed certs
-				},
+				TLSClientConfig: deviceTLSConfig(skipVerify),
 			},
 		},
 	}

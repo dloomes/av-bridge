@@ -3,7 +3,6 @@ package adapters
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -37,11 +36,43 @@ import (
 // Devices ship with a self-signed certificate; set tags.tls_skip_verify:
 // "true" to accept it. HTTPS is the default and the only mode enabled out of
 // the box (xConfiguration NetworkServices HTTP Mode).
+//
+// The same adapter serves the older TC software (TC7, on SX, MX, EX, C
+// and Profile series codecs) as protocol cisco_tc: see NewCiscoTCAdapter.
 type CiscoRoomOSAdapter struct {
 	device.Base
 
 	client  *http.Client
 	baseURL string
+	tc      bool // TC software: older command paths and TLS
+}
+
+// NewCiscoTCAdapter is the adapter for codecs running TC software (TC7.x),
+// the generation before CE and RoomOS. The xAPI is the same HTTP XMLAPI,
+// with these differences (Cisco "TC7 API Reference Guide"):
+//
+//   - standby is xStatus Standby Active (On = asleep), not Standby State
+//   - reboot is xCommand Boot, not SystemUnit Boot
+//   - hangup uses Call DisconnectAll, which needs no CallId
+//   - no RoomAnalytics, so no people count
+//
+// TC's web server predates TLS 1.2-only clients, so HTTPS also accepts TLS
+// 1.0 and 1.1 and the older cipher suites. TC enables HTTP as well as HTTPS
+// by default, so an http:// address avoids TLS altogether.
+func NewCiscoTCAdapter(cfg config.DeviceConfig) *CiscoRoomOSAdapter {
+	a := NewCiscoRoomOSAdapter(cfg)
+	a.tc = true
+	a.client.Transport = &http.Transport{
+		TLSClientConfig: legacyDeviceTLSConfig(cfg.Tags["tls_skip_verify"] == "true"),
+	}
+	return a
+}
+
+func (a *CiscoRoomOSAdapter) protocol() string {
+	if a.tc {
+		return "cisco_tc"
+	}
+	return "cisco_roomos"
 }
 
 func NewCiscoRoomOSAdapter(cfg config.DeviceConfig) *CiscoRoomOSAdapter {
@@ -57,9 +88,7 @@ func NewCiscoRoomOSAdapter(cfg config.DeviceConfig) *CiscoRoomOSAdapter {
 		client: &http.Client{
 			Timeout: 15 * time.Second,
 			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{
-					InsecureSkipVerify: skipVerify, //nolint:gosec // opt-in, for the device's self-signed cert
-				},
+				TLSClientConfig: deviceTLSConfig(skipVerify),
 			},
 		},
 	}
@@ -142,8 +171,18 @@ func ciscoStatusMetrics(root *xnode) map[string]any {
 	}
 
 	// Standby ↔ power. Off means awake; Standby / EnteringStandby /
-	// Halfwake are all some form of asleep.
-	if st := root.text("Standby", "State"); st != "" {
+	// Halfwake are all some form of asleep. TC software reports
+	// Standby Active instead (On = asleep), mapped onto the same values.
+	st := root.text("Standby", "State")
+	if st == "" {
+		switch root.text("Standby", "Active") {
+		case "On":
+			st = "Standby"
+		case "Off":
+			st = "Off"
+		}
+	}
+	if st != "" {
 		m["standby_state"] = st
 		if st == "Off" {
 			m["power_status"] = "on"
@@ -217,6 +256,9 @@ func (a *CiscoRoomOSAdapter) SendCommand(ctx context.Context, req device.Command
 		body = "<Dial command=\"True\"><Number>" + xmlEscape(addr) + "</Number></Dial>"
 	case "hangup":
 		body = `<Call><Disconnect command="True"/></Call>`
+		if a.tc {
+			body = `<Call><DisconnectAll command="True"/></Call>`
+		}
 	case "mute":
 		body = `<Audio><Microphones><Mute command="True"/></Microphones></Audio>`
 	case "unmute":
@@ -231,8 +273,11 @@ func (a *CiscoRoomOSAdapter) SendCommand(ctx context.Context, req device.Command
 		body = `<Standby><Activate command="True"/></Standby>`
 	case "reboot":
 		body = `<SystemUnit><Boot command="True"/></SystemUnit>`
+		if a.tc {
+			body = `<Boot command="True"><Action>Restart</Action></Boot>`
+		}
 	default:
-		return nil, fmt.Errorf("unsupported command %q for cisco_roomos", req.Name)
+		return nil, fmt.Errorf("unsupported command %q for %s", req.Name, a.protocol())
 	}
 
 	start := time.Now()
@@ -305,7 +350,25 @@ var ciscoCapabilities = device.Capabilities{
 	},
 }
 
-func (a *CiscoRoomOSAdapter) Capabilities() device.Capabilities { return ciscoCapabilities }
+// ciscoTCCapabilities is ciscoCapabilities without people_count, which
+// TC software doesn't report.
+var ciscoTCCapabilities = func() device.Capabilities {
+	c := ciscoCapabilities
+	c.Metrics = nil
+	for _, m := range ciscoCapabilities.Metrics {
+		if m != "people_count" {
+			c.Metrics = append(c.Metrics, m)
+		}
+	}
+	return c
+}()
+
+func (a *CiscoRoomOSAdapter) Capabilities() device.Capabilities {
+	if a.tc {
+		return ciscoTCCapabilities
+	}
+	return ciscoCapabilities
+}
 
 // ── HTTP ─────────────────────────────────────────────────────────────────
 
