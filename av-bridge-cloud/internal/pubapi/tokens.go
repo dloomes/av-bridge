@@ -82,7 +82,7 @@ func HashToken(raw string) string {
 // string can't possibly be an av-bridge token. The auth layer maps this
 // to a 401 without touching the DB — a signal that the value is a
 // user's session token, an entirely different scheme, or garbled.
-var ErrInvalidTokenFormat = errors.New("not an av-bridge public API token")
+var ErrInvalidTokenFormat = errors.New("not a M.A.R.C.U.S. public API token")
 
 // ParseToken validates the wire shape of a token and returns its prefix.
 // The prefix is useful for observability (log the prefix, never the

@@ -66,7 +66,7 @@ module "ses" {
   # noreply@uat.involvecloud.com is the initial From. Display name is
   # rendered in the visible sender column of mail clients.
   from_local_part   = "noreply"
-  from_display_name = "AV Bridge"
+  from_display_name = "\"M.A.R.C.U.S.\""
   # Start in monitoring-only DMARC — flip to quarantine/reject once we've
   # observed a week or two of clean sends via the aggregate reports.
   dmarc_policy = "none"

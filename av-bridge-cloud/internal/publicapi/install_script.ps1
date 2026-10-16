@@ -113,7 +113,7 @@ if (-not (Test-Path $BinaryPath)) {
     } else {
         "$CloudBaseUrl/public/downloads/av-bridge-windows-amd64.exe"
     }
-    Write-Host "==> Downloading av-bridge from $binaryUrl"
+    Write-Host "==> Downloading the M.A.R.C.U.S. Collector from $binaryUrl"
     try {
         Invoke-WebRequest -Uri $binaryUrl -OutFile $BinaryPath -UseBasicParsing
     } catch {
@@ -187,7 +187,7 @@ Start-Service -Name $ServiceName
 
 # ── Health check ─────────────────────────────────────────────────────────────
 
-Write-Host '==> Waiting for av-bridge to be healthy...'
+Write-Host '==> Waiting for the Collector to be healthy...'
 $healthy = $false
 for ($i = 0; $i -lt 30; $i++) {
     try {
@@ -204,7 +204,7 @@ if (-not $healthy) {
 
 Write-Host ''
 Write-Host '===================================================='
-Write-Host " av-bridge enrolled + running as $BridgeId"
+Write-Host " M.A.R.C.U.S. Collector enrolled and running as $BridgeId"
 Write-Host '===================================================='
 Write-Host ''
 Write-Host '  Next steps:'
@@ -212,6 +212,6 @@ Write-Host '  * The portal /collectors page will light up green'
 Write-Host '    once the first heartbeat lands (~30 seconds).'
 Write-Host '  * Add devices from the portal — the bridge pulls'
 Write-Host '    config on each poll and reconciles automatically.'
-Write-Host '  * Logs: Get-EventLog -LogName Application -Source av-bridge -Newest 50'
+Write-Host '  * Status: Get-Service av-bridge'
 Write-Host "  * Restart: Restart-Service $ServiceName"
 Write-Host ''

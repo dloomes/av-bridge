@@ -139,7 +139,7 @@ func (h *Handler) CreateBusinessUnit(w http.ResponseWriter, r *http.Request) {
 	}
 	if flagDisabled {
 		writeErr(w, http.StatusBadRequest,
-			"business units are not enabled for this tenant — contact your Involve Cloud administrator")
+			"business units are not enabled for this tenant — contact your M.A.R.C.U.S. administrator")
 		return
 	}
 	if conflictOnName {

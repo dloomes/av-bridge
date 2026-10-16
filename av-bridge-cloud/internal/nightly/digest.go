@@ -720,7 +720,7 @@ func renderHTML(c customerInfo, runs, excluded []runRow, sum digestSummary, nowU
 
 	// Footer.
 	b.WriteString(`<tr><td style="padding:16px 32px 24px;background:#f8fafc;border-top:1px solid #e2e8f0;color:#64748b;font-size:12px;line-height:1.5;">`)
-	b.WriteString(`Room Readiness by av-bridge · <a href="#" style="color:#64748b;text-decoration:underline;">Manage schedule</a> · <a href="#" style="color:#64748b;text-decoration:underline;">View all runs</a>`)
+	b.WriteString(`Room Readiness by M.A.R.C.U.S. · <a href="#" style="color:#64748b;text-decoration:underline;">Manage schedule</a> · <a href="#" style="color:#64748b;text-decoration:underline;">View all runs</a>`)
 	b.WriteString(`</td></tr>`)
 
 	b.WriteString(`</table></td></tr></table></body></html>`)

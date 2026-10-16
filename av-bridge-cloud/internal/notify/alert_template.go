@@ -47,7 +47,7 @@ func renderAlertSubject(evt AlertEvent) string {
 func renderAlertText(evt AlertEvent) string {
 	severity := strings.ToUpper(evt.Severity)
 	var b strings.Builder
-	fmt.Fprintf(&b, "AV BRIDGE ALERT\n\n")
+	fmt.Fprintf(&b, "M.A.R.C.U.S. ALERT\n\n")
 	fmt.Fprintf(&b, "[%s] %s\n", severity, evt.SubjectName())
 	fmt.Fprintf(&b, "%s — %s\n\n", evt.SubjectLabel(), evt.AlertKey)
 	if evt.Message != "" {
@@ -112,7 +112,7 @@ func renderAlertHTML(evt AlertEvent) string {
 	// hint from the first few hundred pixels, so this doubles as an
 	// at-a-glance severity signal even before the recipient reads.
 	fmt.Fprintf(&b, `<tr><td style="background:%s;padding:24px 32px;color:#ffffff;">`, headerBg)
-	b.WriteString(`<div style="font-size:12px;letter-spacing:0.14em;text-transform:uppercase;opacity:0.85;">AV Bridge Alert</div>`)
+	b.WriteString(`<div style="font-size:12px;letter-spacing:0.14em;text-transform:uppercase;opacity:0.85;">M.A.R.C.U.S. Alert</div>`)
 	fmt.Fprintf(&b, `<div style="font-size:22px;font-weight:600;margin-top:6px;line-height:1.25;">%s</div>`, subjectName)
 	fmt.Fprintf(&b, `<div style="font-size:14px;margin-top:4px;opacity:0.9;">%s — <span style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;">%s</span></div>`, subjectLabel, alertKey)
 	b.WriteString(`</td></tr>`)
@@ -140,7 +140,7 @@ func renderAlertHTML(evt AlertEvent) string {
 	// Kept generic (no per-channel name) so we don't need to plumb the
 	// Channel struct into the renderer.
 	b.WriteString(`<tr><td style="padding:16px 32px 20px;background:#f8fafc;border-top:1px solid #e2e8f0;color:#64748b;font-size:12px;line-height:1.5;">`)
-	fmt.Fprintf(&b, `You received this because your notification channel is subscribed to <strong>%s</strong>-level alerts and above. Manage your channels in the av-bridge portal.`, html.EscapeString(strings.ToLower(severity)))
+	fmt.Fprintf(&b, `You received this because your notification channel is subscribed to <strong>%s</strong>-level alerts and above. Manage your channels in the M.A.R.C.U.S. portal.`, html.EscapeString(strings.ToLower(severity)))
 	b.WriteString(`</td></tr>`)
 
 	b.WriteString(`</table></td></tr></table></body></html>`)

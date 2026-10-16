@@ -122,8 +122,8 @@ func main() {
 
 	svcConfig := &service.Config{
 		Name:        "av-bridge",
-		DisplayName: "AV Bridge Collector",
-		Description: "On-prem collector that ships AV device telemetry to the av-bridge cloud.",
+		DisplayName: "M.A.R.C.U.S. Collector",
+		Description: "Monitors AV devices on this network and reports to M.A.R.C.U.S. Cloud.",
 		// -config and -env flags forwarded to the service host invocation
 		// so an admin who installed from a non-default location doesn't
 		// have to hand-edit the service definition afterwards.

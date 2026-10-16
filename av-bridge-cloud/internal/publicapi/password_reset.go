@@ -374,7 +374,7 @@ func renderResetText(ctx resetEmailContext) string {
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "If you didn't request this, you can safely ignore this email — your password won't change.")
 	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, "— The AV Bridge team")
+	fmt.Fprintln(&b, "— The M.A.R.C.U.S. team")
 	return b.String()
 }
 
@@ -417,7 +417,7 @@ func renderResetHTML(ctx resetEmailContext) string {
           <p style="margin:0 0 4px 0;font-size:13px;color:#64748b;">If you didn't request this, you can ignore this email — your password won't change.</p>
         </td></tr>
         <tr><td style="padding:16px 32px 24px 32px;border-top:1px solid #e5e7eb;font-size:12px;color:#94a3b8;">
-          Sent by the AV Bridge portal.
+          Sent by the M.A.R.C.U.S. portal.
         </td></tr>
       </table>
     </td></tr>

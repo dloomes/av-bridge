@@ -100,7 +100,7 @@ if [ ! -x "$BIN_PATH" ]; then
         esac
         AV_BRIDGE_BINARY_URL="${CLOUD_URL}/public/downloads/${ARCH_KEY}"
     fi
-    echo "==> Downloading av-bridge from ${AV_BRIDGE_BINARY_URL}"
+    echo "==> Downloading the M.A.R.C.U.S. Collector from ${AV_BRIDGE_BINARY_URL}"
     curl -fsSL -o "$BIN_PATH" "$AV_BRIDGE_BINARY_URL" \
         || die "binary download failed"
     chmod 755 "$BIN_PATH"
@@ -184,12 +184,12 @@ systemctl restart av-bridge
 
 # ── Health check ─────────────────────────────────────────────────────────────
 
-echo "==> Waiting for av-bridge to be healthy..."
+echo "==> Waiting for the Collector to be healthy..."
 for i in $(seq 1 30); do
     if curl -fsS -o /dev/null "http://127.0.0.1:8080/healthz" 2>/dev/null; then
         echo ""
         echo "===================================================="
-        echo " av-bridge enrolled + running as $BRIDGE_ID"
+        echo " M.A.R.C.U.S. Collector enrolled and running as $BRIDGE_ID"
         echo "===================================================="
         echo ""
         echo "  Next steps:"
