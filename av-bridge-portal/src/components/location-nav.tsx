@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useMemo, useState } from "react";
-import { Building2, ChevronRight, DoorOpen } from "lucide-react";
+import { Building2, ChevronRight, DoorOpen, Map as MapIcon } from "lucide-react";
 import { usePolling } from "@/hooks/usePolling";
 import { api } from "@/lib/api";
 import {
@@ -31,6 +31,7 @@ export function LocationNav() {
     () => (data ? groupDevicesByLocation(data) : []),
     [data]
   );
+  const regions = useMemo(() => groupByRegion(groups), [groups]);
 
   if (loading && !data) {
     return <SidebarHint text="Loading locations…" />;
@@ -42,11 +43,94 @@ export function LocationNav() {
     return <SidebarHint text="No devices configured" />;
   }
 
+  // No regions set up: buildings at the top, as before.
+  if (!regions) {
+    return (
+      <div className="space-y-3">
+        {groups.map((g, i) => (
+          <BuildingBlock key={g.building ?? `__flat__${i}`} group={g} />
+        ))}
+      </div>
+    );
+  }
   return (
     <div className="space-y-3">
-      {groups.map((g, i) => (
-        <BuildingBlock key={g.building ?? `__flat__${i}`} group={g} />
+      {regions.map((r) => (
+        <RegionBlock key={r.region ?? "__none__"} region={r.region} buildings={r.buildings} />
       ))}
+    </div>
+  );
+}
+
+interface RegionGroup {
+  region: string | null; // null = buildings without a region
+  buildings: BuildingGroup[];
+}
+
+// groupByRegion puts buildings under their region, regions in name order
+// with any buildings that have none last. Null when no building has a
+// region, so estates without regions keep the shorter tree.
+function groupByRegion(groups: BuildingGroup[]): RegionGroup[] | null {
+  if (!groups.some((g) => g.region)) return null;
+  const byRegion = new Map<string, BuildingGroup[]>();
+  const none: BuildingGroup[] = [];
+  for (const g of groups) {
+    if (!g.region) {
+      none.push(g);
+      continue;
+    }
+    if (!byRegion.has(g.region)) byRegion.set(g.region, []);
+    byRegion.get(g.region)!.push(g);
+  }
+  const out: RegionGroup[] = Array.from(byRegion.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([region, buildings]) => ({ region, buildings }));
+  if (none.length) out.push({ region: null, buildings: none });
+  return out;
+}
+
+function RegionBlock({ region, buildings }: { region: string | null; buildings: BuildingGroup[] }) {
+  const [open, setOpen] = useState(true);
+  const name = region ?? "No region";
+  return (
+    <div>
+      <div className="flex w-full items-center gap-1 px-2 py-1 text-xs font-semibold uppercase tracking-wide text-sidebar-foreground/70">
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          aria-label={open ? `Collapse ${name}` : `Expand ${name}`}
+          className="rounded p-0.5 hover:bg-white/10 hover:text-sidebar-foreground"
+        >
+          <ChevronRight
+            className={cn(
+              "h-3 w-3 transition-transform",
+              open && "rotate-90"
+            )}
+          />
+        </button>
+        {region ? (
+          <Link
+            href={`/devices?region=${encodeURIComponent(region)}`}
+            className="flex min-w-0 flex-1 items-center gap-2 hover:text-sidebar-foreground"
+            title={`Show devices in ${region}`}
+          >
+            <MapIcon className="h-3.5 w-3.5" />
+            <span className="truncate">{region}</span>
+          </Link>
+        ) : (
+          <span className="flex min-w-0 flex-1 items-center gap-2">
+            <MapIcon className="h-3.5 w-3.5" />
+            <span className="truncate">{name}</span>
+          </span>
+        )}
+      </div>
+      {open && (
+        <div className="mt-1 space-y-3 pl-3">
+          {buildings.map((g, i) => (
+            <BuildingBlock key={g.building ?? `__flat__${i}`} group={g} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

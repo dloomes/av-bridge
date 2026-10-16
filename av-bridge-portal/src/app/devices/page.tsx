@@ -89,6 +89,7 @@ export default function DevicesPage() {
     rawStatus === "switched_off"
       ? rawStatus
       : "all";
+  const regionFilter = searchParams.get("region") ?? "";
   const buildingFilter = searchParams.get("building") ?? "";
   const roomFilter = searchParams.get("room") ?? "";
 
@@ -151,11 +152,13 @@ export default function DevicesPage() {
   const filtered = useMemo(() => {
     if (!data) return null;
     const needle = search.trim().toLowerCase();
+    const wantRegion = regionFilter.toLowerCase();
     const wantBuilding = buildingFilter.toLowerCase();
     const wantRoom = roomFilter.toLowerCase();
     return data.filter((d) => {
       if (statusFilter !== "all" && d.status !== statusFilter) return false;
       if (typeFilter !== "all" && d.type !== typeFilter) return false;
+      if (wantRegion && (d.region ?? "").toLowerCase() !== wantRegion) return false;
       if (wantBuilding && (d.building ?? "").toLowerCase() !== wantBuilding) return false;
       // Room is stored on the device only as room_id, but the sidebar's
       // Places tree groups by the room NAME rendered in d.location
@@ -179,7 +182,7 @@ export default function DevicesPage() {
       }
       return true;
     });
-  }, [data, search, statusFilter, typeFilter, buildingFilter, roomFilter]);
+  }, [data, search, statusFilter, typeFilter, regionFilter, buildingFilter, roomFilter]);
 
   const counts = useMemo(() => {
     if (!data) return { total: 0, online: 0, offline: 0, unknown: 0, switchedOff: 0 };
@@ -198,6 +201,7 @@ export default function DevicesPage() {
 
   const clearCollectorFilter = () => updateFilters({ collector_id: "" });
   const clearStatusFilter = () => updateFilters({ status: "" });
+  const clearRegionFilter = () => updateFilters({ region: "" });
   const clearBuildingFilter = () => updateFilters({ building: "" });
   const clearRoomFilter = () => updateFilters({ room: "" });
 
@@ -264,13 +268,19 @@ export default function DevicesPage() {
 
       <div className="flex-1 px-6 py-6">
         <div className="mx-auto max-w-6xl space-y-4">
-          {(collectorFilter || buildingFilter || roomFilter) && (
+          {(collectorFilter || regionFilter || buildingFilter || roomFilter) && (
             <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/40 px-3 py-2 text-sm">
               <span className="text-muted-foreground">Filtering:</span>
               {collectorFilter && (
                 <FilterChip
                   label={`Collector: ${collectorName || "…"}`}
                   onClear={clearCollectorFilter}
+                />
+              )}
+              {regionFilter && (
+                <FilterChip
+                  label={`Region: ${regionFilter}`}
+                  onClear={clearRegionFilter}
                 />
               )}
               {buildingFilter && (
