@@ -128,6 +128,22 @@ SUPPLEMENT: dict[str, dict] = {
             "> **Diagnostics:** **Fault Count** and **Faults** come from the device's own health check. They include its Warning, Error and Critical messages, such as a camera that isn't detected.",
         ],
     },
+    "cisco_tc": {
+        "category": "conferencing",
+        "sidebar": "Cisco TC (TC7)", "icon": "video",
+        "models": "Cisco TelePresence codecs running TC software (TC7.x), including the SX, MX, EX, C and Profile series. For CE or RoomOS software, use [Cisco RoomOS](/devices/cisco-roomos).",
+        "connection": "xAPI over HTTPS (TCP 443) or HTTP (TCP 80), using Basic authentication",
+        "before": [
+            "Check the codec's software version in its web interface, under **System Information**. It starts `TC7` for this adapter.",
+            "Note the username and password of a user with the **Admin** role. On TC, the built-in `admin` user has it.",
+            "TC uses a self-signed certificate unless you've installed your own. If you haven't, set the `tls_skip_verify` tag to `true` on the device.",
+        ],
+        "notes": [
+            "> **Older HTTPS:** TC's web server predates current TLS, so this adapter also accepts TLS 1.0 and 1.1 and older cipher suites. TC enables HTTP as well as HTTPS by default; if HTTPS still won't connect, enter the address as `http://` followed by the codec's IP address.",
+            "> **Power:** **Power Off** puts the codec into standby and **Power On** wakes it. The device page shows the standby state as Off (awake) or Standby.",
+            "> **Not available on TC:** people count, which needs RoomOS.",
+        ],
+    },
     "tesira": {
         "category": "audio",
         "sidebar": "Biamp Tesira", "icon": "sliders",

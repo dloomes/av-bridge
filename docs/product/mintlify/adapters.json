@@ -436,6 +436,76 @@
     "device_count": 0
   },
   {
+    "id": "cisco_tc",
+    "name": "Cisco TC (TC7)",
+    "vendor": "Cisco",
+    "kind": "vendor",
+    "description": "Cisco TelePresence codecs on TC software (TC7.x): SX, MX, EX, C and Profile series. The same xAPI as RoomOS, with TC's standby and reboot commands and support for its older HTTPS.",
+    "device_types": [
+      "conferencing"
+    ],
+    "power": {
+      "on": true,
+      "off": true
+    },
+    "commands": [
+      "dial",
+      "hangup",
+      "mute",
+      "unmute",
+      "vol_up",
+      "vol_dn",
+      "power_on",
+      "power_off",
+      "reboot"
+    ],
+    "metrics": [
+      "call_state",
+      "active_calls",
+      "remote_number",
+      "mic_mute",
+      "volume",
+      "power_status",
+      "standby_state",
+      "product_id",
+      "software_version",
+      "serial_number",
+      "ip_address",
+      "mac_address",
+      "uptime_s",
+      "fault_count",
+      "faults",
+      "response_ms"
+    ],
+    "config_schema": [
+      {
+        "name": "address",
+        "required": true,
+        "description": "Codec address. HTTPS is assumed; TC also enables HTTP by default, so http:// works if HTTPS gives trouble.",
+        "example": "192.168.1.19"
+      },
+      {
+        "name": "username",
+        "required": true,
+        "description": "Local user with the Admin role (admin by default on TC)."
+      },
+      {
+        "name": "password",
+        "required": true,
+        "description": "That user's password."
+      },
+      {
+        "name": "tags.tls_skip_verify",
+        "required": false,
+        "description": "Set to \"true\" to accept the codec's self-signed certificate.",
+        "example": "true"
+      }
+    ],
+    "example_config": "- id: meeting-room-sx20\n  name: Meeting Room SX20\n  type: conferencing\n  protocol: cisco_tc\n  address: 192.168.1.19\n  username: admin\n  password: ${CISCO_PASSWORD}\n  tags:\n    tls_skip_verify: \"true\"",
+    "docs_url": "https://www.cisco.com/c/en/us/support/collaboration-endpoints/telepresence-sx20-quick-set/products-command-reference-list.html",
+    "device_count": 0
+  },
+  {
     "id": "philips_sicp",
     "name": "Philips Professional Displays",
     "vendor": "Philips (PPDS)",
