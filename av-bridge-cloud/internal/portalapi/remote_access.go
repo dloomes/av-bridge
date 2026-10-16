@@ -30,7 +30,7 @@ func (h *Handler) SetRemoteAccess(svc *remote.Service) *Handler {
 var webPorts = map[int]bool{80: true, 443: true, 8080: true, 8443: true}
 
 // StartRemoteSession — POST /api/v1/devices/{id}/remote-sessions
-// body (optional): { scheme: "http"|"https", port: N }
+// body (optional): { scheme: "http"|"https", port: N, path: "/login" }
 //
 // Starts a session on the device's web interface and returns its launch
 // link, which opens once, within 5 minutes, in a new browser tab.
@@ -42,6 +42,7 @@ func (h *Handler) StartRemoteSession(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Scheme string `json:"scheme"`
 		Port   int    `json:"port"`
+		Path   string `json:"path"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
 		writeErr(w, http.StatusBadRequest, "invalid JSON")
@@ -51,14 +52,14 @@ func (h *Handler) StartRemoteSession(w http.ResponseWriter, r *http.Request) {
 	deviceID := r.PathValue("id")
 
 	var (
-		reportedID, address, webPortTag, collectorID string
-		found                                        bool
+		reportedID, address, webPortTag, webPathTag, collectorID string
+		found                                                    bool
 	)
 	if !h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
 		err := tx.QueryRow(ctx, `
 			SELECT COALESCE(reported_id, ''), COALESCE(address, ''),
-			       COALESCE(tags->>'web_port', ''), collector_id::text
-			  FROM devices WHERE id = $1`, deviceID).Scan(&reportedID, &address, &webPortTag, &collectorID)
+			       COALESCE(tags->>'web_port', ''), COALESCE(tags->>'web_path', ''), collector_id::text
+			  FROM devices WHERE id = $1`, deviceID).Scan(&reportedID, &address, &webPortTag, &webPathTag, &collectorID)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
@@ -95,6 +96,17 @@ func (h *Handler) StartRemoteSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The page to open on: as asked, else the device's web_path tag, else "/".
+	path := req.Path
+	if strings.TrimSpace(path) == "" {
+		path = webPathTag
+	}
+	startPath, err := remote.CleanStartPath(path)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
 	machine, err := h.remote.Machine(r.Context(), collectorID)
 	if err != nil {
 		h.log.Error("remote access: resolving collector failed", "error", err)
@@ -119,17 +131,17 @@ func (h *Handler) StartRemoteSession(w http.ResponseWriter, r *http.Request) {
 		if err := tx.QueryRow(ctx, `
 			INSERT INTO remote_session
 			       (customer_id, device_id, user_id, actor, host_label, scheme, port,
-			        launch_code_hash, expires_at)
-			VALUES ($1, $2, $3::uuid, $4, $5, $6, $7, $8, now() + make_interval(secs => $9))
+			        launch_code_hash, expires_at, start_path)
+			VALUES ($1, $2, $3::uuid, $4, $5, $6, $7, $8, now() + make_interval(secs => $9), $10)
 			RETURNING id::text, expires_at`,
 			p.CustomerID, deviceID, userID, p.ActorLabel(), label, scheme, port,
-			codeHash, remote.MaxDuration.Seconds()).Scan(&sessionID, &expires); err != nil {
+			codeHash, remote.MaxDuration.Seconds(), startPath).Scan(&sessionID, &expires); err != nil {
 			return err
 		}
 		return audit.Record(ctx, tx, p.CustomerID, stampActor(p, audit.Entry{
 			Action:     "remote.session.start",
 			TargetKind: "device", TargetID: deviceID,
-			Metadata: map[string]any{"session_id": sessionID, "kind": "web", "scheme": scheme, "port": port},
+			Metadata: map[string]any{"session_id": sessionID, "kind": "web", "scheme": scheme, "port": port, "path": startPath},
 		}))
 	}) {
 		return
@@ -141,6 +153,7 @@ func (h *Handler) StartRemoteSession(w http.ResponseWriter, r *http.Request) {
 		"url":        h.remote.LaunchURL(label, code),
 		"scheme":     scheme,
 		"port":       port,
+		"path":       startPath,
 		"expires_at": expires,
 	})
 }

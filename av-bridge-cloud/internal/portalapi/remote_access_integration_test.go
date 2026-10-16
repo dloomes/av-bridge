@@ -87,6 +87,8 @@ func TestRemoteAccessEndToEnd(t *testing.T) {
 			fmt.Fprintf(w, "device home host=%s", r.Host)
 		case "/redir":
 			http.Redirect(w, r, "http://"+r.Host+"/after", http.StatusFound)
+		case "/login":
+			io.WriteString(w, "login page")
 		case "/after":
 			if _, err := r.Cookie("devsess"); err != nil {
 				t.Errorf("device cookie didn't come back: %v", err)
@@ -300,6 +302,27 @@ func TestRemoteAccessEndToEnd(t *testing.T) {
 	}
 	if out := q(`SELECT bytes_in::text FROM remote_session WHERE id = $1`, started.ID); out == "0" {
 		t.Error("no traffic recorded")
+	}
+
+	// A session can open on a page other than "/", and a path that would
+	// leave the session's address is refused.
+	if code, _ := call("POST", "/devices/"+dev+"/remote-sessions", map[string]any{"port": devPort, "path": "//evil.example/"}); code != http.StatusBadRequest {
+		t.Fatalf("path //evil.example/ = %d, want 400", code)
+	}
+	code, body = call("POST", "/devices/"+dev+"/remote-sessions", map[string]any{"port": devPort, "path": "login"})
+	if code != http.StatusCreated {
+		t.Fatalf("start with path = %d %s", code, body)
+	}
+	var withPath struct {
+		URL  string `json:"url"`
+		Path string `json:"path"`
+	}
+	_ = json.Unmarshal(body, &withPath)
+	if withPath.Path != "/login" {
+		t.Fatalf("path = %q, want /login", withPath.Path)
+	}
+	if resp, page = get(browser(), withPath.URL); resp.StatusCode != 200 || page != "login page" || resp.Request.URL.Path != "/login" {
+		t.Fatalf("launch with path → %d %q at %s", resp.StatusCode, page, resp.Request.URL)
 	}
 
 	// The sweeper ends a link that was never opened.

@@ -124,14 +124,14 @@ func (s *Service) launch(w http.ResponseWriter, r *http.Request, label string) {
 	_, _ = rand.Read(tok)
 	token := base64.RawURLEncoding.EncodeToString(tok)
 	cookieSum := sha256.Sum256([]byte(token))
-	var id string
+	var id, startPath string
 	err := s.pool.QueryRow(r.Context(), `
 		UPDATE remote_session
 		   SET launched_at = now(), last_activity_at = now(), cookie_hash = $3
 		 WHERE host_label = $1 AND launch_code_hash = $2
 		   AND launched_at IS NULL AND ended_at IS NULL
 		   AND created_at > now() - make_interval(secs => $4)
-		RETURNING id::text`, label, sum[:], cookieSum[:], LaunchTimeout.Seconds()).Scan(&id)
+		RETURNING id::text, start_path`, label, sum[:], cookieSum[:], LaunchTimeout.Seconds()).Scan(&id, &startPath)
 	if err != nil {
 		page(w, http.StatusForbidden, "This link has already been used or has expired",
 			"Each remote access link opens once, within 5 minutes. Start a new session from the device's page in the portal.")
@@ -141,7 +141,9 @@ func (s *Service) launch(w http.ResponseWriter, r *http.Request, label string) {
 		Name: cookieName, Value: token, Path: "/",
 		HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode,
 	})
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	// The page the session was started on (checked by CleanStartPath and
+	// the table's constraint, so it stays on this address).
+	http.Redirect(w, r, startPath, http.StatusSeeOther)
 }
 
 func matches(value string, hash []byte) bool {
@@ -333,3 +335,38 @@ func (w *countingWriter) Flush() {
 }
 
 func (w *countingWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+// CleanStartPath checks the page a session opens on: a path on the device,
+// with an optional query, such as "/login" or "index.html". "" is "/".
+// Anything that could leave the session's own address ("//host", a scheme,
+// backslashes) is refused.
+func CleanStartPath(p string) (string, error) {
+	p = strings.TrimSpace(p)
+	if p == "" {
+		return "/", nil
+	}
+	if strings.Contains(p, "://") {
+		return "", errors.New("enter just the path on the device, such as /login, not a full web address")
+	}
+	if !strings.HasPrefix(p, "/") {
+		p = "/" + p
+	}
+	switch {
+	case len(p) > 512:
+		return "", errors.New("path is too long")
+	case strings.HasPrefix(p, "//"), strings.ContainsAny(p, `\#`):
+		return "", errors.New("path must be a page on the device, such as /login")
+	case strings.HasPrefix(p, launchPath):
+		return "", errors.New("that path is reserved")
+	}
+	for _, r := range p {
+		if r < 0x20 || r == 0x7f || r == ' ' {
+			return "", errors.New("path can't contain spaces or control characters")
+		}
+	}
+	u, err := url.Parse(p)
+	if err != nil || u.Scheme != "" || u.Host != "" {
+		return "", errors.New("path must be a page on the device, such as /login")
+	}
+	return p, nil
+}
