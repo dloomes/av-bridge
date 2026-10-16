@@ -91,6 +91,7 @@ export interface RemoteSessionStart {
   url: string;
   scheme: "http" | "https";
   port: number;
+  path: string;
   expires_at: string;
 }
 
@@ -1125,7 +1126,7 @@ export const api = {
 
   // Remote access: starts a session on the device's web interface, relayed
   // through its Collector. The url opens once, within 5 minutes.
-  startRemoteSession: (id: string, target?: { scheme?: "http" | "https"; port?: number }) =>
+  startRemoteSession: (id: string, target?: { scheme?: "http" | "https"; port?: number; path?: string }) =>
     request<RemoteSessionStart>(
       `/api/v1/devices/${encodeURIComponent(id)}/remote-sessions`,
       { method: "POST", body: JSON.stringify(target ?? {}) }

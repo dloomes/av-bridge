@@ -235,7 +235,11 @@ export default function DeviceDetailPage() {
             );
           })()}
           {canRemoteAccess && (
-            <RemoteAccessButton deviceId={device.id} deviceName={device.name} />
+            <RemoteAccessButton
+              deviceId={device.id}
+              deviceName={device.name}
+              defaultPath={device.tags?.web_path}
+            />
           )}
           <Button
             variant="outline"

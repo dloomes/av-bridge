@@ -29,7 +29,16 @@ function errorText(e: unknown): string {
 // RemoteAccessButton opens a device's web interface in a new tab, relayed
 // through the cloud and the device's Collector — the browser doesn't need
 // to be on the device's network.
-export function RemoteAccessButton({ deviceId, deviceName }: { deviceId: string; deviceName: string }) {
+export function RemoteAccessButton({
+  deviceId,
+  deviceName,
+  defaultPath,
+}: {
+  deviceId: string;
+  deviceName: string;
+  // The device's web_path tag, used when Path is left empty.
+  defaultPath?: string;
+}) {
   const [open, setOpen] = useState(false);
   return (
     <>
@@ -38,15 +47,16 @@ export function RemoteAccessButton({ deviceId, deviceName }: { deviceId: string;
         Web interface
       </Button>
       <Modal open={open} onClose={() => setOpen(false)} title={`Web interface — ${deviceName}`} wide={false}>
-        <RemoteAccessPanel deviceId={deviceId} />
+        <RemoteAccessPanel deviceId={deviceId} defaultPath={defaultPath} />
       </Modal>
     </>
   );
 }
 
-function RemoteAccessPanel({ deviceId }: { deviceId: string }) {
+function RemoteAccessPanel({ deviceId, defaultPath }: { deviceId: string; defaultPath?: string }) {
   const [scheme, setScheme] = useState<"" | "http" | "https">("");
   const [port, setPort] = useState("");
+  const [path, setPath] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sessions, setSessions] = useState<RemoteSession[]>([]);
@@ -78,6 +88,7 @@ function RemoteAccessPanel({ deviceId }: { deviceId: string }) {
       const s = await api.startRemoteSession(deviceId, {
         scheme: scheme || undefined,
         port: portNum,
+        path: path.trim() || undefined,
       });
       if (tab) tab.location.href = s.url;
       else window.open(s.url, "_blank", "noopener");
@@ -133,9 +144,23 @@ function RemoteAccessPanel({ deviceId }: { deviceId: string }) {
           />
         </div>
       </div>
+      <div className="space-y-1.5">
+        <label className={labelClass} htmlFor="ra-path">Path</label>
+        <input
+          id="ra-path"
+          className={inputClass}
+          placeholder={defaultPath || "/"}
+          value={path}
+          onChange={(e) => setPath(e.target.value)}
+          autoComplete="off"
+          spellCheck={false}
+        />
+      </div>
       <p className="text-xs text-muted-foreground -mt-2">
         Automatic uses the device&apos;s address, or its <code>web_port</code> tag, else HTTP on port 80.
         Ports 80, 443, 8080 and 8443, the device&apos;s own port and its <code>web_port</code> tag are allowed.
+        Path is the page to open first, such as <code>/login</code>; left empty, it&apos;s the
+        device&apos;s <code>web_path</code> tag, else the home page.
       </p>
 
       {error && (
