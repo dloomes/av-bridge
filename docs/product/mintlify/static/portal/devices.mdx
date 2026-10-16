@@ -55,10 +55,12 @@ Select **Activity** in the header to see every change made to the device and eve
 Select **Web interface** in the header to open the device's own web page in a new browser tab: a display's settings page, a DSP's control page, a PDU's outlet page. The page is relayed through the device's Collector, so it works from anywhere, without being on the device's network or using a VPN.
 
 1. Select **Web interface**.
-2. Leave **Protocol** and **Port** on **Automatic**, or choose them if the device's web page is somewhere else.
+2. Leave **Protocol** and **Port** on **Automatic**, or choose them if the device's web page is somewhere else. If the device's web page doesn't start at its home page, enter the page in **Path**, such as `/login`.
 3. Select **Open in new tab**. Sign in to the device as you would on site.
 
 **Automatic** uses the scheme and port in the device's address when it's a web address, such as `https://10.0.4.21:8443`, or the device's `web_port` tag. Otherwise it's HTTP on port 80. Only ports 80, 443, 8080 and 8443, the device's own port and its `web_port` tag can be opened, and only on that device's own address.
+
+To open a device on the same page every time, give it a `web_path` tag, such as `web_path: /login`. **Path** then starts with that page unless you enter another.
 
 Each session:
 
