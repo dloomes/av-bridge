@@ -330,6 +330,48 @@ var catalogue = []Info{
 	},
 
 	{
+		ID:          "cisco_tc",
+		Name:        "Cisco TC (TC7)",
+		Vendor:      "Cisco",
+		Kind:        KindVendor,
+		Description: "Cisco TelePresence codecs on TC software (TC7.x): SX, MX, EX, C and Profile series. The same xAPI as RoomOS, with TC's standby and reboot commands and support for its older HTTPS.",
+		DeviceTypes: []string{"conferencing"},
+		Power:       PowerCapability{On: true, Off: true},
+		Commands: []string{
+			"dial", "hangup",
+			"mute", "unmute",
+			"vol_up", "vol_dn",
+			"power_on", "power_off",
+			"reboot",
+		},
+		Metrics: []string{
+			"call_state", "active_calls", "remote_number",
+			"mic_mute", "volume",
+			"power_status", "standby_state",
+			"product_id", "software_version", "serial_number",
+			"ip_address", "mac_address", "uptime_s",
+			"fault_count", "faults",
+			"response_ms",
+		},
+		ConfigSchema: []ConfigField{
+			{Name: "address", Required: true, Description: "Codec address. HTTPS is assumed; TC also enables HTTP by default, so http:// works if HTTPS gives trouble.", Example: "192.168.1.19"},
+			{Name: "username", Required: true, Description: "Local user with the Admin role (admin by default on TC)."},
+			{Name: "password", Required: true, Description: "That user's password."},
+			{Name: "tags.tls_skip_verify", Required: false, Description: "Set to \"true\" to accept the codec's self-signed certificate.", Example: "true"},
+		},
+		ExampleConfig: `- id: meeting-room-sx20
+  name: Meeting Room SX20
+  type: conferencing
+  protocol: cisco_tc
+  address: 192.168.1.19
+  username: admin
+  password: ${CISCO_PASSWORD}
+  tags:
+    tls_skip_verify: "true"`,
+		DocsURL: "https://www.cisco.com/c/en/us/support/collaboration-endpoints/telepresence-sx20-quick-set/products-command-reference-list.html",
+	},
+
+	{
 		ID:          "philips_sicp",
 		Name:        "Philips Professional Displays",
 		Vendor:      "Philips (PPDS)",
