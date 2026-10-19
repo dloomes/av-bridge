@@ -81,6 +81,14 @@ const OVERVIEW_ITEM: NavItem = {
   icon: LayoutDashboard,
   matchExact: true,
 };
+// Dashboards sit with the landing surfaces too: a user's own view of the
+// estate, one click from Overview and Map.
+const DASHBOARDS_ITEM: NavItem = {
+  href: "/dashboards",
+  label: "Dashboards",
+  icon: LayoutGrid,
+  requires: "view.dashboard",
+};
 const MAP_ITEM: NavItem = {
   href: "/map",
   label: "Map",
@@ -92,7 +100,6 @@ const SECTIONS: NavSection[] = [
   {
     title: "Monitor",
     items: [
-      { href: "/dashboards", label: "Dashboards", icon: LayoutGrid, requires: "view.dashboard" },
       { href: "/alerts", label: "Alerts", icon: Bell, badgeKey: "alerts_open", requires: "view.dashboard" },
       { href: "/collectors", label: "Collectors", icon: Server, requires: "view.dashboard" },
       { href: "/devices", label: "Devices", icon: Radio, requires: "view.dashboard" },
@@ -228,6 +235,14 @@ export function Sidebar() {
             badge={0}
             criticalOpen={criticalOpen}
           />
+          {(isVendor || hasPermission(session.user, "view.dashboard")) && (
+            <NavLink
+              item={DASHBOARDS_ITEM}
+              active={pathname === "/dashboards"}
+              badge={0}
+              criticalOpen={criticalOpen}
+            />
+          )}
         </div>
 
         <div className="pt-3">
