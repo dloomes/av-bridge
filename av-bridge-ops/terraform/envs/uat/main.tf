@@ -36,7 +36,10 @@ module "db" {
   subnet_ids        = module.network.private_subnet_ids
   security_group_id = aws_security_group.db.id
 
-  instance_class      = "db.t4g.micro"
+  # db.t4g.small (2 GB): the micro's 1 GB swapped and ran out of EBS
+  # throughput balance under report load (2026-10-19).
+  instance_class      = "db.t4g.small"
+  apply_immediately   = true
   multi_az            = false
   deletion_protection = false
   # UAT: 1 day of backups is plenty. Prod: 7-14.

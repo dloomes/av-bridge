@@ -114,6 +114,10 @@ resource "aws_db_instance" "this" {
   backup_window           = "02:00-03:00"
   maintenance_window      = "sun:03:30-sun:04:30"
 
+  # Changes such as a new instance class wait for the maintenance window
+  # unless this is set; applying them now restarts the database.
+  apply_immediately = var.apply_immediately
+
   auto_minor_version_upgrade = true
   deletion_protection        = var.deletion_protection
   skip_final_snapshot        = !var.deletion_protection

@@ -66,6 +66,12 @@ variable "engine_version" {
   default     = "16.14"
 }
 
+variable "apply_immediately" {
+  description = "Apply instance changes (e.g. instance_class) now, restarting the database, instead of in the next maintenance window."
+  type        = bool
+  default     = false
+}
+
 variable "secret_recovery_window_days" {
   type    = number
   default = 0
