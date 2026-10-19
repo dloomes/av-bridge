@@ -45,8 +45,38 @@ Widgets refresh on their own, every 30 seconds for live information and less oft
 | **Room** | Every device in one room with its status and power state. | Room |
 | **Device** | One device's status and its latest readings. | Device |
 | **Recent activity** | The latest changes and commands from the activity log. | How many |
+| **Rooms in use now** | Rooms in a call or with people in them right now, from codecs and people-counting cameras. | How many |
+| **Building status** | Every building as a tile: green when all is well, amber when devices aren't reporting, red when any are offline. | Region |
+| **Map** | Buildings on a map, coloured by status, as on the **Map** page. | |
+| **Big number** | One figure in large type: devices offline or not reporting, open or critical alerts, rooms needing attention, Room Readiness failures, Collectors not online, or rooms in use now. It turns red once it reaches the number you set. | Figure, red from, label |
+| **Clock** | The time and date. | Time zone, 12- or 24-hour, seconds |
+| **Notice** | A message you write, such as a change freeze or a room out of use, styled as information, a warning or critical. | Message, style |
 
 Each widget only shows what your access allows. If your access is limited to some rooms, widgets only show those rooms. A widget whose information you can't see, such as **Recent activity** without the **View audit log** permission, says so.
+
+## Show a dashboard on a wall screen
+
+Select **Display** on a dashboard to open it full screen in a new tab: dark, with larger text for viewing across a room, and a clock. Select **Full screen** to fill the screen; it shows when you move the mouse. The cursor hides after a few seconds, and the layout moves by a few pixels every five minutes so nothing burns into the screen.
+
+If the screen stops getting updates, for example because its network drops, a red banner across the top says since when.
+
+**Display** uses your own sign-in, so the screen stops when you sign out or your session ends. For a screen that stays on, use a display link.
+
+### Display links
+
+A display link shows one or more shared dashboards on a screen with no one signed in, rotating between them. You need the **Share dashboards** permission.
+
+1. Go to **Dashboards** and select **Display links**.
+2. Give the link a **Name**, such as the screen's location.
+3. Tick the shared dashboards to show, in the order you want them. With more than one, choose how long to show each.
+4. Select **Create display link**, then **Copy** the address. It's shown only once.
+5. Open the address in the screen's browser.
+
+A display link can only view: it can't change anything, can't see the activity log, and sees no more of the estate than the person who created it. Anyone with the address can see those dashboards, so treat it like a password. The list of display links shows when each screen was last seen.
+
+To stop a screen, select **Revoke**. It stops updating at once and says the link has been revoked. If you stop sharing a dashboard, it's taken off every display link straight away.
+
+Creating and revoking display links is recorded in the activity log.
 
 ## Share a dashboard
 
