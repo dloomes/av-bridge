@@ -41,8 +41,8 @@ import type {
   PowerRow,
   RoleMappingRow,
   RoleRow,
-  RoomActivityRow,
-  RoomUtilisationRow,
+  DeviceEventsRow,
+  RoomUsageRow,
   WarrantyRow,
   Telemetry,
   UpdateAssetBody,
@@ -1633,18 +1633,18 @@ export const api = {
       { signal }
     ),
 
-  roomActivityReport: (days: number, signal?: AbortSignal) =>
-    request<RoomActivityRow[]>(
-      `/api/v1/reports/room-activity?days=${days}`,
+  deviceEventsReport: (days: number, signal?: AbortSignal) =>
+    request<DeviceEventsRow[]>(
+      `/api/v1/reports/device-events?days=${days}`,
       { signal }
     ),
 
   warrantyReport: (signal?: AbortSignal) =>
     request<WarrantyRow[]>(`/api/v1/reports/warranty`, { signal }),
 
-  roomUtilisationReport: (days: number, signal?: AbortSignal) =>
-    request<RoomUtilisationRow[]>(
-      `/api/v1/reports/room-utilisation?days=${days}`,
+  roomUsageReport: (days: number, signal?: AbortSignal) =>
+    request<RoomUsageRow[]>(
+      `/api/v1/reports/room-usage?days=${days}`,
       { signal }
     ),
 
@@ -1657,9 +1657,9 @@ export const api = {
   reportCSVUrl: (
     kind:
       | "device-uptime"
-      | "room-activity"
+      | "device-events"
       | "warranty"
-      | "room-utilisation"
+      | "room-usage"
       | "power",
     days: number
   ): string => {

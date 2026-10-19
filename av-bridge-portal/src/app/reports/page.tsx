@@ -19,29 +19,29 @@ import { formatRelative } from "@/lib/utils";
 import type {
   DeviceUptimeRow,
   PowerRow,
-  RoomActivityRow,
-  RoomUtilisationRow,
+  DeviceEventsRow,
+  RoomUsageRow,
   WarrantyBucket,
   WarrantyRow,
 } from "@/lib/types";
 
-type Tab = "uptime" | "activity" | "utilisation" | "warranty" | "power";
+type Tab = "uptime" | "usage" | "events" | "warranty" | "power";
 type Window = 1 | 7 | 30 | 90;
 
 const WINDOWS: Window[] = [1, 7, 30, 90];
 
 const TAB_LABEL: Record<Tab, string> = {
   uptime: "Device uptime",
-  activity: "Room activity",
-  utilisation: "Room utilisation",
+  usage: "Room usage",
+  events: "Device events",
   warranty: "Warranty",
   power: "Power",
 };
 
-const TAB_CSV_KIND: Record<Tab, "device-uptime" | "room-activity" | "warranty" | "room-utilisation" | "power"> = {
+const TAB_CSV_KIND: Record<Tab, "device-uptime" | "device-events" | "warranty" | "room-usage" | "power"> = {
   uptime: "device-uptime",
-  activity: "room-activity",
-  utilisation: "room-utilisation",
+  usage: "room-usage",
+  events: "device-events",
   warranty: "warranty",
   power: "power",
 };
@@ -49,8 +49,8 @@ const TAB_CSV_KIND: Record<Tab, "device-uptime" | "room-activity" | "warranty" |
 // Warranty is a lifetime state, not windowed — the window picker hides for it.
 const TAB_HAS_WINDOW: Record<Tab, boolean> = {
   uptime: true,
-  activity: true,
-  utilisation: true,
+  usage: true,
+  events: true,
   warranty: false,
   power: true,
 };
@@ -65,7 +65,7 @@ export default function ReportsPage() {
         <div>
           <h1 className="text-xl font-semibold">Reports</h1>
           <p className="text-sm text-muted-foreground">
-            Uptime, activity, utilisation, warranty and power over the selected window
+            Uptime, room usage, device events, warranty and power over the selected window
           </p>
         </div>
         <UserMenu />
@@ -123,8 +123,8 @@ export default function ReportsPage() {
         </div>
 
         {tab === "uptime" && <UptimeReport days={days} />}
-        {tab === "activity" && <ActivityReport days={days} />}
-        {tab === "utilisation" && <UtilisationReport days={days} />}
+        {tab === "usage" && <UsageReport days={days} />}
+        {tab === "events" && <EventsReport days={days} />}
         {tab === "warranty" && <WarrantyReport />}
         {tab === "power" && <PowerReport days={days} />}
       </div>
@@ -252,15 +252,161 @@ function UptimeReport({ days }: { days: Window }) {
   );
 }
 
-// --- Room activity ---------------------------------------------------------
+// --- Room usage ------------------------------------------------------------
+//
+// From device readings: an hour is in use when a codec reported a call or a
+// camera counted people. Display power is shown separately, because Room
+// Readiness switches displays on whether the room is used or not.
 
-function ActivityReport({ days }: { days: Window }) {
-  const [rows, setRows] = useState<RoomActivityRow[] | null>(null);
+function UsageReport({ days }: { days: Window }) {
+  const [rows, setRows] = useState<RoomUsageRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async (signal?: AbortSignal) => {
     try {
-      const data = await api.roomActivityReport(days, signal);
+      const data = await api.roomUsageReport(days, signal);
+      if (signal?.aborted) return;
+      setRows(data);
+      setError(null);
+    } catch (e) {
+      if (!signal?.aborted) setError((e as Error).message);
+    }
+  }, [days]);
+
+  useEffect(() => {
+    setRows(null);
+    const ctrl = new AbortController();
+    void load(ctrl.signal);
+    return () => ctrl.abort();
+  }, [load]);
+
+  const maxHours = useMemo(() => {
+    if (!rows || rows.length === 0) return 1;
+    return Math.max(1, ...rows.map((r) => r.avg_hours_per_day));
+  }, [rows]);
+
+  if (error) {
+    return (
+      <Card className="border-destructive/30 bg-destructive/5">
+        <CardContent className="p-4 text-sm [color:hsl(var(--destructive))]">
+          {error}
+          <Button size="sm" variant="ghost" onClick={() => load()}>
+            <RefreshCcw className="h-3 w-3" />
+            Retry
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (rows === null) return <Skeleton className="h-96 w-full" />;
+
+  const measured = rows.filter((r) => r.has_usage_signal);
+  const used = measured.filter((r) => r.hours_in_use > 0);
+  const unused = measured.length - used.length;
+  const totalHours = measured.reduce((n, r) => n + r.hours_in_use, 0);
+  const busiest = used[0];
+
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+        <SummaryCard label="Rooms used" value={`${used.length} / ${measured.length}`} />
+        <SummaryCard label="Hours in use" value={totalHours} />
+        <SummaryCard
+          label="Busiest room"
+          value={busiest ? `${busiest.room_name} (${busiest.avg_hours_per_day.toFixed(1)} h/day)` : "—"}
+          tone="ok"
+        />
+        <SummaryCard label="Unused rooms" value={unused} tone={unused > 0 ? "warn" : undefined} />
+      </div>
+
+      <Card>
+        <CardContent className="p-0 overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="border-b bg-muted/30 text-xs uppercase tracking-wide text-muted-foreground">
+              <tr>
+                <th className="text-left px-3 py-2 font-medium">Room</th>
+                <th className="text-left px-3 py-2 font-medium">Building</th>
+                <th className="text-right px-3 py-2 font-medium">Hours in use</th>
+                <th className="text-right px-3 py-2 font-medium">In calls</th>
+                <th className="text-right px-3 py-2 font-medium">Occupied</th>
+                <th className="text-right px-3 py-2 font-medium">Peak people</th>
+                <th className="text-right px-3 py-2 font-medium">Days used</th>
+                <th className="px-3 py-2 font-medium w-1/5">Hours a day</th>
+                <th className="text-right px-3 py-2 font-medium">Displays on</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.room_id} className="border-b last:border-b-0 hover:bg-accent/20">
+                  <td className="px-3 py-2 font-medium">{r.room_name}</td>
+                  <td className="px-3 py-2 text-muted-foreground">{r.building_name || "—"}</td>
+                  {r.has_usage_signal ? (
+                    <>
+                      <td className="px-3 py-2 text-right tabular-nums">{r.hours_in_use}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{r.hours_in_calls}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{r.hours_occupied}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{r.peak_people ?? "—"}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{r.days_in_use}</td>
+                      <td className="px-3 py-2">
+                        <div className="flex items-center gap-2">
+                          <div className="h-2 flex-1 rounded bg-muted overflow-hidden">
+                            <div
+                              className="h-full bg-foreground/80"
+                              style={{ width: `${(r.avg_hours_per_day / maxHours) * 100}%` }}
+                            />
+                          </div>
+                          <span className="w-10 text-right text-xs tabular-nums">{r.avg_hours_per_day.toFixed(1)}</span>
+                        </div>
+                      </td>
+                    </>
+                  ) : (
+                    <td colSpan={6} className="px-3 py-2 text-xs text-muted-foreground">
+                      {r.device_count === 0
+                        ? "No devices"
+                        : "No usage data: no device here reports calls or people"}
+                    </td>
+                  )}
+                  <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
+                    {r.display_on_hours ? `${r.display_on_hours} h` : "—"}
+                  </td>
+                </tr>
+              ))}
+              {rows.length === 0 && (
+                <tr>
+                  <td colSpan={9} className="px-3 py-8 text-center text-muted-foreground text-sm">
+                    No rooms yet.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </CardContent>
+      </Card>
+
+      <p className="text-[11px] text-muted-foreground flex items-center gap-1">
+        <Clock className="h-3 w-3" />
+        A room is in use for any hour a video codec was in a call or a camera counted people in it. Displays on
+        counts hours a display reported power on, leaving out Room Readiness runs; it isn&apos;t counted as use,
+        because Room Readiness switches displays on every morning.
+      </p>
+    </div>
+  );
+}
+
+// --- Device events ---------------------------------------------------------
+//
+// Events are what devices send unprompted (alerts, Telnet/serial messages,
+// DSP subscription updates), not normal polling, so this shows noisy or
+// faulty rooms, not busy ones. Room use is the Room usage report.
+
+function EventsReport({ days }: { days: Window }) {
+  const [rows, setRows] = useState<DeviceEventsRow[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async (signal?: AbortSignal) => {
+    try {
+      const data = await api.deviceEventsReport(days, signal);
       if (signal?.aborted) return;
       setRows(data);
       setError(null);
@@ -299,15 +445,18 @@ function ActivityReport({ days }: { days: Window }) {
     return <Skeleton className="h-96 w-full" />;
   }
 
-  const totalEvents = rows.reduce((n, r) => n + r.event_count, 0);
-  const activeRooms = rows.filter((r) => r.event_count > 0).length;
+  const totalAlerts = rows.reduce((n, r) => n + r.alert_count, 0);
+  const totalMessages = rows.reduce((n, r) => n + r.message_count, 0);
+  const withEvents = rows.filter((r) => r.event_count > 0).length;
+  const noisiest = rows[0] && rows[0].event_count > 0 ? rows[0].room_name : "—";
 
   return (
     <div className="space-y-3">
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-        <SummaryCard label="Rooms with activity" value={`${activeRooms} / ${rows.length}`} />
-        <SummaryCard label="Total events" value={totalEvents} />
-        <SummaryCard label="Busiest room" value={rows[0]?.room_name ?? "—"} />
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+        <SummaryCard label="Rooms with events" value={`${withEvents} / ${rows.length}`} />
+        <SummaryCard label="Alerts" value={totalAlerts} tone={totalAlerts > 0 ? "warn" : undefined} />
+        <SummaryCard label="Device messages" value={totalMessages} />
+        <SummaryCard label="Most events" value={noisiest} />
       </div>
 
       <Card>
@@ -318,8 +467,9 @@ function ActivityReport({ days }: { days: Window }) {
                 <th className="text-left px-3 py-2 font-medium">Room</th>
                 <th className="text-left px-3 py-2 font-medium">Building</th>
                 <th className="text-right px-3 py-2 font-medium">Devices</th>
-                <th className="text-right px-3 py-2 font-medium">Events</th>
-                <th className="px-3 py-2 font-medium w-1/3">Activity</th>
+                <th className="text-right px-3 py-2 font-medium">Alerts</th>
+                <th className="text-right px-3 py-2 font-medium">Messages</th>
+                <th className="px-3 py-2 font-medium w-1/4">Events</th>
                 <th className="text-left px-3 py-2 font-medium">Last event</th>
               </tr>
             </thead>
@@ -329,9 +479,10 @@ function ActivityReport({ days }: { days: Window }) {
                   <td className="px-3 py-2 font-medium">{r.room_name}</td>
                   <td className="px-3 py-2 text-muted-foreground">{r.building_name || "—"}</td>
                   <td className="px-3 py-2 text-right tabular-nums">{r.device_count}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{r.event_count}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{r.alert_count}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{r.message_count}</td>
                   <td className="px-3 py-2">
-                    <div className="h-2 w-full rounded bg-muted overflow-hidden">
+                    <div className="h-2 w-full rounded bg-muted overflow-hidden" title={`${r.event_count} events`}>
                       <div
                         className="h-full bg-foreground/80"
                         style={{ width: `${(r.event_count / maxEvents) * 100}%` }}
@@ -340,120 +491,6 @@ function ActivityReport({ days }: { days: Window }) {
                   </td>
                   <td className="px-3 py-2 text-muted-foreground text-xs">
                     {r.last_event_at ? formatRelative(r.last_event_at) : "—"}
-                  </td>
-                </tr>
-              ))}
-              {rows.length === 0 && (
-                <tr>
-                  <td colSpan={6} className="px-3 py-8 text-center text-muted-foreground text-sm">
-                    No rooms yet.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
-
-// --- Room utilisation ------------------------------------------------------
-
-function UtilisationReport({ days }: { days: Window }) {
-  const [rows, setRows] = useState<RoomUtilisationRow[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(async (signal?: AbortSignal) => {
-    try {
-      const data = await api.roomUtilisationReport(days, signal);
-      if (signal?.aborted) return;
-      setRows(data);
-      setError(null);
-    } catch (e) {
-      if (!signal?.aborted) setError((e as Error).message);
-    }
-  }, [days]);
-
-  useEffect(() => {
-    setRows(null);
-    const ctrl = new AbortController();
-    void load(ctrl.signal);
-    return () => ctrl.abort();
-  }, [load]);
-
-  const maxHours = useMemo(() => {
-    if (!rows || rows.length === 0) return 1;
-    return Math.max(1, ...rows.map((r) => r.avg_hours_per_day));
-  }, [rows]);
-
-  if (error) {
-    return (
-      <Card className="border-destructive/30 bg-destructive/5">
-        <CardContent className="p-4 text-sm [color:hsl(var(--destructive))]">
-          {error}
-          <Button size="sm" variant="ghost" onClick={() => load()}>
-            <RefreshCcw className="h-3 w-3" />
-            Retry
-          </Button>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  if (rows === null) return <Skeleton className="h-96 w-full" />;
-
-  const active = rows.filter((r) => r.active_hours > 0);
-  const totalActiveHours = active.reduce((n, r) => n + r.active_hours, 0);
-  const busiest = rows[0];
-
-  return (
-    <div className="space-y-3">
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-        <SummaryCard label="Rooms with activity" value={`${active.length} / ${rows.length}`} />
-        <SummaryCard label="Total active hours" value={totalActiveHours} />
-        <SummaryCard
-          label="Avg hours/day (busiest)"
-          value={busiest ? busiest.avg_hours_per_day.toFixed(2) : "—"}
-          tone="ok"
-        />
-        <SummaryCard
-          label="Idle rooms"
-          value={rows.length - active.length}
-          tone={rows.length - active.length > 0 ? "warn" : undefined}
-        />
-      </div>
-
-      <Card>
-        <CardContent className="p-0 overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="border-b bg-muted/30 text-xs uppercase tracking-wide text-muted-foreground">
-              <tr>
-                <th className="text-left px-3 py-2 font-medium">Room</th>
-                <th className="text-left px-3 py-2 font-medium">Building</th>
-                <th className="text-right px-3 py-2 font-medium">Devices</th>
-                <th className="text-right px-3 py-2 font-medium">Active hours</th>
-                <th className="text-right px-3 py-2 font-medium">Active days</th>
-                <th className="text-right px-3 py-2 font-medium">Avg hrs/day</th>
-                <th className="px-3 py-2 font-medium w-1/4">Utilisation</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.room_id} className="border-b last:border-b-0 hover:bg-accent/20">
-                  <td className="px-3 py-2 font-medium">{r.room_name}</td>
-                  <td className="px-3 py-2 text-muted-foreground">{r.building_name || "—"}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{r.device_count}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{r.active_hours}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{r.active_days}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{r.avg_hours_per_day.toFixed(2)}</td>
-                  <td className="px-3 py-2">
-                    <div className="h-2 w-full rounded bg-muted overflow-hidden">
-                      <div
-                        className="h-full bg-foreground/80"
-                        style={{ width: `${(r.avg_hours_per_day / maxHours) * 100}%` }}
-                      />
-                    </div>
                   </td>
                 </tr>
               ))}
@@ -470,9 +507,10 @@ function UtilisationReport({ days }: { days: Window }) {
       </Card>
 
       <p className="text-[11px] text-muted-foreground flex items-center gap-1">
-        <Clock className="h-3 w-3" />
-        Active hour = at least one device event in the room during that clock hour.
-        Averaged over the window to give a comparable hours-per-day figure.
+        <ShieldAlert className="h-3 w-3" />
+        Alerts are devices going offline or reporting faults. Messages are what devices send unprompted, such as
+        Telnet output or DSP updates. Normal polling isn&apos;t counted, so a high count points at a noisy or faulty
+        device, not a busy room; see Room usage for that.
       </p>
     </div>
   );

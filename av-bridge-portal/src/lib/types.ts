@@ -472,12 +472,16 @@ export interface DeviceUptimeRow {
   last_seen_at?: string;
 }
 
-export interface RoomActivityRow {
+// Device events report: events per room, split into alerts and device
+// messages. A high count means a noisy or faulty device, not a busy room.
+export interface DeviceEventsRow {
   room_id: string;
   room_name: string;
   building_name: string;
   device_count: number;
   event_count: number;
+  alert_count: number;
+  message_count: number;
   last_event_at?: string;
 }
 
@@ -506,14 +510,22 @@ export interface WarrantyRow {
   bucket: WarrantyBucket;
 }
 
-export interface RoomUtilisationRow {
+// Room usage report: hours with a call or people in the room, from device
+// readings. has_usage_signal is false when no device in the room reports
+// calls or people, so its hours mean "no data", not "idle".
+export interface RoomUsageRow {
   room_id: string;
   room_name: string;
   building_name: string;
   device_count: number;
-  active_hours: number;
-  active_days: number;
+  has_usage_signal: boolean;
+  hours_in_use: number;
+  hours_in_calls: number;
+  hours_occupied: number;
+  days_in_use: number;
   avg_hours_per_day: number;
+  peak_people: number | null;
+  display_on_hours: number;
 }
 
 export interface PowerRow {

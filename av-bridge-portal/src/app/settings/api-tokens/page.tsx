@@ -37,7 +37,7 @@ const SCOPE_OPTIONS: { key: string; label: string; description: string }[] = [
   { key: "view.firmware", label: "Read firmware", description: "Firmware summary and per-device version reports." },
   { key: "view.notifications", label: "Read notification channels", description: "Configured email / Teams / webhook channels (never their secrets)." },
   { key: "view.audit", label: "Read audit log", description: "Activity trail for the tenant." },
-  { key: "view.reports", label: "Read reports", description: "Uptime, room-activity, and related derived reports." },
+  { key: "view.reports", label: "Read reports", description: "Uptime, room usage, device events and related derived reports." },
   { key: "nightly.view", label: "Read Room Readiness", description: "Nightly schedules, routines, and run history." },
 ];
 
