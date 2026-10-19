@@ -62,6 +62,10 @@ type Principal struct {
 	RegionScopeIDs   []string
 	LocationScopeIDs []string
 	RoomScopeIDs     []string
+	// DisplayLinkID is set when a dashboard display link signed in (see
+	// DisplayResolver): view-only, and limited to DisplayDashboardIDs.
+	DisplayLinkID       string
+	DisplayDashboardIDs []string
 }
 
 // HasPermission returns true if the principal holds the given capability.
@@ -88,6 +92,9 @@ func (p Principal) HasPermission(perm string) bool {
 // Real users surface their email; the legacy static-token path falls back to
 // the role string so existing audit rows remain interpretable.
 func (p Principal) ActorLabel() string {
+	if p.DisplayLinkID != "" {
+		return "display: " + p.Name
+	}
 	if p.Email != "" {
 		return p.Email
 	}

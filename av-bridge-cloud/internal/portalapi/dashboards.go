@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -27,6 +28,9 @@ var dashboardWidgetTypes = map[string]bool{
 	"status": true, "alerts": true, "attention": true, "readiness": true,
 	"usage": true, "uptime": true, "collectors": true, "warranty": true,
 	"firmware": true, "room": true, "device": true, "activity": true,
+	// Wallboard widgets.
+	"clock": true, "notice": true, "bignumber": true, "inuse": true,
+	"buildings": true, "map": true,
 }
 
 var dashboardWidgetSizes = map[string]bool{"s": true, "m": true, "l": true, "xl": true}
@@ -112,6 +116,12 @@ type dashboardDetail struct {
 // their own, and the organisation's shared ones. $1 is the user id.
 const dashboardVisible = `(owner_user_id IS NULL OR owner_user_id::text = $1)`
 
+// displayAllows reports whether a display link (if p is one) may show the
+// dashboard: only those it was created for.
+func displayAllows(p portalauth.Principal, id string) bool {
+	return p.DisplayLinkID == "" || slices.Contains(p.DisplayDashboardIDs, id)
+}
+
 func canEditDashboard(p portalauth.Principal, shared bool) bool {
 	if shared {
 		return p.HasPermission(portalauth.PermDashboardShare)
@@ -142,6 +152,9 @@ func (h *Handler) ListDashboards(w http.ResponseWriter, r *http.Request) {
 			if err := rows.Scan(&d.ID, &d.Name, &d.Shared, &d.WidgetCount, &d.CreatedBy, &d.UpdatedAt); err != nil {
 				return err
 			}
+			if !displayAllows(p, d.ID) {
+				continue
+			}
 			d.CanEdit = canEditDashboard(p, d.Shared)
 			out = append(out, d)
 		}
@@ -165,7 +178,7 @@ func loadDashboard(ctx context.Context, tx pgx.Tx, p portalauth.Principal, id st
 		  FROM dashboards
 		 WHERE id::text = $2 AND `+dashboardVisible, p.UserID, id).Scan(
 		&d.ID, &d.Name, &d.Shared, &d.WidgetCount, &d.CreatedBy, &d.UpdatedAt, &d.Layout)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && !displayAllows(p, d.ID)) {
 		return d, false, nil
 	}
 	if err != nil {

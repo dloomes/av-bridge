@@ -232,7 +232,9 @@ func main() {
 		local := portalauth.NewLocalResolver(store.AdminPool())
 		mock := portalauth.NewMockJWTResolver(lookup, true)
 		static := portalauth.NewStaticResolver(cfg.PoCPortalToken, cfg.PoCPortalCustomerID, cfg.PoCPortalRole)
-		resolver := portalauth.NewChainResolver(local, mock, static)
+		// Display links (dashboard wall screens) have their own dsp_ tokens.
+		display := portalauth.NewDisplayResolver(store.AdminPool())
+		resolver := portalauth.NewChainResolver(local, display, mock, static)
 
 		// Entra vendor SSO — constructed only when ALL four required
 		// values are configured. NewEntraVendorHandler returns nil (with

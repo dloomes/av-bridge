@@ -274,6 +274,13 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 		mux.Handle("GET /api/v1/dashboards/{id}", wrapPerm(portalauth.PermViewDashboard, portal.Portal.GetDashboard))
 		mux.Handle("PUT /api/v1/dashboards/{id}", wrapPerm(portalauth.PermViewDashboard, portal.Portal.UpdateDashboard))
 		mux.Handle("DELETE /api/v1/dashboards/{id}", wrapPerm(portalauth.PermViewDashboard, portal.Portal.DeleteDashboard))
+		// Display links — wall screens showing shared dashboards with no
+		// one signed in (portalauth.DisplayResolver).
+		mux.Handle("GET /api/v1/display-links", wrapPerm(portalauth.PermDashboardShare, portal.Portal.ListDisplayLinks))
+		mux.Handle("POST /api/v1/display-links", wrapPerm(portalauth.PermDashboardShare, portal.Portal.CreateDisplayLink))
+		mux.Handle("DELETE /api/v1/display-links/{id}", wrapPerm(portalauth.PermDashboardShare, portal.Portal.RevokeDisplayLink))
+		mux.Handle("GET /api/v1/display", wrapPerm(portalauth.PermViewDashboard, portal.Portal.CurrentDisplay))
+		mux.Handle("GET /api/v1/rooms/in-use", wrapPerm(portalauth.PermViewDashboard, portal.Portal.RoomsInUse))
 		mux.Handle("GET /api/v1/reports/device-uptime", wrapPerm(portalauth.PermViewReports, portal.Portal.DeviceUptimeReport))
 		mux.Handle("GET /api/v1/reports/device-events", wrapPerm(portalauth.PermViewReports, portal.Portal.DeviceEventsReport))
 		mux.Handle("GET /api/v1/reports/warranty", wrapPerm(portalauth.PermViewReports, portal.Portal.WarrantyReport))

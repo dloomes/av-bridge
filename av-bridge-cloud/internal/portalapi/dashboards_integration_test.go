@@ -87,11 +87,13 @@ func TestDashboards(t *testing.T) {
 	layout := map[string]any{"widgets": []map[string]any{
 		{"id": "w1", "type": "status", "size": "m"},
 		{"id": "w2", "type": "alerts", "size": "l", "config": map[string]any{"severity": "critical"}},
+		{"id": "w3", "type": "notice", "size": "xl", "config": map[string]any{"text": "Court 3 out of use", "tone": "warning"}},
+		{"id": "w4", "type": "bignumber", "size": "s", "config": map[string]any{"metric": "offline", "threshold": 3}},
 	}}
 
 	// Alice builds her own; Bob can't see or change it.
 	code, mine := call(alice, "POST", "/d", map[string]any{"name": "My rooms", "layout": layout})
-	if code != 201 || mine["shared"] != false || mine["widget_count"] != float64(2) {
+	if code != 201 || mine["shared"] != false || mine["widget_count"] != float64(4) {
 		t.Fatalf("create personal = %d %v", code, mine)
 	}
 	mineID := mine["id"].(string)
