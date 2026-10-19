@@ -251,7 +251,7 @@ func seedSystemRoles(ctx context.Context, tx pgx.Tx, customerID string) error {
 				"view.dashboard", "view.audit", "view.reports",
 				"view.firmware", "view.notifications", "view.users",
 				"command.device", "command.bulk", "reconnect.device",
-				"device.crud", "device.remote_access",
+				"device.crud", "device.remote_access", "dashboard.share",
 				"alert.acknowledge", "alert.resolve",
 				"hierarchy.crud",
 				"notification.crud", "notification.test",

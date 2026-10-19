@@ -266,6 +266,14 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 
 		// Category-specific reads — each gated by its matching view.* key.
 		mux.Handle("GET /api/v1/audit", wrapPerm(portalauth.PermViewAudit, portal.Portal.ListAudit))
+		// Dashboards — personal ones need only view.dashboard; publishing
+		// and changing shared ones is checked in the handlers
+		// (dashboard.share).
+		mux.Handle("GET /api/v1/dashboards", wrapPerm(portalauth.PermViewDashboard, portal.Portal.ListDashboards))
+		mux.Handle("POST /api/v1/dashboards", wrapPerm(portalauth.PermViewDashboard, portal.Portal.CreateDashboard))
+		mux.Handle("GET /api/v1/dashboards/{id}", wrapPerm(portalauth.PermViewDashboard, portal.Portal.GetDashboard))
+		mux.Handle("PUT /api/v1/dashboards/{id}", wrapPerm(portalauth.PermViewDashboard, portal.Portal.UpdateDashboard))
+		mux.Handle("DELETE /api/v1/dashboards/{id}", wrapPerm(portalauth.PermViewDashboard, portal.Portal.DeleteDashboard))
 		mux.Handle("GET /api/v1/reports/device-uptime", wrapPerm(portalauth.PermViewReports, portal.Portal.DeviceUptimeReport))
 		mux.Handle("GET /api/v1/reports/device-events", wrapPerm(portalauth.PermViewReports, portal.Portal.DeviceEventsReport))
 		mux.Handle("GET /api/v1/reports/warranty", wrapPerm(portalauth.PermViewReports, portal.Portal.WarrantyReport))

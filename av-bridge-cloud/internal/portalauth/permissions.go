@@ -59,6 +59,9 @@ const (
 	// portal, relayed through its collector (internal/remote). Its own
 	// key: it reaches into the customer's network.
 	PermDeviceRemoteAccess = "device.remote_access"
+	// dashboard.share — publish, edit and delete the organisation's
+	// shared dashboards. Personal dashboards need only view.dashboard.
+	PermDashboardShare = "dashboard.share"
 )
 
 // Outbound notifications — channel CRUD is the manage side; test is the
@@ -141,6 +144,7 @@ var KnownPermissions = map[string]struct{}{
 	PermAlertResolve:       {},
 	PermDeviceCRUD:         {},
 	PermDeviceRemoteAccess: {},
+	PermDashboardShare:     {},
 	PermHierarchyCRUD:      {},
 	PermCollectorCRUD:      {},
 	PermNotificationCRUD:   {},
