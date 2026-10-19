@@ -97,7 +97,7 @@ M.A.R.C.U.S. is built for organisations where "who can do what" isn't a one-size
 - **Historical telemetry** — status, metrics, and event trends over time.
 - **Filter, search, tag** across the fleet.
 - **Nightly digest** email summarising fleet health, issues, and follow-ups.
-- **Reports & exports** on device uptime, room activity, room utilisation, warranty, and power consumption.
+- **Reports & exports** on device uptime, room usage (hours in calls and occupied, from the devices themselves), device events, warranty, and power consumption.
 
 ### 3. Assets & lifecycle
 
