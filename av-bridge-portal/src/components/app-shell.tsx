@@ -29,7 +29,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     pathname === "/sign-in" ||
     pathname.startsWith("/sign-in/") ||
     pathname === "/forgot-password" ||
-    pathname === "/reset-password";
+    pathname === "/reset-password" ||
+    // Wall screens: full screen, and a display link needs no session.
+    pathname === "/display";
 
   useEffect(() => {
     if (!session.hydrated) return;

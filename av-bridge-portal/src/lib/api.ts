@@ -80,7 +80,17 @@ export function currentToken(): string {
 // revoked, or the server was restarted. Clear the local session so AuthGuard
 // bounces the user to /sign-in. Login itself is exempt because 401 there is
 // a bad-password signal, not a session-death signal.
+// A wall screen opened from a display link signs in with the link's token,
+// held only in memory, so it never replaces (or signs out) anyone's own
+// session in that browser. See app/display.
+let displayToken: string | null = null;
+
+export function setDisplayToken(token: string | null) {
+  displayToken = token;
+}
+
 function handle401IfSessionDeath(path: string) {
+  if (displayToken) return; // the display page shows "link revoked" itself
   if (path.startsWith("/api/v1/auth/login")) return;
   if (typeof window === "undefined") return;
   signOut();
@@ -110,6 +120,30 @@ export interface DashboardSummary {
 
 export interface Dashboard extends DashboardSummary {
   layout: { widgets: DashboardWidget[] };
+}
+
+export interface DisplayLink {
+  id: string;
+  name: string;
+  dashboard_ids: string[];
+  rotate_seconds: number;
+  created_by: string;
+  created_at: string;
+  last_used_at: string | null;
+}
+
+export interface CurrentDisplay {
+  name: string;
+  dashboard_ids: string[];
+  rotate_seconds: number;
+}
+
+export interface RoomInUse {
+  room_id: string;
+  room_name: string;
+  building_name: string;
+  in_call: boolean;
+  people: number | null;
 }
 
 export interface RemoteSessionStart {
@@ -149,6 +183,10 @@ class ApiError extends Error {
 
 function authHeaders(): Record<string, string> {
   const headers: Record<string, string> = {};
+  if (displayToken) {
+    headers["Authorization"] = `Bearer ${displayToken}`;
+    return headers;
+  }
   const tok = currentToken();
   if (tok) headers["Authorization"] = `Bearer ${tok}`;
   // Vendor-acting-as-customer: only sent if a scope is set in session. The
@@ -1167,6 +1205,23 @@ export const api = {
 
   deleteDashboard: (id: string) =>
     request<void>(`/api/v1/dashboards/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
+  listDisplayLinks: (signal?: AbortSignal) =>
+    request<{ links: DisplayLink[] }>("/api/v1/display-links", { signal }),
+
+  createDisplayLink: (body: { name: string; dashboard_ids: string[]; rotate_seconds: number }) =>
+    request<{ link: DisplayLink; token: string }>("/api/v1/display-links", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  revokeDisplayLink: (id: string) =>
+    request<void>(`/api/v1/display-links/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
+  // For a display link: its dashboards, in order, and how long to show each.
+  currentDisplay: (signal?: AbortSignal) => request<CurrentDisplay>("/api/v1/display", { signal }),
+
+  roomsInUse: (signal?: AbortSignal) => request<RoomInUse[]>("/api/v1/rooms/in-use", { signal }),
 
   // Remote access: starts a session on the device's web interface, relayed
   // through its Collector. The url opens once, within 5 minutes.

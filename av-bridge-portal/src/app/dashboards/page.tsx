@@ -3,42 +3,24 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
-  DndContext,
-  KeyboardSensor,
-  PointerSensor,
-  closestCenter,
-  useSensor,
-  useSensors,
-  type DragEndEvent,
-} from "@dnd-kit/core";
-import {
-  SortableContext,
-  arrayMove,
-  rectSortingStrategy,
-  sortableKeyboardCoordinates,
-  useSortable,
-} from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
-import {
   Copy,
-  GripVertical,
   LayoutDashboard,
+  MonitorPlay,
   Pencil,
   Plus,
-  Settings2,
   Share2,
   Trash2,
+  Tv,
   Users,
-  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Modal } from "@/components/modal";
 import { UserMenu } from "@/components/user-menu";
+import { DashboardGrid } from "@/components/dashboard/grid";
+import { DisplayLinks } from "@/components/dashboard/display-links";
 import {
-  SIZE_CLASS,
-  SIZE_LABEL,
   WIDGETS,
   WIDGET_BY_TYPE,
   type ConfigField,
@@ -113,7 +95,7 @@ export default function DashboardsPage() {
 
   const [pickerOpen, setPickerOpen] = useState(false);
   const [settingsFor, setSettingsFor] = useState<string | null>(null);
-  const [dialog, setDialog] = useState<null | "new" | "rename" | "delete">(null);
+  const [dialog, setDialog] = useState<null | "new" | "rename" | "delete" | "displays">(null);
 
   const wantedId = params.get("id");
 
@@ -262,6 +244,18 @@ export default function DashboardsPage() {
                 </Button>
               )}
               {current && (
+                <Button asChild variant="outline" size="sm" title="Show this dashboard full screen">
+                  <a href={`/display?id=${encodeURIComponent(current.id)}`} target="_blank" rel="noopener noreferrer">
+                    <MonitorPlay className="h-3.5 w-3.5" /> Display
+                  </a>
+                </Button>
+              )}
+              {canShare && (
+                <Button variant="outline" size="sm" onClick={() => setDialog("displays")} title="Wall screens">
+                  <Tv className="h-3.5 w-3.5" /> Display links
+                </Button>
+              )}
+              {current && (
                 <Button variant="outline" size="sm" onClick={copy} title="Make your own copy">
                   <Copy className="h-3.5 w-3.5" /> Copy
                 </Button>
@@ -333,7 +327,7 @@ export default function DashboardsPage() {
             </CardContent>
           </Card>
         ) : (
-          <Grid
+          <DashboardGrid
             widgets={widgets}
             editing={editing}
             onChange={setDraft}
@@ -380,6 +374,10 @@ export default function DashboardsPage() {
             select(d.id);
           }}
         />
+      </Modal>
+
+      <Modal open={dialog === "displays"} onClose={() => setDialog(null)} title="Display links" wide={false}>
+        <DisplayLinks shared={shared} />
       </Modal>
 
       <Modal open={dialog === "rename"} onClose={() => setDialog(null)} title="Rename dashboard" wide={false}>
@@ -431,127 +429,6 @@ export default function DashboardsPage() {
   );
 }
 
-// ── Grid ─────────────────────────────────────────────────────────────────
-
-function Grid({
-  widgets,
-  editing,
-  onChange,
-  onSettings,
-}: {
-  widgets: DashboardWidget[];
-  editing: boolean;
-  onChange: (next: DashboardWidget[]) => void;
-  onSettings: (id: string) => void;
-}) {
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
-  );
-  const onDragEnd = (e: DragEndEvent) => {
-    if (!e.over || e.active.id === e.over.id) return;
-    const from = widgets.findIndex((w) => w.id === e.active.id);
-    const to = widgets.findIndex((w) => w.id === e.over!.id);
-    if (from >= 0 && to >= 0) onChange(arrayMove(widgets, from, to));
-  };
-  const update = (id: string, patch: Partial<DashboardWidget>) =>
-    onChange(widgets.map((w) => (w.id === id ? { ...w, ...patch } : w)));
-
-  return (
-    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
-      <SortableContext items={widgets.map((w) => w.id)} strategy={rectSortingStrategy} disabled={!editing}>
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-12">
-          {widgets.map((w) => (
-            <WidgetCard
-              key={w.id}
-              widget={w}
-              editing={editing}
-              onSize={(size) => update(w.id, { size })}
-              onRemove={() => onChange(widgets.filter((x) => x.id !== w.id))}
-              onSettings={() => onSettings(w.id)}
-            />
-          ))}
-        </div>
-      </SortableContext>
-    </DndContext>
-  );
-}
-
-function WidgetCard({
-  widget,
-  editing,
-  onSize,
-  onRemove,
-  onSettings,
-}: {
-  widget: DashboardWidget;
-  editing: boolean;
-  onSize: (s: DashboardWidgetSize) => void;
-  onRemove: () => void;
-  onSettings: () => void;
-}) {
-  const def = WIDGET_BY_TYPE[widget.type];
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
-    id: widget.id,
-    disabled: !editing,
-  });
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    zIndex: isDragging ? 20 : undefined,
-  };
-  const config = (widget.config ?? {}) as WidgetConfig;
-  const title = (def?.heading?.(config)) || def?.title || widget.type;
-  const Icon = def?.icon;
-
-  return (
-    <div ref={setNodeRef} style={style} className={cn("col-span-1", SIZE_CLASS[widget.size], isDragging && "opacity-70")}>
-      <Card className={cn("flex h-full flex-col", editing && "ring-1 ring-dashed ring-border")}>
-        <div className="flex items-center gap-2 border-b px-3 py-2">
-          {editing && (
-            <button
-              type="button"
-              className="cursor-grab touch-none rounded p-0.5 text-muted-foreground hover:bg-accent/40 active:cursor-grabbing"
-              aria-label={`Move ${title}`}
-              {...attributes}
-              {...listeners}
-            >
-              <GripVertical className="h-4 w-4" />
-            </button>
-          )}
-          {Icon && <Icon className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />}
-          <h2 className="min-w-0 flex-1 truncate text-sm font-semibold">{title}</h2>
-          {editing && (
-            <>
-              <select
-                aria-label="Widget size"
-                className="h-7 rounded border border-input bg-background px-1.5 text-xs"
-                value={widget.size}
-                onChange={(e) => onSize(e.target.value as DashboardWidgetSize)}
-              >
-                {(Object.keys(SIZE_LABEL) as DashboardWidgetSize[]).map((s) => (
-                  <option key={s} value={s}>{SIZE_LABEL[s]}</option>
-                ))}
-              </select>
-              {def && def.fields.length > 0 && (
-                <button type="button" onClick={onSettings} aria-label={`${title} settings`} className="rounded p-1 text-muted-foreground hover:bg-accent/40">
-                  <Settings2 className="h-3.5 w-3.5" />
-                </button>
-              )}
-              <button type="button" onClick={onRemove} aria-label={`Remove ${title}`} className="rounded p-1 text-muted-foreground hover:bg-accent/40">
-                <X className="h-3.5 w-3.5" />
-              </button>
-            </>
-          )}
-        </div>
-        <CardContent className="max-h-96 flex-1 overflow-y-auto p-3">
-          {def ? def.render(config) : <p className="text-xs text-muted-foreground">This widget isn&apos;t available.</p>}
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
-
 // ── Picker, settings, dialogs ────────────────────────────────────────────
 
 function WidgetPicker({ onPick }: { onPick: (type: string) => void }) {
@@ -578,14 +455,16 @@ function WidgetPicker({ onPick }: { onPick: (type: string) => void }) {
 function WidgetSettings({ widget, onDone }: { widget: DashboardWidget; onDone: (w: DashboardWidget) => void }) {
   const def = WIDGET_BY_TYPE[widget.type];
   const [config, setConfig] = useState<WidgetConfig>({ ...(widget.config ?? {}) });
-  const needsPlaces = def?.fields.some((f) => f.kind !== "select");
+  const needsPlaces = def?.fields.some((f) => f.kind !== "select" && f.kind !== "text" && f.kind !== "number");
   const [buildings, setBuildings] = useState<NamedRow[]>([]);
+  const [regions, setRegions] = useState<NamedRow[]>([]);
   const [rooms, setRooms] = useState<NamedRow[]>([]);
   const [devices, setDevices] = useState<DeviceSummary[]>([]);
   useEffect(() => {
     if (!needsPlaces) return;
     const ctrl = new AbortController();
     api.listBuildings(ctrl.signal).then(setBuildings).catch(() => {});
+    api.listRegions(ctrl.signal).then(setRegions).catch(() => {});
     api.listRooms(ctrl.signal).then(setRooms).catch(() => {});
     api.listDevices(ctrl.signal).then(setDevices).catch(() => {});
     return () => ctrl.abort();
@@ -595,9 +474,55 @@ function WidgetSettings({ widget, onDone }: { widget: DashboardWidget; onDone: (
   const field = (f: ConfigField) => {
     const value = typeof config[f.key] === "string" ? (config[f.key] as string) : "";
     const set = (v: string, extra?: WidgetConfig) => setConfig((c) => ({ ...c, [f.key]: v, ...extra }));
+    if (f.kind === "text") {
+      return (
+        <div key={f.key} className="space-y-1.5">
+          <label className={labelClass} htmlFor={`wf-${f.key}`}>{f.label}</label>
+          {f.multiline ? (
+            <textarea
+              id={`wf-${f.key}`}
+              className={cn(inputClass, "h-28 py-2")}
+              value={value}
+              maxLength={f.maxLength}
+              placeholder={f.placeholder}
+              onChange={(e) => set(e.target.value)}
+            />
+          ) : (
+            <input
+              id={`wf-${f.key}`}
+              className={inputClass}
+              value={value}
+              maxLength={f.maxLength}
+              placeholder={f.placeholder}
+              onChange={(e) => set(e.target.value)}
+            />
+          )}
+        </div>
+      );
+    }
+    if (f.kind === "number") {
+      const n = config[f.key];
+      return (
+        <div key={f.key} className="space-y-1.5">
+          <label className={labelClass} htmlFor={`wf-${f.key}`}>{f.label}</label>
+          <input
+            id={`wf-${f.key}`}
+            type="number"
+            inputMode="numeric"
+            className={inputClass}
+            min={f.min}
+            max={f.max}
+            value={typeof n === "number" || typeof n === "string" ? String(n) : String(f.default)}
+            onChange={(e) => setConfig((c) => ({ ...c, [f.key]: Number(e.target.value) }))}
+          />
+        </div>
+      );
+    }
     let options: { value: string; label: string }[];
     if (f.kind === "select") {
       options = f.options;
+    } else if (f.kind === "region") {
+      options = [...regions].sort((a, b) => a.name.localeCompare(b.name)).map((r) => ({ value: r.name, label: r.name }));
     } else if (f.kind === "building") {
       options = [...buildings].sort((a, b) => a.name.localeCompare(b.name)).map((b) => ({ value: b.name, label: b.name }));
     } else if (f.kind === "room") {

@@ -6,14 +6,21 @@
 // of types (av-bridge-cloud/internal/portalapi/dashboards.go) — add a type
 // in both places.
 
+import dynamic from "next/dynamic";
 import Link from "next/link";
-import { useMemo, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   Activity,
   AlertTriangle,
   BarChart3,
   Bell,
+  Building2,
   CalendarClock,
+  Clock,
+  Hash,
+  Map as MapIcon,
+  Megaphone,
+  Users,
   Cpu,
   DoorOpen,
   Gauge,
@@ -26,14 +33,17 @@ import {
 import { usePolling } from "@/hooks/usePolling";
 import { api, type DashboardWidgetSize } from "@/lib/api";
 import { cn, formatMetricValue, formatRelative } from "@/lib/utils";
-import type { DeviceStatus, DeviceSummary } from "@/lib/types";
+import type { BuildingsMapEntry } from "@/components/buildings-map";
+import type { BuildingRow, DeviceStatus, DeviceSummary } from "@/lib/types";
 
 export type WidgetConfig = Record<string, unknown>;
 
 // A setting shown in the widget's settings panel.
 export type ConfigField =
   | { key: string; label: string; kind: "select"; options: { value: string; label: string }[]; default: string }
-  | { key: string; label: string; kind: "building" | "room" | "device"; optional?: boolean };
+  | { key: string; label: string; kind: "building" | "region" | "room" | "device"; optional?: boolean }
+  | { key: string; label: string; kind: "text"; placeholder?: string; multiline?: boolean; maxLength: number }
+  | { key: string; label: string; kind: "number"; default: number; min: number; max: number };
 
 export interface WidgetDef {
   type: string;
@@ -547,6 +557,238 @@ function ActivityWidget({ config }: { config: WidgetConfig }) {
   );
 }
 
+// ── Wallboard widgets ────────────────────────────────────────────────────
+
+function ClockWidget({ config }: { config: WidgetConfig }) {
+  const tz = str(config, "tz", "Europe/London");
+  const hour12 = str(config, "format") === "12";
+  const seconds = str(config, "seconds") !== "off";
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const t = setInterval(() => setNow(new Date()), seconds ? 1000 : 15_000);
+    return () => clearInterval(t);
+  }, [seconds]);
+  let time = "";
+  let date = "";
+  try {
+    time = now.toLocaleTimeString("en-GB", {
+      timeZone: tz, hour: "2-digit", minute: "2-digit", second: seconds ? "2-digit" : undefined, hour12,
+    });
+    date = now.toLocaleDateString("en-GB", { timeZone: tz, weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  } catch {
+    time = now.toLocaleTimeString("en-GB");
+  }
+  return (
+    <div className="flex h-full flex-col items-center justify-center py-2 text-center">
+      <div className="text-5xl font-semibold tabular-nums tracking-tight">{time}</div>
+      <div className="mt-1 text-sm text-muted-foreground">{date}</div>
+      {tz !== "Europe/London" && <div className="text-xs text-muted-foreground">{tz.replace(/_/g, " ")}</div>}
+    </div>
+  );
+}
+
+function NoticeWidget({ config }: { config: WidgetConfig }) {
+  const text = str(config, "text").trim();
+  const tone = str(config, "tone", "info");
+  if (!text) return <Empty>Write the notice in this widget&apos;s settings.</Empty>;
+  return (
+    <div
+      className={cn(
+        "h-full whitespace-pre-wrap rounded-md border-l-4 px-3 py-2 text-lg leading-snug",
+        tone === "critical" && "border-destructive bg-destructive/10",
+        tone === "warning" && "border-amber-500 bg-amber-500/10",
+        tone === "info" && "border-sky-500 bg-sky-500/10"
+      )}
+    >
+      {text}
+    </div>
+  );
+}
+
+// Each Big number metric: how to fetch it, and whether a high value is bad.
+const BIG_NUMBERS: Record<string, { label: string; fetch: () => Promise<number>; good?: boolean; href: string }> = {
+  offline: { label: "Devices offline", href: "/devices?status=offline",
+    fetch: async () => (await sharedDevices()).filter((d) => d.status === "offline").length },
+  unknown: { label: "Devices not reporting", href: "/devices?status=unknown",
+    fetch: async () => (await sharedDevices()).filter((d) => d.status === "unknown").length },
+  critical: { label: "Critical alerts", href: "/alerts",
+    fetch: async () => (await api.alertsSummary()).critical_open },
+  alerts: { label: "Open alerts", href: "/alerts",
+    fetch: async () => (await api.alertsSummary()).open },
+  attention: { label: "Rooms needing attention", href: "/devices?status=offline",
+    fetch: async () => {
+      const rooms = new Set<string>();
+      for (const d of await sharedDevices())
+        if (d.status === "offline" || d.status === "unknown") rooms.add(`${d.building ?? ""}|${d.location}`);
+      return rooms.size;
+    } },
+  readiness: { label: "Room Readiness failures, 24 h", href: "/nightly/runs",
+    fetch: async () =>
+      (await api.listNightlyRuns({ from: new Date(Date.now() - 24 * 3600_000).toISOString(), status: "failed", limit: 500 })).length },
+  collectors: { label: "Collectors not online", href: "/collectors",
+    fetch: async () => (await api.listCollectors()).filter((c) => c.status !== "online").length },
+  in_use: { label: "Rooms in use now", href: "/dashboards", good: true,
+    fetch: async () => (await api.roomsInUse()).length },
+};
+
+function BigNumberWidget({ config }: { config: WidgetConfig }) {
+  const metric = BIG_NUMBERS[str(config, "metric", "offline")] ?? BIG_NUMBERS.offline;
+  const key = str(config, "metric", "offline");
+  const threshold = num(config, "threshold", 1);
+  const state = usePolling(() => metric.fetch(), REFRESH_MS, [key]);
+  const label = str(config, "label").trim() || metric.label;
+  return (
+    <Load state={state}>
+      {(n) => {
+        const alarm = !metric.good && n >= threshold;
+        return (
+          <Link href={metric.href} className="flex h-full flex-col items-center justify-center py-2 text-center hover:opacity-80">
+            <div
+              className={cn(
+                "text-6xl font-bold tabular-nums leading-none",
+                alarm ? "[color:hsl(var(--destructive))]" : metric.good ? "text-emerald-600" : "text-foreground"
+              )}
+            >
+              {n}
+            </div>
+            <div className="mt-2 text-sm uppercase tracking-wide text-muted-foreground">{label}</div>
+          </Link>
+        );
+      }}
+    </Load>
+  );
+}
+
+function InUseWidget({ config }: { config: WidgetConfig }) {
+  const limit = num(config, "limit", 10);
+  const state = usePolling((s) => api.roomsInUse(s), REFRESH_MS);
+  return (
+    <Load state={state}>
+      {(rooms) =>
+        rooms.length === 0 ? (
+          <Empty>No rooms are in a call or occupied right now.</Empty>
+        ) : (
+          <>
+            <div className="mb-1 text-xs text-muted-foreground">{rooms.length} in use</div>
+            <ul className="space-y-0.5">
+              {rooms.slice(0, limit).map((r) => (
+                <Row
+                  key={r.room_id}
+                  href={devicesHref({ building: r.building_name || undefined, room: r.room_name })}
+                  right={[r.in_call && "In a call", r.people != null && `${r.people} people`].filter(Boolean).join(" · ")}
+                >
+                  <span className="mr-1.5 inline-block h-2 w-2 rounded-full bg-emerald-500 align-middle" />
+                  <span className="font-medium">{r.room_name}</span>
+                  {r.building_name && <span className="text-muted-foreground"> · {r.building_name}</span>}
+                </Row>
+              ))}
+            </ul>
+          </>
+        )
+      }
+    </Load>
+  );
+}
+
+// Worst-first, matching the Map and Overview pages.
+function worstOf(devs: DeviceSummary[]): DeviceStatus {
+  if (devs.some((d) => d.status === "offline")) return "offline";
+  if (devs.some((d) => d.status === "unknown")) return "unknown";
+  if (devs.some((d) => d.status === "switched_off")) return "switched_off";
+  return "online";
+}
+
+function BuildingsWidget({ config }: { config: WidgetConfig }) {
+  const region = str(config, "region");
+  const state = usePolling(() => sharedDevices(), REFRESH_MS);
+  return (
+    <Load state={state}>
+      {(all) => {
+        const by = new Map<string, DeviceSummary[]>();
+        for (const d of all) {
+          if (!d.building || (region && d.region !== region)) continue;
+          if (!by.has(d.building)) by.set(d.building, []);
+          by.get(d.building)!.push(d);
+        }
+        const tiles = Array.from(by.entries()).sort(([a], [b]) => a.localeCompare(b));
+        if (tiles.length === 0) return <Empty>No buildings with devices.</Empty>;
+        return (
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(9rem,1fr))] gap-2">
+            {tiles.map(([name, devs]) => {
+              const worst = worstOf(devs);
+              const down = devs.filter((d) => d.status === "offline").length;
+              const quiet = devs.filter((d) => d.status === "unknown").length;
+              return (
+                <Link
+                  key={name}
+                  href={devicesHref({ building: name })}
+                  className={cn(
+                    "rounded-md border-l-4 bg-background/60 px-2.5 py-2 hover:opacity-80",
+                    worst === "offline" && "border-destructive bg-destructive/10",
+                    worst === "unknown" && "border-amber-500 bg-amber-500/10",
+                    worst === "switched_off" && "border-sky-500",
+                    worst === "online" && "border-emerald-500"
+                  )}
+                >
+                  <div className="truncate text-sm font-semibold">{name}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {down || quiet
+                      ? [down && `${down} offline`, quiet && `${quiet} not reporting`].filter(Boolean).join(" · ")
+                      : `${devs.length} devices OK`}
+                  </div>
+                </Link>
+              );
+            })}
+          </div>
+        );
+      }}
+    </Load>
+  );
+}
+
+const BuildingsMap = dynamic(() => import("@/components/buildings-map").then((m) => m.BuildingsMap), {
+  ssr: false,
+  loading: () => <div className="h-80 animate-pulse rounded-md bg-muted/60" />,
+});
+
+const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN ?? "";
+
+function MapWidget() {
+  const devices = usePolling(() => sharedDevices(), REFRESH_MS);
+  const buildings = usePolling<BuildingRow[]>((s) => api.listBuildings(s), 5 * 60_000);
+  const entries = useMemo<BuildingsMapEntry[]>(() => {
+    if (!devices.data || !buildings.data) return [];
+    const byName = new Map<string, DeviceSummary[]>();
+    for (const d of devices.data) {
+      if (!d.building) continue;
+      const k = d.building.toLowerCase();
+      if (!byName.has(k)) byName.set(k, []);
+      byName.get(k)!.push(d);
+    }
+    return buildings.data
+      .map<BuildingsMapEntry>((b) => {
+        const devs = byName.get(b.name.toLowerCase()) ?? [];
+        return {
+          building: b,
+          worst: worstOf(devs),
+          totals: {
+            total: devs.length,
+            online: devs.filter((d) => d.status === "online").length,
+            offline: devs.filter((d) => d.status === "offline").length,
+            unknown: devs.filter((d) => d.status === "unknown").length,
+          },
+        };
+      })
+      .filter((e) => e.totals.total > 0);
+  }, [devices.data, buildings.data]);
+  if (!MAPBOX_TOKEN) return <Empty>The map isn&apos;t set up on this portal.</Empty>;
+  return (
+    <Load state={{ data: devices.data && buildings.data ? entries : null, error: devices.error ?? buildings.error }}>
+      {(e) => <BuildingsMap entries={e} mapboxToken={MAPBOX_TOKEN} className="h-80 min-h-[18rem] w-full rounded-md" />}
+    </Load>
+  );
+}
+
 // ── Catalogue ────────────────────────────────────────────────────────────
 
 export const WIDGETS: WidgetDef[] = [
@@ -640,6 +882,72 @@ export const WIDGETS: WidgetDef[] = [
         options: [{ value: "5", label: "5" }, { value: "10", label: "10" }, { value: "20", label: "20" }] },
     ],
     render: (c) => <ActivityWidget config={c} />,
+  },
+  {
+    type: "clock", title: "Clock", icon: Clock, defaultSize: "s",
+    description: "The time and date, in any time zone.",
+    fields: [
+      { key: "tz", label: "Time zone", kind: "select", default: "Europe/London",
+        options: [
+          { value: "Europe/London", label: "UK (London)" },
+          { value: "UTC", label: "UTC" },
+          { value: "Europe/Dublin", label: "Ireland (Dublin)" },
+          { value: "Europe/Paris", label: "Central Europe (Paris)" },
+          { value: "America/New_York", label: "US Eastern (New York)" },
+          { value: "America/Los_Angeles", label: "US Pacific (Los Angeles)" },
+          { value: "Asia/Dubai", label: "Gulf (Dubai)" },
+          { value: "Asia/Singapore", label: "Singapore" },
+          { value: "Australia/Sydney", label: "Australia (Sydney)" },
+        ] },
+      { key: "format", label: "Format", kind: "select", default: "24",
+        options: [{ value: "24", label: "24-hour" }, { value: "12", label: "12-hour" }] },
+      { key: "seconds", label: "Seconds", kind: "select", default: "on",
+        options: [{ value: "on", label: "Show" }, { value: "off", label: "Hide" }] },
+    ],
+    render: (c) => <ClockWidget config={c} />,
+  },
+  {
+    type: "notice", title: "Notice", icon: Megaphone, defaultSize: "m",
+    description: "A message for everyone watching, such as a change freeze or a room out of use.",
+    fields: [
+      { key: "text", label: "Message", kind: "text", multiline: true, maxLength: 500,
+        placeholder: "Court 3 out of use until Monday" },
+      { key: "tone", label: "Style", kind: "select", default: "info",
+        options: [{ value: "info", label: "Information" }, { value: "warning", label: "Warning" }, { value: "critical", label: "Critical" }] },
+    ],
+    heading: () => "Notice",
+    render: (c) => <NoticeWidget config={c} />,
+  },
+  {
+    type: "bignumber", title: "Big number", icon: Hash, defaultSize: "s",
+    description: "One figure in large type, red once it reaches a threshold.",
+    fields: [
+      { key: "metric", label: "Figure", kind: "select", default: "offline",
+        options: Object.entries(BIG_NUMBERS).map(([value, m]) => ({ value, label: m.label })) },
+      { key: "threshold", label: "Red from", kind: "number", default: 1, min: 1, max: 100000 },
+      { key: "label", label: "Label (optional)", kind: "text", maxLength: 60 },
+    ],
+    heading: (c) => (BIG_NUMBERS[str(c, "metric", "offline")] ?? BIG_NUMBERS.offline).label,
+    render: (c) => <BigNumberWidget config={c} />,
+  },
+  {
+    type: "inuse", title: "Rooms in use now", icon: Users, defaultSize: "m",
+    description: "Rooms in a call or with people in them right now.",
+    fields: [LIMIT_FIELD],
+    render: (c) => <InUseWidget config={c} />,
+  },
+  {
+    type: "buildings", title: "Building status", icon: Building2, defaultSize: "l",
+    description: "Every building as a tile, coloured by its worst device.",
+    fields: [{ key: "region", label: "Region", kind: "region", optional: true }],
+    heading: (c) => (str(c, "region") ? `Building status · ${str(c, "region")}` : undefined),
+    render: (c) => <BuildingsWidget config={c} />,
+  },
+  {
+    type: "map", title: "Map", icon: MapIcon, defaultSize: "l",
+    description: "Buildings on a map, coloured by status.",
+    fields: [],
+    render: () => <MapWidget />,
   },
 ];
 
