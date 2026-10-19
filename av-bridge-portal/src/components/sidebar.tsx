@@ -15,6 +15,7 @@ import {
   HeartPulse,
   History,
   LayoutDashboard,
+  LayoutGrid,
   Map as MapIcon,
   MapPin,
   Moon,
@@ -91,6 +92,7 @@ const SECTIONS: NavSection[] = [
   {
     title: "Monitor",
     items: [
+      { href: "/dashboards", label: "Dashboards", icon: LayoutGrid, requires: "view.dashboard" },
       { href: "/alerts", label: "Alerts", icon: Bell, badgeKey: "alerts_open", requires: "view.dashboard" },
       { href: "/collectors", label: "Collectors", icon: Server, requires: "view.dashboard" },
       { href: "/devices", label: "Devices", icon: Radio, requires: "view.dashboard" },

@@ -36,7 +36,7 @@ export const PERMISSIONS: readonly PermissionDef[] = [
   // Reads
   { key: "view.dashboard",     title: "View dashboard",       description: "Fleet summary, device list, telemetry, live event stream.", category: "Reads" },
   { key: "view.audit",         title: "View audit log",       description: "See who did what and when across the tenant.",             category: "Reads" },
-  { key: "view.reports",       title: "View reports",         description: "Device uptime and room activity reports, CSV export.",     category: "Reads" },
+  { key: "view.reports",       title: "View reports",         description: "Device uptime, room usage, device events, warranty and power reports, CSV export.", category: "Reads" },
   { key: "view.firmware",      title: "View firmware",        description: "Fleet firmware histogram + target versions.",              category: "Reads" },
   { key: "view.notifications", title: "View notifications",   description: "List the notification channels configured for the tenant.", category: "Reads" },
   { key: "view.users",         title: "View users",           description: "List of users in the tenant and their assigned roles.",   category: "Reads" },
@@ -78,6 +78,7 @@ export const PERMISSIONS: readonly PermissionDef[] = [
   // Room Readiness (nightly lifecycle)
   { key: "nightly.view",        title: "View Room Readiness",  description: "See nightly schedules, routines, and run history.",                       category: "Room Readiness" },
   { key: "device.remote_access", title: "Remote access", description: "Open a device's web interface from the portal, through its Collector.", category: "Device control" },
+  { key: "dashboard.share", title: "Share dashboards", description: "Publish dashboards the whole organisation can see, and edit or delete them.", category: "Fleet management" },
   { key: "nightly.defer",       title: "Defer tonight's power-down", description: "Keep a room powered up tonight when it's still in use; it returns to schedule the next day.", category: "Room Readiness" },
   { key: "nightly.manage",      title: "Manage Room Readiness", description: "Edit the nightly schedule, room overrides, and test routines.",         category: "Room Readiness" },
   // Public API

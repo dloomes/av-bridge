@@ -86,6 +86,32 @@ function handle401IfSessionDeath(path: string) {
   signOut();
 }
 
+// Dashboards: a named, ordered list of widgets. Personal ones belong to the
+// signed-in user; shared ones are published to the organisation by users
+// with dashboard.share. See components/dashboard/widgets.tsx.
+export type DashboardWidgetSize = "s" | "m" | "l" | "xl";
+
+export interface DashboardWidget {
+  id: string;
+  type: string;
+  size: DashboardWidgetSize;
+  config?: Record<string, unknown>;
+}
+
+export interface DashboardSummary {
+  id: string;
+  name: string;
+  shared: boolean;
+  can_edit: boolean;
+  widget_count: number;
+  created_by: string;
+  updated_at: string;
+}
+
+export interface Dashboard extends DashboardSummary {
+  layout: { widgets: DashboardWidget[] };
+}
+
 export interface RemoteSessionStart {
   id: string;
   url: string;
@@ -1123,6 +1149,24 @@ export const api = {
       `/api/v1/devices/${encodeURIComponent(id)}/reconnect`,
       { method: "POST", signal }
     ),
+
+  listDashboards: (signal?: AbortSignal) =>
+    request<{ dashboards: DashboardSummary[]; can_share: boolean }>("/api/v1/dashboards", { signal }),
+
+  getDashboard: (id: string, signal?: AbortSignal) =>
+    request<Dashboard>(`/api/v1/dashboards/${encodeURIComponent(id)}`, { signal }),
+
+  createDashboard: (body: { name: string; shared?: boolean; layout?: Dashboard["layout"] }) =>
+    request<Dashboard>("/api/v1/dashboards", { method: "POST", body: JSON.stringify(body) }),
+
+  updateDashboard: (id: string, body: { name?: string; shared?: boolean; layout?: Dashboard["layout"] }) =>
+    request<Dashboard>(`/api/v1/dashboards/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+
+  deleteDashboard: (id: string) =>
+    request<void>(`/api/v1/dashboards/${encodeURIComponent(id)}`, { method: "DELETE" }),
 
   // Remote access: starts a session on the device's web interface, relayed
   // through its Collector. The url opens once, within 5 minutes.
