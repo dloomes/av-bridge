@@ -20,6 +20,7 @@ import (
 
 	"github.com/dloomes/av-bridge-cloud/internal/db"
 	"github.com/dloomes/av-bridge-cloud/internal/portalauth"
+	"github.com/dloomes/av-bridge-cloud/internal/telemetry"
 )
 
 func TestRoomUsageAndDeviceEventsReports(t *testing.T) {
@@ -110,6 +111,11 @@ func TestRoomUsageAndDeviceEventsReports(t *testing.T) {
 	for i, typ := range []string{"alert:offline", "alert:offline", "alert:fault", "telnet_message", "telnet_message"} {
 		exec(`INSERT INTO events (customer_id, device_id, event_type, payload, ts)
 		      VALUES ($1, $2, $3, '{}', now() - make_interval(mins => $4))`, cust, tv, typ, 10+i)
+	}
+
+	// Reports read the daily summaries; fold the readings in.
+	if err := telemetry.Rollup(ctx, su, 0); err != nil {
+		t.Fatal(err)
 	}
 
 	all := map[string]struct{}{}

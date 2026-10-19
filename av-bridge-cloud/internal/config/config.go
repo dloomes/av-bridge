@@ -173,6 +173,10 @@ type Config struct {
 	// addresses (e.g. "access.uat.involvecloud.com", with a wildcard DNS
 	// record and certificate). Empty = remote access off.
 	AccessDomain string
+
+	// TelemetryRetentionDays is how long raw telemetry is kept; reports
+	// read daily summaries kept for 400 days (internal/telemetry).
+	TelemetryRetentionDays int
 }
 
 func FromEnv() (Config, error) {
@@ -224,6 +228,10 @@ func FromEnv() (Config, error) {
 		return Config{}, err
 	}
 	nightlyGrace, err := getenvDuration("NIGHTLY_GRACE_WINDOW", 30*time.Minute)
+	if err != nil {
+		return Config{}, err
+	}
+	telemetryRetention, err := getenvInt("TELEMETRY_RETENTION_DAYS", 90)
 	if err != nil {
 		return Config{}, err
 	}
@@ -307,6 +315,8 @@ func FromEnv() (Config, error) {
 		CloudBaseURL: os.Getenv("CLOUD_BASE_URL"),
 
 		AccessDomain: os.Getenv("ACCESS_DOMAIN"),
+
+		TelemetryRetentionDays: telemetryRetention,
 	}
 	if c.MigrationDSN == "" {
 		return c, fmt.Errorf("DATABASE_MIGRATION_URL is required")

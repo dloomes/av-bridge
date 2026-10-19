@@ -26,6 +26,7 @@ import (
 	"github.com/dloomes/av-bridge-cloud/internal/portalauth"
 	"github.com/dloomes/av-bridge-cloud/internal/pubapi"
 	"github.com/dloomes/av-bridge-cloud/internal/remote"
+	"github.com/dloomes/av-bridge-cloud/internal/telemetry"
 	"github.com/dloomes/av-bridge-cloud/internal/publicapi"
 	"github.com/dloomes/av-bridge-cloud/internal/secrets"
 	"github.com/dloomes/av-bridge-cloud/internal/collectorhealth"
@@ -175,6 +176,9 @@ func main() {
 		log.Info("no collector release bundled — updates disabled")
 	}
 	go collectorUpdates.Run(sweeperCtx)
+	// Telemetry: daily summaries for reports, and raw readings pruned
+	// after TELEMETRY_RETENTION_DAYS (default 90).
+	go telemetry.New(store.AdminPool(), cfg.TelemetryRetentionDays, log).Run(sweeperCtx)
 
 	// Routine executor — Phase B slice 1. Constructed early so the
 	// portal handler can hold a reference for the run-now endpoint.

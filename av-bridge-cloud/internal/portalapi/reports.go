@@ -81,10 +81,10 @@ func (h *Handler) DeviceUptimeReport(w http.ResponseWriter, r *http.Request) {
 				    WHEN r.name IS NOT NULL THEN r.name
 				    ELSE ''
 				  END AS dev_location,
-				  COUNT(t.*)::int AS samples,
-				  COUNT(t.*) FILTER (WHERE t.status = 'online')::int AS online_samples,
-				  CASE WHEN COUNT(t.*) > 0
-				    THEN ROUND(100.0 * COUNT(t.*) FILTER (WHERE t.status = 'online') / COUNT(t.*), 2)
+				  COALESCE(SUM(t.samples), 0)::int AS samples,
+				  COALESCE(SUM(t.online_samples), 0)::int AS online_samples,
+				  CASE WHEN SUM(t.samples) > 0
+				    THEN ROUND(100.0 * SUM(t.online_samples) / SUM(t.samples), 2)
 				    ELSE NULL END AS uptime_pct,
 				  ` + devicestatus.EffectiveStatusSQL + ` AS dev_current_status,
 				  d.last_seen_at
@@ -92,7 +92,9 @@ func (h *Handler) DeviceUptimeReport(w http.ResponseWriter, r *http.Request) {
 				LEFT JOIN rooms r ON r.id = d.room_id
 				LEFT JOIN buildings b ON b.id = r.building_id
 				LEFT JOIN collectors c ON c.id = d.collector_id
-				LEFT JOIN telemetry t ON t.device_id = d.id AND t.ts >= (SELECT since FROM win)
+				-- Daily summaries (internal/telemetry), whole UTC days.
+				LEFT JOIN telemetry_daily t ON t.device_id = d.id
+				      AND t.day >= ((SELECT since FROM win) AT TIME ZONE 'UTC')::date
 				WHERE d.deleted_at IS NULL
 				GROUP BY d.id, d.name, d.reported_id, r.name, b.name, d.latest_status, d.last_seen_at, c.last_seen_at, c.serving_seen_at
 				ORDER BY uptime_pct ASC NULLS LAST, dev_name`, days))
@@ -365,7 +367,9 @@ func warrantyBucket(daysLeft *int) string {
 // RoomUsageReport — GET /api/v1/reports/room-usage?days=N[&format=csv]
 //
 // How much each room is used, from the readings its devices report every
-// poll. Results are shared for reportCacheTTL (report_cache.go). A room is in use for any clock hour in which one of its devices
+// poll, as summarised per device and UTC day (internal/telemetry). Windows
+// are whole UTC days. Results are shared for reportCacheTTL
+// (report_cache.go). A room is in use for any clock hour in which one of its devices
 // reported a call (active_calls > 0, Cisco and Poly codecs) or people in
 // the room (people_count > 0, Cisco with a camera that counts them).
 //
@@ -397,58 +401,48 @@ func (h *Handler) RoomUsageReport(w http.ResponseWriter, r *http.Request) {
 		out := []row{}
 		ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
 			rows, err := tx.Query(ctx, `
-				WITH signal_devices AS (
-				    -- Only devices that can report a call, people or power:
-				    -- declared by their adapter, or seen in their last reading.
-				    -- Skips PDUs, DSPs, switches and the like before any
-				    -- telemetry is read.
-				    SELECT d.id, d.room_id
-				      FROM devices d
-				     WHERE d.room_id IS NOT NULL AND d.deleted_at IS NULL
-				       AND (COALESCE(d.capabilities->'metrics', '[]'::jsonb) ?| array['active_calls', 'people_count', 'power_status']
-				            OR COALESCE(d.latest_metrics, '{}'::jsonb) ?| array['active_calls', 'people_count', 'power_status'])
+				WITH since AS (SELECT ((now() - make_interval(days => $1)) AT TIME ZONE 'UTC')::date AS day),
+				room_days AS (
+				    -- Daily summaries (internal/telemetry): per device and UTC
+				    -- day, 24-bit masks of the hours with a call, people, or a
+				    -- display on. OR'd per room so each hour counts once.
+				    SELECT d.room_id, td.day,
+				           bit_or(td.call_hours)       AS calls,
+				           bit_or(td.occupied_hours)   AS occupied,
+				           bit_or(td.display_on_hours) AS display,
+				           bool_or(td.usage_signal)    AS signal,
+				           MAX(td.peak_people)         AS peak_people
+				      FROM telemetry_daily td
+				      JOIN devices d ON d.id = td.device_id
+				     WHERE td.day >= (SELECT day FROM since)
+				       AND d.room_id IS NOT NULL AND d.deleted_at IS NULL
+				     GROUP BY d.room_id, td.day
 				),
-				hourly AS (
-				    SELECT d.room_id,
-				           date_trunc('hour', t.ts) AS hr,
-				           bool_or(jsonb_typeof(t.metrics->'active_calls') = 'number'
-				                   AND (t.metrics->>'active_calls')::numeric > 0)  AS in_call,
-				           bool_or(jsonb_typeof(t.metrics->'people_count') = 'number'
-				                   AND (t.metrics->>'people_count')::numeric > 0)  AS occupied,
-				           MAX(CASE WHEN jsonb_typeof(t.metrics->'people_count') = 'number'
-				                    THEN (t.metrics->>'people_count')::numeric END) AS people,
-				           bool_or(t.metrics->>'power_status' IN ('on', 'active')) AS display_on,
-				           bool_or(t.metrics ? 'active_calls' OR t.metrics ? 'people_count') AS signal
-				      FROM signal_devices d
-				      JOIN telemetry t ON t.device_id = d.id
-				     WHERE t.ts >= now() - make_interval(days => $1)
-				       AND t.status = 'online'
-				       AND (t.metrics ? 'active_calls' OR t.metrics ? 'people_count' OR t.metrics ? 'power_status')
-				     GROUP BY d.room_id, date_trunc('hour', t.ts)
-				),
-				marked AS (
-				    SELECT h.*,
-				           EXISTS (
-				               SELECT 1 FROM nightly_run nr
-				                WHERE nr.room_id = h.room_id
-				                  AND nr.started_at IS NOT NULL
-				                  AND nr.started_at < h.hr + interval '1 hour'
-				                  AND COALESCE(nr.completed_at, now()) > h.hr
-				           ) AS in_run
-				      FROM hourly h
+				run_hours AS (
+				    -- Hours a Room Readiness run was working on the room, left
+				    -- out of display-on time.
+				    SELECT nr.room_id, h::date AS day,
+				           bit_or(1 << extract(hour FROM h)::int) AS mask
+				      FROM nightly_run nr,
+				           generate_series(date_trunc('hour', nr.started_at AT TIME ZONE 'UTC'),
+				                           date_trunc('hour', COALESCE(nr.completed_at, now()) AT TIME ZONE 'UTC'),
+				                           interval '1 hour') AS h
+				     WHERE nr.started_at IS NOT NULL
+				       AND COALESCE(nr.completed_at, now()) >= (SELECT day FROM since)
+				     GROUP BY nr.room_id, h::date
 				),
 				per_room AS (
-				    SELECT room_id,
-				           bool_or(signal)                                      AS signal,
-				           COUNT(*) FILTER (WHERE in_call OR occupied)          AS in_use,
-				           COUNT(*) FILTER (WHERE in_call)                      AS in_calls,
-				           COUNT(*) FILTER (WHERE occupied)                     AS occupied,
-				           COUNT(DISTINCT date_trunc('day', hr))
-				               FILTER (WHERE in_call OR occupied)               AS days_in_use,
-				           MAX(people)                                          AS peak_people,
-				           COUNT(*) FILTER (WHERE display_on AND NOT in_run)    AS display_on
-				      FROM marked
-				     GROUP BY room_id
+				    SELECT rd.room_id,
+				           bool_or(rd.signal)                                            AS signal,
+				           SUM(bit_count((rd.calls | rd.occupied)::bit(24)))             AS in_use,
+				           SUM(bit_count(rd.calls::bit(24)))                             AS in_calls,
+				           SUM(bit_count(rd.occupied::bit(24)))                          AS occupied,
+				           COUNT(*) FILTER (WHERE (rd.calls | rd.occupied) <> 0)         AS days_in_use,
+				           MAX(rd.peak_people)                                           AS peak_people,
+				           SUM(bit_count((rd.display & ~COALESCE(rh.mask, 0))::bit(24))) AS display_on
+				      FROM room_days rd
+				      LEFT JOIN run_hours rh ON rh.room_id = rd.room_id AND rh.day = rd.day
+				     GROUP BY rd.room_id
 				)
 				SELECT r.id::text, r.name, COALESCE(b.name, ''),
 				       (SELECT COUNT(*) FROM devices d WHERE d.room_id = r.id AND d.deleted_at IS NULL)::int,
@@ -566,12 +560,12 @@ func (h *Handler) PowerReport(w http.ResponseWriter, r *http.Request) {
 			           rd.room_id,
 			           rd.power_watts_on,
 			           rd.standby,
-			           COUNT(t.*)::numeric                                    AS samples,
-			           COUNT(t.*) FILTER (WHERE t.status = 'online')::numeric AS online_samples
+			           COALESCE(SUM(t.samples), 0)::numeric        AS samples,
+			           COALESCE(SUM(t.online_samples), 0)::numeric AS online_samples
 			      FROM room_devices rd
-			      LEFT JOIN telemetry t
+			      LEFT JOIN telemetry_daily t
 			             ON t.device_id = rd.device_id
-			            AND t.ts >= (SELECT since FROM win)
+			            AND t.day >= ((SELECT since FROM win) AT TIME ZONE 'UTC')::date
 			     GROUP BY rd.device_id, rd.room_id, rd.power_watts_on, rd.standby
 			),
 			dev_consumed AS (
