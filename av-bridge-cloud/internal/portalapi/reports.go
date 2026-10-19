@@ -147,12 +147,15 @@ func (h *Handler) DeviceUptimeReport(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-// RoomActivityReport — GET /api/v1/reports/room-activity?days=N[&format=csv]
+// DeviceEventsReport — GET /api/v1/reports/device-events?days=N[&format=csv]
 //
-// Counts device events per room over the window. Rooms with zero events
-// still appear (left join) so an empty room is visible as "unused". Useful
-// for spotting underutilised rooms and load-balancing schedules.
-func (h *Handler) RoomActivityReport(w http.ResponseWriter, r *http.Request) {
+// Per room: how many events its devices raised over the window, split into
+// alerts (offline, faults…) and device messages (unprompted Telnet, serial
+// and WebSocket output, DSP subscription updates, call notifications).
+// Normal polling isn't an event, so a high count points at a noisy or
+// faulty device, not a busy room; room use is RoomUsageReport. Rooms with
+// none still appear.
+func (h *Handler) DeviceEventsReport(w http.ResponseWriter, r *http.Request) {
 	days := reportDays(r)
 	wantCSV := r.URL.Query().Get("format") == "csv"
 
@@ -162,26 +165,34 @@ func (h *Handler) RoomActivityReport(w http.ResponseWriter, r *http.Request) {
 		BuildingName string     `json:"building_name"`
 		DeviceCount  int        `json:"device_count"`
 		EventCount   int        `json:"event_count"`
+		AlertCount   int        `json:"alert_count"`
+		MessageCount int        `json:"message_count"`
 		LastEventAt  *time.Time `json:"last_event_at,omitempty"`
 	}
 	out := []row{}
 
 	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, fmt.Sprintf(`
-			WITH win AS (SELECT now() - interval '%d days' AS since)
-			SELECT
-			  r.id::text,
-			  r.name,
-			  COALESCE(b.name, ''),
-			  COUNT(DISTINCT d.id)::int AS device_count,
-			  COUNT(e.*)::int AS event_count,
-			  MAX(e.ts) AS last_event_at
-			FROM rooms r
-			LEFT JOIN buildings b ON b.id = r.building_id
-			LEFT JOIN devices d ON d.room_id = r.id AND d.deleted_at IS NULL
-			LEFT JOIN events e ON e.device_id = d.id AND e.ts >= (SELECT since FROM win)
-			GROUP BY r.id, r.name, b.name
-			ORDER BY event_count DESC, r.name`, days))
+		rows, err := tx.Query(ctx, `
+			WITH ev AS (
+			    SELECT d.room_id,
+			           COUNT(*)                                            AS events,
+			           COUNT(*) FILTER (WHERE e.event_type LIKE 'alert:%') AS alerts,
+			           MAX(e.ts)                                           AS last_ts
+			      FROM events e
+			      JOIN devices d ON d.id = e.device_id
+			     WHERE e.ts >= now() - make_interval(days => $1)
+			       AND d.room_id IS NOT NULL
+			     GROUP BY d.room_id
+			)
+			SELECT r.id::text, r.name, COALESCE(b.name, ''),
+			       (SELECT COUNT(*) FROM devices d WHERE d.room_id = r.id AND d.deleted_at IS NULL)::int,
+			       COALESCE(ev.events, 0)::int,
+			       COALESCE(ev.alerts, 0)::int,
+			       ev.last_ts
+			  FROM rooms r
+			  LEFT JOIN buildings b ON b.id = r.building_id
+			  LEFT JOIN ev ON ev.room_id = r.id
+			 ORDER BY COALESCE(ev.events, 0) DESC, r.name`, days)
 		if err != nil {
 			return err
 		}
@@ -189,9 +200,10 @@ func (h *Handler) RoomActivityReport(w http.ResponseWriter, r *http.Request) {
 		for rows.Next() {
 			var rr row
 			if err := rows.Scan(&rr.RoomID, &rr.RoomName, &rr.BuildingName,
-				&rr.DeviceCount, &rr.EventCount, &rr.LastEventAt); err != nil {
+				&rr.DeviceCount, &rr.EventCount, &rr.AlertCount, &rr.LastEventAt); err != nil {
 				return err
 			}
+			rr.MessageCount = rr.EventCount - rr.AlertCount
 			out = append(out, rr)
 		}
 		return rows.Err()
@@ -201,12 +213,12 @@ func (h *Handler) RoomActivityReport(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if wantCSV {
-		filename := fmt.Sprintf("room-activity-%dd-%s.csv", days, time.Now().UTC().Format("20060102"))
+		filename := fmt.Sprintf("device-events-%dd-%s.csv", days, time.Now().UTC().Format("20060102"))
 		w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 		w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
 		cw := csv.NewWriter(w)
 		_ = cw.Write([]string{"room_id", "room_name", "building_name",
-			"device_count", "event_count", "last_event_at"})
+			"device_count", "event_count", "alert_count", "message_count", "last_event_at"})
 		for _, rr := range out {
 			lastEvent := ""
 			if rr.LastEventAt != nil {
@@ -214,7 +226,8 @@ func (h *Handler) RoomActivityReport(w http.ResponseWriter, r *http.Request) {
 			}
 			_ = cw.Write([]string{
 				rr.RoomID, rr.RoomName, rr.BuildingName,
-				strconv.Itoa(rr.DeviceCount), strconv.Itoa(rr.EventCount), lastEvent,
+				strconv.Itoa(rr.DeviceCount), strconv.Itoa(rr.EventCount),
+				strconv.Itoa(rr.AlertCount), strconv.Itoa(rr.MessageCount), lastEvent,
 			})
 		}
 		cw.Flush()
@@ -347,17 +360,20 @@ func warrantyBucket(daysLeft *int) string {
 	}
 }
 
-// RoomUtilisationReport — GET /api/v1/reports/room-utilisation?days=N[&format=csv]
+// RoomUsageReport — GET /api/v1/reports/room-usage?days=N[&format=csv]
 //
-// "Utilisation" defined as active-hours-per-day: for each room in the window,
-// the count of distinct (day, hour) buckets where any device in the room
-// fired an event. Averaged over the window this gives a comparable "hours in
-// active use per day" figure per room. Approximate (device chatter can
-// inflate idle rooms slightly; sparse-event integrations can undercount) but
-// requires no per-tenant business-hours config to run.
+// How much each room is used, from the readings its devices report every
+// poll. A room is in use for any clock hour in which one of its devices
+// reported a call (active_calls > 0, Cisco and Poly codecs) or people in
+// the room (people_count > 0, Cisco with a camera that counts them).
 //
-// Rooms with zero events still appear so operators can see under-used rooms.
-func (h *Handler) RoomUtilisationReport(w http.ResponseWriter, r *http.Request) {
+// Display power isn't counted as use: Room Readiness switches displays on
+// every morning, so they read "on" whether anyone comes in or not. It's
+// reported separately as display_on_hours, leaving out hours a Room
+// Readiness run was working on the room. Rooms with no device that reports
+// calls or people have has_usage_signal false, so the portal can say "no
+// usage data" rather than show an idle room.
+func (h *Handler) RoomUsageReport(w http.ResponseWriter, r *http.Request) {
 	days := reportDays(r)
 	wantCSV := r.URL.Query().Get("format") == "csv"
 
@@ -366,46 +382,85 @@ func (h *Handler) RoomUtilisationReport(w http.ResponseWriter, r *http.Request) 
 		RoomName       string  `json:"room_name"`
 		BuildingName   string  `json:"building_name"`
 		DeviceCount    int     `json:"device_count"`
-		ActiveHours    int     `json:"active_hours"`
-		ActiveDays     int     `json:"active_days"`
+		HasUsageSignal bool    `json:"has_usage_signal"`
+		HoursInUse     int     `json:"hours_in_use"`
+		HoursInCalls   int     `json:"hours_in_calls"`
+		HoursOccupied  int     `json:"hours_occupied"`
+		DaysInUse      int     `json:"days_in_use"`
 		AvgHoursPerDay float64 `json:"avg_hours_per_day"`
+		PeakPeople     *int    `json:"peak_people"`
+		DisplayOnHours int     `json:"display_on_hours"`
 	}
 	out := []row{}
 
 	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, fmt.Sprintf(`
-			WITH win AS (SELECT now() - interval '%d days' AS since),
-			active AS (
+		rows, err := tx.Query(ctx, `
+			WITH hourly AS (
 			    SELECT d.room_id,
-			           COUNT(DISTINCT date_trunc('hour', e.ts)) AS active_hours,
-			           COUNT(DISTINCT date_trunc('day',  e.ts)) AS active_days
-			      FROM events e
-			      JOIN devices d ON d.id = e.device_id
-			     WHERE e.ts >= (SELECT since FROM win)
-			       AND d.room_id IS NOT NULL
-			     GROUP BY d.room_id
+			           date_trunc('hour', t.ts) AS hr,
+			           bool_or(jsonb_typeof(t.metrics->'active_calls') = 'number'
+			                   AND (t.metrics->>'active_calls')::numeric > 0)  AS in_call,
+			           bool_or(jsonb_typeof(t.metrics->'people_count') = 'number'
+			                   AND (t.metrics->>'people_count')::numeric > 0)  AS occupied,
+			           MAX(CASE WHEN jsonb_typeof(t.metrics->'people_count') = 'number'
+			                    THEN (t.metrics->>'people_count')::numeric END) AS people,
+			           bool_or(t.metrics->>'power_status' IN ('on', 'active')) AS display_on,
+			           bool_or(t.metrics ? 'active_calls' OR t.metrics ? 'people_count') AS signal
+			      FROM telemetry t
+			      JOIN devices d ON d.id = t.device_id
+			     WHERE t.ts >= now() - make_interval(days => $1)
+			       AND d.room_id IS NOT NULL AND d.deleted_at IS NULL
+			       AND t.status = 'online'
+			       AND (t.metrics ? 'active_calls' OR t.metrics ? 'people_count' OR t.metrics ? 'power_status')
+			     GROUP BY d.room_id, date_trunc('hour', t.ts)
+			),
+			marked AS (
+			    SELECT h.*,
+			           EXISTS (
+			               SELECT 1 FROM nightly_run nr
+			                WHERE nr.room_id = h.room_id
+			                  AND nr.started_at IS NOT NULL
+			                  AND nr.started_at < h.hr + interval '1 hour'
+			                  AND COALESCE(nr.completed_at, now()) > h.hr
+			           ) AS in_run
+			      FROM hourly h
+			),
+			per_room AS (
+			    SELECT room_id,
+			           bool_or(signal)                                      AS signal,
+			           COUNT(*) FILTER (WHERE in_call OR occupied)          AS in_use,
+			           COUNT(*) FILTER (WHERE in_call)                      AS in_calls,
+			           COUNT(*) FILTER (WHERE occupied)                     AS occupied,
+			           COUNT(DISTINCT date_trunc('day', hr))
+			               FILTER (WHERE in_call OR occupied)               AS days_in_use,
+			           MAX(people)                                          AS peak_people,
+			           COUNT(*) FILTER (WHERE display_on AND NOT in_run)    AS display_on
+			      FROM marked
+			     GROUP BY room_id
 			)
-			SELECT r.id::text,
-			       r.name,
-			       COALESCE(b.name, ''),
-			       COUNT(DISTINCT d.id)::int AS device_count,
-			       COALESCE(a.active_hours, 0)::int,
-			       COALESCE(a.active_days,  0)::int,
-			       ROUND(COALESCE(a.active_hours, 0)::numeric / %d, 2)::float8 AS avg_hours_per_day
+			SELECT r.id::text, r.name, COALESCE(b.name, ''),
+			       (SELECT COUNT(*) FROM devices d WHERE d.room_id = r.id AND d.deleted_at IS NULL)::int,
+			       COALESCE(p.signal, false),
+			       COALESCE(p.in_use, 0)::int,
+			       COALESCE(p.in_calls, 0)::int,
+			       COALESCE(p.occupied, 0)::int,
+			       COALESCE(p.days_in_use, 0)::int,
+			       ROUND(COALESCE(p.in_use, 0)::numeric / $1, 2)::float8,
+			       p.peak_people::int,
+			       COALESCE(p.display_on, 0)::int
 			  FROM rooms r
 			  LEFT JOIN buildings b ON b.id = r.building_id
-			  LEFT JOIN devices  d  ON d.room_id = r.id AND d.deleted_at IS NULL
-			  LEFT JOIN active   a  ON a.room_id = r.id
-			 GROUP BY r.id, r.name, b.name, a.active_hours, a.active_days
-			 ORDER BY avg_hours_per_day DESC, r.name`, days, days))
+			  LEFT JOIN per_room p ON p.room_id = r.id
+			 ORDER BY COALESCE(p.signal, false) DESC, COALESCE(p.in_use, 0) DESC, r.name`, days)
 		if err != nil {
 			return err
 		}
 		defer rows.Close()
 		for rows.Next() {
 			var rr row
-			if err := rows.Scan(&rr.RoomID, &rr.RoomName, &rr.BuildingName,
-				&rr.DeviceCount, &rr.ActiveHours, &rr.ActiveDays, &rr.AvgHoursPerDay); err != nil {
+			if err := rows.Scan(&rr.RoomID, &rr.RoomName, &rr.BuildingName, &rr.DeviceCount,
+				&rr.HasUsageSignal, &rr.HoursInUse, &rr.HoursInCalls, &rr.HoursOccupied,
+				&rr.DaysInUse, &rr.AvgHoursPerDay, &rr.PeakPeople, &rr.DisplayOnHours); err != nil {
 				return err
 			}
 			out = append(out, rr)
@@ -417,19 +472,24 @@ func (h *Handler) RoomUtilisationReport(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if wantCSV {
-		filename := fmt.Sprintf("room-utilisation-%dd-%s.csv", days, time.Now().UTC().Format("20060102"))
+		filename := fmt.Sprintf("room-usage-%dd-%s.csv", days, time.Now().UTC().Format("20060102"))
 		w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 		w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
 		cw := csv.NewWriter(w)
-		_ = cw.Write([]string{"room_id", "room_name", "building_name",
-			"device_count", "active_hours", "active_days", "avg_hours_per_day"})
+		_ = cw.Write([]string{"room_id", "room_name", "building_name", "device_count",
+			"has_usage_signal", "hours_in_use", "hours_in_calls", "hours_occupied",
+			"days_in_use", "avg_hours_per_day", "peak_people", "display_on_hours"})
 		for _, rr := range out {
+			peak := ""
+			if rr.PeakPeople != nil {
+				peak = strconv.Itoa(*rr.PeakPeople)
+			}
 			_ = cw.Write([]string{
-				rr.RoomID, rr.RoomName, rr.BuildingName,
-				strconv.Itoa(rr.DeviceCount),
-				strconv.Itoa(rr.ActiveHours),
-				strconv.Itoa(rr.ActiveDays),
-				strconv.FormatFloat(rr.AvgHoursPerDay, 'f', 2, 64),
+				rr.RoomID, rr.RoomName, rr.BuildingName, strconv.Itoa(rr.DeviceCount),
+				strconv.FormatBool(rr.HasUsageSignal),
+				strconv.Itoa(rr.HoursInUse), strconv.Itoa(rr.HoursInCalls), strconv.Itoa(rr.HoursOccupied),
+				strconv.Itoa(rr.DaysInUse), strconv.FormatFloat(rr.AvgHoursPerDay, 'f', 2, 64),
+				peak, strconv.Itoa(rr.DisplayOnHours),
 			})
 		}
 		cw.Flush()

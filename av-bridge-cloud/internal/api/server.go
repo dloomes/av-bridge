@@ -267,9 +267,9 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 		// Category-specific reads — each gated by its matching view.* key.
 		mux.Handle("GET /api/v1/audit", wrapPerm(portalauth.PermViewAudit, portal.Portal.ListAudit))
 		mux.Handle("GET /api/v1/reports/device-uptime", wrapPerm(portalauth.PermViewReports, portal.Portal.DeviceUptimeReport))
-		mux.Handle("GET /api/v1/reports/room-activity", wrapPerm(portalauth.PermViewReports, portal.Portal.RoomActivityReport))
+		mux.Handle("GET /api/v1/reports/device-events", wrapPerm(portalauth.PermViewReports, portal.Portal.DeviceEventsReport))
 		mux.Handle("GET /api/v1/reports/warranty", wrapPerm(portalauth.PermViewReports, portal.Portal.WarrantyReport))
-		mux.Handle("GET /api/v1/reports/room-utilisation", wrapPerm(portalauth.PermViewReports, portal.Portal.RoomUtilisationReport))
+		mux.Handle("GET /api/v1/reports/room-usage", wrapPerm(portalauth.PermViewReports, portal.Portal.RoomUsageReport))
 		mux.Handle("GET /api/v1/reports/power", wrapPerm(portalauth.PermViewReports, portal.Portal.PowerReport))
 		mux.Handle("GET /api/v1/firmware", wrapPerm(portalauth.PermViewFirmware, portal.Portal.FirmwareSummary))
 		mux.Handle("GET /api/v1/firmware/targets", wrapPerm(portalauth.PermViewFirmware, portal.Portal.ListFirmwareTargets))
