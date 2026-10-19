@@ -51,7 +51,7 @@ PAGES: dict[str, dict] = {}
 # copied without a place in the navigation.
 STATIC_GROUPS: list[dict] = [
     {"group": "Using the portal", "icon": "computer-mouse", "folder": "portal",
-     "pages": ["getting-around", "overview-and-map", "devices", "alerts",
+     "pages": ["getting-around", "overview-and-map", "dashboards", "devices", "alerts",
                "room-readiness", "test-routines"]},
     {"group": "Administration", "icon": "user-gear", "folder": "admin",
      "pages": ["users-and-access", "roles", "single-sign-on", "notifications",
