@@ -65,55 +65,57 @@ func (h *Handler) DeviceUptimeReport(w http.ResponseWriter, r *http.Request) {
 		CurrentStatus string     `json:"current_status"`
 		LastSeenAt    *time.Time `json:"last_seen_at,omitempty"`
 	}
-	out := []row{}
-
-	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
-		// We cast the parameter to text + concat with '::interval' inline so
-		// pgx doesn't need to know about the interval type explicitly. Window
-		// is bounded so the cast is safe.
-		rows, err := tx.Query(ctx, fmt.Sprintf(`
-			WITH win AS (SELECT now() - interval '%d days' AS since)
-			SELECT
-			  d.id::text,
-			  COALESCE(d.name, d.reported_id, '') AS dev_name,
-			  CASE
-			    WHEN b.name IS NOT NULL AND r.name IS NOT NULL THEN b.name || ' / ' || r.name
-			    WHEN r.name IS NOT NULL THEN r.name
-			    ELSE ''
-			  END AS dev_location,
-			  COUNT(t.*)::int AS samples,
-			  COUNT(t.*) FILTER (WHERE t.status = 'online')::int AS online_samples,
-			  CASE WHEN COUNT(t.*) > 0
-			    THEN ROUND(100.0 * COUNT(t.*) FILTER (WHERE t.status = 'online') / COUNT(t.*), 2)
-			    ELSE NULL END AS uptime_pct,
-			  ` + devicestatus.EffectiveStatusSQL + ` AS dev_current_status,
-			  d.last_seen_at
-			FROM devices d
-			LEFT JOIN rooms r ON r.id = d.room_id
-			LEFT JOIN buildings b ON b.id = r.building_id
-			LEFT JOIN collectors c ON c.id = d.collector_id
-			LEFT JOIN telemetry t ON t.device_id = d.id AND t.ts >= (SELECT since FROM win)
-			WHERE d.deleted_at IS NULL
-			GROUP BY d.id, d.name, d.reported_id, r.name, b.name, d.latest_status, d.last_seen_at, c.last_seen_at, c.serving_seen_at
-			ORDER BY uptime_pct ASC NULLS LAST, dev_name`, days))
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var (
-				rr  row
-				pct *float64
-			)
-			if err := rows.Scan(&rr.DeviceID, &rr.Name, &rr.Location,
-				&rr.Samples, &rr.OnlineSamples, &pct,
-				&rr.CurrentStatus, &rr.LastSeenAt); err != nil {
+	out, ok := cachedReport(reportKey(r, "device-uptime", days), func() ([]row, bool) {
+		out := []row{}
+		ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
+			// We cast the parameter to text + concat with '::interval' inline so
+			// pgx doesn't need to know about the interval type explicitly. Window
+			// is bounded so the cast is safe.
+			rows, err := tx.Query(ctx, fmt.Sprintf(`
+				WITH win AS (SELECT now() - interval '%d days' AS since)
+				SELECT
+				  d.id::text,
+				  COALESCE(d.name, d.reported_id, '') AS dev_name,
+				  CASE
+				    WHEN b.name IS NOT NULL AND r.name IS NOT NULL THEN b.name || ' / ' || r.name
+				    WHEN r.name IS NOT NULL THEN r.name
+				    ELSE ''
+				  END AS dev_location,
+				  COUNT(t.*)::int AS samples,
+				  COUNT(t.*) FILTER (WHERE t.status = 'online')::int AS online_samples,
+				  CASE WHEN COUNT(t.*) > 0
+				    THEN ROUND(100.0 * COUNT(t.*) FILTER (WHERE t.status = 'online') / COUNT(t.*), 2)
+				    ELSE NULL END AS uptime_pct,
+				  ` + devicestatus.EffectiveStatusSQL + ` AS dev_current_status,
+				  d.last_seen_at
+				FROM devices d
+				LEFT JOIN rooms r ON r.id = d.room_id
+				LEFT JOIN buildings b ON b.id = r.building_id
+				LEFT JOIN collectors c ON c.id = d.collector_id
+				LEFT JOIN telemetry t ON t.device_id = d.id AND t.ts >= (SELECT since FROM win)
+				WHERE d.deleted_at IS NULL
+				GROUP BY d.id, d.name, d.reported_id, r.name, b.name, d.latest_status, d.last_seen_at, c.last_seen_at, c.serving_seen_at
+				ORDER BY uptime_pct ASC NULLS LAST, dev_name`, days))
+			if err != nil {
 				return err
 			}
-			rr.UptimePct = pct
-			out = append(out, rr)
-		}
-		return rows.Err()
+			defer rows.Close()
+			for rows.Next() {
+				var (
+					rr  row
+					pct *float64
+				)
+				if err := rows.Scan(&rr.DeviceID, &rr.Name, &rr.Location,
+					&rr.Samples, &rr.OnlineSamples, &pct,
+					&rr.CurrentStatus, &rr.LastSeenAt); err != nil {
+					return err
+				}
+				rr.UptimePct = pct
+				out = append(out, rr)
+			}
+			return rows.Err()
+		})
+		return out, ok
 	})
 	if !ok {
 		return
@@ -363,7 +365,7 @@ func warrantyBucket(daysLeft *int) string {
 // RoomUsageReport — GET /api/v1/reports/room-usage?days=N[&format=csv]
 //
 // How much each room is used, from the readings its devices report every
-// poll. A room is in use for any clock hour in which one of its devices
+// poll. Results are shared for reportCacheTTL (report_cache.go). A room is in use for any clock hour in which one of its devices
 // reported a call (active_calls > 0, Cisco and Poly codecs) or people in
 // the room (people_count > 0, Cisco with a camera that counts them).
 //
@@ -391,81 +393,93 @@ func (h *Handler) RoomUsageReport(w http.ResponseWriter, r *http.Request) {
 		PeakPeople     *int    `json:"peak_people"`
 		DisplayOnHours int     `json:"display_on_hours"`
 	}
-	out := []row{}
-
-	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, `
-			WITH hourly AS (
-			    SELECT d.room_id,
-			           date_trunc('hour', t.ts) AS hr,
-			           bool_or(jsonb_typeof(t.metrics->'active_calls') = 'number'
-			                   AND (t.metrics->>'active_calls')::numeric > 0)  AS in_call,
-			           bool_or(jsonb_typeof(t.metrics->'people_count') = 'number'
-			                   AND (t.metrics->>'people_count')::numeric > 0)  AS occupied,
-			           MAX(CASE WHEN jsonb_typeof(t.metrics->'people_count') = 'number'
-			                    THEN (t.metrics->>'people_count')::numeric END) AS people,
-			           bool_or(t.metrics->>'power_status' IN ('on', 'active')) AS display_on,
-			           bool_or(t.metrics ? 'active_calls' OR t.metrics ? 'people_count') AS signal
-			      FROM telemetry t
-			      JOIN devices d ON d.id = t.device_id
-			     WHERE t.ts >= now() - make_interval(days => $1)
-			       AND d.room_id IS NOT NULL AND d.deleted_at IS NULL
-			       AND t.status = 'online'
-			       AND (t.metrics ? 'active_calls' OR t.metrics ? 'people_count' OR t.metrics ? 'power_status')
-			     GROUP BY d.room_id, date_trunc('hour', t.ts)
-			),
-			marked AS (
-			    SELECT h.*,
-			           EXISTS (
-			               SELECT 1 FROM nightly_run nr
-			                WHERE nr.room_id = h.room_id
-			                  AND nr.started_at IS NOT NULL
-			                  AND nr.started_at < h.hr + interval '1 hour'
-			                  AND COALESCE(nr.completed_at, now()) > h.hr
-			           ) AS in_run
-			      FROM hourly h
-			),
-			per_room AS (
-			    SELECT room_id,
-			           bool_or(signal)                                      AS signal,
-			           COUNT(*) FILTER (WHERE in_call OR occupied)          AS in_use,
-			           COUNT(*) FILTER (WHERE in_call)                      AS in_calls,
-			           COUNT(*) FILTER (WHERE occupied)                     AS occupied,
-			           COUNT(DISTINCT date_trunc('day', hr))
-			               FILTER (WHERE in_call OR occupied)               AS days_in_use,
-			           MAX(people)                                          AS peak_people,
-			           COUNT(*) FILTER (WHERE display_on AND NOT in_run)    AS display_on
-			      FROM marked
-			     GROUP BY room_id
-			)
-			SELECT r.id::text, r.name, COALESCE(b.name, ''),
-			       (SELECT COUNT(*) FROM devices d WHERE d.room_id = r.id AND d.deleted_at IS NULL)::int,
-			       COALESCE(p.signal, false),
-			       COALESCE(p.in_use, 0)::int,
-			       COALESCE(p.in_calls, 0)::int,
-			       COALESCE(p.occupied, 0)::int,
-			       COALESCE(p.days_in_use, 0)::int,
-			       ROUND(COALESCE(p.in_use, 0)::numeric / $1, 2)::float8,
-			       p.peak_people::int,
-			       COALESCE(p.display_on, 0)::int
-			  FROM rooms r
-			  LEFT JOIN buildings b ON b.id = r.building_id
-			  LEFT JOIN per_room p ON p.room_id = r.id
-			 ORDER BY COALESCE(p.signal, false) DESC, COALESCE(p.in_use, 0) DESC, r.name`, days)
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var rr row
-			if err := rows.Scan(&rr.RoomID, &rr.RoomName, &rr.BuildingName, &rr.DeviceCount,
-				&rr.HasUsageSignal, &rr.HoursInUse, &rr.HoursInCalls, &rr.HoursOccupied,
-				&rr.DaysInUse, &rr.AvgHoursPerDay, &rr.PeakPeople, &rr.DisplayOnHours); err != nil {
+	out, ok := cachedReport(reportKey(r, "room-usage", days), func() ([]row, bool) {
+		out := []row{}
+		ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
+			rows, err := tx.Query(ctx, `
+				WITH signal_devices AS (
+				    -- Only devices that can report a call, people or power:
+				    -- declared by their adapter, or seen in their last reading.
+				    -- Skips PDUs, DSPs, switches and the like before any
+				    -- telemetry is read.
+				    SELECT d.id, d.room_id
+				      FROM devices d
+				     WHERE d.room_id IS NOT NULL AND d.deleted_at IS NULL
+				       AND (COALESCE(d.capabilities->'metrics', '[]'::jsonb) ?| array['active_calls', 'people_count', 'power_status']
+				            OR COALESCE(d.latest_metrics, '{}'::jsonb) ?| array['active_calls', 'people_count', 'power_status'])
+				),
+				hourly AS (
+				    SELECT d.room_id,
+				           date_trunc('hour', t.ts) AS hr,
+				           bool_or(jsonb_typeof(t.metrics->'active_calls') = 'number'
+				                   AND (t.metrics->>'active_calls')::numeric > 0)  AS in_call,
+				           bool_or(jsonb_typeof(t.metrics->'people_count') = 'number'
+				                   AND (t.metrics->>'people_count')::numeric > 0)  AS occupied,
+				           MAX(CASE WHEN jsonb_typeof(t.metrics->'people_count') = 'number'
+				                    THEN (t.metrics->>'people_count')::numeric END) AS people,
+				           bool_or(t.metrics->>'power_status' IN ('on', 'active')) AS display_on,
+				           bool_or(t.metrics ? 'active_calls' OR t.metrics ? 'people_count') AS signal
+				      FROM signal_devices d
+				      JOIN telemetry t ON t.device_id = d.id
+				     WHERE t.ts >= now() - make_interval(days => $1)
+				       AND t.status = 'online'
+				       AND (t.metrics ? 'active_calls' OR t.metrics ? 'people_count' OR t.metrics ? 'power_status')
+				     GROUP BY d.room_id, date_trunc('hour', t.ts)
+				),
+				marked AS (
+				    SELECT h.*,
+				           EXISTS (
+				               SELECT 1 FROM nightly_run nr
+				                WHERE nr.room_id = h.room_id
+				                  AND nr.started_at IS NOT NULL
+				                  AND nr.started_at < h.hr + interval '1 hour'
+				                  AND COALESCE(nr.completed_at, now()) > h.hr
+				           ) AS in_run
+				      FROM hourly h
+				),
+				per_room AS (
+				    SELECT room_id,
+				           bool_or(signal)                                      AS signal,
+				           COUNT(*) FILTER (WHERE in_call OR occupied)          AS in_use,
+				           COUNT(*) FILTER (WHERE in_call)                      AS in_calls,
+				           COUNT(*) FILTER (WHERE occupied)                     AS occupied,
+				           COUNT(DISTINCT date_trunc('day', hr))
+				               FILTER (WHERE in_call OR occupied)               AS days_in_use,
+				           MAX(people)                                          AS peak_people,
+				           COUNT(*) FILTER (WHERE display_on AND NOT in_run)    AS display_on
+				      FROM marked
+				     GROUP BY room_id
+				)
+				SELECT r.id::text, r.name, COALESCE(b.name, ''),
+				       (SELECT COUNT(*) FROM devices d WHERE d.room_id = r.id AND d.deleted_at IS NULL)::int,
+				       COALESCE(p.signal, false),
+				       COALESCE(p.in_use, 0)::int,
+				       COALESCE(p.in_calls, 0)::int,
+				       COALESCE(p.occupied, 0)::int,
+				       COALESCE(p.days_in_use, 0)::int,
+				       ROUND(COALESCE(p.in_use, 0)::numeric / $1, 2)::float8,
+				       p.peak_people::int,
+				       COALESCE(p.display_on, 0)::int
+				  FROM rooms r
+				  LEFT JOIN buildings b ON b.id = r.building_id
+				  LEFT JOIN per_room p ON p.room_id = r.id
+				 ORDER BY COALESCE(p.signal, false) DESC, COALESCE(p.in_use, 0) DESC, r.name`, days)
+			if err != nil {
 				return err
 			}
-			out = append(out, rr)
-		}
-		return rows.Err()
+			defer rows.Close()
+			for rows.Next() {
+				var rr row
+				if err := rows.Scan(&rr.RoomID, &rr.RoomName, &rr.BuildingName, &rr.DeviceCount,
+					&rr.HasUsageSignal, &rr.HoursInUse, &rr.HoursInCalls, &rr.HoursOccupied,
+					&rr.DaysInUse, &rr.AvgHoursPerDay, &rr.PeakPeople, &rr.DisplayOnHours); err != nil {
+					return err
+				}
+				out = append(out, rr)
+			}
+			return rows.Err()
+		})
+		return out, ok
 	})
 	if !ok {
 		return

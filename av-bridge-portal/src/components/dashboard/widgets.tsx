@@ -58,6 +58,8 @@ export interface WidgetDef {
 }
 
 const REFRESH_MS = 30_000;
+// Reports scan days of readings; the cloud keeps each result for 15 minutes.
+const REPORT_REFRESH_MS = 15 * 60_000;
 
 const str = (c: WidgetConfig, k: string, d = "") => (typeof c[k] === "string" ? (c[k] as string) : d);
 const num = (c: WidgetConfig, k: string, d: number) => {
@@ -328,7 +330,7 @@ function UsageWidget({ config }: { config: WidgetConfig }) {
   const days = num(config, "days", 7);
   const mode = str(config, "mode", "busiest");
   const limit = num(config, "limit", 5);
-  const state = usePolling((s) => api.roomUsageReport(days, s), 5 * 60_000, [days]);
+  const state = usePolling((s) => api.roomUsageReport(days, s), REPORT_REFRESH_MS, [days]);
   return (
     <Load state={state}>
       {(rows) => {
@@ -361,7 +363,7 @@ function UsageWidget({ config }: { config: WidgetConfig }) {
 function UptimeWidget({ config }: { config: WidgetConfig }) {
   const days = num(config, "days", 7);
   const limit = num(config, "limit", 5);
-  const state = usePolling((s) => api.deviceUptimeReport(days, s), 5 * 60_000, [days]);
+  const state = usePolling((s) => api.deviceUptimeReport(days, s), REPORT_REFRESH_MS, [days]);
   return (
     <Load state={state}>
       {(rows) => {

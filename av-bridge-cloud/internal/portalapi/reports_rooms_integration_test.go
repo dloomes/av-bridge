@@ -99,7 +99,11 @@ func TestRoomUsageAndDeviceEventsReports(t *testing.T) {
 	              date_trunc('hour', now()) - interval '5 hours' + interval '10 minutes',
 	              date_trunc('hour', now()) - interval '5 hours' + interval '40 minutes')`, cust, boardroom)
 
+	exec(`UPDATE devices SET capabilities = '{"metrics": ["active_calls", "people_count"]}' WHERE id = $1`, codec)
+	exec(`UPDATE devices SET latest_metrics = '{"power_status": "active"}' WHERE id = $1`, display)
+
 	tv := device(huddle, "tv")
+	exec(`UPDATE devices SET capabilities = '{"metrics": ["power_status"]}' WHERE id = $1`, tv)
 	reading(tv, "online", 3, `{"power_status": "on"}`)
 	reading(tv, "online", 2, `{"power_status": "on"}`)
 	reading(tv, "online", 1, `{"power_status": "standby"}`)
