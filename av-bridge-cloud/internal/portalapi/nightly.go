@@ -120,8 +120,8 @@ func (h *Handler) UpdateNightlySchedule(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	}
-	if req.RetentionDays != nil && *req.RetentionDays < 30 {
-		writeErr(w, http.StatusBadRequest, "retention_days must be at least 30")
+	if req.RetentionDays != nil && (*req.RetentionDays < 30 || *req.RetentionDays > 365) {
+		writeErr(w, http.StatusBadRequest, "retention_days must be between 30 and 365")
 		return
 	}
 	if req.HelpdeskEmail != nil && *req.HelpdeskEmail != "" {
