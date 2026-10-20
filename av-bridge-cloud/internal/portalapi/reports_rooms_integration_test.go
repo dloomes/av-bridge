@@ -165,7 +165,10 @@ func TestRoomUsageAndDeviceEventsReports(t *testing.T) {
 		t.Errorf("Store = %+v; want empty", s)
 	}
 	if csv := get(h.RoomUsageReport, "/r?days=1&format=csv").Body.String(); !strings.HasPrefix(csv, "room_id,room_name,building_name,device_count,has_usage_signal,hours_in_use") ||
-		!strings.Contains(csv, ",Boardroom,HQ,2,true,2,1,2,1,2.00,5,1") {
+		// days_in_use is 1 or 2: the readings are hours ago, so before
+		// 10:00 UTC they straddle midnight.
+		!(strings.Contains(csv, ",Boardroom,HQ,2,true,2,1,2,1,2.00,5,1") ||
+			strings.Contains(csv, ",Boardroom,HQ,2,true,2,1,2,2,2.00,5,1")) {
 		t.Errorf("usage CSV:\n%s", csv)
 	}
 

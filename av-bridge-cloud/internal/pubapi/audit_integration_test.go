@@ -148,6 +148,92 @@ func TestAuditEndpoint(t *testing.T) {
 		}
 	}
 
+	// Place filters and the rolling window, on a real hierarchy:
+	// location › building › rooms A and B, a device and an asset in A.
+	q := func(sql string, args ...any) string {
+		t.Helper()
+		var v string
+		if err := su.QueryRow(ctx, sql, args...).Scan(&v); err != nil {
+			t.Fatalf("%s: %v", sql, err)
+		}
+		return v
+	}
+	col := q(`INSERT INTO collectors (customer_id, bridge_collector_id, name, hmac_secret_enc)
+	          VALUES ($1::uuid, 'au-' || $1::text, 'au', '\x00') RETURNING id::text`, cust)
+	reg := q(`INSERT INTO regions (customer_id, name) VALUES ($1, 'North') RETURNING id::text`, cust)
+	loc := q(`INSERT INTO locations (customer_id, region_id, name) VALUES ($1, $2, 'Leeds') RETURNING id::text`, cust, reg)
+	bld := q(`INSERT INTO buildings (customer_id, location_id, name) VALUES ($1, $2, 'Crown Court') RETURNING id::text`, cust, loc)
+	roomA := q(`INSERT INTO rooms (customer_id, building_id, name) VALUES ($1, $2, 'Court 1') RETURNING id::text`, cust, bld)
+	roomB := q(`INSERT INTO rooms (customer_id, building_id, name) VALUES ($1, $2, 'Court 2') RETURNING id::text`, cust, bld)
+	devA := q(`INSERT INTO devices (customer_id, collector_id, room_id, reported_id, name, protocol)
+	           VALUES ($1, $2, $3, 'disp-a', 'Display A', 'ping') RETURNING id::text`, cust, col, roomA)
+	devB := q(`INSERT INTO devices (customer_id, collector_id, room_id, reported_id, name, protocol)
+	           VALUES ($1, $2, $3, 'disp-b', 'Display B', 'ping') RETURNING id::text`, cust, col, roomB)
+	assetA := q(`INSERT INTO assets (customer_id, room_id, name, category) VALUES ($1, $2, 'Lectern', 'other') RETURNING id::text`, cust, roomA)
+
+	eLoc := ins(cust, "admin@example.test", "location.update", "location", loc, "", "", "", "5 hours")
+	eBld := ins(cust, "admin@example.test", "building.update", "building", bld, "", "", "", "5 hours")
+	eRoomA := ins(cust, "admin@example.test", "room.update", "room", roomA, "", "", "", "5 hours")
+	eDevA := ins(cust, "admin@example.test", "device.update", "device", devA, "", "", "", "5 hours")
+	eCmdA := ins(cust, "operator@example.test", "command.submit", "command", "c-a", "device", devA, "", "5 hours")
+	eAssetA := ins(cust, "admin@example.test", "asset.update", "asset", assetA, "", "", "", "5 hours")
+	eRunA := ins(cust, "system:nightly", "nightly_run.start", "nightly_run", "r-a", "room", roomA, "", "5 hours")
+	eDevB := ins(cust, "admin@example.test", "device.update", "device", devB, "", "", "", "5 hours")
+	for p, want := range map[string][]string{
+		"/pub/v1/audit?device_id=" + devA:                       {eDevA, eCmdA},
+		"/pub/v1/audit?room_id=" + roomA:                        {eRoomA, eDevA, eCmdA, eAssetA, eRunA},
+		"/pub/v1/audit?room_id=" + roomB:                        {eDevB},
+		"/pub/v1/audit?building_id=" + bld:                      {eBld, eRoomA, eDevA, eCmdA, eAssetA, eRunA, eDevB},
+		"/pub/v1/audit?location_id=" + loc:                      {eLoc, eBld, eRoomA, eDevA, eCmdA, eAssetA, eRunA, eDevB},
+		"/pub/v1/audit?location_id=" + loc + "&action=command.": {eCmdA},
+		"/pub/v1/audit?room_id=" + roomA + "&device_id=" + devB: {},
+	} {
+		code, ids, _, _ := get(p)
+		if code != http.StatusOK || set(ids) != set(want) {
+			t.Errorf("GET %s: %d %v, want %v", p, code, ids, want)
+		}
+	}
+
+	// last= is a rolling window back from now.
+	var recent, older string
+	if err := su.QueryRow(ctx, `
+		INSERT INTO audit_log (customer_id, actor, action, target_kind, target_id, ts)
+		VALUES ($1, 'admin@example.test', 'device.update', 'device', $2, now() - interval '5 minutes')
+		RETURNING id::text`, cust, devA).Scan(&recent); err != nil {
+		t.Fatal(err)
+	}
+	if err := su.QueryRow(ctx, `
+		INSERT INTO audit_log (customer_id, actor, action, target_kind, target_id, ts)
+		VALUES ($1, 'admin@example.test', 'device.update', 'device', $2, now() - interval '30 minutes')
+		RETURNING id::text`, cust, devA).Scan(&older); err != nil {
+		t.Fatal(err)
+	}
+	for p, want := range map[string][]string{
+		"/pub/v1/audit?last=15m":                  {recent},
+		"/pub/v1/audit?last=1h&device_id=" + devA: {recent, older},
+		"/pub/v1/audit?last=1d&device_id=" + devB: {},
+	} {
+		code, ids, _, _ := get(p)
+		if code != http.StatusOK || set(ids) != set(want) {
+			t.Errorf("GET %s: %d %v, want %v", p, code, ids, want)
+		}
+	}
+	for _, p := range []string{
+		"/pub/v1/audit?last=15",
+		"/pub/v1/audit?last=-5m",
+		"/pub/v1/audit?last=400d",
+		"/pub/v1/audit?last=15m&since=2026-10-01T00:00:00Z",
+		"/pub/v1/audit?room_id=not-a-uuid",
+	} {
+		if code, _, _, _ := get(p); code != http.StatusBadRequest {
+			t.Errorf("GET %s: %d, want 400", p, code)
+		}
+	}
+	// The paging check below expects only the first set of entries.
+	if _, err := su.Exec(ctx, `DELETE FROM audit_log WHERE customer_id = $1 AND id::text <> ALL($2)`, cust, all); err != nil {
+		t.Fatal(err)
+	}
+
 	// Paging at limit=1 visits every entry once, in order, across the tie.
 	var paged []string
 	next := ""
