@@ -91,7 +91,11 @@ func TestAllEndpoints(t *testing.T) {
 	}
 	exec(`INSERT INTO alerts (customer_id, device_id, alert_key, severity, message, status, opened_at) VALUES ($1,$2,'device_offline','critical','down','open', now() - interval '5 minutes')`, cust, devs[1])
 	exec(`INSERT INTO alerts (customer_id, device_id, alert_key, severity, message, status, opened_at, resolved_at, resolved_by) VALUES ($1,$2,'device_degraded','warning','slow','resolved', now() - interval '9 minutes', now(), 'auto:recovered')`, cust, devs[0])
-	exec(`INSERT INTO alerts (customer_id, collector_id, alert_key, severity, message, status, payload) VALUES ($1,$2,'collector_offline','critical','quiet','open', NULL)`, cust, col)
+	// A collector_offline alert belongs to a Collector that really is
+	// offline: the collector health watcher (run by other packages' tests
+	// on this database) resolves those whose Collector was seen recently.
+	downCol := q(`INSERT INTO collectors (customer_id, name, hmac_secret_enc, last_seen_at) VALUES ($1, 'col-down', '\x00'::bytea, now() - interval '1 hour') RETURNING id::text`, cust)
+	exec(`INSERT INTO alerts (customer_id, collector_id, alert_key, severity, message, status, payload) VALUES ($1,$2,'collector_offline','critical','quiet','open', NULL)`, cust, downCol)
 	a1 := q(`INSERT INTO assets (customer_id, room_id, name, category, status) VALUES ($1,$2,'Screen','display','in_service') RETURNING id::text`, cust, r1)
 	q(`INSERT INTO assets (customer_id, room_id, name, category, status) VALUES ($1,$2,'Spare remote','accessory','in_storage') RETURNING id::text`, cust, r2)
 	q(`INSERT INTO assets (customer_id, name, category, status) VALUES ($1,'Cable','cable','in_service') RETURNING id::text`, cust)
