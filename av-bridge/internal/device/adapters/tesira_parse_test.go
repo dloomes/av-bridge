@@ -403,3 +403,20 @@ func TestTTPIndex(t *testing.T) {
 		t.Errorf("unset channel defaults to 1: %q", got)
 	}
 }
+
+func TestParseTesiraAliases(t *testing.T) {
+	resp := `+OK "list":["Level1" "AudioMeter1" "DEVICE" "VoIPControlStatus1" "SourceSelector1"]`
+	got := parseTesiraAliases(parseTTPValue(resp))
+	want := []string{"AudioMeter1", "Level1", "SourceSelector1", "VoIPControlStatus1"}
+	if len(got) != len(want) {
+		t.Fatalf("aliases = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("aliases = %v, want %v (sorted, DEVICE left out)", got, want)
+		}
+	}
+	if parseTesiraAliases("") != nil || parseTesiraAliases(`"oops"`) != nil {
+		t.Error("unparseable replies give no tags")
+	}
+}

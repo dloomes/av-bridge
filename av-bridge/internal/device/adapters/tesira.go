@@ -146,6 +146,7 @@ type TesiraAdapter struct {
 	hostname         string
 	ipAddress        string
 	macAddress       string
+	instanceTags     []string // SESSION get aliases, at Connect
 
 	// Pending command response — single-request-at-a-time model matches TTP
 	respCh chan string
@@ -295,6 +296,16 @@ func (a *TesiraAdapter) fetchIdentity(ctx context.Context) {
 	hostname := getStr("hostname")
 	netStatus := getStr("networkStatus")
 
+	// The design's instance tags, for the portal's command and reading
+	// helpers. Fetched at every Connect, so a newly pushed design (which
+	// drops the session) is picked up when the adapter reconnects.
+	var tags []string
+	if resp, err := a.sendAndReceive(ctx, "SESSION get aliases", 3*time.Second); err == nil && strings.HasPrefix(resp, "+OK") {
+		tags = parseTesiraAliases(parseTTPValue(resp))
+	} else {
+		log.Debug("tesira aliases fetch failed", "err", err, "resp", resp)
+	}
+
 	// networkStatus is authoritative for MAC address; also acts as a
 	// secondary source for the primary IP when deviceInfo didn't give
 	// us one.
@@ -309,6 +320,7 @@ func (a *TesiraAdapter) fetchIdentity(ctx context.Context) {
 	a.hostname = hostname
 	a.ipAddress = ip
 	a.macAddress = mac
+	a.instanceTags = tags
 	// Serial number is stored under lastMetrics via Poll's dedicated
 	// probe; if deviceInfo gave us one earlier and the poll hasn't yet
 	// run, seed it here so the operator sees it on the very first
@@ -326,7 +338,8 @@ func (a *TesiraAdapter) fetchIdentity(ctx context.Context) {
 		"hostname", hostname,
 		"ip", ip,
 		"mac", mac,
-		"serial", serial)
+		"serial", serial,
+		"instance_tags", len(tags))
 }
 
 func (a *TesiraAdapter) Disconnect() error {
@@ -789,6 +802,10 @@ func (a *TesiraAdapter) Capabilities() device.Capabilities {
 	// specific label; that label is what shows up in Metrics on the
 	// telemetry payload, so it's what the routine builder should
 	// offer for check_metric.
+	a.identityMu.RLock()
+	caps.InstanceTags = a.instanceTags
+	a.identityMu.RUnlock()
+
 	if len(a.Cfg.Subscriptions) > 0 {
 		caps.Metrics = make([]string, 0, len(a.Cfg.Subscriptions))
 		for _, s := range a.Cfg.Subscriptions {
@@ -1057,6 +1074,38 @@ func setTTPReading(metrics map[string]any, label string, v any) {
 	if n, ok := tesiraActiveCalls(v); ok {
 		metrics[label+"_active_calls"] = n
 	}
+}
+
+// maxInstanceTags caps what's sent to the cloud; a large Tesira design
+// has a few hundred blocks.
+const maxInstanceTags = 2000
+
+// parseTesiraAliases decodes the list from SESSION get aliases
+// (+OK "list":["AudioMeter1" "DEVICE" "Level1" ...]) into sorted instance
+// tags. DEVICE (the device service, not a DSP block) and SESSION are left
+// out.
+func parseTesiraAliases(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if !strings.HasPrefix(raw, "[") {
+		return nil
+	}
+	var list []any
+	if err := tesiraUnmarshal(raw, &list); err != nil {
+		return nil
+	}
+	out := make([]string, 0, len(list))
+	for _, v := range list {
+		s, ok := v.(string)
+		if !ok || s == "" || s == "DEVICE" || s == "SESSION" {
+			continue
+		}
+		out = append(out, s)
+		if len(out) == maxInstanceTags {
+			break
+		}
+	}
+	sortStrings(out)
+	return out
 }
 
 // parseTTPValue extracts the value from a TTP +OK response. Tesira firmware

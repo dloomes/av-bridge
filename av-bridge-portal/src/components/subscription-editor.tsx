@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Gauge, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { COMMAND_NAME, normaliseCommandName } from "@/lib/command-template";
+import { InstanceTagList } from "@/components/command-editor";
 import type { Subscription } from "@/lib/types";
 
 // One editable row. `key` is a stable React key only; `rate` is carried
@@ -109,9 +110,12 @@ const GRID =
 interface Props {
   rows: SubscriptionRow[];
   onChange: (rows: SubscriptionRow[]) => void;
+  // The DSP's instance tags (empty until its Collector has connected);
+  // undefined for devices that aren't Tesiras.
+  instanceTags?: string[];
 }
 
-export function SubscriptionEditor({ rows, onChange }: Props) {
+export function SubscriptionEditor({ rows, onChange, instanceTags }: Props) {
   const update = (key: number, patch: Partial<SubscriptionRow>) =>
     onChange(rows.map((r) => (r.key === key ? { ...r, ...patch } : r)));
 
@@ -153,6 +157,7 @@ export function SubscriptionEditor({ rows, onChange }: Props) {
                   />
                   <input
                     aria-label="Instance tag"
+                    list="tesira-reading-tags"
                     className={`${inputClass} font-mono text-xs`}
                     value={r.tag}
                     onChange={(e) => update(r.key, { tag: e.target.value })}
@@ -215,6 +220,7 @@ export function SubscriptionEditor({ rows, onChange }: Props) {
       </div>
 
       <MeterHelper onAdd={addRows} taken={new Set(rows.map((r) => r.label.trim()))} />
+      {instanceTags && <InstanceTagList id="tesira-reading-tags" tags={instanceTags} />}
 
       <p className="text-[11px] text-muted-foreground">
         <strong>Snapshot</strong> reads the value on every poll, which suits meters.{" "}
@@ -321,6 +327,7 @@ function MeterHelper({
           <label htmlFor="meter-tag" className={labelClass}>Instance tag</label>
           <input
             id="meter-tag"
+            list="tesira-reading-tags"
             className={`${inputClass} font-mono text-xs`}
             value={tag}
             onChange={(e) => { setTag(e.target.value); setError(null); }}

@@ -56,6 +56,10 @@ type Capabilities struct {
 	Power    PowerCapability `json:"power"`
 	Commands []string        `json:"commands,omitempty"`
 	Metrics  []string        `json:"metrics,omitempty"`
+	// InstanceTags are the DSP block names in the device's running design
+	// (Tesira: SESSION get aliases), so the portal can offer them when
+	// commands and readings are set up.
+	InstanceTags []string `json:"instance_tags,omitempty"`
 }
 
 // PowerCapability describes whether the adapter can turn a device

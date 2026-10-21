@@ -1069,6 +1069,7 @@ export function DeviceForm({
             rows={form.commands}
             onChange={(rows) => set("commands", rows)}
             protocol={form.protocol}
+            instanceTags={form.protocol === "tesira" ? initial?.capabilities?.instance_tags ?? [] : undefined}
           />
         </div>
       </details>
@@ -1088,6 +1089,7 @@ export function DeviceForm({
             <SubscriptionEditor
               rows={form.subscriptions}
               onChange={(rows) => set("subscriptions", rows)}
+              instanceTags={form.protocol === "tesira" ? initial?.capabilities?.instance_tags ?? [] : undefined}
             />
           </div>
         </details>

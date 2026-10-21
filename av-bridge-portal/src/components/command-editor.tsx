@@ -114,9 +114,11 @@ interface Props {
   rows: CommandRow[];
   onChange: (rows: CommandRow[]) => void;
   protocol: string;
+  // The DSP's instance tags, once its Collector has connected to it.
+  instanceTags?: string[];
 }
 
-export function CommandEditor({ rows, onChange, protocol }: Props) {
+export function CommandEditor({ rows, onChange, protocol, instanceTags }: Props) {
   const isTesira = protocol === "tesira";
 
   const update = (key: number, patch: Partial<CommandRow>) =>
@@ -215,7 +217,7 @@ export function CommandEditor({ rows, onChange, protocol }: Props) {
         )}
       </div>
 
-      {isTesira && <TesiraBlockHelper onAdd={addGenerated} />}
+      {isTesira && <TesiraBlockHelper onAdd={addGenerated} instanceTags={instanceTags} />}
 
       <p className="text-[11px] text-muted-foreground">
         Put <code className="rounded bg-muted px-1">{"{name}"}</code> in a command to ask for a
@@ -230,8 +232,10 @@ export function CommandEditor({ rows, onChange, protocol }: Props) {
 // tag is the block name from Tesira software.
 function TesiraBlockHelper({
   onAdd,
+  instanceTags,
 }: {
   onAdd: (pairs: [string, string][], prefix?: string) => void;
+  instanceTags?: string[];
 }) {
   const [block, setBlock] = useState<TesiraBlock>("level");
   const [tag, setTag] = useState("");
@@ -298,6 +302,7 @@ function TesiraBlockHelper({
           <label htmlFor="tesira-tag" className={labelClass}>Instance tag</label>
           <input
             id="tesira-tag"
+            list="tesira-command-tags"
             className={`${inputClass} font-mono text-xs`}
             value={tag}
             onChange={(e) => { setTag(e.target.value); setError(null); }}
@@ -319,9 +324,29 @@ function TesiraBlockHelper({
         {spec.hint} If a name is already used, the new one is prefixed with the tag (e.g.{" "}
         <code>zone2_mute</code>).{spec.channel && " Use channel 0 for a ganged block."}
       </p>
+      {instanceTags && <InstanceTagList id="tesira-command-tags" tags={instanceTags} />}
       {error && (
         <p className="text-xs [color:hsl(var(--destructive))]">{error}</p>
       )}
     </div>
+  );
+}
+
+// InstanceTagList offers the DSP's instance tags to inputs with
+// list={id}, and says where they come from.
+export function InstanceTagList({ id, tags }: { id: string; tags: string[] }) {
+  return (
+    <>
+      <datalist id={id}>
+        {tags.map((t) => (
+          <option key={t} value={t} />
+        ))}
+      </datalist>
+      <p className="text-[11px] text-muted-foreground">
+        {tags.length > 0
+          ? `The instance tag box suggests the ${tags.length} block${tags.length === 1 ? "" : "s"} in the DSP's design, as its Collector last read them.`
+          : "Once the device is saved and its Collector has connected, the instance tag box suggests the blocks in the DSP's design."}
+      </p>
+    </>
   );
 }

@@ -43,6 +43,9 @@ export interface DeviceSummary {
     power: { on: boolean; off: boolean };
     commands?: string[];
     metrics?: string[];
+    // DSP block names from the device's running design (Tesira), offered
+    // in the device form's command and reading helpers.
+    instance_tags?: string[];
   };
 }
 
