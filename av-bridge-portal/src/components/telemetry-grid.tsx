@@ -1,11 +1,13 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Cloud, Gauge } from "lucide-react";
+import { Cloud, Fingerprint, Gauge, HeartPulse } from "lucide-react";
 import { formatMetricValue, prettyMetricKey } from "@/lib/utils";
 
 interface Props {
   metrics: Record<string, unknown> | null | undefined;
   lensMetrics?: Record<string, unknown> | null;
   error?: string;
+  // Keys shown elsewhere on the page (the Levels card), left out here.
+  exclude?: Set<string>;
 }
 
 // Keys never shown on the device page. Older Collector builds still send
@@ -13,9 +15,11 @@ interface Props {
 // 2026-09); hide them so the panel is tidy before those sites update.
 const HIDDEN_KEYS = new Set(["discovered_servers", "discovered_server_count", "ptp_info"]);
 
-// Identity first, in this order, whatever order the metrics arrive in
-// (Postgres jsonb reorders keys). Everything else follows alphabetically.
-const PREFERRED_ORDER = [
+// The device's own details are grouped: what it is, how it's doing, and
+// everything else it reports. Each group keeps this order, whatever order
+// the metrics arrive in (Postgres jsonb reorders keys); the rest follow
+// alphabetically.
+const IDENTITY = [
   "hostname",
   "part_number",
   "model",
@@ -24,19 +28,21 @@ const PREFERRED_ORDER = [
   "firmware_version",
   "ip_address",
   "mac_address",
-  "fault_count",
-  "faults",
-  "last_poll",
 ];
+const HEALTH = ["fault_count", "faults", "poll_error", "ttp_error", "last_poll"];
 
-function orderedEntries(metrics: Record<string, unknown> | null | undefined): [string, unknown][] {
+function orderedEntries(
+  metrics: Record<string, unknown> | null | undefined,
+  exclude?: Set<string>,
+): [string, unknown][] {
   if (!metrics) return [];
+  const order = [...IDENTITY, ...HEALTH];
   const rank = (k: string) => {
-    const i = PREFERRED_ORDER.indexOf(k);
-    return i === -1 ? PREFERRED_ORDER.length : i;
+    const i = order.indexOf(k);
+    return i === -1 ? order.length : i;
   };
   return Object.entries(metrics)
-    .filter(([k]) => !HIDDEN_KEYS.has(k))
+    .filter(([k]) => !HIDDEN_KEYS.has(k) && !exclude?.has(k))
     .sort(([a], [b]) => rank(a) - rank(b) || a.localeCompare(b));
 }
 
@@ -64,9 +70,12 @@ function structuredSummary(value: object): string {
   return n === 1 ? "1 field" : `${n} fields`;
 }
 
-export function TelemetryGrid({ metrics, lensMetrics, error }: Props) {
-  const direct = orderedEntries(metrics);
+export function TelemetryGrid({ metrics, lensMetrics, error, exclude }: Props) {
+  const direct = orderedEntries(metrics, exclude);
   const lens = orderedEntries(lensMetrics);
+  const identity = direct.filter(([k]) => IDENTITY.includes(k));
+  const health = direct.filter(([k]) => HEALTH.includes(k));
+  const other = direct.filter(([k]) => !IDENTITY.includes(k) && !HEALTH.includes(k));
 
   return (
     <Card>
@@ -87,12 +96,15 @@ export function TelemetryGrid({ metrics, lensMetrics, error }: Props) {
           </div>
         ) : (
           <>
-            <MetricsSection
-              icon={<Gauge className="h-3.5 w-3.5" />}
-              label="Direct from device"
-              entries={direct}
-              emptyHint="No direct metrics."
-            />
+            {identity.length > 0 && (
+              <MetricsSection icon={<Fingerprint className="h-3.5 w-3.5" />} label="Identity" entries={identity} emptyHint="" />
+            )}
+            {health.length > 0 && (
+              <MetricsSection icon={<HeartPulse className="h-3.5 w-3.5" />} label="Health" entries={health} emptyHint="" />
+            )}
+            {other.length > 0 && (
+              <MetricsSection icon={<Gauge className="h-3.5 w-3.5" />} label="Readings" entries={other} emptyHint="" />
+            )}
             {lens.length > 0 && (
               <MetricsSection
                 icon={<Cloud className="h-3.5 w-3.5" />}

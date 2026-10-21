@@ -24,7 +24,7 @@ import { CommandPanel } from "@/components/command-panel";
 import { TelemetryGrid } from "@/components/telemetry-grid";
 import { PowerBadge } from "@/components/power-badge";
 import { CallBadge } from "@/components/call-badge";
-import { EventFeed } from "@/components/event-feed";
+import { LevelsCard, levelKeys } from "@/components/levels-card";
 import { DeviceEventHistory } from "@/components/device-event-history";
 import { Modal } from "@/components/modal";
 import { DeviceForm } from "@/components/device-form";
@@ -361,14 +361,12 @@ export default function DeviceDetailPage() {
               error={
                 telemetry.error?.message ?? telemetry.data?.error ?? undefined
               }
+              exclude={levelKeys(device.subscriptions)}
             />
-            {canSendCommand && <CommandPanel device={device} telemetry={telemetry.data} />}
+            <LevelsCard subscriptions={device.subscriptions ?? []} metrics={telemetry.data?.metrics} />
           </div>
-          <aside className="space-y-6">
-            <EventFeed
-              deviceId={device.id}
-              emptyHint="No events for this device yet."
-            />
+          <aside className="space-y-6 min-w-0">
+            {canSendCommand && <CommandPanel device={device} telemetry={telemetry.data} />}
             <DeviceEventHistory deviceId={device.id} />
           </aside>
         </div>
