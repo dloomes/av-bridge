@@ -863,6 +863,20 @@ func (h *Handler) ImportAssets(w http.ResponseWriter, r *http.Request) {
 				})
 				continue
 			}
+			if _, err := parseDate(row.PurchaseDate); err != nil {
+				res.Errors = append(res.Errors, importRowError{
+					Row: row.Row, AssetTag: row.AssetTag,
+					Message: "purchase_date must be YYYY-MM-DD",
+				})
+				continue
+			}
+			if _, err := parseDate(row.WarrantyEnd); err != nil {
+				res.Errors = append(res.Errors, importRowError{
+					Row: row.Row, AssetTag: row.AssetTag,
+					Message: "warranty_end must be YYYY-MM-DD",
+				})
+				continue
+			}
 			if row.Building != "" || row.Room != "" {
 				if row.Building == "" || row.Room == "" {
 					res.Errors = append(res.Errors, importRowError{
@@ -1030,6 +1044,11 @@ func parseAssetCSV(r io.Reader) ([]csvAssetRow, error) {
 	}
 	idx := map[string]int{}
 	for i, h := range header {
+		// Excel's "CSV UTF-8" starts the file with a byte-order mark,
+		// which would otherwise stick to the first column's name.
+		if i == 0 {
+			h = strings.TrimPrefix(h, string(rune(0xFEFF)))
+		}
 		idx[strings.ToLower(strings.TrimSpace(h))] = i
 	}
 	// Only name + category are strictly required. Every other column
