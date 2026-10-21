@@ -30,6 +30,11 @@ export interface DeviceSummary {
   // The device's own power state as its adapter reports it (e.g. Sony
   // "active" / "standby"), when it reports one. See PowerBadge.
   power_status?: string;
+  // A codec's calls as its adapter reports them, when it does: the number
+  // of calls, and the first call's state ("idle", "connected",
+  // "ringing"...). See CallBadge.
+  active_calls?: number;
+  call_state?: string;
   tags?: Record<string, string>;
   // Adapter-declared capabilities. Populated by the ingest handler
   // from the bridge's per-device Capabilities() output. Used by the

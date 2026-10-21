@@ -420,6 +420,11 @@ func (h *Handler) ListDevices(w http.ResponseWriter, r *http.Request) {
 		// reports it (e.g. Sony "active" / "standby"); empty when it
 		// doesn't report one. The portal shows it as a pill.
 		PowerStatus string `json:"power_status,omitempty"`
+		// ActiveCalls and CallState: a codec's calls, as its adapter
+		// reports them (call_state is e.g. "idle", "connected",
+		// "ringing"); absent when it doesn't. The portal shows a call pill.
+		ActiveCalls *int   `json:"active_calls,omitempty"`
+		CallState   string `json:"call_state,omitempty"`
 	}
 	out := []item{}
 	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
@@ -443,7 +448,10 @@ func (h *Handler) ListDevices(w http.ResponseWriter, r *http.Request) {
 			       COALESCE(c.local_url, ''),
 			       d.tags,
 			       d.capabilities,
-			       COALESCE(d.latest_metrics->>'power_status', '')
+			       COALESCE(d.latest_metrics->>'power_status', ''),
+			       CASE WHEN jsonb_typeof(d.latest_metrics->'active_calls') = 'number'
+			            THEN (d.latest_metrics->>'active_calls')::numeric::int END,
+			       COALESCE(d.latest_metrics->>'call_state', '')
 			  FROM devices d
 			  LEFT JOIN rooms r      ON r.id   = d.room_id
 			  LEFT JOIN buildings b  ON b.id   = r.building_id
@@ -470,7 +478,8 @@ func (h *Handler) ListDevices(w http.ResponseWriter, r *http.Request) {
 			if err := rows.Scan(&it.ID, &it.Name, &it.Type, &it.Protocol,
 				&it.Location, &it.Region, &it.LocationName, &it.Building,
 				&it.RoomID, &it.CollectorID, &it.Address, &it.Status,
-				&it.CollectorStatus, &it.CollectorLocalURL, &tags, &caps, &it.PowerStatus); err != nil {
+				&it.CollectorStatus, &it.CollectorLocalURL, &tags, &caps, &it.PowerStatus,
+				&it.ActiveCalls, &it.CallState); err != nil {
 				return err
 			}
 			if len(tags) > 0 {

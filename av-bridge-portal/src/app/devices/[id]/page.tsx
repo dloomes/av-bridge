@@ -23,6 +23,7 @@ import { DeviceIcon } from "@/components/device-icon";
 import { CommandPanel } from "@/components/command-panel";
 import { TelemetryGrid } from "@/components/telemetry-grid";
 import { PowerBadge } from "@/components/power-badge";
+import { CallBadge } from "@/components/call-badge";
 import { EventFeed } from "@/components/event-feed";
 import { DeviceEventHistory } from "@/components/device-event-history";
 import { Modal } from "@/components/modal";
@@ -170,6 +171,12 @@ export default function DeviceDetailPage() {
               <PowerBadge
                 protocol={device.protocol}
                 powerStatus={telemetry.data?.metrics?.power_status}
+                status={device.status}
+              />
+              <CallBadge
+                type={device.type}
+                activeCalls={telemetry.data?.metrics?.active_calls}
+                callState={telemetry.data?.metrics?.call_state}
                 status={device.status}
               />
             </div>

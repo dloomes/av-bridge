@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { PowerBadge } from "@/components/power-badge";
+import { CallBadge } from "@/components/call-badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -469,6 +470,13 @@ export default function DevicesPage() {
                             <PowerBadge
                               protocol={d.protocol}
                               powerStatus={d.power_status}
+                              status={d.status}
+                              className="ml-1.5 uppercase text-[10px]"
+                            />
+                            <CallBadge
+                              type={d.type}
+                              activeCalls={d.active_calls}
+                              callState={d.call_state}
                               status={d.status}
                               className="ml-1.5 uppercase text-[10px]"
                             />
