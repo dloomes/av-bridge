@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -27,6 +28,7 @@ import (
 	"github.com/dloomes/av-bridge/internal/config"
 	"github.com/dloomes/av-bridge/internal/ha"
 	"github.com/dloomes/av-bridge/internal/hub"
+	"github.com/dloomes/av-bridge/internal/logship"
 	"github.com/dloomes/av-bridge/internal/store"
 	"github.com/dloomes/av-bridge/internal/tunnel"
 	"github.com/dloomes/av-bridge/internal/update"
@@ -104,10 +106,7 @@ func main() {
 		return
 	}
 
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	}))
-	slog.SetDefault(logger)
+	slog.SetDefault(newLogger(slog.LevelInfo, *configPath))
 
 	// The kardianos/service library wants the Program interface hooked
 	// up before we've done any config work — install/uninstall don't
@@ -327,7 +326,7 @@ func (p *program) run(ctx context.Context) error {
 	default:
 		lvl = slog.LevelInfo
 	}
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: lvl})))
+	slog.SetDefault(newLogger(lvl, p.configPath))
 
 	st, err := store.New(cfg.Hub.StorePath)
 	if err != nil {
@@ -515,4 +514,33 @@ func (p *program) run(ctx context.Context) error {
 		return errRestartForUpdate
 	}
 	return nil
+}
+
+var (
+	logFileOnce sync.Once
+	logFile     io.Writer
+)
+
+// newLogger writes JSON logs to stdout at level and copies Info and above
+// to logship.Default, which the cloud client sends with each push. On
+// Windows it also writes logs/av-bridge.log next to the config (10 MB,
+// five old files kept), because a Windows service's stdout goes nowhere.
+func newLogger(level slog.Level, configPath string) *slog.Logger {
+	var out io.Writer = os.Stdout
+	if runtime.GOOS == "windows" {
+		logFileOnce.Do(func() {
+			path := filepath.Join(filepath.Dir(configPath), "logs", "av-bridge.log")
+			if f, err := logship.OpenRotatingFile(path, 10<<20, 5); err == nil {
+				logFile = f
+			} else {
+				fmt.Fprintf(os.Stderr, "log file %s: %v\n", path, err)
+			}
+		})
+		if logFile != nil {
+			// File first: as a service, writing to stdout can fail, and
+			// MultiWriter stops at the first error.
+			out = io.MultiWriter(logFile, os.Stdout)
+		}
+	}
+	return slog.New(logship.NewHandler(slog.NewJSONHandler(out, &slog.HandlerOptions{Level: level}), logship.Default))
 }

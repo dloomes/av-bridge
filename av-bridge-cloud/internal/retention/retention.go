@@ -48,6 +48,8 @@ var Rules = []Rule{
 		     (SELECT s.retention_days FROM nightly_schedule s WHERE s.customer_id = t.customer_id), 90))`},
 	{Name: "remote access sessions (90 days after ending)", Table: "remote_session",
 		Where: `t.ended_at < now() - interval '90 days'`},
+	{Name: "Collector logs (30 days)", Table: "collector_logs",
+		Where: `t.inserted_at < now() - interval '30 days'`},
 }
 
 // Service runs retention passes.

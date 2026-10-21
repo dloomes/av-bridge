@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/dloomes/av-bridge/internal/config"
 	"github.com/dloomes/av-bridge/internal/device"
+	"github.com/dloomes/av-bridge/internal/logship"
 )
 
 func TestSpoolBounds(t *testing.T) {
@@ -192,5 +194,36 @@ func TestBacklogBlocksNewDataFromOvertaking(t *testing.T) {
 	got := fc.deviceOrder()
 	if len(got) != 2 || got[0] != "old" || got[1] != "new" {
 		t.Fatalf("delivered %v, want [old new]", got)
+	}
+}
+
+// Log lines go with the next push, even when there's no telemetry, and are
+// spooled through an outage like everything else.
+func TestLogsAreSentAndSpooled(t *testing.T) {
+	fc := &fakeCloud{}
+	srv := httptest.NewServer(fc)
+	defer srv.Close()
+	ctx := context.Background()
+	c := newTestClient(t, srv.URL, t.TempDir())
+	logship.Default.Take()
+	log := slog.New(logship.NewHandler(slog.NewJSONHandler(io.Discard, nil), logship.Default))
+
+	fc.down.Store(true)
+	log.Warn("device unreachable", "device", "dsp-1")
+	c.flush(ctx)
+	fc.down.Store(false)
+	log.Info("device connected", "device", "dsp-1")
+	c.flush(ctx)
+
+	fc.mu.Lock()
+	defer fc.mu.Unlock()
+	var msgs []string
+	for _, p := range fc.got {
+		for _, r := range p.Logs {
+			msgs = append(msgs, r.Msg)
+		}
+	}
+	if len(msgs) != 2 || msgs[0] != "device unreachable" || msgs[1] != "device connected" {
+		t.Fatalf("logs delivered = %v, want the outage line then the new one", msgs)
 	}
 }

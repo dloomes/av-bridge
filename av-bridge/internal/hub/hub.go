@@ -235,6 +235,9 @@ func (h *Hub) Reconcile(want []config.DeviceConfig) {
 	for _, dcfg := range toSpawn {
 		h.spawnDevice(dcfg)
 	}
+	if len(toSpawn) > 0 {
+		slog.Info("reconcile: started devices", "count", len(toSpawn))
+	}
 }
 
 // spawnDevice creates an adapter, registers it, and starts its manage
@@ -254,7 +257,7 @@ func (h *Hub) spawnDevice(dcfg config.DeviceConfig) {
 	h.mu.Lock()
 	h.devices[dcfg.ID] = &DeviceEntry{Dev: dev, Cfg: dcfg, Cancel: cancel, polls: polls}
 	h.mu.Unlock()
-	slog.Info("reconcile: starting device", "device", dcfg.ID, "protocol", dcfg.Protocol)
+	slog.Debug("reconcile: starting device", "device", dcfg.ID, "protocol", dcfg.Protocol)
 	go h.manageDevice(devCtx, dev, polls)
 }
 
@@ -274,7 +277,7 @@ func (h *Hub) manageDevice(ctx context.Context, dev device.Device, polls <-chan 
 	// Restore persisted state
 	state := h.store.GetDevice(info.ID)
 	if state.LastStatus != "" {
-		log.Info("restored device state", "last_status", state.LastStatus, "last_seen", state.LastSeen)
+		log.Debug("restored device state", "last_status", state.LastStatus, "last_seen", state.LastSeen)
 	}
 
 	// Connect with exponential backoff. On every failed attempt push a
@@ -288,11 +291,15 @@ func (h *Hub) manageDevice(ctx context.Context, dev device.Device, polls <-chan 
 	// The cloud has a 15-minute staleness safety net that would also
 	// flip the pill eventually; this fixes it in seconds and lets
 	// operators see the true state without waiting.
+	// Repeated failures are logged once, then every 15 minutes, then on
+	// recovery (see failureLog).
+	connects := newFailureLog("connect")
+	polling := newFailureLog("poll")
 	backoff := 5 * time.Second
 	for {
-		log.Info("connecting to device")
+		log.Debug("connecting to device")
 		if err := dev.Connect(ctx); err != nil {
-			log.Warn("connection failed, retrying", "error", err, "backoff", backoff)
+			connects.failed(log, err)
 			h.cloud.EnqueueTelemetry(newOfflineHeartbeat(dev, err))
 			if !waitBackoff(ctx, backoff, polls, func() *device.Telemetry { return newOfflineHeartbeat(dev, err) }) {
 				return
@@ -303,7 +310,9 @@ func (h *Hub) manageDevice(ctx context.Context, dev device.Device, polls <-chan 
 			continue
 		}
 		backoff = 5 * time.Second
-		log.Info("device connected")
+		if !connects.ok(log) {
+			log.Debug("device connected")
+		}
 		break
 	}
 
@@ -328,12 +337,12 @@ func (h *Hub) manageDevice(ctx context.Context, dev device.Device, polls <-chan 
 			log.Debug("event received", "type", e.EventType)
 
 		case <-pollTicker.C:
-			h.pollOnce(ctx, dev, log)
+			h.pollOnce(ctx, dev, log, polling)
 
 		case req := <-polls:
 			// On demand (the cloud's _poll command): a fresh reading for
 			// a Room Readiness check, without waiting for the next tick.
-			tel := h.pollOnce(ctx, dev, log)
+			tel := h.pollOnce(ctx, dev, log, polling)
 			if tel == nil {
 				tel = newOfflineHeartbeat(dev, errors.New("poll failed"))
 			}
@@ -341,11 +350,14 @@ func (h *Hub) manageDevice(ctx context.Context, dev device.Device, polls <-chan 
 
 		case <-heartbeat.C:
 			if dev.Status() == device.StatusOffline {
-				log.Info("device offline, attempting reconnect")
+				log.Debug("device offline, attempting reconnect")
 				if err := dev.Connect(ctx); err != nil {
-					log.Warn("reconnect failed", "error", err)
-				} else {
-					log.Info("device reconnected")
+					connects.failed(log, err)
+				} else if !connects.ok(log) {
+					// Debug: for adapters whose Connect can't fail (HTTP),
+					// an unreachable device "reconnects" every heartbeat;
+					// its polls going ok again is the recovery that's logged.
+					log.Debug("device reconnected")
 				}
 			} else if hb, ok := dev.(device.Heartbeater); ok {
 				// Proactive keep-alive for stateful adapters (Poly session,
@@ -364,12 +376,13 @@ func (h *Hub) manageDevice(ctx context.Context, dev device.Device, polls <-chan 
 
 // pollOnce polls the device, sends the reading to the cloud and keeps the
 // local state. Returns nil if the poll failed outright.
-func (h *Hub) pollOnce(ctx context.Context, dev device.Device, log *slog.Logger) *device.Telemetry {
+func (h *Hub) pollOnce(ctx context.Context, dev device.Device, log *slog.Logger, failures *failureLog) *device.Telemetry {
 	tel, err := dev.Poll(ctx)
 	if err != nil {
-		log.Warn("poll error", "error", err)
+		failures.failed(log, err)
 		return nil
 	}
+	failures.ok(log)
 	// Attach static capabilities from the adapter — done here
 	// (once per poll) rather than in every adapter's Poll so
 	// each vendor implementation stays focused on state, not

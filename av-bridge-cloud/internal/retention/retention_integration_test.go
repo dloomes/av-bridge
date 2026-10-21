@@ -87,7 +87,9 @@ func TestRetentionRules(t *testing.T) {
 	cmd := `INSERT INTO commands (customer_id, collector_id, device_id, name, status, submitted_at) VALUES ($1, $2, $3, 'power_on', $4, now() - $5::interval) RETURNING id::text`
 	add("commands", true, cmd, cust, col, dev, "succeeded", "91 days")
 	add("commands", false, cmd, cust, col, dev, "succeeded", "89 days")
-	add("commands", false, cmd, cust, col, dev, "pending", "200 days") // never finished: kept
+	// Never finished: kept. In progress and never claimed, so the commands
+	// sweeper (whose tests share this database) leaves it alone too.
+	add("commands", false, cmd, cust, col, dev, "in_progress", "200 days")
 
 	run := `INSERT INTO nightly_run (customer_id, room_id, phase, status, scheduled_at) VALUES ($1, $2, 'ready', $3, now() - $4::interval) RETURNING id::text`
 	add("nightly_run", true, run, cust, room, "succeeded", "91 days")  // default 90
@@ -112,6 +114,11 @@ func TestRetentionRules(t *testing.T) {
 	if _, err := admin.Exec(ctx, `DELETE FROM audit_log WHERE false`); err == nil {
 		t.Error("app_admin can delete from audit_log directly; it should stay append-only")
 	}
+
+	clog := `INSERT INTO collector_logs (customer_id, collector_id, ts, level, msg, inserted_at)
+	         VALUES ($1, $2, now(), 'INFO', 'x', now() - $3::interval) RETURNING id::text`
+	add("collector_logs", true, clog, cust, col, "31 days")
+	add("collector_logs", false, clog, cust, col, "29 days")
 
 	deadline := time.Now().Add(time.Minute)
 	for _, r := range Rules {

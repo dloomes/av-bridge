@@ -7,7 +7,9 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/dloomes/av-bridge-cloud/internal/auth"
 	"github.com/dloomes/av-bridge-cloud/internal/db"
@@ -67,6 +69,15 @@ type payloadDTO struct {
 	BridgeOS        string         `json:"bridge_os,omitempty"`
 	Telemetry       []telemetryDTO `json:"telemetry"`
 	Events          []eventDTO     `json:"events"`
+	// Logs: the Collector's own log since its last push (bridge v1.0.55+).
+	Logs []logDTO `json:"logs"`
+}
+
+type logDTO struct {
+	TS    time.Time      `json:"ts"`
+	Level string         `json:"level"`
+	Msg   string         `json:"msg"`
+	Attrs map[string]any `json:"attrs"`
 }
 
 type Handler struct {
@@ -189,6 +200,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		// Logs are the reporting Collector's own (a standby's lines are
+		// its own, not its primary's).
+		if err := insertCollectorLogs(ctx, tx, col.CustomerID, col.ID, p.Logs); err != nil {
+			return err
+		}
+
 		_, err := tx.Exec(ctx,
 			`UPDATE collectors SET last_seen_at = now(), status = 'online' WHERE id = $1`, col.ID)
 		return err
@@ -229,6 +246,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		"accepted":  true,
 		"telemetry": len(p.Telemetry),
 		"events":    len(p.Events),
+		"logs":      len(p.Logs),
 	})
 }
 
@@ -369,6 +387,74 @@ func insertEvent(ctx context.Context, tx pgx.Tx, customerID, deviceID string, e 
 }
 
 // ---- helpers ----
+
+// Limits on what one push can add, matching the Collector's own (bridge
+// internal/logship), so a misbehaving Collector can't flood the table.
+const (
+	maxLogsPerPush = 5000
+	maxLogMsg      = 2000
+	maxLogAttrs    = 4096
+)
+
+// insertCollectorLogs stores a push's log lines in one statement.
+func insertCollectorLogs(ctx context.Context, tx pgx.Tx, customerID, collectorID string, logs []logDTO) error {
+	if len(logs) == 0 {
+		return nil
+	}
+	if len(logs) > maxLogsPerPush {
+		logs = logs[len(logs)-maxLogsPerPush:]
+	}
+	now := time.Now().UTC()
+	ts := make([]time.Time, len(logs))
+	levels := make([]string, len(logs))
+	msgs := make([]string, len(logs))
+	attrs := make([]any, len(logs))
+	for i, l := range logs {
+		ts[i] = l.TS
+		if ts[i].IsZero() {
+			ts[i] = now
+		}
+		levels[i] = logLevel(l.Level)
+		msgs[i] = truncateUTF8(l.Msg, maxLogMsg)
+		if len(l.Attrs) > 0 {
+			if b, err := json.Marshal(l.Attrs); err == nil && len(b) <= maxLogAttrs {
+				attrs[i] = string(b)
+			}
+		}
+	}
+	_, err := tx.Exec(ctx, `
+		INSERT INTO collector_logs (customer_id, collector_id, ts, level, msg, attrs)
+		SELECT $1, $2, l.ts, l.level, l.msg, l.attrs
+		  FROM unnest($3::timestamptz[], $4::text[], $5::text[], $6::jsonb[]) AS l(ts, level, msg, attrs)`,
+		customerID, collectorID, ts, levels, msgs, attrs)
+	return err
+}
+
+// logLevel maps slog's level names (which can carry an offset, "WARN+2")
+// onto the four the table holds.
+func logLevel(s string) string {
+	switch {
+	case strings.HasPrefix(s, "ERROR"):
+		return "ERROR"
+	case strings.HasPrefix(s, "WARN"):
+		return "WARN"
+	case strings.HasPrefix(s, "DEBUG"):
+		return "DEBUG"
+	default:
+		return "INFO"
+	}
+}
+
+func truncateUTF8(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	s = s[:n]
+	for len(s) > 0 && !utf8.ValidString(s) {
+		s = s[:len(s)-1]
+	}
+	return s + "…"
+}
 
 func nilIfEmpty(s string) any {
 	if s == "" {

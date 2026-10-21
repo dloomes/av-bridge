@@ -18,6 +18,7 @@ import (
 	"github.com/dloomes/av-bridge/internal/config"
 	"github.com/dloomes/av-bridge/internal/device"
 	"github.com/dloomes/av-bridge/internal/hostinfo"
+	"github.com/dloomes/av-bridge/internal/logship"
 )
 
 // Payload is the envelope sent to the cloud webhook.
@@ -39,6 +40,9 @@ type Payload struct {
 	BridgeOS  string              `json:"bridge_os,omitempty"`
 	Telemetry []*device.Telemetry `json:"telemetry,omitempty"`
 	Events    []*device.Event     `json:"events,omitempty"`
+	// Logs is the Collector's own log since the last push, Info and above
+	// (see logship). Older clouds ignore it.
+	Logs []logship.Record `json:"logs,omitempty"`
 }
 
 // Client batches telemetry and events and pushes them to the cloud portal.
@@ -151,7 +155,9 @@ func (c *Client) flush(ctx context.Context) {
 	for attempt := 1; attempt <= c.cfg.RetryAttempts; attempt++ {
 		err := c.send(ctx, body)
 		if err == nil {
-			slog.Info("cloud push succeeded", "telemetry", nTel, "events", nEv)
+			// Debug, not Info: every 30 seconds, and Info lines are sent
+			// to the cloud with the next push.
+			slog.Debug("cloud push succeeded", "telemetry", nTel, "events", nEv)
 			return
 		}
 		lastErr = err
@@ -209,7 +215,9 @@ func (c *Client) takePayload() (body []byte, nTel, nEv int, err error) {
 	c.pendingEv = nil
 	c.eventsMu.Unlock()
 
-	if len(tel) == 0 && len(evs) == 0 {
+	logs := logship.Default.Take()
+
+	if len(tel) == 0 && len(evs) == 0 && len(logs) == 0 {
 		return nil, 0, 0, nil
 	}
 
@@ -223,6 +231,7 @@ func (c *Client) takePayload() (body []byte, nTel, nEv int, err error) {
 		BridgeOS:        hostinfo.OS(),
 		Telemetry:       tel,
 		Events:          evs,
+		Logs:            logs,
 	}
 	body, err = json.Marshal(payload)
 	if err != nil {

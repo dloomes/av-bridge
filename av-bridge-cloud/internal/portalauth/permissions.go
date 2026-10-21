@@ -55,6 +55,8 @@ const (
 	// stand up new bridges (which is more sensitive: the bridge is a
 	// long-lived HMAC-authenticated identity).
 	PermCollectorCRUD = "collector.crud"
+	// PermViewCollectorLogs reads the logs Collectors send to the cloud.
+	PermViewCollectorLogs = "view.collector_logs"
 	// device.remote_access — open a device's web interface from the
 	// portal, relayed through its collector (internal/remote). Its own
 	// key: it reaches into the customer's network.
@@ -147,6 +149,7 @@ var KnownPermissions = map[string]struct{}{
 	PermDashboardShare:     {},
 	PermHierarchyCRUD:      {},
 	PermCollectorCRUD:      {},
+	PermViewCollectorLogs:  {},
 	PermNotificationCRUD:   {},
 	PermNotificationTest:   {},
 	PermFirmwareTargetCRUD: {},

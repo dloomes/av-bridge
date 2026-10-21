@@ -56,6 +56,7 @@ export const PERMISSIONS: readonly PermissionDef[] = [
   { key: "hierarchy.crud",    title: "Manage locations",     description: "Regions, locations, buildings, rooms — full CRUD.",         category: "Fleet management" },
   { key: "business_unit.crud", title: "Manage business units", description: "Create, rename and remove business units, and assign regions to them. Only applies when business units are switched on for the tenant.", category: "Fleet management" },
   { key: "collector.crud",    title: "Manage collectors",    description: "Pre-provision on-prem bridges from the portal and issue enrollment tokens for site setup.", category: "Fleet management" },
+  { key: "view.collector_logs", title: "View Collector logs", description: "Read the logs Collectors send to the cloud, kept for 30 days.", category: "Fleet management" },
 
   // Notifications
   { key: "notification.crud", title: "Manage notification channels", description: "Add, edit, and remove email / Teams / webhook channels.",       category: "Notifications" },

@@ -796,6 +796,36 @@ async function pollCommandUntilTerminal(
   );
 }
 
+export interface CollectorLogLine {
+  id: number;
+  ts: string;
+  level: "DEBUG" | "INFO" | "WARN" | "ERROR";
+  msg: string;
+  attrs?: Record<string, unknown>;
+}
+
+export interface CollectorLogPage {
+  collector: { id: string; name: string };
+  logs: CollectorLogLine[];
+  next_before: number | null;
+}
+
+export interface CollectorLogFilter {
+  level?: "info" | "warn" | "error";
+  q?: string;
+  before?: number;
+  limit?: number;
+}
+
+function collectorLogQuery(f: CollectorLogFilter): string {
+  const p = new URLSearchParams();
+  if (f.level) p.set("level", f.level);
+  if (f.q?.trim()) p.set("q", f.q.trim());
+  if (f.before) p.set("before", String(f.before));
+  if (f.limit) p.set("limit", String(f.limit));
+  return p.toString();
+}
+
 export const api = {
   // -- auth --------------------------------------------------------------------
   //
@@ -1246,6 +1276,21 @@ export const api = {
 
   listCollectors: (signal?: AbortSignal) =>
     request<CollectorSummary[]>("/api/v1/collectors", { signal }),
+
+  // A Collector's own log, newest first, a page at a time (pass the
+  // previous page's next_before as `before`).
+  collectorLogs: (id: string, f: CollectorLogFilter, signal?: AbortSignal) =>
+    request<CollectorLogPage>(
+      `/api/v1/collectors/${encodeURIComponent(id)}/logs?${collectorLogQuery(f)}`,
+      { signal }
+    ),
+
+  // The matching lines as a text file, oldest first (up to 50,000).
+  collectorLogsText: (id: string, f: CollectorLogFilter, signal?: AbortSignal) =>
+    requestText(
+      `/api/v1/collectors/${encodeURIComponent(id)}/logs?${collectorLogQuery({ ...f, before: undefined })}&format=text`,
+      { signal }
+    ),
 
   // Pre-provision a collector + mint an enrollment token in one call.
   // Response includes the raw token — display once, don't re-fetch.

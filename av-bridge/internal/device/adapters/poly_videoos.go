@@ -218,7 +218,7 @@ func (a *PolyVideoOSAdapter) fetchDeviceInfo(ctx context.Context) {
 		empty := a.softwareVersion == "" && a.serialNumber == "" && a.ipAddress == ""
 		a.infoMu.RUnlock()
 		if empty {
-			slog.Info("poly /rest/system raw body", "device", a.Cfg.ID, "body", string(body))
+			slog.Debug("poly /rest/system raw body", "device", a.Cfg.ID, "body", string(body))
 		}
 
 		var sys struct {
@@ -268,10 +268,10 @@ func (a *PolyVideoOSAdapter) fetchDeviceInfo(ctx context.Context) {
 		if serial != "" {
 			ldev, err := a.lens.LookupBySerial(ctx, serial)
 			if err != nil {
-				slog.Info("poly lens lookup failed",
+				slog.Debug("poly lens lookup failed",
 					"device", a.Cfg.ID, "serial", serial, "error", err)
 			} else if ldev == nil {
-				slog.Info("poly lens lookup returned no match",
+				slog.Debug("poly lens lookup returned no match",
 					"device", a.Cfg.ID, "serial", serial)
 			} else {
 				a.lensMu.Lock()

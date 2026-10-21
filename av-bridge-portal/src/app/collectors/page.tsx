@@ -16,6 +16,7 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  ScrollText,
   Server,
   Signal,
   Trash2,
@@ -65,6 +66,7 @@ const SYNC_TONE: Record<string, Tone> = {
 export default function CollectorsPage() {
   const session = useSession();
   const canManage = hasPermission(session.user, "collector.crud");
+  const canViewLogs = !!session.user?.is_vendor || hasPermission(session.user, "view.collector_logs");
 
   const fetcher = useCallback(
     (signal: AbortSignal) => api.listCollectors(signal),
@@ -293,6 +295,15 @@ export default function CollectorsPage() {
                               <div className="text-xs text-muted-foreground mt-0.5 font-mono">
                                 {c.bridge_collector_id}
                               </div>
+                            )}
+                            {canViewLogs && (
+                              <Link
+                                href={`/collectors/${c.id}/logs`}
+                                className="mt-1 inline-flex items-center gap-1 text-xs text-primary hover:underline"
+                              >
+                                <ScrollText aria-hidden="true" className="h-3 w-3" />
+                                Logs
+                              </Link>
                             )}
                           </td>
                           <td className="px-4 py-3.5 align-top">

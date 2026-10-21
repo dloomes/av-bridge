@@ -233,6 +233,7 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 		// listings the sidebar uses to render its location tree.
 		mux.Handle("GET /api/v1/status", wrapPerm(portalauth.PermViewDashboard, portal.Portal.Status))
 		mux.Handle("GET /api/v1/collectors", wrapPerm(portalauth.PermViewDashboard, portal.Portal.ListCollectors))
+		mux.Handle("GET /api/v1/collectors/{id}/logs", wrapPerm(portalauth.PermViewCollectorLogs, portal.Portal.ListCollectorLogs))
 		// Pre-provisioning + enrollment (collector-enroll v1). Gated by
 		// collector.crud — customer admins get it out of the box, vendor
 		// bypass rides the standard middleware path.
