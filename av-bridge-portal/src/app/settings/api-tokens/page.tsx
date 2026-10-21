@@ -84,16 +84,16 @@ export default function APITokensPage() {
   );
 
   return (
-    <div className="min-h-screen">
+    <div className="min-h-app">
       <div className="max-w-5xl mx-auto p-6 space-y-4">
-        <header className="flex items-center justify-between">
+        <header className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold">API tokens</h1>
             <p className="text-sm text-muted-foreground">
               Programmatic access to <code className="text-xs bg-muted px-1 rounded">/pub/v1</code>. Read-only in this release.
             </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Button
               variant="ghost"
               asChild

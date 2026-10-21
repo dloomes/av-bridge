@@ -60,7 +60,7 @@ export default function ReportsPage() {
   const [days, setDays] = useState<Window>(7);
 
   return (
-    <div className="flex h-screen flex-col">
+    <div className="flex h-app flex-col">
       <header className="flex flex-wrap items-center justify-between gap-3 border-b bg-card/50 px-6 py-4">
         <div>
           <h1 className="text-xl font-semibold">Reports</h1>
@@ -195,7 +195,7 @@ function UptimeReport({ days }: { days: Window }) {
       </div>
 
       <Card>
-        <CardContent className="p-0 overflow-x-auto">
+        <CardContent className="p-0 overflow-x-auto relative">
           <table className="w-full text-sm">
             <thead className="border-b bg-muted/30 text-xs uppercase tracking-wide text-muted-foreground">
               <tr>
@@ -321,7 +321,7 @@ function UsageReport({ days }: { days: Window }) {
       </div>
 
       <Card>
-        <CardContent className="p-0 overflow-x-auto">
+        <CardContent className="p-0 overflow-x-auto relative">
           <table className="w-full text-sm">
             <thead className="border-b bg-muted/30 text-xs uppercase tracking-wide text-muted-foreground">
               <tr>
@@ -460,7 +460,7 @@ function EventsReport({ days }: { days: Window }) {
       </div>
 
       <Card>
-        <CardContent className="p-0 overflow-x-auto">
+        <CardContent className="p-0 overflow-x-auto relative">
           <table className="w-full text-sm">
             <thead className="border-b bg-muted/30 text-xs uppercase tracking-wide text-muted-foreground">
               <tr>
@@ -597,7 +597,7 @@ function WarrantyReport() {
       </div>
 
       <Card>
-        <CardContent className="p-0 overflow-x-auto">
+        <CardContent className="p-0 overflow-x-auto relative">
           <table className="w-full text-sm">
             <thead className="border-b bg-muted/30 text-xs uppercase tracking-wide text-muted-foreground">
               <tr>
@@ -722,7 +722,7 @@ function PowerReport({ days }: { days: Window }) {
       </div>
 
       <Card>
-        <CardContent className="p-0 overflow-x-auto">
+        <CardContent className="p-0 overflow-x-auto relative">
           <table className="w-full text-sm">
             <thead className="border-b bg-muted/30 text-xs uppercase tracking-wide text-muted-foreground">
               <tr>

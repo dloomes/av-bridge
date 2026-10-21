@@ -1,4 +1,10 @@
 import type { Config } from "tailwindcss";
+import plugin from "tailwindcss/plugin";
+
+// The visible screen height, less the phone top bar (--topbar-h, set by
+// the signed-in shell). dvh rather than vh so iPhone Safari's toolbar
+// doesn't hide the bottom of the page.
+const APP_HEIGHT = "calc(100dvh - var(--topbar-h, 0px))";
 
 const config: Config = {
   darkMode: ["class"],
@@ -53,6 +59,9 @@ const config: Config = {
           foreground: "hsl(var(--warning-foreground))",
         },
       },
+      height: { app: APP_HEIGHT },
+      minHeight: { app: APP_HEIGHT },
+      maxHeight: { app: APP_HEIGHT },
       borderRadius: {
         lg: "var(--radius)",
         md: "calc(var(--radius) - 2px)",
@@ -74,7 +83,15 @@ const config: Config = {
       },
     },
   },
-  plugins: [require("tailwindcss-animate")],
+  plugins: [
+    require("tailwindcss-animate"),
+    // coarse: touch screens, for bigger tap targets. can-hover: devices
+    // with a real hover, so hover-to-reveal never hides controls on touch.
+    plugin(({ addVariant }) => {
+      addVariant("coarse", "@media (pointer: coarse)");
+      addVariant("can-hover", "@media (hover: hover)");
+    }),
+  ],
 };
 
 export default config;

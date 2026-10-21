@@ -217,7 +217,7 @@ export default function LocationsPage() {
   };
 
   return (
-    <div className="flex h-screen flex-col">
+    <div className="flex h-app flex-col">
       <header className="flex flex-wrap items-center justify-between gap-3 border-b bg-card/50 px-6 py-4">
         <div>
           <h1 className="text-xl font-semibold">Locations</h1>
@@ -729,7 +729,7 @@ export default function LocationsPage() {
                                                       size="sm"
                                                       variant="ghost"
                                                       aria-label="Edit room"
-                                                      className="opacity-0 group-hover:opacity-100 transition-opacity"
+                                                      className="transition-opacity can-hover:opacity-0 can-hover:group-hover:opacity-100 focus-visible:opacity-100"
                                                       onClick={() =>
                                                         setModal({
                                                           kind: "room",
@@ -747,7 +747,7 @@ export default function LocationsPage() {
                                                       size="sm"
                                                       variant="ghost"
                                                       aria-label="Delete room"
-                                                      className="opacity-0 group-hover:opacity-100 transition-opacity"
+                                                      className="transition-opacity can-hover:opacity-0 can-hover:group-hover:opacity-100 focus-visible:opacity-100"
                                                       onClick={() =>
                                                         setDeleteTarget({
                                                           kind: "room",

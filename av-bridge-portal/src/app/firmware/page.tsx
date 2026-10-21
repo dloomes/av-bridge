@@ -120,7 +120,7 @@ export default function FirmwarePage() {
   }, [rows]);
 
   return (
-    <div className="flex h-screen flex-col">
+    <div className="flex h-app flex-col">
       <header className="flex flex-wrap items-center justify-between gap-3 border-b bg-card/50 px-6 py-4">
         <div>
           <h1 className="text-xl font-semibold">Firmware</h1>

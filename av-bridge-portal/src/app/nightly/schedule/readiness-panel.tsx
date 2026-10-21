@@ -383,7 +383,7 @@ export function ReadinessPanel({ canManage }: { canManage: boolean }) {
           {groups.map((g) => (
             <div key={g.label} className="space-y-2">
               <div className="text-xs font-medium text-muted-foreground">{g.label}</div>
-              <div className="overflow-x-auto rounded-md border">
+              <div className="overflow-x-auto rounded-md border relative">
                 <table className="w-full min-w-[560px] text-sm">
                   <thead>
                     <tr className="border-b bg-muted/40 text-left text-[10px] uppercase tracking-wide text-muted-foreground">

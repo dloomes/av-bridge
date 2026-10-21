@@ -54,7 +54,7 @@ import { PRODUCT_NAME } from "@/lib/brand";
 // the page header + summary tiles so the map doesn't push content below
 // the fold on standard desktops.
 const MAP_HEIGHT_CLASSES =
-  "h-[calc(100vh-360px)] min-h-[520px] max-h-[calc(100vh-140px)]";
+  "h-[calc(100dvh-360px)] min-h-[520px] max-h-[calc(100dvh-140px)]";
 
 const BuildingsMap = dynamic(
   () => import("@/components/buildings-map").then((m) => m.BuildingsMap),
@@ -185,7 +185,7 @@ export default function MapPage() {
     (collectors.loading && !collectors.data);
 
   return (
-    <div className="flex h-screen flex-col">
+    <div className="flex h-app flex-col">
       <header className="flex flex-wrap items-center justify-between gap-3 border-b bg-card/50 px-6 py-4">
         <div className="flex items-center gap-3">
           {branding.logo_data_url && (
@@ -204,7 +204,7 @@ export default function MapPage() {
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <SetAsDefaultToggle page="map" />
           <span className="text-xs text-muted-foreground">
             Last update{" "}

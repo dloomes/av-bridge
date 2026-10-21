@@ -183,7 +183,7 @@ function Wall({ mode }: { mode: Exclude<Mode, { kind: "none" }> }) {
 
   return (
     <div
-      className={cn("min-h-screen bg-background text-foreground", idle && "cursor-none")}
+      className={cn("min-h-dvh bg-background text-foreground", idle && "cursor-none")}
       style={{ transform: `translate(${shift.x}px, ${shift.y}px)` }}
     >
       {stale && (
@@ -269,7 +269,7 @@ function useWallBehaviour() {
 
 function Message({ title, body, children }: { title: string; body: string; children?: React.ReactNode }) {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background p-6 text-center text-foreground">
+    <div className="flex min-h-dvh items-center justify-center bg-background p-6 text-center text-foreground">
       <div className="max-w-md space-y-3">
         <h1 className="text-2xl font-semibold">{title}</h1>
         <p className="text-muted-foreground">{body}</p>

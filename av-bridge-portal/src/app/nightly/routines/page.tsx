@@ -103,14 +103,14 @@ export default function RoutinesListPage() {
   };
 
   return (
-    <div className="flex flex-col h-screen">
+    <div className="flex flex-col h-app">
       <header className="border-b bg-card/50 px-6 py-4">
-        <div className="flex items-center gap-2.5">
+        <div className="flex flex-wrap items-center gap-2.5">
           <div className="h-9 w-9 rounded-md bg-primary/10 flex items-center justify-center">
             <FileCode2 aria-hidden="true" className="h-4 w-4 text-primary" />
           </div>
           <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <Link
                 href="/nightly/schedule?tab=readiness"
                 className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
@@ -128,7 +128,7 @@ export default function RoutinesListPage() {
             </p>
           </div>
           {canManage && (
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <Button
                 variant="outline"
                 size="sm"
@@ -217,7 +217,7 @@ export default function RoutinesListPage() {
           {routines !== null && routines.length > 0 && (
             <Card>
               <CardContent className="p-0">
-                <div className="overflow-x-auto">
+                <div className="overflow-x-auto relative">
                   <table className="w-full min-w-[560px] text-sm">
                     <thead>
                       <tr className="border-b bg-muted/40 text-left text-[10px] uppercase tracking-wider text-muted-foreground">

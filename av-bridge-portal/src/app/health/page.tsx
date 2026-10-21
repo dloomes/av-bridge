@@ -28,7 +28,7 @@ export default function HealthPage() {
   );
 
   return (
-    <div className="flex h-screen flex-col">
+    <div className="flex h-app flex-col">
       <header className="flex flex-wrap items-center justify-between gap-3 border-b bg-card/50 px-6 py-4">
         <div className="flex items-center gap-3">
           <div className="h-9 w-9 rounded-md bg-primary/10 flex items-center justify-center text-primary">
@@ -41,7 +41,7 @@ export default function HealthPage() {
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Button
             variant="outline"
             size="sm"

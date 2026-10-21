@@ -366,9 +366,9 @@ export default function NightlySchedulePage() {
     roomGroups.every((g) => collapsedBuildings.has(g.key));
 
   return (
-    <div className="flex flex-col h-screen">
+    <div className="flex flex-col h-app">
       <header className="border-b bg-card/50 px-6 py-4">
-        <div className="flex items-center gap-2.5">
+        <div className="flex flex-wrap items-center gap-2.5">
           <div className="h-9 w-9 rounded-md bg-primary/10 flex items-center justify-center">
             <Moon aria-hidden="true" className="h-4 w-4 text-primary" />
           </div>
@@ -382,7 +382,7 @@ export default function NightlySchedulePage() {
             </p>
           </div>
         </div>
-        <div role="tablist" aria-label="Room Readiness" className="mt-4 -mb-4 flex gap-1">
+        <div role="tablist" aria-label="Room Readiness" className="mt-4 -mb-4 flex gap-1 overflow-x-auto">
           {TABS.map((t) => (
             <button
               key={t.key}
@@ -675,7 +675,7 @@ export default function NightlySchedulePage() {
                             {!collapsed && (
                               <div
                                 id={groupId}
-                                className="overflow-x-auto rounded-md border"
+                                className="overflow-x-auto rounded-md border relative"
                               >
                                 <table className="w-full min-w-[560px] text-sm">
                               <thead>

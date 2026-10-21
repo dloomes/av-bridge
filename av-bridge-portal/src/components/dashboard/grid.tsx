@@ -113,7 +113,7 @@ function WidgetCard({
           {editing && (
             <button
               type="button"
-              className="cursor-grab touch-none rounded p-0.5 text-muted-foreground hover:bg-accent/40 active:cursor-grabbing"
+              className="cursor-grab touch-none rounded p-0.5 coarse:p-3 coarse:-m-2.5 text-muted-foreground hover:bg-accent/40 active:cursor-grabbing"
               aria-label={`Move ${title}`}
               {...attributes}
               {...listeners}

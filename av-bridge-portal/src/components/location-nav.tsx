@@ -94,12 +94,12 @@ function RegionBlock({ region, buildings }: { region: string | null; buildings: 
   const name = region ?? "No region";
   return (
     <div>
-      <div className="flex w-full items-center gap-1 px-2 py-1 text-xs font-semibold uppercase tracking-wide text-sidebar-foreground/70">
+      <div className="flex w-full items-center gap-1 px-2 py-1 coarse:py-2 text-xs font-semibold uppercase tracking-wide text-sidebar-foreground/70">
         <button
           type="button"
           onClick={() => setOpen((o) => !o)}
           aria-label={open ? `Collapse ${name}` : `Expand ${name}`}
-          className="rounded p-0.5 hover:bg-white/10 hover:text-sidebar-foreground"
+          className="rounded p-0.5 coarse:p-2 coarse:-m-1.5 hover:bg-white/10 hover:text-sidebar-foreground"
         >
           <ChevronRight
             className={cn(
@@ -155,7 +155,7 @@ function BuildingBlock({ group }: { group: BuildingGroup }) {
   const buildingName = group.building;
   return (
     <div>
-      <div className="flex w-full items-center gap-1 px-2 py-1 text-xs font-semibold uppercase tracking-wide text-sidebar-foreground/60">
+      <div className="flex w-full items-center gap-1 px-2 py-1 coarse:py-2 text-xs font-semibold uppercase tracking-wide text-sidebar-foreground/60">
         {/* Chevron is its own button so the label link + expand toggle don't
             steal each other's clicks. Small hit target on purpose — the
             main affordance is the label, which navigates. */}
@@ -163,7 +163,7 @@ function BuildingBlock({ group }: { group: BuildingGroup }) {
           type="button"
           onClick={() => setOpen((o) => !o)}
           aria-label={open ? `Collapse ${buildingName}` : `Expand ${buildingName}`}
-          className="rounded p-0.5 hover:bg-white/10 hover:text-sidebar-foreground"
+          className="rounded p-0.5 coarse:p-2 coarse:-m-1.5 hover:bg-white/10 hover:text-sidebar-foreground"
         >
           <ChevronRight
             className={cn(
@@ -213,12 +213,12 @@ function RoomBlock({
   const roomHref = `/devices?${params.toString()}`;
   return (
     <div>
-      <div className="flex w-full items-center gap-1 px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-sidebar-foreground/50">
+      <div className="flex w-full items-center gap-1 px-2 py-1 coarse:py-2 text-[11px] font-medium uppercase tracking-wide text-sidebar-foreground/50">
         <button
           type="button"
           onClick={() => setOpen((o) => !o)}
           aria-label={open ? `Collapse ${room}` : `Expand ${room}`}
-          className="rounded p-0.5 hover:bg-white/10 hover:text-sidebar-foreground"
+          className="rounded p-0.5 coarse:p-2 coarse:-m-1.5 hover:bg-white/10 hover:text-sidebar-foreground"
         >
           <ChevronRight
             className={cn(
@@ -260,7 +260,7 @@ function DeviceLink({ device }: { device: DeviceSummary }) {
       <Link
         href={`/devices/${encodeURIComponent(device.id)}`}
         className={cn(
-          "flex items-center gap-2 rounded-md px-2 py-1.5 text-xs transition-colors",
+          "flex items-center gap-2 rounded-md px-2 py-1.5 coarse:py-2.5 text-xs transition-colors",
           active
             ? "bg-white/10 text-white"
             : "text-sidebar-foreground/75 hover:bg-white/5 hover:text-white"

@@ -200,7 +200,7 @@ export default function DashboardPage() {
     (collectors.loading && !collectors.data);
 
   return (
-    <div className="flex h-screen flex-col">
+    <div className="flex h-app flex-col">
       <header className="flex flex-wrap items-center justify-between gap-3 border-b bg-card/50 px-6 py-4">
         <div className="flex items-center gap-3">
           {branding.logo_data_url && (
@@ -219,7 +219,7 @@ export default function DashboardPage() {
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <SetAsDefaultToggle page="overview" />
           <span className="text-xs text-muted-foreground">
             Last update{" "}

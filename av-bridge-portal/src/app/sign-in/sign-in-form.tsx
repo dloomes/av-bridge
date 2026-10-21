@@ -306,7 +306,7 @@ export function SignInForm({ branding, showVendorSSO = false, slug, appOrigin = 
   return (
     <div
       style={rootStyle}
-      className="min-h-screen grid md:grid-cols-[1.1fr_1fr] bg-background text-foreground"
+      className="min-h-dvh grid md:grid-cols-[1.1fr_1fr] bg-background text-foreground"
     >
       {/* ═══════════ LEFT: brand + hero (dark) ═══════════ */}
       <section

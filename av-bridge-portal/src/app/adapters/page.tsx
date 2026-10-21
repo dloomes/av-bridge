@@ -137,9 +137,9 @@ export default function AdaptersPage() {
   const open = all.find((a) => a.id === openId) ?? null;
 
   return (
-    <div className="flex min-h-screen flex-col">
+    <div className="flex min-h-app flex-col">
       <header className="border-b bg-card/50 px-6 py-4">
-        <div className="flex items-center justify-between gap-4">
+        <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className="h-9 w-9 rounded-md bg-primary/10 flex items-center justify-center">
               <Puzzle aria-hidden="true" className="h-4 w-4 text-primary" />

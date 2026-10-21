@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Activity as ActivityIcon,
   BarChart3,
@@ -18,6 +18,7 @@ import {
   LayoutGrid,
   Map as MapIcon,
   MapPin,
+  Menu,
   Moon,
   Palette,
   Puzzle,
@@ -27,6 +28,7 @@ import {
   Users,
   KeyRound,
   Key,
+  X,
 } from "lucide-react";
 import { LocationNav } from "@/components/location-nav";
 import { useBranding } from "@/components/branding-provider";
@@ -194,30 +196,57 @@ export function Sidebar() {
     alerts_open: summary.data?.open ?? 0,
   };
   const criticalOpen = summary.data?.critical_open ?? 0;
+  const canSeeAlerts = isVendor || hasPermission(session.user, "view.dashboard");
 
-  return (
-    <aside className="hidden md:flex md:w-64 lg:w-72 flex-col bg-sidebar text-sidebar-foreground border-r border-white/5">
-      <div className="px-5 py-6 flex items-center gap-2.5">
-        {branding.logo_data_url ? (
-          <img
-            src={branding.logo_data_url}
-            alt=""
-            className="h-8 w-8 rounded-md object-contain bg-white/5 p-0.5"
-          />
-        ) : (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src="/marcus-ring.png" alt="" className="h-8 w-8 object-contain" />
-        )}
-        <div>
-          <div className="font-semibold text-sm leading-tight">
-            {branding.display_name || PRODUCT_NAME}
-          </div>
-          <div className="text-xs text-sidebar-foreground/50 leading-tight">
-            AV Monitoring
-          </div>
+  // Phones: the sidebar is a drawer behind a menu button in a slim top
+  // bar. It closes when a link inside it is chosen (including Places
+  // links that only change the query string), on Escape, or on the scrim.
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => setDrawerOpen(false), [pathname]);
+  useEffect(() => {
+    if (!drawerOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setDrawerOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    closeButtonRef.current?.focus();
+    const menuButton = menuButtonRef.current;
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prevOverflow;
+      menuButton?.focus();
+    };
+  }, [drawerOpen]);
+
+  const brand = (
+    <div className="flex items-center gap-2.5 min-w-0">
+      {branding.logo_data_url ? (
+        <img
+          src={branding.logo_data_url}
+          alt=""
+          className="h-8 w-8 rounded-md object-contain bg-white/5 p-0.5"
+        />
+      ) : (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src="/marcus-ring.png" alt="" className="h-8 w-8 object-contain" />
+      )}
+      <div className="min-w-0">
+        <div className="font-semibold text-sm leading-tight truncate">
+          {branding.display_name || PRODUCT_NAME}
+        </div>
+        <div className="text-xs text-sidebar-foreground/50 leading-tight">
+          AV Monitoring
         </div>
       </div>
+    </div>
+  );
 
+  const contents = (
+    <>
       <nav className="flex-1 overflow-y-auto px-3 pb-2 scrollbar-thin">
         <div className="pt-1 space-y-0.5">
           {/* Active state compares against the pathname only — the
@@ -300,7 +329,86 @@ export function Sidebar() {
       <div className="px-5 py-4 border-t border-white/5 text-xs text-sidebar-foreground/50">
         <EnvironmentBadge />
       </div>
-    </aside>
+    </>
+  );
+
+  const iconButton =
+    "inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50";
+
+  return (
+    <>
+      <aside className="hidden md:flex md:w-64 lg:w-72 flex-col bg-sidebar text-sidebar-foreground border-r border-white/5">
+        <div className="px-5 py-6">{brand}</div>
+        {contents}
+      </aside>
+
+      {/* Phone top bar. AppShell sets --topbar-h to its height. */}
+      <div className="md:hidden fixed inset-x-0 top-0 z-30 flex h-14 items-center gap-2 border-b border-white/5 bg-sidebar px-2 text-sidebar-foreground">
+        <button
+          ref={menuButtonRef}
+          type="button"
+          onClick={() => setDrawerOpen(true)}
+          aria-label="Open menu"
+          aria-expanded={drawerOpen}
+          aria-controls="mobile-nav"
+          className={iconButton}
+        >
+          <Menu aria-hidden="true" className="h-5 w-5" />
+        </button>
+        {brand}
+        {canSeeAlerts && (
+          <Link
+            href="/alerts"
+            aria-label={`Alerts: ${badges.alerts_open} open`}
+            className={cn(iconButton, "relative ml-auto")}
+          >
+            <Bell aria-hidden="true" className="h-5 w-5" />
+            {badges.alerts_open > 0 && (
+              <span
+                aria-hidden="true"
+                className={cn(
+                  "absolute right-1 top-1 inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1 text-[11px] font-semibold",
+                  criticalOpen > 0 ? "bg-red-500 text-white" : "bg-white/20 text-white"
+                )}
+              >
+                {badges.alerts_open > 99 ? "99+" : badges.alerts_open}
+              </span>
+            )}
+          </Link>
+        )}
+      </div>
+
+      {drawerOpen && (
+        <div className="md:hidden fixed inset-0 z-50" role="dialog" aria-modal="true" aria-label="Menu">
+          <div
+            className="absolute inset-0 bg-black/60 animate-in fade-in duration-200 motion-reduce:animate-none"
+            onClick={() => setDrawerOpen(false)}
+            aria-hidden="true"
+          />
+          <aside
+            id="mobile-nav"
+            className="relative flex h-dvh w-72 max-w-[85vw] flex-col bg-sidebar text-sidebar-foreground shadow-xl animate-in slide-in-from-left duration-200 motion-reduce:animate-none"
+            onClick={(e) => {
+              if ((e.target as Element).closest("a")) setDrawerOpen(false);
+            }}
+          >
+            <div className="flex items-center justify-between gap-2 py-3 pl-5 pr-2">
+              {brand}
+              <button
+                ref={closeButtonRef}
+                type="button"
+                onClick={() => setDrawerOpen(false)}
+                aria-label="Close menu"
+                className={iconButton}
+              >
+                <X aria-hidden="true" className="h-5 w-5" />
+              </button>
+            </div>
+            {contents}
+          </aside>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -320,7 +428,7 @@ function NavLink({
     <Link
       href={item.href}
       className={cn(
-        "flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors",
+        "flex items-center gap-3 rounded-md px-3 py-2 coarse:py-3 text-sm transition-colors",
         active
           ? "bg-white/10 text-white"
           : "text-sidebar-foreground/70 hover:bg-white/5 hover:text-white"
@@ -359,7 +467,7 @@ function SectionHeader({
       type="button"
       onClick={onToggle}
       aria-expanded={open}
-      className="group flex w-full items-center gap-1 rounded px-3 pb-1 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/40 hover:text-sidebar-foreground/70"
+      className="group flex w-full items-center gap-1 rounded px-3 pb-1 coarse:py-2 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/40 hover:text-sidebar-foreground/70"
     >
       <ChevronRight
         className={cn(

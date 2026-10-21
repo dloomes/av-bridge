@@ -63,7 +63,7 @@ export default function HelpdeskPage() {
   const totalDevices = data?.reduce((n, c) => n + c.devices_total, 0) ?? 0;
 
   return (
-    <div className="flex h-screen flex-col">
+    <div className="flex h-app flex-col">
       <header className="flex flex-wrap items-center justify-between gap-3 border-b bg-card/50 px-6 py-4">
         <div className="flex items-center gap-3">
           <div className="h-9 w-9 rounded-lg bg-amber-500/10 ring-1 ring-amber-500/30 flex items-center justify-center">
@@ -76,7 +76,7 @@ export default function HelpdeskPage() {
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-4 text-sm">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
           <span>
             <span className="font-semibold text-red-600">{totalCritical}</span>{" "}
             <span className="text-muted-foreground">critical</span>

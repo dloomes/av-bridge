@@ -24,7 +24,7 @@ export default function ResetPasswordPage() {
   return (
     <Suspense
       fallback={
-        <div className="min-h-screen bg-background text-foreground flex items-center justify-center">
+        <div className="min-h-dvh bg-background text-foreground flex items-center justify-center">
           <Loader2
             className="h-5 w-5 animate-spin text-muted-foreground"
             aria-hidden="true"
@@ -88,7 +88,7 @@ function ResetPasswordForm() {
   };
 
   return (
-    <div className="min-h-screen bg-background text-foreground flex flex-col">
+    <div className="min-h-dvh bg-background text-foreground flex flex-col">
       <div className="flex-1 flex items-center justify-center px-4 py-10">
         <div className="w-full max-w-md">
           <div className="rounded-xl border border-border bg-card p-8 shadow-sm">

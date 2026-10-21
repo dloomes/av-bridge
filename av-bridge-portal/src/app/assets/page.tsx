@@ -307,7 +307,7 @@ export default function AssetsPage() {
     buildingFilter !== "";
 
   return (
-    <div className="min-h-screen">
+    <div className="min-h-app">
       <div className="max-w-6xl mx-auto p-6 space-y-6">
         <header className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
@@ -526,7 +526,7 @@ export default function AssetsPage() {
                 readable rather than crushing them; below that width the
                 horizontal scrollbar appears.
               */}
-              <div className="overflow-x-auto">
+              <div className="overflow-x-auto relative">
                 <table className="w-full min-w-[720px] text-sm">
                   <thead>
                     <tr className="border-b bg-muted/40 text-left text-[11px] uppercase tracking-[0.08em] text-muted-foreground">

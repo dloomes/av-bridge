@@ -96,7 +96,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   if (!session.hydrated || !session.token) {
     return (
-      <main className="flex-1 min-w-0 flex h-screen items-center justify-center">
+      <main className="flex-1 min-w-0 flex h-dvh items-center justify-center">
         <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
       </main>
     );
@@ -126,7 +126,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <ToastProvider>
       <BrandingProvider>
         <Sidebar />
-        <main className="flex-1 min-w-0">{children}</main>
+        {/* Phones have a 3.5rem top bar (in Sidebar); pages size
+            themselves to the screen less --topbar-h (h-app). */}
+        <main className="flex-1 min-w-0 pt-14 md:pt-0 [--topbar-h:3.5rem] md:[--topbar-h:0px]">
+          {children}
+        </main>
       </BrandingProvider>
     </ToastProvider>
   );
@@ -140,7 +144,7 @@ function NoAccess({ email }: { email: string }) {
     router.replace("/sign-in");
   };
   return (
-    <main className="flex-1 min-w-0 flex h-screen items-center justify-center p-6">
+    <main className="flex-1 min-w-0 flex h-dvh items-center justify-center p-6">
       <div className="max-w-md w-full rounded-lg border bg-card p-6 space-y-4 text-sm">
         <div className="flex items-center gap-3">
           <div className="h-9 w-9 rounded-md bg-muted flex items-center justify-center">

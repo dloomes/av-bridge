@@ -120,9 +120,9 @@ export default function UsersPage() {
   };
 
   return (
-    <div className="min-h-screen">
+    <div className="min-h-app">
       <div className="max-w-6xl mx-auto p-6 space-y-6">
-        <header className="flex items-center justify-between">
+        <header className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold">Users</h1>
             <p className="text-sm text-muted-foreground">
@@ -131,7 +131,7 @@ export default function UsersPage() {
                 : "Users in your tenant."}
             </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {admin && (
               <Button onClick={() => setEditing({ mode: "create" })}>
                 <Plus className="h-4 w-4" />

@@ -188,7 +188,7 @@ export default function DashboardsPage() {
   const mine = useMemo(() => (list ?? []).filter((d) => !d.shared), [list]);
 
   return (
-    <div className="flex h-screen flex-col">
+    <div className="flex h-app flex-col">
       <header className="flex flex-wrap items-center justify-between gap-3 border-b bg-card/50 px-6 py-4">
         <div className="flex min-w-0 flex-wrap items-center gap-3">
           <LayoutDashboard className="h-5 w-5 text-muted-foreground" />

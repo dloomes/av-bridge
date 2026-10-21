@@ -110,7 +110,7 @@ export default function AlertsPage() {
   );
 
   return (
-    <div className="flex h-screen flex-col">
+    <div className="flex h-app flex-col">
       <header className="flex flex-wrap items-center justify-between gap-3 border-b bg-card/50 px-6 py-4">
         <div>
           <h1 className="text-xl font-semibold">Alerts</h1>
@@ -118,7 +118,7 @@ export default function AlertsPage() {
             Issues raised by the bridge that need attention
           </p>
         </div>
-        <div className="flex items-center gap-4 text-sm">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
           <span>
             <span className="font-semibold text-red-600">{counts.critical}</span>{" "}
             <span className="text-muted-foreground">critical</span>

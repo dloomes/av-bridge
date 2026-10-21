@@ -27,7 +27,7 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
 
   if (!session.hydrated || (!session.token && pathname !== "/sign-in")) {
     return (
-      <div className="flex h-screen items-center justify-center">
+      <div className="flex h-app items-center justify-center">
         <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
       </div>
     );

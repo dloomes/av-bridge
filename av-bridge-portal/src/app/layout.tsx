@@ -44,7 +44,7 @@ export default function RootLayout({
             aria-hidden="true"
           />
         )}
-        <div className="flex min-h-screen">
+        <div className="flex min-h-dvh">
           <AppShell>{children}</AppShell>
         </div>
       </body>
