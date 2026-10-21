@@ -8,6 +8,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"net/url"
 	"os"
 	"testing"
 	"time"
@@ -99,9 +100,22 @@ func TestRetentionRules(t *testing.T) {
 	add("remote_session", true, sess, cust, dev, "s-old-"+cust, "91 days")
 	add("remote_session", false, sess, cust, dev, "s-new-"+cust, "1 day")
 
+	// Apply as app_admin, the role the cloud runs retention as, so a
+	// missing grant fails here rather than in production.
+	u, _ := url.Parse(dsn)
+	u.User = url.UserPassword("app_admin", "app_admin_dev")
+	admin, err := pgx.Connect(ctx, u.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close(ctx)
+	if _, err := admin.Exec(ctx, `DELETE FROM audit_log WHERE false`); err == nil {
+		t.Error("app_admin can delete from audit_log directly; it should stay append-only")
+	}
+
 	deadline := time.Now().Add(time.Minute)
 	for _, r := range Rules {
-		if _, err := Apply(ctx, conn, r, deadline); err != nil {
+		if _, err := Apply(ctx, admin, r, deadline); err != nil {
 			t.Fatalf("%s: %v", r.Name, err)
 		}
 	}

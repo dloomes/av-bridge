@@ -22,28 +22,32 @@ const (
 
 // Rule is one kind of record and how long it's kept. Where selects, from
 // alias t, the rows that are past it; ctid identifies them for the batch.
+// A rule with Func instead calls that function (customer, batch) once per
+// organisation, for tables the app may not delete from directly.
 type Rule struct {
 	Name  string
 	Table string
 	Where string
+	Func  string
 }
 
 // Rules are the retention periods, as published.
 var Rules = []Rule{
-	{"audit log (24 months)", "audit_log",
-		`t.ts < now() - interval '24 months'`},
-	{"resolved alerts (12 months after resolution)", "alerts",
-		`t.status = 'resolved' AND t.resolved_at < now() - interval '12 months'`},
-	{"device events (90 days)", "events",
-		`t.ts < now() - interval '90 days'`},
-	{"command history (90 days after finishing)", "commands",
-		`t.status IN ('succeeded', 'failed', 'cancelled') AND t.submitted_at < now() - interval '90 days'`},
-	{"Room Readiness runs (per-customer setting)", "nightly_run",
-		`t.status NOT IN ('pending', 'in_progress')
+	// audit_log is append-only for the app; migration 0062's function
+	// deletes only entries past 24 months.
+	{Name: "audit log (24 months)", Table: "audit_log", Func: "retention_prune_audit_log"},
+	{Name: "resolved alerts (12 months after resolution)", Table: "alerts",
+		Where: `t.status = 'resolved' AND t.resolved_at < now() - interval '12 months'`},
+	{Name: "device events (90 days)", Table: "events",
+		Where: `t.ts < now() - interval '90 days'`},
+	{Name: "command history (90 days after finishing)", Table: "commands",
+		Where: `t.status IN ('succeeded', 'failed', 'cancelled') AND t.submitted_at < now() - interval '90 days'`},
+	{Name: "Room Readiness runs (per-customer setting)", Table: "nightly_run",
+		Where: `t.status NOT IN ('pending', 'in_progress')
 		 AND t.scheduled_at < now() - make_interval(days => COALESCE(
 		     (SELECT s.retention_days FROM nightly_schedule s WHERE s.customer_id = t.customer_id), 90))`},
-	{"remote access sessions (90 days after ending)", "remote_session",
-		`t.ended_at < now() - interval '90 days'`},
+	{Name: "remote access sessions (90 days after ending)", Table: "remote_session",
+		Where: `t.ended_at < now() - interval '90 days'`},
 }
 
 // Service runs retention passes.
@@ -74,7 +78,7 @@ func (s *Service) Run(ctx context.Context) {
 }
 
 // Pass applies every rule, within passBudget; anything left is picked up
-// on the next pass.
+// on the next pass. A rule that fails is logged and the rest still run.
 func (s *Service) Pass(ctx context.Context) error {
 	conn, err := s.pool.Acquire(ctx)
 	if err != nil {
@@ -91,7 +95,11 @@ func (s *Service) Pass(ctx context.Context) error {
 	for _, r := range Rules {
 		n, err := Apply(ctx, conn.Conn(), r, deadline)
 		if err != nil {
-			return err
+			if ctx.Err() != nil {
+				return err
+			}
+			s.log.Warn("retention rule failed", "records", r.Name, "error", err)
+			continue
 		}
 		if n > 0 {
 			s.log.Info("retention: deleted", "records", r.Name, "count", n)
@@ -103,6 +111,9 @@ func (s *Service) Pass(ctx context.Context) error {
 // Apply deletes r's expired rows in batches until none are left or the
 // deadline passes, and returns how many it deleted. Exposed for tests.
 func Apply(ctx context.Context, conn *pgx.Conn, r Rule, deadline time.Time) (int64, error) {
+	if r.Func != "" {
+		return applyFunc(ctx, conn, r, deadline)
+	}
 	var total int64
 	for time.Now().Before(deadline) {
 		tag, err := conn.Exec(ctx, `
@@ -114,6 +125,32 @@ func Apply(ctx context.Context, conn *pgx.Conn, r Rule, deadline time.Time) (int
 		total += tag.RowsAffected()
 		if tag.RowsAffected() < batch {
 			break
+		}
+	}
+	return total, nil
+}
+
+// applyFunc runs a Func rule for each organisation in turn.
+func applyFunc(ctx context.Context, conn *pgx.Conn, r Rule, deadline time.Time) (int64, error) {
+	rows, err := conn.Query(ctx, `SELECT id FROM customers`)
+	if err != nil {
+		return 0, err
+	}
+	customers, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return 0, err
+	}
+	var total int64
+	for _, c := range customers {
+		for time.Now().Before(deadline) {
+			var n int64
+			if err := conn.QueryRow(ctx, `SELECT `+r.Func+`($1::uuid, $2)`, c, batch).Scan(&n); err != nil {
+				return total, err
+			}
+			total += n
+			if n < batch {
+				break
+			}
 		}
 	}
 	return total, nil
