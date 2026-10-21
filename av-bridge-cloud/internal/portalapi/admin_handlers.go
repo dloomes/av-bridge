@@ -1149,6 +1149,10 @@ type Subscription struct {
 	Channel   int    `json:"channel"`
 	Label     string `json:"label"`
 	Rate      int    `json:"rate,omitempty"`
+	// Mode: "" or "subscribe" (live, pushed by the device) or "poll"
+	// (read on every poll). Must round-trip: the bridge config handler
+	// reads it from the stored JSON.
+	Mode string `json:"mode,omitempty"`
 }
 
 type createDeviceReq struct {

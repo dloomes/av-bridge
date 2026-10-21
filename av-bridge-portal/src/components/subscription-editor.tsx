@@ -225,7 +225,44 @@ export function SubscriptionEditor({ rows, onChange }: Props) {
   );
 }
 
-// Adds snapshot rows for a meter block across a range of channels.
+// Tesira DSP blocks the helper can add readings for, from the attributes
+// Biamp's TTP reference documents. Meters change constantly, so they're
+// snapshots; states are live, so each change is recorded as it happens.
+type ReadingBlock = "meter" | "level" | "mute" | "logic" | "voip";
+
+const READING_BLOCKS: { value: ReadingBlock; label: string; channels: boolean; hint: string }[] = [
+  { value: "meter", label: "Meter", channels: true,
+    hint: "One snapshot reading per channel, in dB, from an audio or peak meter." },
+  { value: "level", label: "Level", channels: true,
+    hint: "Each channel's level (dB) and mute, updated live." },
+  { value: "mute", label: "Mute", channels: true,
+    hint: "Each channel's mute, updated live: true when muted." },
+  { value: "logic", label: "Logic meter", channels: true,
+    hint: "Each channel's logic state, updated live: true when on." },
+  { value: "voip", label: "VoIP call state", channels: false,
+    hint: "The phone's call state, updated live, plus a count of active calls for Room Readiness checks." },
+];
+
+function blockRows(block: ReadingBlock, tag: string, prefix: string, list: number[]): SubscriptionRow[] {
+  const ch = (c: number) => (list.length === 1 ? "" : `_ch${c}`);
+  switch (block) {
+    case "meter":
+      return list.map((c) => row({ label: `${prefix}_ch${c}`, tag, attribute: "level", channel: String(c), mode: "poll" }));
+    case "level":
+      return list.flatMap((c) => [
+        row({ label: `${prefix}${ch(c)}_level`, tag, attribute: "level", channel: String(c), mode: "subscribe" }),
+        row({ label: `${prefix}${ch(c)}_mute`, tag, attribute: "mute", channel: String(c), mode: "subscribe" }),
+      ]);
+    case "mute":
+      return list.map((c) => row({ label: `${prefix}${ch(c)}_mute`, tag, attribute: "mute", channel: String(c), mode: "subscribe" }));
+    case "logic":
+      return list.map((c) => row({ label: `${prefix}${ch(c)}_state`, tag, attribute: "state", channel: String(c), mode: "subscribe" }));
+    case "voip":
+      return [row({ label: `${prefix}_call`, tag, attribute: "callState", channel: "1", mode: "subscribe" })];
+  }
+}
+
+// Adds the standard readings for one DSP block across a range of channels.
 function MeterHelper({
   onAdd,
   taken,
@@ -233,29 +270,28 @@ function MeterHelper({
   onAdd: (rows: SubscriptionRow[]) => void;
   taken: Set<string>;
 }) {
+  const [block, setBlock] = useState<ReadingBlock>("meter");
   const [tag, setTag] = useState("");
   const [channels, setChannels] = useState("1");
   const [prefix, setPrefix] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const spec = READING_BLOCKS.find((b) => b.value === block)!;
 
   const suggested = normaliseCommandName(tag.trim()).toLowerCase();
+  const p = normaliseCommandName(prefix.trim()) || suggested || "block";
+  const preview = blockRows(block, "x", p, spec.channels ? parseChannels(channels) ?? [1] : [1]).map((r) => r.label);
 
   const add = () => {
     const t = tag.trim();
-    if (!t) return setError("Enter the meter block's instance tag from Tesira software.");
+    if (!t) return setError("Enter the block's instance tag from Tesira software.");
     if (/\s/.test(t)) return setError("Instance tags with spaces aren't supported.");
-    const list = parseChannels(channels);
+    const list = spec.channels ? parseChannels(channels) : [1];
     if (!list) return setError(`Channels: use a number, a range like 1-8, or a list like 1,3,5 (up to ${MAX_CHANNELS}).`);
-    const p = normaliseCommandName(prefix.trim()) || suggested;
-    const labels = list.map((c) => `${p}_ch${c}`);
-    const clash = labels.find((l) => taken.has(l));
-    if (clash) return setError(`A reading called "${clash}" already exists — change the label prefix.`);
+    const added = blockRows(block, t, p, list);
+    const clash = added.find((r) => taken.has(r.label));
+    if (clash) return setError(`A reading called "${clash.label}" already exists — change the label prefix.`);
     setError(null);
-    onAdd(
-      list.map((c, i) =>
-        row({ label: labels[i], tag: t, attribute: "level", channel: String(c), mode: "poll" })
-      )
-    );
+    onAdd(added);
     setTag("");
     setChannels("1");
     setPrefix("");
@@ -265,31 +301,48 @@ function MeterHelper({
     <div className="rounded-md border border-dashed p-3 space-y-2">
       <div className="flex items-center gap-2 text-xs font-medium text-foreground">
         <Gauge className="h-3.5 w-3.5 text-primary" />
-        Add meter readings
+        Add readings for a DSP block
       </div>
-      <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_2.25rem] sm:grid-cols-[minmax(0,1fr)_6rem_minmax(0,1fr)_auto] gap-2 items-end">
+      <div className="grid grid-cols-2 sm:grid-cols-[9rem_minmax(0,1fr)_6rem_minmax(0,1fr)_auto] gap-2 items-end">
         <div className="col-span-2 sm:col-span-1 space-y-1">
-          <label htmlFor="meter-tag" className={labelClass}>Meter instance tag</label>
+          <label htmlFor="reading-block" className={labelClass}>Block</label>
+          <select
+            id="reading-block"
+            className={inputClass}
+            value={block}
+            onChange={(e) => { setBlock(e.target.value as ReadingBlock); setError(null); }}
+          >
+            {READING_BLOCKS.map((b) => (
+              <option key={b.value} value={b.value}>{b.label}</option>
+            ))}
+          </select>
+        </div>
+        <div className="col-span-2 sm:col-span-1 space-y-1">
+          <label htmlFor="meter-tag" className={labelClass}>Instance tag</label>
           <input
             id="meter-tag"
             className={`${inputClass} font-mono text-xs`}
             value={tag}
             onChange={(e) => { setTag(e.target.value); setError(null); }}
-            placeholder="MicMeter1"
+            placeholder={block === "voip" ? "VoIPControlStatus1" : block === "meter" ? "MicMeter1" : "Zone1Level"}
             spellCheck={false}
             autoComplete="off"
           />
         </div>
-        <div className="space-y-1">
-          <label htmlFor="meter-channels" className={labelClass}>Channels</label>
-          <input
-            id="meter-channels"
-            className={inputClass}
-            value={channels}
-            onChange={(e) => { setChannels(e.target.value); setError(null); }}
-            placeholder="1-8"
-          />
-        </div>
+        {spec.channels ? (
+          <div className="space-y-1">
+            <label htmlFor="meter-channels" className={labelClass}>Channels</label>
+            <input
+              id="meter-channels"
+              className={inputClass}
+              value={channels}
+              onChange={(e) => { setChannels(e.target.value); setError(null); }}
+              placeholder="1-8"
+            />
+          </div>
+        ) : (
+          <div className="hidden sm:block" />
+        )}
         <div className="space-y-1">
           <label htmlFor="meter-prefix" className={labelClass}>Label prefix</label>
           <input
@@ -307,8 +360,8 @@ function MeterHelper({
         </Button>
       </div>
       <p className="text-[11px] text-muted-foreground">
-        Adds one snapshot reading per channel, labelled like{" "}
-        <code>{(normaliseCommandName(prefix.trim()) || suggested || "micmeter1")}_ch1</code>.
+        {spec.hint} Labelled like <code>{preview.slice(0, 2).join(", ")}</code>
+        {preview.length > 2 ? "…" : ""}.
       </p>
       {error && <p className="text-xs [color:hsl(var(--destructive))]">{error}</p>}
     </div>

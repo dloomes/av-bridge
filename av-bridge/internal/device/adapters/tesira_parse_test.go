@@ -335,3 +335,71 @@ func TestFillTTPTemplate(t *testing.T) {
 		})
 	}
 }
+
+func TestTypedTTPValue(t *testing.T) {
+	cases := []struct {
+		in   string
+		want any
+	}{
+		{"true", true},
+		{"false", false},
+		{"-30.000000", -30.0},
+		{"3.3", 3.3},
+		{"-79.996880", -80.0},
+		{"Init", "Init"},
+		{"", ""},
+	}
+	for _, c := range cases {
+		if got := typedTTPValue(c.in); got != c.want {
+			t.Errorf("typedTTPValue(%q) = %#v, want %#v", c.in, got, c.want)
+		}
+	}
+	list, ok := typedTTPValue("[5.200000 3.000000 -10.000000 -70.000000]").([]any)
+	if !ok || len(list) != 4 || list[0] != 5.2 || list[3] != -70.0 {
+		t.Errorf("levels list = %#v", list)
+	}
+	mutes, ok := typedTTPValue("[true false]").([]any)
+	if !ok || len(mutes) != 2 || mutes[0] != true {
+		t.Errorf("mutes list = %#v", mutes)
+	}
+}
+
+// Notification shapes from Biamp's TTP reference.
+func TestSubscriptionNotificationValues(t *testing.T) {
+	label, raw := parseSubscriptionNotification(`! "publishToken":"MyLevel4ALL" "value":[5.200000 3.000000 -10.000000 -70.000000]`)
+	if label != "MyLevel4ALL" || raw != "[5.200000 3.000000 -10.000000 -70.000000]" {
+		t.Errorf("levels: label %q raw %q", label, raw)
+	}
+
+	line := `! "publishToken":"VoIP_PHL1" "value":{"callStateInfo":[` +
+		`{"state":VOIP_CALL_STATE_RINGBACK "lineId":0 "callId":0 "action":UI_CLEAR_STATUS "cid":"" "prompt":VOIP_PROMPT_CONNECTING}` +
+		` {"state":VOIP_CALL_STATE_IDLE "lineId":0 "callId":1 "action":UI_CLEAR_STATUS "cid":"" "prompt":VOIP_PROMPT_NONE}` +
+		` {"state":VOIP_CALL_STATE_INIT "lineId":1 "callId":0 "action":UI_CLEAR_STATUS "cid":"" "prompt":VOIP_PROMPT_SIP_USER_NOT_CONFIGURED}]}`
+	label, raw = parseSubscriptionNotification(line)
+	if label != "VoIP_PHL1" {
+		t.Fatalf("callState label = %q", label)
+	}
+	metrics := map[string]any{}
+	setTTPReading(metrics, label, typedTTPValue(raw))
+	if n := metrics["VoIP_PHL1_active_calls"]; n != 1 {
+		t.Errorf("active calls = %#v, want 1 (one ringback; idle and init aren't calls); raw %q", n, raw)
+	}
+	if _, ok := metrics["VoIP_PHL1"].(map[string]any); !ok {
+		t.Errorf("callState value = %#v, want the decoded object", metrics["VoIP_PHL1"])
+	}
+}
+
+func TestTTPIndex(t *testing.T) {
+	if got := "Level4CH subscribe levels" + ttpIndex("levels", 1); got != "Level4CH subscribe levels" {
+		t.Errorf("levels takes no index: %q", got)
+	}
+	if got := ttpIndex("callState", 0); got != "" {
+		t.Errorf("callState takes no index: %q", got)
+	}
+	if got := ttpIndex("level", 2); got != " 2" {
+		t.Errorf("level 2 = %q", got)
+	}
+	if got := ttpIndex("mute", 0); got != " 1" {
+		t.Errorf("unset channel defaults to 1: %q", got)
+	}
+}

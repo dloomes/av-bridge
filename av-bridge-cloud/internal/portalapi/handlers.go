@@ -512,6 +512,7 @@ func (h *Handler) GetDevice(w http.ResponseWriter, r *http.Request) {
 		Channel   int    `json:"channel"`
 		Label     string `json:"label"`
 		Rate      int    `json:"rate,omitempty"`
+		Mode      string `json:"mode,omitempty"`
 	}
 	// deviceAsset mirrors the standard asset fields, embedded so the edit
 	// form can pre-fill the Physical inventory section without a follow-

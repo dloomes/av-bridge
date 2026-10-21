@@ -359,16 +359,13 @@ func (a *TesiraAdapter) sendSubscriptions(ctx context.Context) {
 	log := slog.With("device", a.Cfg.ID)
 
 	subscribe := func(label, tag, attribute string, channel, rate int) {
-		if channel <= 0 {
-			channel = 1
-		}
 		if rate <= 0 {
 			rate = 500
 		}
 		if label == "" {
 			label = fmt.Sprintf("%s_%s", tag, attribute)
 		}
-		cmd := fmt.Sprintf("%s subscribe %s %d %s %d", tag, attribute, channel, label, rate)
+		cmd := fmt.Sprintf("%s subscribe %s%s %s %d", tag, attribute, ttpIndex(attribute, channel), label, rate)
 		resp, err := a.sendAndReceive(ctx, cmd, 3*time.Second)
 		switch {
 		case err != nil:
@@ -484,14 +481,15 @@ func (a *TesiraAdapter) readLoop(ctx context.Context) {
 // Both forms collapse to a label (the publishToken / custom label) and a
 // stringified value. Notifications that don't match either form are dropped.
 func (a *TesiraAdapter) HandleSubscriptionNotification(line string) {
-	label, value := parseSubscriptionNotification(line)
+	label, raw := parseSubscriptionNotification(line)
 	if label == "" {
 		return
 	}
+	value := typedTTPValue(raw)
 
 	// Update cached metrics
 	a.stateMu.Lock()
-	a.lastMetrics[label] = value
+	setTTPReading(a.lastMetrics, label, value)
 	a.stateMu.Unlock()
 
 	// Emit as a device event so the hub forwards it to the cloud
@@ -666,11 +664,7 @@ func (a *TesiraAdapter) runPolledSubscriptions(ctx context.Context, metrics map[
 		if label == "" {
 			label = fmt.Sprintf("%s_%s", s.Tag, s.Attribute)
 		}
-		channel := s.Channel
-		if channel <= 0 {
-			channel = 1
-		}
-		cmd := fmt.Sprintf("%s get %s %d", s.Tag, s.Attribute, channel)
+		cmd := s.Tag + " get " + s.Attribute + ttpIndex(s.Attribute, s.Channel)
 		resp, err := a.sendAndReceive(ctx, cmd, 3*time.Second)
 		if err != nil || !strings.HasPrefix(resp, "+OK") {
 			slog.Debug("tesira polled sub failed",
@@ -678,7 +672,7 @@ func (a *TesiraAdapter) runPolledSubscriptions(ctx context.Context, metrics map[
 			continue
 		}
 		if v := parseTTPValue(resp); v != "" {
-			metrics[label] = v
+			setTTPReading(metrics, label, typedTTPValue(v))
 		}
 	}
 }
@@ -714,7 +708,7 @@ func (a *TesiraAdapter) SendCommand(ctx context.Context, req device.CommandReque
 	if strings.HasPrefix(resp, "+OK") {
 		parsed["success"] = true
 		if val := parseTTPValue(resp); val != "" {
-			parsed["value"] = val
+			parsed["value"] = typedTTPValue(val)
 		}
 	} else if strings.HasPrefix(resp, "-ERR") {
 		parsed["success"] = false
@@ -800,6 +794,9 @@ func (a *TesiraAdapter) Capabilities() device.Capabilities {
 		for _, s := range a.Cfg.Subscriptions {
 			if s.Label != "" {
 				caps.Metrics = append(caps.Metrics, s.Label)
+				if s.Attribute == "callState" {
+					caps.Metrics = append(caps.Metrics, s.Label+"_active_calls")
+				}
 			}
 		}
 		sortStrings(caps.Metrics)
@@ -908,6 +905,11 @@ func extractValueField(content string) string {
 	if rest == "" {
 		return ""
 	}
+	// Multi-value attributes (levels, mutes) arrive as a bracketed,
+	// space-separated list and callState as an object; take the whole of it.
+	if rest[0] == '[' || rest[0] == '{' {
+		return takeBracketed(rest)
+	}
 	if strings.HasPrefix(rest, "\"") {
 		end := strings.Index(rest[1:], "\"")
 		if end < 0 {
@@ -921,6 +923,140 @@ func extractValueField(content string) string {
 		return rest
 	}
 	return rest[:end]
+}
+
+// takeBracketed returns the leading [...] or {...} of s, matching nested
+// brackets and skipping any inside quoted strings. Unbalanced input is
+// returned whole.
+func takeBracketed(s string) string {
+	depth, inQuote := 0, false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case inQuote:
+			if c == '\\' {
+				i++
+			} else if c == '"' {
+				inQuote = false
+			}
+		case c == '"':
+			inQuote = true
+		case c == '[' || c == '{':
+			depth++
+		case c == ']' || c == '}':
+			depth--
+			if depth == 0 {
+				return s[:i+1]
+			}
+		}
+	}
+	return s
+}
+
+// ttpNoIndexAttributes take no channel index in get and subscribe: the
+// "all channels" forms return every channel in one list, and VoIP
+// callState covers every line (Biamp TTP reference examples:
+// "Level4CH subscribe levels MyLevel4ALL 500",
+// "VoIPControlStatus1 subscribe callState VoIP_PHL1 1500").
+var ttpNoIndexAttributes = map[string]bool{
+	"levels":    true,
+	"mutes":     true,
+	"callState": true,
+}
+
+// ttpIndex is the " <channel>" part of a get or subscribe, or "" for an
+// attribute that takes none.
+func ttpIndex(attribute string, channel int) string {
+	if ttpNoIndexAttributes[attribute] {
+		return ""
+	}
+	if channel <= 0 {
+		channel = 1
+	}
+	return " " + strconv.Itoa(channel)
+}
+
+// typedTTPValue turns a TTP value into what it represents, so readings
+// can be compared and charted: "true"/"false" become booleans, numbers
+// become numbers (Tesira sends six decimal places, "-30.000000", which is
+// rounded to two), and [..] lists and {..} objects are decoded. Anything
+// else stays text.
+func typedTTPValue(raw string) any {
+	s := strings.TrimSpace(raw)
+	switch s {
+	case "true":
+		return true
+	case "false":
+		return false
+	case "":
+		return ""
+	}
+	if s[0] == '[' || s[0] == '{' {
+		var v any
+		if err := tesiraUnmarshal(s, &v); err == nil {
+			return roundTTPNumbers(v)
+		}
+		return s
+	}
+	if f, err := strconv.ParseFloat(s, 64); err == nil {
+		return roundTTP(f)
+	}
+	return s
+}
+
+func roundTTP(f float64) float64 {
+	if f >= 0 {
+		return float64(int64(f*100+0.5)) / 100
+	}
+	return float64(int64(f*100-0.5)) / 100
+}
+
+func roundTTPNumbers(v any) any {
+	switch x := v.(type) {
+	case float64:
+		return roundTTP(x)
+	case []any:
+		for i := range x {
+			x[i] = roundTTPNumbers(x[i])
+		}
+	case map[string]any:
+		for k := range x {
+			x[k] = roundTTPNumbers(x[k])
+		}
+	}
+	return v
+}
+
+// tesiraActiveCalls counts the calls in a VoIP callState value, shaped
+// {"callStateInfo":[{"state":VOIP_CALL_STATE_IDLE "lineId":0 "callId":1 ...} ...]}.
+// Every call appearance is listed; idle ones, and lines that haven't
+// started up (INIT), aren't calls. ok is false when v isn't a callState.
+func tesiraActiveCalls(v any) (n int, ok bool) {
+	m, isMap := v.(map[string]any)
+	if !isMap {
+		return 0, false
+	}
+	list, isList := m["callStateInfo"].([]any)
+	if !isList {
+		return 0, false
+	}
+	for _, e := range list {
+		c, _ := e.(map[string]any)
+		state, _ := c["state"].(string)
+		if state != "" && state != "VOIP_CALL_STATE_IDLE" && state != "VOIP_CALL_STATE_INIT" {
+			n++
+		}
+	}
+	return n, true
+}
+
+// setTTPReading stores a reading under label, plus <label>_active_calls
+// when it's a VoIP call state.
+func setTTPReading(metrics map[string]any, label string, v any) {
+	metrics[label] = v
+	if n, ok := tesiraActiveCalls(v); ok {
+		metrics[label+"_active_calls"] = n
+	}
 }
 
 // parseTTPValue extracts the value from a TTP +OK response. Tesira firmware

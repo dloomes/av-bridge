@@ -46,17 +46,63 @@ export function commandsFromRows(rows: CommandRow[]): Record<string, string> {
   return out;
 }
 
-// Standard Tesira block commands, generated from the block's instance tag.
-// TTP form: <instance tag> <verb> <attribute> <channel> [value].
-function tesiraBlockCommands(tag: string, channel: string, step: string): [string, string][] {
-  return [
-    ["mute", `${tag} set mute ${channel} true`],
-    ["unmute", `${tag} set mute ${channel} false`],
-    ["toggle_mute", `${tag} toggle mute ${channel}`],
-    ["vol_up", `${tag} increment level ${channel} ${step}`],
-    ["vol_down", `${tag} decrement level ${channel} ${step}`],
-    ["set_level", `${tag} set level ${channel} {level}`],
-  ];
+// Tesira DSP block types the helper can generate commands for. TTP form:
+// <instance tag> <verb> <attribute> [<index>] [value]. Level and mute
+// strings follow Biamp's TTP reference; the others follow Biamp's usual
+// attribute names, so test each from the device page.
+type TesiraBlock = "level" | "mute" | "logic" | "source" | "voip";
+
+const TESIRA_BLOCKS: { value: TesiraBlock; label: string; channel: boolean; hint: string }[] = [
+  { value: "level", label: "Level", channel: true,
+    hint: "Adds mute, unmute, toggle mute, volume up and down, and set level." },
+  { value: "mute", label: "Mute", channel: true,
+    hint: "Adds mute, unmute and toggle mute." },
+  { value: "logic", label: "Logic state", channel: true,
+    hint: "Adds on, off and toggle, for a Logic State block driving room logic." },
+  { value: "source", label: "Source selector", channel: false,
+    hint: "Adds select source, which asks for the source number (0 selects none)." },
+  { value: "voip", label: "VoIP phone", channel: false,
+    hint: "Adds dial (asks for the number), answer and hang up, on the line you choose." },
+];
+
+function tesiraBlockCommands(
+  block: TesiraBlock,
+  tag: string,
+  channel: string,
+  step: string,
+  line: string,
+): [string, string][] {
+  switch (block) {
+    case "level":
+      return [
+        ["mute", `${tag} set mute ${channel} true`],
+        ["unmute", `${tag} set mute ${channel} false`],
+        ["toggle_mute", `${tag} toggle mute ${channel}`],
+        ["vol_up", `${tag} increment level ${channel} ${step}`],
+        ["vol_down", `${tag} decrement level ${channel} ${step}`],
+        ["set_level", `${tag} set level ${channel} {level}`],
+      ];
+    case "mute":
+      return [
+        ["mute", `${tag} set mute ${channel} true`],
+        ["unmute", `${tag} set mute ${channel} false`],
+        ["toggle_mute", `${tag} toggle mute ${channel}`],
+      ];
+    case "logic":
+      return [
+        ["logic_on", `${tag} set state ${channel} true`],
+        ["logic_off", `${tag} set state ${channel} false`],
+        ["logic_toggle", `${tag} toggle state ${channel}`],
+      ];
+    case "source":
+      return [["select_source", `${tag} set sourceSelection {source}`]];
+    case "voip":
+      return [
+        ["dial", `${tag} dial ${line} 1 {number}`],
+        ["answer", `${tag} answer ${line} 1`],
+        ["hang_up", `${tag} end ${line} 1`],
+      ];
+  }
 }
 
 const labelClass =
@@ -180,17 +226,20 @@ export function CommandEditor({ rows, onChange, protocol }: Props) {
   );
 }
 
-// Generates the standard mute / volume / level commands for one Tesira
-// block. The instance tag is the block name from Tesira software.
+// Generates the standard commands for one Tesira DSP block. The instance
+// tag is the block name from Tesira software.
 function TesiraBlockHelper({
   onAdd,
 }: {
   onAdd: (pairs: [string, string][], prefix?: string) => void;
 }) {
+  const [block, setBlock] = useState<TesiraBlock>("level");
   const [tag, setTag] = useState("");
   const [channel, setChannel] = useState("1");
   const [step, setStep] = useState("3");
+  const [line, setLine] = useState("1");
   const [error, setError] = useState<string | null>(null);
+  const spec = TESIRA_BLOCKS.find((b) => b.value === block)!;
 
   const add = () => {
     const t = tag.trim();
@@ -198,20 +247,53 @@ function TesiraBlockHelper({
     if (/\s/.test(t)) {
       return setError("Instance tags with spaces aren't supported here — add those commands by hand.");
     }
-    if (!/^\d+$/.test(channel) || Number(channel) < 1) return setError("Channel must be 1 or higher.");
-    if (!/^\d+(\.\d+)?$/.test(step) || Number(step) <= 0) return setError("Step must be a positive number of dB.");
+    if (spec.channel && !/^\d+$/.test(channel)) {
+      return setError("Channel must be a number: 0 for a ganged block, otherwise 1 or higher.");
+    }
+    if (block === "level" && (!/^\d+(\.\d+)?$/.test(step) || Number(step) <= 0)) {
+      return setError("Step must be a positive number of dB.");
+    }
+    if (block === "voip" && (!/^\d+$/.test(line) || Number(line) < 1)) {
+      return setError("Line must be 1 or higher.");
+    }
     setError(null);
-    onAdd(tesiraBlockCommands(t, channel, step), t);
+    onAdd(tesiraBlockCommands(block, t, channel, step, line), t);
     setTag("");
   };
+
+  const field = (id: string, label: string, value: string, set: (v: string) => void, mode: "numeric" | "decimal") => (
+    <div className="space-y-1">
+      <label htmlFor={id} className={labelClass}>{label}</label>
+      <input
+        id={id}
+        className={inputClass}
+        inputMode={mode}
+        value={value}
+        onChange={(e) => { set(e.target.value.trim()); setError(null); }}
+      />
+    </div>
+  );
 
   return (
     <div className="rounded-md border border-dashed p-3 space-y-2">
       <div className="flex items-center gap-2 text-xs font-medium text-foreground">
         <Wand2 className="h-3.5 w-3.5 text-primary" />
-        Add standard commands for a level or mute block
+        Add commands for a DSP block
       </div>
-      <div className="grid grid-cols-2 sm:grid-cols-[minmax(0,1fr)_5rem_5rem_auto] gap-2 items-end">
+      <div className="grid grid-cols-2 sm:grid-cols-[9rem_minmax(0,1fr)_5rem_5rem_auto] gap-2 items-end">
+        <div className="col-span-2 sm:col-span-1 space-y-1">
+          <label htmlFor="tesira-block" className={labelClass}>Block</label>
+          <select
+            id="tesira-block"
+            className={inputClass}
+            value={block}
+            onChange={(e) => { setBlock(e.target.value as TesiraBlock); setError(null); }}
+          >
+            {TESIRA_BLOCKS.map((b) => (
+              <option key={b.value} value={b.value}>{b.label}</option>
+            ))}
+          </select>
+        </div>
         <div className="col-span-2 sm:col-span-1 space-y-1">
           <label htmlFor="tesira-tag" className={labelClass}>Instance tag</label>
           <input
@@ -222,38 +304,20 @@ function TesiraBlockHelper({
             onKeyDown={(e) => {
               if (e.key === "Enter") { e.preventDefault(); add(); }
             }}
-            placeholder="master_level"
+            placeholder={block === "voip" ? "VoIPControlStatus1" : block === "source" ? "SourceSelector1" : "master_level"}
             spellCheck={false}
             autoComplete="off"
           />
         </div>
-        <div className="space-y-1">
-          <label htmlFor="tesira-channel" className={labelClass}>Channel</label>
-          <input
-            id="tesira-channel"
-            className={inputClass}
-            inputMode="numeric"
-            value={channel}
-            onChange={(e) => { setChannel(e.target.value.trim()); setError(null); }}
-          />
-        </div>
-        <div className="space-y-1">
-          <label htmlFor="tesira-step" className={labelClass}>Step (dB)</label>
-          <input
-            id="tesira-step"
-            className={inputClass}
-            inputMode="decimal"
-            value={step}
-            onChange={(e) => { setStep(e.target.value.trim()); setError(null); }}
-          />
-        </div>
+        {spec.channel ? field("tesira-channel", "Channel", channel, setChannel, "numeric") : block === "voip" ? field("tesira-line", "Line", line, setLine, "numeric") : <div className="hidden sm:block" />}
+        {block === "level" ? field("tesira-step", "Step (dB)", step, setStep, "decimal") : <div className="hidden sm:block" />}
         <Button type="button" size="sm" className="col-span-2 sm:col-span-1 h-9" onClick={add}>
           Add
         </Button>
       </div>
       <p className="text-[11px] text-muted-foreground">
-        Adds mute, unmute, toggle mute, volume up/down and set level. If a name is already
-        used, the new one is prefixed with the tag (e.g. <code>zone2_mute</code>).
+        {spec.hint} If a name is already used, the new one is prefixed with the tag (e.g.{" "}
+        <code>zone2_mute</code>).{spec.channel && " Use channel 0 for a ganged block."}
       </p>
       {error && (
         <p className="text-xs [color:hsl(var(--destructive))]">{error}</p>

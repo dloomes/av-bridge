@@ -385,13 +385,14 @@ func TestTesiraAdapter_SubscriptionNotificationParsing(t *testing.T) {
 	a := NewTesiraAdapter(cfg)
 
 	cases := []struct {
-		line       string
-		wantLabel  string
-		wantValue  string
+		line      string
+		wantLabel string
+		wantValue any
 	}{
-		{"! mute_state true", "mute_state", "true"},
-		{"! gain_level -10.0", "gain_level", "-10.0"},
+		{"! mute_state true", "mute_state", true},
+		{"! gain_level -10.0", "gain_level", -10.0},
 		{"! call_state \"Init\"", "call_state", "Init"},
+		{`! "publishToken":"zone_level" "value":-30.000000`, "zone_level", -30.0},
 	}
 
 	for _, tc := range cases {
@@ -404,7 +405,7 @@ func TestTesiraAdapter_SubscriptionNotificationParsing(t *testing.T) {
 					t.Errorf("event type: got %q, want %q", evt.EventType, "tesira_subscription:"+tc.wantLabel)
 				}
 				if v, ok := evt.Payload["value"]; !ok || v != tc.wantValue {
-					t.Errorf("event value: got %q, want %q", v, tc.wantValue)
+					t.Errorf("event value: got %#v, want %#v", v, tc.wantValue)
 				}
 			case <-time.After(100 * time.Millisecond):
 				t.Fatal("no event emitted after subscription notification")
