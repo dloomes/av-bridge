@@ -954,7 +954,7 @@ export default function NightlySchedulePage() {
                       htmlFor="retention_days"
                       className="text-xs font-medium"
                     >
-                      Keep detailed step results for (days)
+                      Keep run history for (days)
                     </label>
                     <input
                       id="retention_days"
@@ -974,9 +974,8 @@ export default function NightlySchedulePage() {
                       className="w-full rounded-md border bg-background px-3 py-2 text-sm disabled:opacity-50"
                     />
                     <p className="text-xs text-muted-foreground">
-                      Minimum 30 days. Run-level pass/fail summaries are kept
-                      forever — only the per-step debug details are trimmed
-                      after this window.
+                      30 to 365 days. Runs older than this, with their step
+                      results, are deleted automatically.
                     </p>
                   </div>
                 </CardContent>
