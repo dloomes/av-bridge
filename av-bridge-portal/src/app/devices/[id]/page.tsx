@@ -363,10 +363,10 @@ export default function DeviceDetailPage() {
               }
               exclude={levelKeys(device.subscriptions)}
             />
+            {canSendCommand && <CommandPanel device={device} telemetry={telemetry.data} />}
             <LevelsCard subscriptions={device.subscriptions ?? []} metrics={telemetry.data?.metrics} />
           </div>
           <aside className="space-y-6 min-w-0">
-            {canSendCommand && <CommandPanel device={device} telemetry={telemetry.data} />}
             <DeviceEventHistory deviceId={device.id} />
           </aside>
         </div>
