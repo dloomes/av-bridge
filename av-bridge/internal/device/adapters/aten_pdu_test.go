@@ -32,8 +32,10 @@ type fakeATEN struct {
 	junk bool
 	// refuseNames: answer the name read as some firmwares do.
 	refuseNames bool
-	lastClose   time.Time
-	refused     atomic.Int64
+	// legacySwitch: accept only the older "sw o01 on imme" form.
+	legacySwitch bool
+	lastClose    time.Time
+	refused      atomic.Int64
 }
 
 func newFakeATEN(t *testing.T) *fakeATEN {
@@ -112,15 +114,24 @@ func (f *fakeATEN) serve(c net.Conn) {
 	case strings.HasSuffix(cmd, " name"):
 		reply = "Display"
 	case strings.HasPrefix(cmd, "read status"):
-		reply = "Outlet 01: on"
-	case strings.HasPrefix(cmd, "read meter outlet"):
-		reply = "current: 0.5 A power: 110 W"
-	case strings.Contains(cmd, "volt"):
-		reply = "voltage: 230.1 V"
-	case strings.Contains(cmd, "dev power"):
-		reply = "power: 880 W"
+		reply = "on"
+	// read meter, as ATEN's Telnet guide documents it: a bare value.
+	case strings.HasPrefix(cmd, "read meter olt ") && strings.HasSuffix(cmd, " curr simple"):
+		reply = "0.5"
+	case strings.HasPrefix(cmd, "read meter olt ") && strings.HasSuffix(cmd, " pow simple"):
+		reply = "110"
+	case cmd == "read meter dev volt simple":
+		reply = "230.1"
+	case cmd == "read meter dev pow simple":
+		reply = "880"
+	case cmd == "read meter dev curr simple":
+		reply = "4.2"
+	case strings.HasPrefix(cmd, "sw ") && f.legacySwitch && strings.HasSuffix(cmd, " imme"):
+		reply = "Outlet01 command is setting"
+	case strings.HasPrefix(cmd, "sw ") && !f.legacySwitch && strings.Contains(cmd, " imme "):
+		reply = "Outlet01 command is setting"
 	default:
-		reply = "PE6108G"
+		reply = "Invalid command or exceed max command length"
 	}
 	if f.junk {
 		reply = "Main Menu"
@@ -262,6 +273,76 @@ func TestATENPacesSessionsForBusyPDU(t *testing.T) {
 	}
 	if tel.Metrics["outlet_1_power_w"] == nil || tel.Metrics["voltage_v"] == nil {
 		t.Errorf("readings missing: %v", tel.Metrics)
+	}
+}
+
+// Meter readings use ATEN's documented syntax and its bare-value replies.
+func TestATENMeterReadings(t *testing.T) {
+	f := newFakeATEN(t)
+	a := newTestATEN(f, nil)
+	tel, _ := a.Poll(context.Background())
+	m := tel.Metrics
+	if m["outlet_1_current_a"] != 0.5 || m["outlet_2_power_w"] != 110.0 ||
+		m["voltage_v"] != 230.1 || m["total_power_w"] != 880.0 || m["total_current_a"] != 4.2 {
+		t.Errorf("readings = %v", m)
+	}
+	if tel.Error != "" {
+		t.Errorf("error = %q; every documented command should be accepted", tel.Error)
+	}
+	if n := f.count("read meter olt o01", " curr simple"); n != 1 {
+		t.Errorf("outlet current reads = %d", n)
+	}
+}
+
+// Switching sends the PE/PG guide's form; a PDU that only takes the older
+// form gets it, and the adapter remembers.
+func TestATENSwitchForms(t *testing.T) {
+	ctx := context.Background()
+	f := newFakeATEN(t)
+	a := newTestATEN(f, nil)
+	if _, err := a.SendCommand(ctx, device.CommandRequest{Name: "outlet_off", Args: map[string]any{"outlet": 2}}); err != nil {
+		t.Fatal(err)
+	}
+	if f.count("sw o02 imme off", "") != 1 {
+		t.Errorf("want the newer form, got %v", f.cmds)
+	}
+
+	old := newFakeATEN(t)
+	old.legacySwitch = true
+	b := newTestATEN(old, nil)
+	if _, err := b.SendCommand(ctx, device.CommandRequest{Name: "outlet_on", Args: map[string]any{"outlet": 1}}); err != nil {
+		t.Fatalf("older firmware: %v", err)
+	}
+	if old.count("sw o01 imme on", "") != 1 || old.count("sw o01 on imme", "") != 1 {
+		t.Errorf("want newer form refused then older form, got %v", old.cmds)
+	}
+	b.SendCommand(ctx, device.CommandRequest{Name: "outlet_reboot", Args: map[string]any{"outlet": 1}})
+	if old.count("sw o01 imme reboot", "") != 0 || old.count("sw o01 reboot imme", "") != 1 {
+		t.Errorf("second command should go straight to the older form, got %v", old.cmds)
+	}
+}
+
+func TestParseMeterValue(t *testing.T) {
+	cases := []struct {
+		resp string
+		want float64
+		ok   bool
+	}{
+		{"0.5\r\n> ", 0.5, true},
+		{"read meter olt o01 curr simple\r\n0.52\r\n> ", 0.52, true}, // echo's "o01" isn't the value
+		{"C:1.25", 1.25, true},
+		{"POW:-3", -3, true},
+		{"current: 0.5 A", 0.5, true},
+		{"Not Support", 0, false},
+		{"Command incorrect", 0, false},
+		{"Invalid command or exceed max command length", 0, false},
+		{"> ", 0, false},
+	}
+	for _, c := range cases {
+		got, ok := parseMeterValue(c.resp)
+		if ok != c.ok || got != c.want {
+			t.Errorf("parseMeterValue(%q) = %v, %v; want %v, %v", c.resp, got, ok, c.want, c.ok)
+		}
 	}
 }
 

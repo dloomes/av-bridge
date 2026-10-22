@@ -34,16 +34,26 @@ import (
 // each. After successful login the device sits at a `>` prompt awaiting a
 // single command.
 //
-// Commands we use (from ATEN eco PDU CLI reference):
+// Commands we use, from ATEN's eco PDU Telnet guides (PE/PG series guide,
+// and the older PE5-PE9 / 2016 guides, which agree on read syntax):
 //
-//	read status o<N> simple            — outlet on/off state
-//	read status o<N> name              — user-configured outlet label
-//	read meter outlet o<N> simple      — per-outlet current + power
-//	read meter dev volt simple         — device-level voltage
-//	read meter dev power simple        — device-level power draw
-//	sw o<N> on immediate               — power outlet on
-//	sw o<N> off immediate              — power outlet off
-//	sw o<N> reboot immediate           — power cycle outlet
+//	read status o<N> simple            — outlet state: on, off, pending, pop
+//	read meter olt o<N> curr simple    — outlet current (A)
+//	read meter olt o<N> pow simple     — outlet power (W)
+//	read meter dev volt simple         — device voltage
+//	read meter dev pow simple          — device power draw
+//	read meter dev curr simple         — device current
+//	sw o<N> imme on|off|reboot         — switch an outlet now (PE/PG guide);
+//	                                     older firmwares: sw o<N> on|off|reboot imme
+//
+// A "simple" reply is just the value ("0.5"); errors are "Command
+// incorrect", "Parameter out of bounds", "Not Support", or on newer
+// firmware "Invalid command or exceed max command length".
+//
+// The guides have no command for an outlet's name (names are set in the
+// web interface). The adapter still tries "read status o<N> name", which
+// some firmwares may answer, and stops asking once a PDU refuses it; set
+// outlet_<n>_name tags to label outlets.
 //
 // Parsing is regex-based and forgiving: firmware quirks (extra banners,
 // trailing spaces, punctuation drift) degrade a metric rather than fail the
@@ -68,6 +78,11 @@ type ATENPDUAdapter struct {
 	// firmwares answer "Invalid command or exceed max command length"),
 	// so names aren't asked for again until the adapter restarts.
 	namesUnsupported bool
+
+	// swLegacy: this PDU only accepts the older switch form
+	// ("sw o01 on imme"), learnt when it refused the newer one.
+	swMu     sync.Mutex
+	swLegacy bool
 
 	// lastClose is when the previous session ended (guarded by cmdMu).
 	// The PDU needs a moment to free its Telnet slot; a new session
@@ -192,11 +207,13 @@ func (a *ATENPDUAdapter) Poll(ctx context.Context) (*device.Telemetry, error) {
 				metrics[fmt.Sprintf("outlet_%d_state", i)] = state
 			}
 		}
-		if resp, ok := execRead("read meter outlet " + outlet + " simple"); ok {
-			if amps, ok := parseNumericMetric(resp, `(?i)current[^0-9\-]*([\-0-9.]+)`); ok {
+		if resp, ok := execRead("read meter olt " + outlet + " curr simple"); ok {
+			if amps, ok := parseMeterValue(resp); ok {
 				metrics[fmt.Sprintf("outlet_%d_current_a", i)] = amps
 			}
-			if watts, ok := parseNumericMetric(resp, `(?i)power[^0-9\-]*([\-0-9.]+)`); ok {
+		}
+		if resp, ok := execRead("read meter olt " + outlet + " pow simple"); ok {
+			if watts, ok := parseMeterValue(resp); ok {
 				metrics[fmt.Sprintf("outlet_%d_power_w", i)] = watts
 			}
 		}
@@ -241,13 +258,18 @@ func (a *ATENPDUAdapter) Poll(ctx context.Context) (*device.Telemetry, error) {
 	}
 
 	if resp, ok := execRead("read meter dev volt simple"); ok {
-		if v, ok := parseNumericMetric(resp, `(?i)volt[^0-9\-]*([\-0-9.]+)`); ok {
+		if v, ok := parseMeterValue(resp); ok {
 			metrics["voltage_v"] = v
 		}
 	}
-	if resp, ok := execRead("read meter dev power simple"); ok {
-		if w, ok := parseNumericMetric(resp, `(?i)power[^0-9\-]*([\-0-9.]+)`); ok {
+	if resp, ok := execRead("read meter dev pow simple"); ok {
+		if w, ok := parseMeterValue(resp); ok {
 			metrics["total_power_w"] = w
+		}
+	}
+	if resp, ok := execRead("read meter dev curr simple"); ok {
+		if amps, ok := parseMeterValue(resp); ok {
+			metrics["total_current_a"] = amps
 		}
 	}
 
@@ -310,6 +332,15 @@ func (a *ATENPDUAdapter) SendCommand(ctx context.Context, req device.CommandRequ
 	if err != nil {
 		return nil, fmt.Errorf("aten_pdu command %q: %w", req.Name, err)
 	}
+	// The newer switch form refused: this firmware wants the older one.
+	if legacy, ok := legacySwitch(raw); ok && atenRefusedRE.MatchString(resp) {
+		if resp2, err2 := a.exec(ctx, legacy); err2 == nil && !atenRefusedRE.MatchString(resp2) {
+			a.swMu.Lock()
+			a.swLegacy = true
+			a.swMu.Unlock()
+			raw, resp = legacy, resp2
+		}
+	}
 
 	// Surface the raw device reply at INFO so operators can see how the PDU
 	// actually reacted (helps diagnose "success but nothing changed" cases
@@ -352,7 +383,13 @@ func (a *ATENPDUAdapter) resolveCommand(req device.CommandRequest) (string, erro
 			"outlet_off":    "off",
 			"outlet_reboot": "reboot",
 		}[req.Name]
-		return fmt.Sprintf("sw %s %s immediate", outlet, verb), nil
+		a.swMu.Lock()
+		legacy := a.swLegacy
+		a.swMu.Unlock()
+		if legacy {
+			return fmt.Sprintf("sw %s %s imme", outlet, verb), nil
+		}
+		return fmt.Sprintf("sw %s imme %s", outlet, verb), nil
 	}
 
 	// Raw passthrough — accept if it looks like an ATEN CLI verb.
@@ -395,7 +432,7 @@ func (a *ATENPDUAdapter) outletArg(req device.CommandRequest) (string, error) {
 // ── Capabilities ─────────────────────────────────────────────────────────────
 
 func (a *ATENPDUAdapter) Capabilities() device.Capabilities {
-	metrics := []string{"voltage_v", "total_power_w", "outlet_count", "response_ms"}
+	metrics := []string{"voltage_v", "total_power_w", "total_current_a", "outlet_count", "response_ms"}
 	for i := 1; i <= a.outletCount; i++ {
 		metrics = append(metrics,
 			fmt.Sprintf("outlet_%d_state", i),
@@ -644,7 +681,11 @@ var (
 	// atenRefusedRE is the PDU turning a command down ("Invalid command or
 	// exceed max command length"), as opposed to answering it. Narrower
 	// than atenErrorRE so an outlet called "Fail-over switch" still counts.
-	atenRefusedRE = regexp.MustCompile(`(?i)invalid command|exceed(s|ed)? max|unknown command|command not (found|supported)|syntax error`)
+	atenRefusedRE = regexp.MustCompile(`(?i)command incorrect|parameter out of bounds|not support|invalid command|exceed(s|ed)? max|unknown command|syntax error`)
+
+	// atenSwitchNewRE matches the newer switch form we send by default.
+	atenSwitchNewRE = regexp.MustCompile(`^sw (o\d+) imme (on|off|reboot)$`)
+	atenNumberRE    = regexp.MustCompile(`-?\d+(\.\d+)?`)
 )
 
 func parseOutletState(resp string) string {
@@ -711,20 +752,37 @@ func parseOutletName(resp, outletID string) string {
 
 var outletNameRE = regexp.MustCompile(`(?i)name\s*[:=]\s*(.+)$`)
 
-func parseNumericMetric(resp, pattern string) (float64, bool) {
-	re, err := regexp.Compile(pattern)
-	if err != nil {
+// legacySwitch gives the older form ("sw o01 on imme") of a switch command
+// sent in the newer form ("sw o01 imme on").
+func legacySwitch(cmd string) (string, bool) {
+	m := atenSwitchNewRE.FindStringSubmatch(cmd)
+	if m == nil {
+		return "", false
+	}
+	return fmt.Sprintf("sw %s %s imme", m[1], m[2]), true
+}
+
+// parseMeterValue reads a "read meter ... simple" reply: just the value
+// ("0.5"), or "TT:VVV" in format mode, or a labelled value from older
+// firmware ("current: 0.5 A"). The echoed command and prompt are skipped,
+// so the command's own digits ("o01") aren't taken as the value, and a
+// refusal ("Not Support", "Command incorrect") gives no value.
+func parseMeterValue(resp string) (float64, bool) {
+	if atenRefusedRE.MatchString(resp) {
 		return 0, false
 	}
-	m := re.FindStringSubmatch(resp)
-	if len(m) < 2 {
-		return 0, false
+	for _, line := range strings.Split(resp, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(strings.ToLower(line), "read ") || isATENPrompt(line+"\n") {
+			continue
+		}
+		if m := atenNumberRE.FindString(line); m != "" {
+			if f, err := strconv.ParseFloat(m, 64); err == nil {
+				return f, true
+			}
+		}
 	}
-	f, err := strconv.ParseFloat(m[1], 64)
-	if err != nil {
-		return 0, false
-	}
-	return f, true
+	return 0, false
 }
 
 func isATENPrompt(line string) bool {
