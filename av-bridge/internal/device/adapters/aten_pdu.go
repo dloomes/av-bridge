@@ -64,6 +64,10 @@ type ATENPDUAdapter struct {
 	namesMu   sync.Mutex
 	names     map[int]string
 	namesRead time.Time
+	// namesUnsupported: every outlet's name request was refused (some
+	// firmwares answer "Invalid command or exceed max command length"),
+	// so names aren't asked for again until the adapter restarts.
+	namesUnsupported bool
 
 	// lastClose is when the previous session ended (guarded by cmdMu).
 	// The PDU needs a moment to free its Telnet slot; a new session
@@ -173,7 +177,8 @@ func (a *ATENPDUAdapter) Poll(ctx context.Context) (*device.Telemetry, error) {
 	}
 
 	a.namesMu.Lock()
-	refreshNames := a.names == nil || time.Since(a.namesRead) >= atenNameRefresh
+	refreshNames := !a.namesUnsupported && (a.names == nil || time.Since(a.namesRead) >= atenNameRefresh)
+	nameRefused, nameAsked := 0, 0
 	if a.names == nil {
 		a.names = map[int]string{}
 	}
@@ -206,7 +211,10 @@ func (a *ATENPDUAdapter) Poll(ctx context.Context) (*device.Telemetry, error) {
 		} else {
 			if refreshNames {
 				if resp, ok := execRead("read status " + outlet + " name"); ok {
-					if name := parseOutletName(resp, outlet); name != "" {
+					nameAsked++
+					if atenRefusedRE.MatchString(resp) {
+						nameRefused++
+					} else if name := parseOutletName(resp, outlet); name != "" {
 						a.namesMu.Lock()
 						a.names[i] = name
 						a.namesMu.Unlock()
@@ -224,6 +232,11 @@ func (a *ATENPDUAdapter) Poll(ctx context.Context) (*device.Telemetry, error) {
 	if refreshNames {
 		a.namesMu.Lock()
 		a.namesRead = time.Now()
+		if nameAsked > 0 && nameRefused == nameAsked {
+			a.namesUnsupported = true
+			slog.Info("aten_pdu doesn't report outlet names; label outlets with outlet_<n>_name tags instead",
+				"device", a.Cfg.ID)
+		}
 		a.namesMu.Unlock()
 	}
 
@@ -628,6 +641,10 @@ var (
 	outletStateOffRE = regexp.MustCompile(`(?i)\boff\b`)
 	atenPromptRE     = regexp.MustCompile(`^[^\s]*>\s*$`)
 	atenErrorRE      = regexp.MustCompile(`(?i)(invalid|unknown|error|fail|denied)`)
+	// atenRefusedRE is the PDU turning a command down ("Invalid command or
+	// exceed max command length"), as opposed to answering it. Narrower
+	// than atenErrorRE so an outlet called "Fail-over switch" still counts.
+	atenRefusedRE = regexp.MustCompile(`(?i)invalid command|exceed(s|ed)? max|unknown command|command not (found|supported)|syntax error`)
 )
 
 func parseOutletState(resp string) string {
@@ -681,6 +698,9 @@ func parseOutletName(resp, outletID string) string {
 	}
 
 	candidate = strings.TrimSpace(candidate)
+	if atenRefusedRE.MatchString(candidate) {
+		return "" // the PDU refused the command; that's not a name
+	}
 	// Reject sentinel values and the outlet id echoed back on its own.
 	switch strings.ToLower(candidate) {
 	case "", "n/a", "na", "--", "none", outletID:

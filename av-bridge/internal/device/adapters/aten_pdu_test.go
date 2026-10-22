@@ -29,9 +29,11 @@ type fakeATEN struct {
 	// hangUpOnBadPassword: reject by closing the session, not re-prompting.
 	hangUpOnBadPassword bool
 	// junk: logged-in sessions reply with text that holds no readings.
-	junk      bool
-	lastClose time.Time
-	refused   atomic.Int64
+	junk bool
+	// refuseNames: answer the name read as some firmwares do.
+	refuseNames bool
+	lastClose   time.Time
+	refused     atomic.Int64
 }
 
 func newFakeATEN(t *testing.T) *fakeATEN {
@@ -105,6 +107,8 @@ func (f *fakeATEN) serve(c net.Conn) {
 	f.mu.Unlock()
 	var reply string
 	switch {
+	case strings.HasSuffix(cmd, " name") && f.refuseNames:
+		reply = "Invalid command or exceed max command length"
 	case strings.HasSuffix(cmd, " name"):
 		reply = "Display"
 	case strings.HasPrefix(cmd, "read status"):
@@ -180,6 +184,34 @@ func TestATENOutletNamesAreCached(t *testing.T) {
 	a.Poll(ctx)
 	if n := f.count("read status", " name"); n != 4 {
 		t.Errorf("names should refresh after atenNameRefresh, got %d reads", n)
+	}
+}
+
+// A PDU that refuses the name read gets no names (not its error text as
+// every outlet's name), keeps its other readings, and isn't asked again.
+func TestATENRefusedNameReadIsNotAName(t *testing.T) {
+	f := newFakeATEN(t)
+	f.refuseNames = true
+	a := newTestATEN(f, nil)
+	ctx := context.Background()
+
+	tel, _ := a.Poll(ctx)
+	if v, ok := tel.Metrics["outlet_1_name"]; ok {
+		t.Errorf("outlet_1_name = %q, want none", v)
+	}
+	if tel.Metrics["outlet_1_state"] != "on" || tel.Error != "" {
+		t.Errorf("other readings should be unaffected: %v (error %q)", tel.Metrics, tel.Error)
+	}
+	if n := f.count("read status", " name"); n != 2 {
+		t.Fatalf("want 2 name reads on the first poll, got %d", n)
+	}
+
+	a.namesMu.Lock()
+	a.namesRead = time.Now().Add(-2 * atenNameRefresh)
+	a.namesMu.Unlock()
+	a.Poll(ctx)
+	if n := f.count("read status", " name"); n != 2 {
+		t.Errorf("a PDU that refused names was asked again (%d reads)", n)
 	}
 }
 
