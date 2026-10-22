@@ -41,7 +41,35 @@ func adapterRelevantChange(a, b config.DeviceConfig) bool {
 	if !reflect.DeepEqual(a.Subscriptions, b.Subscriptions) {
 		return true
 	}
+	// Tags are settings too (outlet_count, outlet names, tls_skip_verify,
+	// port_prefix, ...): a running adapter keeps the tags it started with,
+	// so it must restart to use new ones.
+	if !reflect.DeepEqual(a.Tags, b.Tags) {
+		return true
+	}
 	return false
+}
+
+// adapterConfig is a copy of dcfg for an adapter to own. Some adapters add
+// what they discover to their Tags (Sony, Aurora); with a shared map that
+// would change the hub's record of the config it was given, so every
+// config pull would look like a tag change and restart the device.
+func adapterConfig(dcfg config.DeviceConfig) config.DeviceConfig {
+	c := dcfg
+	if dcfg.Tags != nil {
+		c.Tags = make(map[string]string, len(dcfg.Tags))
+		for k, v := range dcfg.Tags {
+			c.Tags[k] = v
+		}
+	}
+	if dcfg.Commands != nil {
+		c.Commands = make(map[string]string, len(dcfg.Commands))
+		for k, v := range dcfg.Commands {
+			c.Commands[k] = v
+		}
+	}
+	c.Subscriptions = append([]config.SubscriptionSpec(nil), dcfg.Subscriptions...)
+	return c
 }
 
 // DeviceEntry holds a device, the config that produced it, and the cancel
@@ -207,7 +235,7 @@ func (h *Hub) Reconcile(want []config.DeviceConfig) {
 			continue
 		}
 		if !adapterRelevantChange(entry.Cfg, wanted) {
-			// Cosmetic-only edit (Name / Location / Type / Tags). Keep the
+			// Cosmetic-only edit (Name / Location / Type). Keep the
 			// running adapter — don't drop a live session for a label change.
 			// We still refresh entry.Cfg so the next reconcile compares
 			// against the desired state, not against a fossilised earlier
@@ -243,7 +271,7 @@ func (h *Hub) Reconcile(want []config.DeviceConfig) {
 // spawnDevice creates an adapter, registers it, and starts its manage
 // goroutine. Caller must NOT hold h.mu.
 func (h *Hub) spawnDevice(dcfg config.DeviceConfig) {
-	dev, err := adapters.New(dcfg, adapters.Deps{Lens: h.lens})
+	dev, err := adapters.New(adapterConfig(dcfg), adapters.Deps{Lens: h.lens})
 	if err != nil {
 		slog.Error("failed to create adapter", "device", dcfg.ID, "error", err)
 		return

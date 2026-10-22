@@ -1698,6 +1698,9 @@ func (h *Handler) UpdateDevice(w http.ResponseWriter, r *http.Request) {
 		where += " AND EXISTS (SELECT 1 FROM assets WHERE id = $" + strconv.Itoa(assetParamIdx) + "::uuid)"
 	}
 
+	// Telemetry from before this edit mustn't put the old tags back (see
+	// migration 0064 and the ingest upsert).
+	set = append(set, "config_updated_at = now()")
 	sql := "UPDATE devices SET " + strings.Join(set, ", ") + " WHERE " + where
 
 	p, _ := portalauth.From(r.Context())

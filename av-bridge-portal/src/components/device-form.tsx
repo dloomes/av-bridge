@@ -15,6 +15,7 @@ import {
   subscriptionsFromRows,
   type SubscriptionRow,
 } from "@/components/subscription-editor";
+import { TagEditor, rowsFromTags, tagsFromRows, type TagRow } from "@/components/tag-editor";
 import { api, MoveError } from "@/lib/api";
 import type {
   AdapterInfo,
@@ -85,7 +86,7 @@ interface FormState {
   asset_warranty_end: string;
   asset_notes: string;
   commands: CommandRow[];
-  tags_json: string;
+  tags: TagRow[];
   subscriptions: SubscriptionRow[];
 }
 
@@ -117,7 +118,7 @@ function emptyForm(): FormState {
     asset_warranty_end: "",
     asset_notes: "",
     commands: [],
-    tags_json: "",
+    tags: [],
     subscriptions: [],
   };
 }
@@ -148,7 +149,7 @@ function formFromDetail(d: DeviceDetail): FormState {
     asset_warranty_end: d.asset?.warranty_end ?? "",
     asset_notes: d.asset?.notes ?? "",
     commands: rowsFromCommands(d.commands),
-    tags_json: d.tags ? JSON.stringify(d.tags, null, 2) : "",
+    tags: rowsFromTags(d.tags),
     subscriptions: rowsFromSubscriptions(d.subscriptions),
   };
 }
@@ -370,18 +371,6 @@ const ASSET_STATUSES = [
   { key: "retired", label: "Retired" },
 ] as const;
 
-// parseJsonField returns the parsed value or throws with a friendly label so
-// the form can surface "tags: invalid JSON" rather than a stack trace.
-function parseJsonField<T>(label: string, raw: string): T | undefined {
-  const trimmed = raw.trim();
-  if (!trimmed) return undefined;
-  try {
-    return JSON.parse(trimmed) as T;
-  } catch (e) {
-    throw new Error(`${label}: invalid JSON — ${(e as Error).message}`);
-  }
-}
-
 const labelClass =
   "text-xs font-medium text-muted-foreground uppercase tracking-wide";
 const inputClass =
@@ -534,7 +523,7 @@ export function DeviceForm({
     let subscriptions: Subscription[] | undefined;
     try {
       commands = commandsFromRows(form.commands);
-      tags = parseJsonField<Record<string, string>>("tags", form.tags_json);
+      tags = tagsFromRows(form.tags);
       subscriptions = subscriptionsFromRows(form.subscriptions);
     } catch (e) {
       setError((e as Error).message);
@@ -1095,23 +1084,22 @@ export function DeviceForm({
         </details>
       )}
 
-      <details className="rounded-md border bg-muted/30 p-3">
+      <details className="rounded-md border bg-muted/30 p-3" open={form.tags.length > 0}>
         <summary className="cursor-pointer text-xs font-medium text-muted-foreground uppercase tracking-wide">
-          Advanced (JSON)
+          Tags{form.tags.length > 0 ? ` (${form.tags.length})` : ""}
         </summary>
-        <div className="mt-3 space-y-3">
-          <div>
-            <label className={labelClass}>Tags (object)</label>
-            <textarea
-              rows={3}
-              className={textareaClass}
-              value={form.tags_json}
-              onChange={(e) => set("tags_json", e.target.value)}
-              placeholder='{"make": "Sony", "model": "..."}'
-            />
-          </div>
+        <div className="mt-3">
+          <TagEditor rows={form.tags} onChange={(rows) => set("tags", rows)} protocol={form.protocol} />
         </div>
       </details>
+
+      {/* Repeated by the buttons: the form is long, and an error shown only
+          at the top is easy to miss after pressing Save. */}
+      {error && (
+        <div role="alert" className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm [color:hsl(var(--destructive))]">
+          {error}
+        </div>
+      )}
 
       <div className="flex items-center justify-end gap-2 pt-2 border-t">
         <Button type="button" variant="ghost" onClick={onCancel} disabled={submitting}>

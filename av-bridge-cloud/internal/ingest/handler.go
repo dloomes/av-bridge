@@ -278,8 +278,10 @@ SELECT $1::uuid,$2::uuid,$3::text,$4::text,$5::text,$6::text,$7::text,$8::text,$
     OR EXISTS (SELECT 1 FROM devices d
                 WHERE d.collector_id = $2::uuid AND d.reported_id = $3::text)
 ON CONFLICT (collector_id, reported_id) DO UPDATE SET
-  name             = COALESCE(EXCLUDED.name, devices.name),
-  type             = COALESCE(EXCLUDED.type, devices.type),
+  -- name and type, like protocol, are the portal's: a Collector keeps
+  -- running a renamed device without restarting it, so its telemetry
+  -- carries the old name and would undo the rename. The insert path
+  -- still sets them for devices first seen through telemetry.
   -- protocol is NOT updated on conflict. It's config, not observation
   -- — the cloud is authoritative for it (portal / /bridge/config PUT
   -- seed). Overwriting it here would revert any protocol change made
@@ -292,7 +294,15 @@ ON CONFLICT (collector_id, reported_id) DO UPDATE SET
   firmware_version = COALESCE(EXCLUDED.firmware_version, devices.firmware_version),
   mac_address      = COALESCE(EXCLUDED.mac_address, devices.mac_address),
   ip_address       = COALESCE(EXCLUDED.ip_address, devices.ip_address),
-  tags             = COALESCE(EXCLUDED.tags, devices.tags),
+  -- tags: the Collector's, which include adapter-discovered ones (Sony,
+  -- Aurora), except while a portal edit may not have reached it yet:
+  -- telemetry taken before the edit, or within a few minutes after it
+  -- (still in a push batch or spool), keeps the portal's (migration 0064).
+  tags             = CASE WHEN devices.config_updated_at IS NOT NULL
+                               AND (devices.config_updated_at > now() - interval '3 minutes'
+                                    OR EXCLUDED.last_seen_at < devices.config_updated_at)
+                          THEN devices.tags
+                          ELSE COALESCE(EXCLUDED.tags, devices.tags) END,
   latest_status    = CASE WHEN devices.last_seen_at IS NULL OR EXCLUDED.last_seen_at IS NULL
                                OR EXCLUDED.last_seen_at >= devices.last_seen_at
                           THEN COALESCE(EXCLUDED.latest_status, devices.latest_status)

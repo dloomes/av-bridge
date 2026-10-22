@@ -110,3 +110,35 @@ func TestWaitBackoffAnswersPollsOffline(t *testing.T) {
 		t.Error("cancelled context should end the wait")
 	}
 }
+
+// A tag edit restarts the adapter (tags are settings: outlet names,
+// outlet_count, tls_skip_verify...); a name or location edit doesn't.
+func TestAdapterRelevantChangeIncludesTags(t *testing.T) {
+	base := config.DeviceConfig{ID: "pdu", Name: "PDU", Protocol: "aten_pdu", Address: "10.0.0.5",
+		Tags: map[string]string{"outlet_count": "8"}}
+	renamed := base
+	renamed.Name, renamed.Location = "Rack PDU", "Comms room"
+	if adapterRelevantChange(base, renamed) {
+		t.Error("a rename shouldn't restart the adapter")
+	}
+	tagged := base
+	tagged.Tags = map[string]string{"outlet_count": "8", "outlet_1_name": "Codec"}
+	if !adapterRelevantChange(base, tagged) {
+		t.Error("a tag change must restart the adapter so it uses the new tags")
+	}
+}
+
+// An adapter that writes discovered values into its own Tags (Sony,
+// Aurora) mustn't change the hub's copy, or every config pull would look
+// like a tag change.
+func TestAdapterConfigIsACopy(t *testing.T) {
+	orig := config.DeviceConfig{ID: "tv", Tags: map[string]string{"a": "1"},
+		Commands: map[string]string{"x": "y"}, Subscriptions: []config.SubscriptionSpec{{Tag: "t"}}}
+	c := adapterConfig(orig)
+	c.Tags["model"] = "FW-85BZ40L"
+	c.Commands["z"] = "w"
+	c.Subscriptions[0].Tag = "changed"
+	if len(orig.Tags) != 1 || len(orig.Commands) != 1 || orig.Subscriptions[0].Tag != "t" {
+		t.Errorf("hub's config was changed through the adapter's copy: %+v", orig)
+	}
+}
