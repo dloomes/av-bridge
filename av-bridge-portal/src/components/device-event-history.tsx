@@ -11,7 +11,6 @@ import {
   XCircle,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { usePolling } from "@/hooks/usePolling";
 import { api } from "@/lib/api";
@@ -58,7 +57,9 @@ export function DeviceEventHistory({ deviceId, limit = 50 }: Props) {
         </button>
       </CardHeader>
       <CardContent className="p-0">
-        <ScrollArea className="max-h-96 px-4 pb-4 scrollbar-thin">
+        {/* A plain scroll box: Radix ScrollArea doesn't scroll inside a
+            max-height (its viewport grows with the content). */}
+        <div className="max-h-[28rem] overflow-y-auto px-4 pb-4 scrollbar-thin">
           {error && (
             <div className="my-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm [color:hsl(var(--destructive))]">
               Failed to load events: {error.message}
@@ -95,7 +96,7 @@ export function DeviceEventHistory({ deviceId, limit = 50 }: Props) {
               ))}
             </ul>
           )}
-        </ScrollArea>
+        </div>
       </CardContent>
     </Card>
   );
@@ -109,6 +110,7 @@ function EventRow({ event }: { event: DeviceEvent }) {
   const Icon = meta.icon;
   const label = humaniseEventType(event.event_type);
   const payload = filterPayload(event.payload);
+  const message = typeof event.payload?.message === "string" ? event.payload.message : "";
 
   return (
     <li
@@ -133,6 +135,12 @@ function EventRow({ event }: { event: DeviceEvent }) {
           {formatRelative(event.timestamp)}
         </time>
       </div>
+
+      {message && (
+        <p className="mt-1 pl-[22px] text-xs text-muted-foreground line-clamp-2" title={message}>
+          {message}
+        </p>
+      )}
 
       {payload.length > 0 && (
         <dl className="mt-1.5 grid grid-cols-[max-content_1fr] gap-x-3 gap-y-0.5 pl-[22px] text-[11px] leading-relaxed">
@@ -241,6 +249,12 @@ function humaniseEventType(eventType: string): string {
 // context we already show (device_name is in the page header) or are
 // wire-noise (alert_key repeats what event_type already says).
 const NOISE_KEYS = new Set([
+  // Alert events: the message is shown as text, severity by colour, and
+  // raw / metadata are the wire copy of the same thing.
+  "message",
+  "raw",
+  "metadata",
+  "severity",
   "alert_key",
   "device_id",
   "device_name",
