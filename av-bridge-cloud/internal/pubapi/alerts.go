@@ -22,6 +22,8 @@ type publicAlert struct {
 	DeviceName     string          `json:"device_name,omitempty"`
 	CollectorID    string          `json:"collector_id,omitempty"`
 	CollectorName  string          `json:"collector_name,omitempty"`
+	RoomID         string          `json:"room_id,omitempty"`
+	RoomName       string          `json:"room_name,omitempty"`
 	AlertKey       string          `json:"alert_key"`
 	Severity       string          `json:"severity"`
 	Message        string          `json:"message"`
@@ -54,16 +56,19 @@ func (h *Handler) ListAlerts(w http.ResponseWriter, r *http.Request) {
 
 	sql := `
 		SELECT a.id::text,
-		       CASE WHEN a.collector_id IS NOT NULL THEN 'collector' ELSE 'device' END,
+		       CASE WHEN a.collector_id IS NOT NULL THEN 'collector'
+		            WHEN a.room_id IS NOT NULL THEN 'room' ELSE 'device' END,
 		       COALESCE(a.device_id::text, ''),
 		       COALESCE(d.name, d.reported_id, ''),
 		       COALESCE(a.collector_id::text, ''),
 		       COALESCE(c.name, ''),
+		       COALESCE(a.room_id::text, ''), COALESCE(rm.name, ''),
 		       a.alert_key, a.severity, a.message, a.payload, a.status,
 		       a.opened_at, a.acknowledged_at, a.resolved_at
 		  FROM alerts a
 		  LEFT JOIN devices d    ON d.id = a.device_id
 		  LEFT JOIN collectors c ON c.id = a.collector_id
+		  LEFT JOIN rooms rm     ON rm.id = a.room_id
 		 WHERE 1=1`
 	args := []any{}
 	arg := func(v any) string {
@@ -97,6 +102,7 @@ func (h *Handler) ListAlerts(w http.ResponseWriter, r *http.Request) {
 				&a.ID, &a.SubjectKind,
 				&a.DeviceID, &a.DeviceName,
 				&a.CollectorID, &a.CollectorName,
+				&a.RoomID, &a.RoomName,
 				&a.AlertKey, &a.Severity, &a.Message, &a.Payload, &a.Status,
 				&a.OpenedAt, &a.AcknowledgedAt, &a.ResolvedAt,
 			); err != nil {

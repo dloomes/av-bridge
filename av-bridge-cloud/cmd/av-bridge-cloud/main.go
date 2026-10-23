@@ -429,6 +429,7 @@ func main() {
 	// portal handler init) so the portal's run-now endpoint has a
 	// reference to it.
 	nightlyScheduler.SetExecutor(nightlyExecutor)
+	nightlyScheduler.SetDispatcher(dispatcher)
 	go nightlyScheduler.Run(sweeperCtx)
 
 	// Kick off the nightly digest sender goroutine — the sender itself

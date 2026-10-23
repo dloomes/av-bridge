@@ -20,7 +20,7 @@ import { useSession } from "@/hooks/useSession";
 import { api } from "@/lib/api";
 import { hasPermission } from "@/lib/session";
 import { formatRelative } from "@/lib/utils";
-import type { AlertItem, AlertSeverity, AlertStatus } from "@/lib/types";
+import { alertSubject, type AlertItem, type AlertSeverity, type AlertStatus } from "@/lib/types";
 
 type Tab = "open" | "acknowledged" | "resolved" | "all";
 
@@ -180,10 +180,10 @@ export default function AlertsPage() {
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2 flex-wrap">
                           <Link
-                            href={`/devices/${encodeURIComponent(a.device_id)}`}
+                            href={alertSubject(a).href}
                             className="font-medium hover:underline"
                           >
-                            {a.device_name}
+                            {alertSubject(a).name}
                           </Link>
                           <span className="text-[11px] uppercase tracking-wide text-muted-foreground/80">
                             {a.alert_key}

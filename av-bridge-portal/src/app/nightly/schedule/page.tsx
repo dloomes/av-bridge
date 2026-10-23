@@ -29,6 +29,7 @@ import type {
   UpdateRoomOverrideBody,
 } from "@/lib/api";
 import { EXCLUSION_REASON_LABELS } from "@/lib/api";
+import { DatesPanel } from "./dates-panel";
 import { ReadinessPanel } from "./readiness-panel";
 import { DAY_BUTTONS, isFutureDate, summariseDays } from "./shared";
 
@@ -543,6 +544,9 @@ export default function NightlySchedulePage() {
 
                 </CardContent>
               </Card>
+
+              {/* ── One-off dates ─────────────────────────────────────── */}
+              <DatesPanel canManage={canManage} rooms={rooms} />
 
               {/* ── Per-room overrides ─────────────────────────────────── */}
               <Card>

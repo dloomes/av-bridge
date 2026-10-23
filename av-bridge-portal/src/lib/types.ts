@@ -413,8 +413,15 @@ export type AlertStatus = "open" | "acknowledged" | "resolved";
 
 export interface AlertItem {
   id: string;
+  // What the alert is about: a device, a Collector, or a room (a failed
+  // Room Readiness health check or power cycle).
+  subject_kind?: "device" | "collector" | "room";
   device_id: string;
   device_name: string;
+  collector_id?: string;
+  collector_name?: string;
+  room_id?: string;
+  room_name?: string;
   alert_key: string;
   severity: AlertSeverity;
   message: string;
@@ -425,6 +432,22 @@ export interface AlertItem {
   acknowledged_by?: string;
   resolved_at?: string;
   resolved_by?: string;
+}
+
+// alertSubject names what an alert is about and where to look at it. Room
+// alerts open the failed run (its id is in the payload).
+export function alertSubject(a: AlertItem): { name: string; href: string } {
+  if (a.subject_kind === "collector") {
+    return { name: a.collector_name || "Collector", href: "/collectors" };
+  }
+  if (a.subject_kind === "room") {
+    const runId = (a.payload as { run_id?: string } | undefined)?.run_id;
+    return {
+      name: a.room_name || "Room",
+      href: runId ? `/nightly/runs/${encodeURIComponent(runId)}` : "/nightly/runs",
+    };
+  }
+  return { name: a.device_name, href: `/devices/${encodeURIComponent(a.device_id)}` };
 }
 
 export interface AlertsSummary {

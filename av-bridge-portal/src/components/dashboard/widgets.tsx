@@ -34,7 +34,7 @@ import { usePolling } from "@/hooks/usePolling";
 import { api, type DashboardWidgetSize } from "@/lib/api";
 import { cn, formatMetricValue, formatRelative } from "@/lib/utils";
 import type { BuildingsMapEntry } from "@/components/buildings-map";
-import type { BuildingRow, DeviceStatus, DeviceSummary } from "@/lib/types";
+import { alertSubject, type BuildingRow, type DeviceStatus, type DeviceSummary } from "@/lib/types";
 
 export type WidgetConfig = Record<string, unknown>;
 
@@ -219,14 +219,14 @@ function AlertsWidget({ config }: { config: WidgetConfig }) {
             <div className="mb-1 text-xs text-muted-foreground">{rows.length} open</div>
             <ul className="space-y-0.5">
               {rows.slice(0, limit).map((a) => (
-                <Row key={a.id} href={`/devices/${encodeURIComponent(a.device_id)}`} right={formatRelative(a.opened_at)}>
+                <Row key={a.id} href={alertSubject(a).href} right={formatRelative(a.opened_at)}>
                   <span
                     className={cn(
                       "mr-1.5 inline-block h-2 w-2 rounded-full align-middle",
                       a.severity === "critical" ? "bg-destructive" : a.severity === "warning" ? "bg-amber-500" : "bg-sky-500"
                     )}
                   />
-                  <span className="font-medium">{a.device_name}</span>
+                  <span className="font-medium">{alertSubject(a).name}</span>
                   <span className="text-muted-foreground"> · {a.message}</span>
                 </Row>
               ))}

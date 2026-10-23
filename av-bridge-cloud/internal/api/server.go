@@ -358,6 +358,10 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 		mux.Handle("GET /api/v1/nightly/rooms", wrapPerm(portalauth.PermNightlyView, portal.Portal.ListNightlyRooms))
 		mux.Handle("PATCH /api/v1/nightly/rooms/{id}", wrapPerm(portalauth.PermNightlyManage, portal.Portal.UpdateRoomOverride))
 		mux.Handle("DELETE /api/v1/nightly/rooms/{id}", wrapPerm(portalauth.PermNightlyManage, portal.Portal.DeleteRoomOverride))
+		// One-off dates: closed days and open days with their own times.
+		mux.Handle("GET /api/v1/nightly/dates", wrapPerm(portalauth.PermNightlyView, portal.Portal.ListScheduleDates))
+		mux.Handle("POST /api/v1/nightly/dates", wrapPerm(portalauth.PermNightlyManage, portal.Portal.CreateScheduleDate))
+		mux.Handle("DELETE /api/v1/nightly/dates/{id}", wrapPerm(portalauth.PermNightlyManage, portal.Portal.DeleteScheduleDate))
 		// FR39 quick "room in use tonight" defer — operators can use this
 		// without needing the full nightly.manage grant.
 		mux.Handle("POST /api/v1/nightly/rooms/{id}/defer-tonight", wrapPerm(portalauth.PermNightlyDefer, portal.Portal.DeferTonight))

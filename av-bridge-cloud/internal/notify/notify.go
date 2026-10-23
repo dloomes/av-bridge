@@ -38,7 +38,11 @@ type AlertEvent struct {
 	DeviceName    string
 	CollectorID   string
 	CollectorName string
-	AlertKey      string
+	// RoomID / RoomName: a room alert (a failed health check or power
+	// cycle, from Room Readiness).
+	RoomID    string
+	RoomName  string
+	AlertKey  string
 	Severity      string
 	Message       string
 	OpenedAt      time.Time
@@ -51,6 +55,9 @@ func (a AlertEvent) SubjectName() string {
 	if a.CollectorID != "" {
 		return a.CollectorName
 	}
+	if a.RoomID != "" {
+		return a.RoomName
+	}
 	return a.DeviceName
 }
 
@@ -59,6 +66,9 @@ func (a AlertEvent) SubjectName() string {
 func (a AlertEvent) SubjectLabel() string {
 	if a.CollectorID != "" {
 		return "Collector"
+	}
+	if a.RoomID != "" {
+		return "Room"
 	}
 	return "Device"
 }

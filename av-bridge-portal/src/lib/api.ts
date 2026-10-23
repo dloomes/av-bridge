@@ -500,6 +500,32 @@ export interface UpdateNightlyScheduleBody {
   enabled?: boolean;
 }
 
+// One-off schedule date (GET /api/v1/nightly/dates). Closes a room, or
+// every room when room_id is absent, for the day: no power-on, no
+// readiness check. Or opens it with its own times (a weekend sitting, a
+// late finish), whatever the weekly schedule says. A room's date wins
+// over an every-room date.
+export interface ScheduleDate {
+  id: string;
+  date: string;               // YYYY-MM-DD, the organisation's timezone
+  room_id?: string;
+  room_name?: string;
+  closed: boolean;
+  power_on_time?: string;     // HH:MM, open dates only; else the usual
+  power_off_time?: string;    // HH:MM, open dates only; else the usual
+  note?: string;
+  created_by?: string;
+}
+
+export interface CreateScheduleDateBody {
+  date: string;
+  room_id?: string;
+  closed: boolean;
+  power_on_time?: string;
+  power_off_time?: string;
+  note?: string;
+}
+
 // Nightly-lifecycle per-room override row. Returned by
 // GET /api/v1/nightly/rooms. Effective values are already resolved against
 // the customer default; `has_override` badges rooms whose behaviour
@@ -968,6 +994,20 @@ export const api = {
 
   deleteRoomOverride: (roomID: string) =>
     request<void>(`/api/v1/nightly/rooms/${encodeURIComponent(roomID)}`, {
+      method: "DELETE",
+    }),
+
+  listScheduleDates: (signal?: AbortSignal) =>
+    request<ScheduleDate[]>("/api/v1/nightly/dates", { signal }),
+
+  createScheduleDate: (body: CreateScheduleDateBody) =>
+    request<{ id: string }>("/api/v1/nightly/dates", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  deleteScheduleDate: (id: string) =>
+    request<void>(`/api/v1/nightly/dates/${encodeURIComponent(id)}`, {
       method: "DELETE",
     }),
 

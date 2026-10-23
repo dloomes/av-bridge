@@ -983,11 +983,13 @@ func (h *Handler) ListAlerts(w http.ResponseWriter, r *http.Request) {
 
 	type item struct {
 		ID              string          `json:"id"`
-		SubjectKind     string          `json:"subject_kind"` // "device" | "collector"
+		SubjectKind     string          `json:"subject_kind"` // "device" | "collector" | "room"
 		DeviceID        string          `json:"device_id,omitempty"`
 		DeviceName      string          `json:"device_name,omitempty"`
 		CollectorID     string          `json:"collector_id,omitempty"`
 		CollectorName   string          `json:"collector_name,omitempty"`
+		RoomID          string          `json:"room_id,omitempty"`
+		RoomName        string          `json:"room_name,omitempty"`
 		AlertKey        string          `json:"alert_key"`
 		Severity        string          `json:"severity"`
 		Message         string          `json:"message"`
@@ -1005,17 +1007,20 @@ func (h *Handler) ListAlerts(w http.ResponseWriter, r *http.Request) {
 	// subject appear. CASE picks the subject kind based on which column
 	// is populated — the CHECK constraint guarantees exactly one is set.
 	sql := `SELECT a.id::text,
-	               CASE WHEN a.collector_id IS NOT NULL THEN 'collector' ELSE 'device' END AS subject_kind,
+	               CASE WHEN a.collector_id IS NOT NULL THEN 'collector'
+	                    WHEN a.room_id IS NOT NULL THEN 'room' ELSE 'device' END AS subject_kind,
 	               COALESCE(a.device_id::text, ''),
 	               COALESCE(d.name, d.reported_id, ''),
 	               COALESCE(a.collector_id::text, ''),
 	               COALESCE(c.name, ''),
+	               COALESCE(a.room_id::text, ''), COALESCE(rm.name, ''),
 	               a.alert_key, a.severity, a.message, a.payload, a.status,
 	               a.opened_at, a.acknowledged_at, COALESCE(a.acknowledged_by,''),
 	               a.resolved_at, COALESCE(a.resolved_by,'')
 	          FROM alerts a
 	          LEFT JOIN devices d ON d.id = a.device_id
-	          LEFT JOIN collectors c ON c.id = a.collector_id`
+	          LEFT JOIN collectors c ON c.id = a.collector_id
+	          LEFT JOIN rooms rm ON rm.id = a.room_id`
 	args := []any{}
 	if status != "" {
 		args = append(args, status)
@@ -1035,6 +1040,7 @@ func (h *Handler) ListAlerts(w http.ResponseWriter, r *http.Request) {
 			if err := rows.Scan(&it.ID, &it.SubjectKind,
 				&it.DeviceID, &it.DeviceName,
 				&it.CollectorID, &it.CollectorName,
+				&it.RoomID, &it.RoomName,
 				&it.AlertKey, &it.Severity, &it.Message, &it.Payload, &it.Status,
 				&it.OpenedAt, &it.AcknowledgedAt, &it.AcknowledgedBy,
 				&it.ResolvedAt, &it.ResolvedBy); err != nil {

@@ -24,6 +24,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/dloomes/av-bridge-cloud/internal/notify"
 )
 
 // Config bundles the scheduler's tunables. All exposed via env vars in
@@ -64,6 +66,10 @@ type Scheduler struct {
 	// after the warm-up. Nil, or disabled in its own config, means
 	// readiness runs fail with that reason.
 	executor *Executor
+
+	// dispatcher notifies when a failed run opens a room alert (see
+	// run_alerts.go). Nil: the alert is recorded, nothing is sent.
+	dispatcher *notify.Dispatcher
 
 	// now overrides time.Now for tests. Nil in prod → uses time.Now().
 	now func() time.Time
@@ -138,6 +144,11 @@ func (s *Scheduler) tick(ctx context.Context) {
 	if err := s.startReadinessRuns(ctx); err != nil {
 		s.log.Warn("readiness start-runs error", "error", err)
 	}
+	// Failed health checks and power cycles open room alerts; passing
+	// ones resolve them.
+	if err := s.syncRunAlerts(ctx); err != nil {
+		s.log.Warn("room alert sync error", "error", err)
+	}
 }
 
 // roomView is a de-nested view of every enabled room's effective schedule
@@ -210,6 +221,10 @@ func (s *Scheduler) createDueRuns(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	books, err := s.loadDateBooks(ctx)
+	if err != nil {
+		return err
+	}
 	nowUTC := s.wallNow().UTC()
 	for _, rv := range rooms {
 		loc, err := time.LoadLocation(rv.timezone)
@@ -232,9 +247,11 @@ func (s *Scheduler) createDueRuns(ctx context.Context) error {
 			}
 		}
 
-		// Only trigger power-off on a day the customer marked as active.
-		todayISO := isoWeekday(nowLocal)
-		if !containsInt(rv.daysOfWeek, todayISO) {
+		// Only power off on a day the room is in use: a weekly day, or an
+		// open one-off date, and not a closed one. An open date can have
+		// its own power-off time.
+		today := books[rv.customerID].dayPlan(rv.roomID, nowLocal, rv.daysOfWeek, rv.powerOnTime, rv.powerOffTime)
+		if !today.active {
 			continue
 		}
 
@@ -242,8 +259,8 @@ func (s *Scheduler) createDueRuns(ctx context.Context) error {
 		// to UTC for storage / comparison with nightly_run.scheduled_at.
 		scheduledLocal := time.Date(
 			nowLocal.Year(), nowLocal.Month(), nowLocal.Day(),
-			int(rv.powerOffTime/time.Hour),
-			int((rv.powerOffTime%time.Hour)/time.Minute),
+			int(today.off/time.Hour),
+			int((today.off%time.Hour)/time.Minute),
 			0, 0, loc,
 		)
 		scheduledUTC := scheduledLocal.UTC()
@@ -306,6 +323,10 @@ func (s *Scheduler) createDueRuns(ctx context.Context) error {
 //	ready          — terminal success
 //	failed         — terminal failure
 func (s *Scheduler) advanceRuns(ctx context.Context) error {
+	books, err := s.loadDateBooks(ctx)
+	if err != nil {
+		return err
+	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT nr.id::text, nr.customer_id::text, nr.room_id::text, r.name,
 		       nr.phase, nr.scheduled_at, nr.started_at,
@@ -373,7 +394,7 @@ func (s *Scheduler) advanceRuns(ctx context.Context) error {
 			continue
 		}
 		next, reason, ok := s.decideTransition(r.phase, r.scheduledAt, r.phaseSince,
-			r.powerOnTime, r.daysOfWeek, r.timezone, nowUTC)
+			r.powerOnTime, r.daysOfWeek, r.timezone, nowUTC, books[r.customerID], r.roomID)
 		if !ok {
 			continue // no transition due yet
 		}
@@ -434,6 +455,8 @@ func (s *Scheduler) decideTransition(
 	daysOfWeek []int,
 	timezone string,
 	nowUTC time.Time,
+	book *dateBook,
+	roomID string,
 ) (string, string, bool) {
 	switch phase {
 	case "scheduled_off":
@@ -447,14 +470,22 @@ func (s *Scheduler) decideTransition(
 
 	case "off":
 		// Compute the NEXT power-on instant after scheduled_at, on the
-		// closest following day that's in daysOfWeek. That handles the
-		// Fri-evening → Mon-morning weekend gap correctly.
+		// closest following day in use. That handles the Fri-evening →
+		// Mon-morning weekend gap, and one-off dates (a closed Monday, an
+		// open Saturday).
 		loc, err := time.LoadLocation(timezone)
 		if err != nil {
 			return "failed", "bad timezone: " + err.Error(), true
 		}
+		// The next day in use (one-off dates over the weekly days), at
+		// that day's power-on time.
 		schedLocal := scheduledAt.In(loc)
-		onLocal := nextPowerOnAfter(schedLocal, powerOnTime, daysOfWeek)
+		onLocal := nextPowerOn(schedLocal, func(day time.Time) plan {
+			return book.dayPlan(roomID, day, daysOfWeek, powerOnTime, 0)
+		})
+		if onLocal.IsZero() {
+			return "", "", false // no day in use within a fortnight: keep waiting
+		}
 		onUTC := onLocal.UTC()
 		if nowUTC.Before(onUTC) {
 			return "", "", false
@@ -673,60 +704,3 @@ func int32sToIntSlice(xs []int32) []int {
 	return out
 }
 
-// nextPowerOnAfter — given a scheduled power-off local instant, the daily
-// power-on time (duration since midnight), and the set of days_of_week the
-// customer treats as active, return the local instant when power should
-// come back on.
-//
-// Two cases:
-//  1. Power-on time falls later on the same day as power-off (unusual in
-//     prod — typical is 19:00 off / 07:30 on next morning — but valid,
-//     and essential for testing). Return the same-day instant regardless
-//     of whether today is in daysOfWeek: it's part of the cycle we
-//     already committed to.
-//  2. Same-day power-on time has already passed (the overnight case).
-//     Walk forward day-by-day until we hit one in daysOfWeek. That
-//     spans weekends correctly (Fri 19:00 off → Mon 07:30 on when
-//     daysOfWeek = Mon-Fri).
-//
-// If daysOfWeek is empty (invalid config but don't panic), fall back to
-// the next calendar day.
-var errNoScheduledDay = errors.New("no scheduled day of week within a week")
-
-func nextPowerOnAfter(scheduledOffLocal time.Time, powerOnTime time.Duration, daysOfWeek []int) time.Time {
-	loc := scheduledOffLocal.Location()
-	// Case 1: same-day power-on that hasn't happened yet.
-	sameDay := time.Date(
-		scheduledOffLocal.Year(), scheduledOffLocal.Month(), scheduledOffLocal.Day(),
-		int(powerOnTime/time.Hour),
-		int((powerOnTime%time.Hour)/time.Minute),
-		0, 0, loc,
-	)
-	if sameDay.After(scheduledOffLocal) {
-		return sameDay
-	}
-	// Case 2: overnight — walk forward until we find a scheduled day.
-	// Build baseDay in the caller's timezone so day arithmetic doesn't
-	// silently slip via UTC-anchored Truncate() near DST boundaries.
-	baseDay := time.Date(
-		scheduledOffLocal.Year(), scheduledOffLocal.Month(), scheduledOffLocal.Day(),
-		0, 0, 0, 0, loc,
-	)
-	for i := 1; i <= 7; i++ {
-		candidateDay := baseDay.AddDate(0, 0, i)
-		if len(daysOfWeek) == 0 || containsInt(daysOfWeek, isoWeekday(candidateDay)) {
-			return time.Date(
-				candidateDay.Year(), candidateDay.Month(), candidateDay.Day(),
-				int(powerOnTime/time.Hour),
-				int((powerOnTime%time.Hour)/time.Minute),
-				0, 0, loc,
-			)
-		}
-	}
-	// Shouldn't happen — every ISO weekday is exhausted in 7 iterations.
-	return scheduledOffLocal.AddDate(0, 0, 1)
-}
-
-// keep errNoScheduledDay referenced so a lint pass doesn't complain if a
-// future refactor drops the panic-recovery path.
-var _ = errNoScheduledDay

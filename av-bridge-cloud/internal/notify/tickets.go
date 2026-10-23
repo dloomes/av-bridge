@@ -158,12 +158,14 @@ func (d *Dispatcher) activeTickets(ctx context.Context) ([]ticketRow, error) {
 		       a.id::text, a.customer_id::text,
 		       COALESCE(a.device_id::text,''), COALESCE(dv.name,''),
 		       COALESCE(a.collector_id::text,''), COALESCE(col.name,''),
+		       COALESCE(a.room_id::text,''), COALESCE(rm.name,''),
 		       a.alert_key, a.severity, a.message, a.opened_at, a.payload
 		  FROM alert_tickets t
 		  JOIN alerts a                 ON a.id = t.alert_id
 		  JOIN notification_channels c  ON c.id = t.channel_id
 		  LEFT JOIN devices dv          ON dv.id = a.device_id
 		  LEFT JOIN collectors col      ON col.id = a.collector_id
+		  LEFT JOIN rooms rm            ON rm.id = a.room_id
 		 WHERE (t.state = 'open' AND a.status = 'resolved')
 		    OR (t.state = 'pending' AND (a.status = 'resolved'
 		        OR (c.enabled AND t.attempts < $1)))
@@ -181,6 +183,7 @@ func (d *Dispatcher) activeTickets(ctx context.Context) ([]ticketRow, error) {
 			&t.ch.ID, &t.ch.Type, &t.ch.Name, &t.ch.Target, &cfg, &t.ch.MinSeverity,
 			&t.evt.AlertID, &t.evt.CustomerID, &t.evt.DeviceID, &t.evt.DeviceName,
 			&t.evt.CollectorID, &t.evt.CollectorName,
+			&t.evt.RoomID, &t.evt.RoomName,
 			&t.evt.AlertKey, &t.evt.Severity, &t.evt.Message, &t.evt.OpenedAt, &payload); err != nil {
 			return nil, err
 		}

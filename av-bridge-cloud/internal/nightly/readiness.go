@@ -80,6 +80,10 @@ func (s *Scheduler) createDueReadinessRuns(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	books, err := s.loadDateBooks(ctx)
+	if err != nil {
+		return err
+	}
 	nowUTC := s.wallNow().UTC()
 	for _, rr := range rooms {
 		loc, err := time.LoadLocation(rr.timezone)
@@ -92,7 +96,13 @@ func (s *Scheduler) createDueReadinessRuns(ctx context.Context) error {
 			!nowLocal.Truncate(24*time.Hour).After(rr.excludedUntil.Truncate(24*time.Hour)) {
 			continue
 		}
-		if !containsInt(rr.daysOfWeek, isoWeekday(nowLocal)) {
+		// A closed one-off date skips the check; an open one runs it even
+		// on a day the readiness schedule doesn't.
+		if d, ok := books[rr.customerID].lookup(rr.roomID, nowLocal); ok {
+			if d.closed {
+				continue
+			}
+		} else if !containsInt(rr.daysOfWeek, isoWeekday(nowLocal)) {
 			continue
 		}
 		due := time.Date(nowLocal.Year(), nowLocal.Month(), nowLocal.Day(),
