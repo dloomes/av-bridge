@@ -20,12 +20,13 @@ import (
 
 // adapterRelevantChange reports whether the difference between a and b would
 // require a restart of the running adapter. Returns false when the configs
-// differ only in cosmetic fields (Name, Location, Type, Tags) — those don't
-// affect the connection, polling cadence, or pre-registered subscriptions.
+// differ only in cosmetic fields (Name, Location, Type), which don't affect
+// the connection, polling or subscriptions. Tags do: adapters read settings
+// from them.
 //
-// Limitation: cosmetic field updates don't propagate to telemetry until the
-// next real restart, since the adapter caches Cfg by value. A separate live-
-// update path on device.Base would be needed if/when that matters.
+// A cosmetic change doesn't reach the running adapter until its next
+// restart (it holds Cfg by value), so its telemetry keeps the old name; the
+// cloud ignores telemetry names for existing devices, so that's harmless.
 func adapterRelevantChange(a, b config.DeviceConfig) bool {
 	if a.Protocol != b.Protocol ||
 		a.Address != b.Address ||
@@ -45,6 +46,12 @@ func adapterRelevantChange(a, b config.DeviceConfig) bool {
 	// port_prefix, ...): a running adapter keeps the tags it started with,
 	// so it must restart to use new ones.
 	if !reflect.DeepEqual(a.Tags, b.Tags) {
+		return true
+	}
+	// A new stamp means the tags were edited (even if back to what this
+	// adapter has): restart so its telemetry carries the stamp the cloud
+	// now expects, or the cloud would ignore its tags from then on.
+	if a.ConfigStamp != b.ConfigStamp {
 		return true
 	}
 	return false
@@ -490,8 +497,9 @@ func newOfflineHeartbeat(dev device.Device, cause error) *device.Telemetry {
 		Location:   info.Location,
 		Protocol:   info.Protocol,
 		Status:     device.StatusOffline,
-		Timestamp:  time.Now().UTC(),
-		Tags:       info.Tags,
+		Timestamp:   time.Now().UTC(),
+		Tags:        info.Tags,
+		ConfigStamp: info.ConfigStamp,
 	}
 	if cause != nil {
 		tel.Error = cause.Error()

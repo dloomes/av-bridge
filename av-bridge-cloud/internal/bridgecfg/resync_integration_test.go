@@ -130,4 +130,28 @@ func TestConfigResync(t *testing.T) {
 	if resync, _ := poll(); resync {
 		t.Fatal("resync should clear once the bridge has pulled")
 	}
+
+	// A tag edit (the portal stamps config_updated_at) also wakes the poll,
+	// and the pulled config carries the stamp in a form ingest compares
+	// exactly against the column.
+	if _, err := su.Exec(ctx, `UPDATE devices SET tags = '{"outlet_1_name": "Codec"}',
+	                           config_updated_at = '2026-10-23 10:00:00.123456+00' WHERE id = $1`, dev); err != nil {
+		t.Fatal(err)
+	}
+	if resync, _ := poll(); !resync {
+		t.Fatal("a tag edit should make the bridge re-pull")
+	}
+	rec := httptest.NewRecorder()
+	cfg.Get(rec, signed("/bridge/config"))
+	var got struct {
+		Devices []bridgecfg.Device `json:"devices"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || len(got.Devices) != 1 {
+		t.Fatalf("config = %s (%v)", rec.Body.String(), err)
+	}
+	var same bool
+	if err := su.QueryRow(ctx, `SELECT $1::timestamptz = config_updated_at FROM devices WHERE id = $2`,
+		got.Devices[0].ConfigStamp, dev).Scan(&same); err != nil || !same {
+		t.Errorf("config_stamp %q doesn't round-trip to config_updated_at (%v)", got.Devices[0].ConfigStamp, err)
+	}
 }

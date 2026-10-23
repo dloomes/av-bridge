@@ -122,6 +122,24 @@ func TestDeviceSubscriptionModeRoundTrip(t *testing.T) {
 		t.Errorf("after update, modes = %v; want zone1_mute poll", m)
 	}
 
+	// Changing tags stamps the device (it tells the Collector to re-pull);
+	// saving the same tags again, or changing something else, doesn't.
+	stamp := func() string {
+		return q(`SELECT COALESCE(config_updated_at::text, 'none') FROM devices WHERE id = $1`, c.ID)
+	}
+	if s := stamp(); s != "none" {
+		t.Errorf("never-tagged device stamped: %s", s)
+	}
+	call("PATCH", "/api/v1/devices/"+c.ID, c.ID, `{"tags": {"outlet_1_name": "Codec"}}`, nil)
+	first := stamp()
+	if first == "none" {
+		t.Fatal("a tag change should stamp config_updated_at")
+	}
+	call("PATCH", "/api/v1/devices/"+c.ID, c.ID, `{"tags": {"outlet_1_name": "Codec"}, "name": "DSP 2"}`, nil)
+	if s := stamp(); s != first {
+		t.Errorf("unchanged tags re-stamped: %s -> %s", first, s)
+	}
+
 	// The bridge config is built from the stored JSON, which must carry it.
 	if stored := q(`SELECT subscriptions::text FROM devices WHERE id = $1`, c.ID); !strings.Contains(stored, `"mode": "poll"`) && !strings.Contains(stored, `"mode":"poll"`) {
 		t.Errorf("stored subscriptions = %s; want mode poll", stored)

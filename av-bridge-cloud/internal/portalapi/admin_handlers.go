@@ -1637,6 +1637,11 @@ func (h *Handler) UpdateDevice(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Tags != nil {
 		add("tags", jsonOrNilCasted(*req.Tags))
+		// Stamp the edit when the tags actually change: the stamp tells the
+		// Collector to re-pull (migration 0065) and stops older telemetry
+		// putting the old tags back. In SET, "tags" is still the old value.
+		set = append(set, "config_updated_at = CASE WHEN tags IS DISTINCT FROM $"+
+			strconv.Itoa(len(args))+"::jsonb THEN now() ELSE config_updated_at END")
 	}
 	if req.Subscriptions != nil {
 		add("subscriptions", jsonOrNilCasted(*req.Subscriptions))
@@ -1698,9 +1703,6 @@ func (h *Handler) UpdateDevice(w http.ResponseWriter, r *http.Request) {
 		where += " AND EXISTS (SELECT 1 FROM assets WHERE id = $" + strconv.Itoa(assetParamIdx) + "::uuid)"
 	}
 
-	// Telemetry from before this edit mustn't put the old tags back (see
-	// migration 0064 and the ingest upsert).
-	set = append(set, "config_updated_at = now()")
 	sql := "UPDATE devices SET " + strings.Join(set, ", ") + " WHERE " + where
 
 	p, _ := portalauth.From(r.Context())

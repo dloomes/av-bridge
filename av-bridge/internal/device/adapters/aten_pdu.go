@@ -249,11 +249,6 @@ func (a *ATENPDUAdapter) Poll(ctx context.Context) (*device.Telemetry, error) {
 	if refreshNames {
 		a.namesMu.Lock()
 		a.namesRead = time.Now()
-		if nameAsked > 0 && nameRefused == nameAsked {
-			a.namesUnsupported = true
-			slog.Info("aten_pdu doesn't report outlet names; label outlets with outlet_<n>_name tags instead",
-				"device", a.Cfg.ID)
-		}
 		a.namesMu.Unlock()
 	}
 
@@ -280,6 +275,17 @@ func (a *ATENPDUAdapter) Poll(ctx context.Context) (*device.Telemetry, error) {
 		if !strings.HasSuffix(k, "_name") {
 			readings++
 		}
+	}
+
+	// Every name read refused, on a poll that otherwise got readings (so
+	// it really was the PDU's CLI answering): this firmware has no name
+	// command. Stop asking until the adapter restarts.
+	if refreshNames && readings > 0 && nameAsked > 0 && nameRefused == nameAsked {
+		a.namesMu.Lock()
+		a.namesUnsupported = true
+		a.namesMu.Unlock()
+		slog.Info("aten_pdu doesn't report outlet names; label outlets with outlet_<n>_name tags instead",
+			"device", a.Cfg.ID)
 	}
 
 	metrics["response_ms"] = time.Since(start).Milliseconds()
@@ -349,7 +355,7 @@ func (a *ATENPDUAdapter) SendCommand(ctx context.Context, req device.CommandRequ
 		"device", a.Cfg.ID, "command", req.Name, "raw_cli", raw, "response", resp)
 
 	parsed := map[string]any{"raw": resp}
-	if isATENError(resp) {
+	if isATENError(resp) || atenRefusedRE.MatchString(resp) {
 		parsed["success"] = false
 		return &device.CommandResponse{Raw: resp, Parsed: parsed, Latency: time.Since(start)},
 			fmt.Errorf("aten_pdu: device rejected command: %s", firstLine(resp))
@@ -773,7 +779,15 @@ func parseMeterValue(resp string) (float64, bool) {
 	}
 	for _, line := range strings.Split(resp, "\n") {
 		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(strings.ToLower(line), "read ") || isATENPrompt(line+"\n") {
+		if isATENPrompt(line + "\n") {
+			continue
+		}
+		// Drop a prompt in front of an echoed command ("PE8108G> read ..."),
+		// so the model number isn't taken as the value.
+		if i := strings.LastIndex(line, ">"); i >= 0 {
+			line = strings.TrimSpace(line[i+1:])
+		}
+		if line == "" || strings.HasPrefix(strings.ToLower(line), "read ") {
 			continue
 		}
 		if m := atenNumberRE.FindString(line); m != "" {

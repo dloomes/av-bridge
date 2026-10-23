@@ -120,6 +120,10 @@ type DeviceConfig struct {
 	Commands      map[string]string  `yaml:"commands"`
 	Tags          map[string]string  `yaml:"tags"`
 	Subscriptions []SubscriptionSpec `yaml:"subscriptions"`
+	// ConfigStamp is the cloud's stamp of the device's last portal edit,
+	// sent back with its telemetry so the cloud only takes tags from
+	// readings made with the current settings. Empty for YAML devices.
+	ConfigStamp string `yaml:"config_stamp,omitempty"`
 }
 
 // SubscriptionSpec describes a single push-notification subscription that an

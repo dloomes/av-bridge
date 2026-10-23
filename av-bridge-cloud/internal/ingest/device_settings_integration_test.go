@@ -58,47 +58,53 @@ func TestTelemetryKeepsPortalEdits(t *testing.T) {
 	dev := q(`INSERT INTO devices (customer_id, collector_id, reported_id, name, type, protocol, tags)
 	          VALUES ($1, $2, 'pdu', 'Rack PDU', 'power', 'aten_pdu', '{"outlet_count": "8"}') RETURNING id::text`, cust, col)
 
-	push := func(ts time.Time, name string, tags map[string]string) {
+	push := func(stamp, name string, tags map[string]string) {
 		t.Helper()
 		if err := st.WithTenant(ctx, cust, func(tx pgx.Tx) error {
 			_, err := upsertDeviceFromTelemetry(ctx, tx, cust, col, telemetryDTO{
 				DeviceID: "pdu", DeviceName: name, DeviceType: "power", Protocol: "aten_pdu",
-				Status: "online", Timestamp: ts, Tags: tags,
+				Status: "online", Timestamp: time.Now(), Tags: tags, ConfigStamp: stamp,
 			})
 			return err
 		}); err != nil {
 			t.Fatalf("upsert: %v", err)
 		}
 	}
-	tagsNow := func() string {
+	state := func() string {
 		return q(`SELECT COALESCE(tags->>'outlet_1_name', '-') || '|' || COALESCE(tags->>'model', '-') || '|' || name FROM devices WHERE id = $1`, dev)
 	}
 	old := map[string]string{"outlet_count": "8"}
 
-	// No edit yet: telemetry's tags (with what the adapter discovered) are
-	// taken, but never its name.
-	push(time.Now(), "pdu-old-name", map[string]string{"outlet_count": "8", "model": "PE6108G"})
-	if got := tagsNow(); got != "-|PE6108G|Rack PDU" {
+	// Never edited: telemetry's tags (with what the adapter discovered) are
+	// taken, from any Collector, but never its name.
+	push("", "pdu-old-name", map[string]string{"outlet_count": "8", "model": "PE6108G"})
+	if got := state(); got != "-|PE6108G|Rack PDU" {
 		t.Errorf("before any edit = %q", got)
 	}
 
-	// The portal edits the tags (what UpdateDevice does).
-	q(`UPDATE devices SET tags = '{"outlet_count": "8", "outlet_1_name": "Codec"}', config_updated_at = now() WHERE id = $1 RETURNING id::text`, dev)
-
-	// A reading taken before the edit, arriving after it, and one taken
-	// just after (the Collector hasn't restarted the device yet), keep
-	// the portal's tags.
-	push(time.Now().Add(-20*time.Second), "pdu-old-name", old)
-	push(time.Now(), "pdu-old-name", old)
-	if got := tagsNow(); got != "Codec|-|Rack PDU" {
-		t.Errorf("stale telemetry after the edit = %q; want the portal's tags kept", got)
+	// The portal edits the tags: it stamps the device, which also bumps
+	// the Collector's config version so it re-pulls straight away.
+	before := q(`SELECT config_version::text FROM collectors WHERE id = $1`, col)
+	q(`UPDATE devices SET tags = '{"outlet_count": "8", "outlet_1_name": "Codec"}',
+	          config_updated_at = '2026-10-23 10:00:00.123456+00' WHERE id = $1 RETURNING id::text`, dev)
+	if after := q(`SELECT config_version::text FROM collectors WHERE id = $1`, col); after == before {
+		t.Errorf("a tag edit should bump the Collector's config version (still %s)", after)
 	}
 
-	// Once the edit is a few minutes old, the Collector (running the new
-	// tags) is followed again, including tags it discovers.
-	q(`UPDATE devices SET config_updated_at = now() - interval '10 minutes' WHERE id = $1 RETURNING id::text`, dev)
-	push(time.Now(), "pdu-old-name", map[string]string{"outlet_count": "8", "outlet_1_name": "Codec", "model": "PE6108G"})
-	if got := tagsNow(); got != "Codec|PE6108G|Rack PDU" {
-		t.Errorf("after the edit has settled = %q", got)
+	// Telemetry made with the old settings, however late it arrives, and
+	// telemetry from a Collector too old to send a stamp, keep the
+	// portal's tags.
+	push("", "pdu-old-name", old)
+	push("2026-10-23T09:00:00.000000Z", "pdu-old-name", old)
+	if got := state(); got != "Codec|-|Rack PDU" {
+		t.Errorf("old telemetry after the edit = %q; want the portal's tags kept", got)
+	}
+
+	// Telemetry made with the new settings (the stamp the Collector pulled)
+	// is followed again, including tags it discovers.
+	push("2026-10-23T10:00:00.123456Z", "pdu-old-name",
+		map[string]string{"outlet_count": "8", "outlet_1_name": "Codec", "model": "PE6108G"})
+	if got := state(); got != "Codec|PE6108G|Rack PDU" {
+		t.Errorf("telemetry with the current stamp = %q", got)
 	}
 }

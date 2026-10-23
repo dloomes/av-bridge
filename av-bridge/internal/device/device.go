@@ -24,17 +24,21 @@ const (
 // LensMetrics carries values fetched from Poly Lens (or any future external
 // inventory source). Adapters without a secondary source leave LensMetrics nil.
 type Telemetry struct {
-	DeviceID     string            `json:"device_id"`
-	DeviceName   string            `json:"device_name"`
-	DeviceType   string            `json:"device_type"`
-	Location     string            `json:"location,omitempty"`
-	Protocol     string            `json:"protocol"`
-	Status       Status            `json:"status"`
-	Timestamp    time.Time         `json:"timestamp"`
-	Metrics      map[string]any    `json:"metrics,omitempty"`
-	LensMetrics  map[string]any    `json:"lens_metrics,omitempty"`
-	Tags         map[string]string `json:"tags,omitempty"`
-	Error        string            `json:"error,omitempty"`
+	DeviceID    string            `json:"device_id"`
+	DeviceName  string            `json:"device_name"`
+	DeviceType  string            `json:"device_type"`
+	Location    string            `json:"location,omitempty"`
+	Protocol    string            `json:"protocol"`
+	Status      Status            `json:"status"`
+	Timestamp   time.Time         `json:"timestamp"`
+	Metrics     map[string]any    `json:"metrics,omitempty"`
+	LensMetrics map[string]any    `json:"lens_metrics,omitempty"`
+	Tags        map[string]string `json:"tags,omitempty"`
+	Error       string            `json:"error,omitempty"`
+	// ConfigStamp: the device config's stamp this adapter is running with
+	// (config.DeviceConfig.ConfigStamp), so the cloud can tell telemetry
+	// made with the current tags from older telemetry.
+	ConfigStamp string `json:"config_stamp,omitempty"`
 	// Capabilities — what this device supports. Static per adapter,
 	// declared once in each vendor implementation. Carried on every
 	// telemetry payload for simplicity (bandwidth is trivial and the
@@ -128,6 +132,7 @@ type Device interface {
 //   - Persistent TCP (Tesira, Aurora, ATEN, Telnet, WebSocket) — proves
 //     the socket is alive if the poll rate exceeds any enterprise NAT
 //     idle timeout.
+//
 // Stateless adapters (REST, Sony Bravia PSK, VISCA, Ping, Serial) do
 // NOT implement this — every request already stands on its own.
 type Heartbeater interface {
@@ -178,7 +183,7 @@ func NewBase(cfg config.DeviceConfig) Base {
 
 func (b *Base) ID() string                { return b.Cfg.ID }
 func (b *Base) Info() config.DeviceConfig { return b.Cfg }
-func (b *Base) Events() <-chan *Event      { return b.eventsCh }
+func (b *Base) Events() <-chan *Event     { return b.eventsCh }
 
 func (b *Base) Status() Status {
 	b.mu.RLock()
@@ -202,14 +207,15 @@ func (b *Base) Emit(e *Event) {
 
 func (b *Base) BaseTelemetry() *Telemetry {
 	return &Telemetry{
-		DeviceID:   b.Cfg.ID,
-		DeviceName: b.Cfg.Name,
-		DeviceType: b.Cfg.Type,
-		Location:   b.Cfg.Location,
-		Protocol:   b.Cfg.Protocol,
-		Status:     b.Status(),
-		Timestamp:  time.Now().UTC(),
-		Tags:       b.Cfg.Tags,
+		DeviceID:    b.Cfg.ID,
+		DeviceName:  b.Cfg.Name,
+		DeviceType:  b.Cfg.Type,
+		Location:    b.Cfg.Location,
+		Protocol:    b.Cfg.Protocol,
+		Status:      b.Status(),
+		Timestamp:   time.Now().UTC(),
+		Tags:        b.Cfg.Tags,
+		ConfigStamp: b.Cfg.ConfigStamp,
 	}
 }
 

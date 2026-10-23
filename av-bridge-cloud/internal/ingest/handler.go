@@ -37,6 +37,9 @@ type telemetryDTO struct {
 	LensMetrics  map[string]any    `json:"lens_metrics"`
 	Tags         map[string]string `json:"tags"`
 	Error        string            `json:"error"`
+	// ConfigStamp: the device config's stamp the Collector was running
+	// with (bridgecfg Device.ConfigStamp); empty from older Collectors.
+	ConfigStamp string `json:"config_stamp"`
 	// Capabilities is the adapter's static declaration of what this
 	// device supports (power, commands, metrics). Persisted as-is to
 	// devices.capabilities so the portal + routine executor can gate
@@ -295,14 +298,14 @@ ON CONFLICT (collector_id, reported_id) DO UPDATE SET
   mac_address      = COALESCE(EXCLUDED.mac_address, devices.mac_address),
   ip_address       = COALESCE(EXCLUDED.ip_address, devices.ip_address),
   -- tags: the Collector's, which include adapter-discovered ones (Sony,
-  -- Aurora), except while a portal edit may not have reached it yet:
-  -- telemetry taken before the edit, or within a few minutes after it
-  -- (still in a push batch or spool), keeps the portal's (migration 0064).
-  tags             = CASE WHEN devices.config_updated_at IS NOT NULL
-                               AND (devices.config_updated_at > now() - interval '3 minutes'
-                                    OR EXCLUDED.last_seen_at < devices.config_updated_at)
-                          THEN devices.tags
-                          ELSE COALESCE(EXCLUDED.tags, devices.tags) END,
+  -- Aurora), but only from telemetry made with the device's current
+  -- settings. After a portal edit, telemetry carrying an older config
+  -- stamp (sent late, replayed from a spool, or from a Collector too old
+  -- to send one) keeps the portal's tags. Migration 0065.
+  tags             = CASE WHEN devices.config_updated_at IS NULL
+                            OR NULLIF($18::text, '')::timestamptz >= devices.config_updated_at
+                          THEN COALESCE(EXCLUDED.tags, devices.tags)
+                          ELSE devices.tags END,
   latest_status    = CASE WHEN devices.last_seen_at IS NULL OR EXCLUDED.last_seen_at IS NULL
                                OR EXCLUDED.last_seen_at >= devices.last_seen_at
                           THEN COALESCE(EXCLUDED.latest_status, devices.latest_status)
@@ -355,6 +358,7 @@ func upsertDeviceFromTelemetry(ctx context.Context, tx pgx.Tx, customerID, colle
 		jsonbMap(t.Metrics),
 		nilIfZeroTime(t.Timestamp),
 		nilIfEmptyRaw(t.Capabilities),
+		t.ConfigStamp,
 	).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		// Soft-deleted device (the WHERE deleted_at IS NULL guard on

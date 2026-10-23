@@ -142,3 +142,18 @@ func TestAdapterConfigIsACopy(t *testing.T) {
 		t.Errorf("hub's config was changed through the adapter's copy: %+v", orig)
 	}
 }
+
+// A new config stamp alone restarts the adapter, and its telemetry carries
+// the stamp, so the cloud accepts its tags again.
+func TestConfigStampRestartsAndIsReported(t *testing.T) {
+	a := config.DeviceConfig{ID: "pdu", Protocol: "ping", Tags: map[string]string{"x": "1"}, ConfigStamp: "2026-10-23T10:00:00.000000Z"}
+	b := a
+	b.ConfigStamp = "2026-10-23T10:05:00.000000Z"
+	if !adapterRelevantChange(a, b) {
+		t.Error("a new stamp must restart the adapter")
+	}
+	base := device.NewBase(b)
+	if tel := base.BaseTelemetry(); tel.ConfigStamp != b.ConfigStamp {
+		t.Errorf("telemetry stamp = %q, want %q", tel.ConfigStamp, b.ConfigStamp)
+	}
+}

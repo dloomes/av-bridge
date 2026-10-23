@@ -65,6 +65,7 @@ type wireDevice struct {
 	Commands      map[string]string `json:"commands,omitempty"`
 	Tags          map[string]string `json:"tags,omitempty"`
 	Subscriptions []Subscription    `json:"subscriptions,omitempty"`
+	ConfigStamp   string            `json:"config_stamp,omitempty"`
 }
 
 func (w wireDevice) toConfig() config.DeviceConfig {
@@ -94,6 +95,7 @@ func (w wireDevice) toConfig() config.DeviceConfig {
 		Commands:      w.Commands,
 		Tags:          w.Tags,
 		Subscriptions: subs,
+		ConfigStamp:   w.ConfigStamp,
 	}
 }
 

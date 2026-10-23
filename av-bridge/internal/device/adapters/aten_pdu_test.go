@@ -34,6 +34,8 @@ type fakeATEN struct {
 	refuseNames bool
 	// legacySwitch: accept only the older "sw o01 on imme" form.
 	legacySwitch bool
+	// refuseSwitch: refuse every switch form with ATEN's documented error.
+	refuseSwitch bool
 	lastClose    time.Time
 	refused      atomic.Int64
 }
@@ -126,6 +128,8 @@ func (f *fakeATEN) serve(c net.Conn) {
 		reply = "880"
 	case cmd == "read meter dev curr simple":
 		reply = "4.2"
+	case strings.HasPrefix(cmd, "sw ") && f.refuseSwitch:
+		reply = "Command incorrect"
 	case strings.HasPrefix(cmd, "sw ") && f.legacySwitch && strings.HasSuffix(cmd, " imme"):
 		reply = "Outlet01 command is setting"
 	case strings.HasPrefix(cmd, "sw ") && !f.legacySwitch && strings.Contains(cmd, " imme "):
@@ -322,6 +326,18 @@ func TestATENSwitchForms(t *testing.T) {
 	}
 }
 
+// A switch the PDU refuses in both forms ("Command incorrect" is one of
+// ATEN's documented errors) is a failed command, not a success.
+func TestATENRefusedSwitchFails(t *testing.T) {
+	f := newFakeATEN(t)
+	f.refuseSwitch = true
+	a := newTestATEN(f, nil)
+	_, err := a.SendCommand(context.Background(), device.CommandRequest{Name: "outlet_on", Args: map[string]any{"outlet": 1}})
+	if err == nil {
+		t.Fatal("a refused switch should fail the command")
+	}
+}
+
 func TestParseMeterValue(t *testing.T) {
 	cases := []struct {
 		resp string
@@ -333,6 +349,7 @@ func TestParseMeterValue(t *testing.T) {
 		{"C:1.25", 1.25, true},
 		{"POW:-3", -3, true},
 		{"current: 0.5 A", 0.5, true},
+		{"PE8108G> read meter olt o01 curr simple\r\n0.7\r\n> ", 0.7, true}, // prompt before the echo
 		{"Not Support", 0, false},
 		{"Command incorrect", 0, false},
 		{"Invalid command or exceed max command length", 0, false},

@@ -50,6 +50,11 @@ type Device struct {
 	Commands     map[string]string  `json:"commands,omitempty"`
 	Tags         map[string]string  `json:"tags,omitempty"`
 	Subscriptions []Subscription    `json:"subscriptions,omitempty"`
+	// ConfigStamp is when the device's tags were last edited in the
+	// portal (devices.config_updated_at). The Collector sends it back with
+	// the device's telemetry, so ingest can tell readings made with the
+	// current tags from older ones.
+	ConfigStamp string `json:"config_stamp,omitempty"`
 }
 
 // Handler serves both /bridge/config endpoints. Auth + cipher are shared so
@@ -150,7 +155,8 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 			       COALESCE(baud_rate, 0),
 			       username_enc, password_enc,
 			       COALESCE(poll_rate_seconds, 0),
-			       commands, tags, subscriptions
+			       commands, tags, subscriptions,
+			       COALESCE(to_char(config_updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'), '')
 			  FROM devices
 			 WHERE collector_id = $1
 			   AND deleted_at IS NULL
@@ -168,7 +174,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 			)
 			if err := rows.Scan(
 				&d.ID, &d.Name, &d.Type, &d.Protocol, &d.Address, &d.BaudRate,
-				&userEnc, &passEnc, &d.PollRate, &cmds, &tags, &subs,
+				&userEnc, &passEnc, &d.PollRate, &cmds, &tags, &subs, &d.ConfigStamp,
 			); err != nil {
 				return err
 			}
