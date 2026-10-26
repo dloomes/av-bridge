@@ -5,12 +5,16 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
   CheckCircle2,
+  FileDown,
   Loader2,
   Moon,
   XCircle,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { BackLink } from "@/components/back-link";
+import { useBranding } from "@/components/branding-provider";
+import { useToast } from "@/components/toast";
 import { Card, CardContent } from "@/components/ui/card";
 import { api } from "@/lib/api";
 import type {
@@ -75,6 +79,22 @@ export default function NightlyRunDetailPage() {
 
   const [loaded, setLoaded] = useState<NightlyRunDetail | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [making, setMaking] = useState(false);
+  const { branding } = useBranding();
+  const { toast } = useToast();
+
+  const downloadPDF = async () => {
+    if (!loaded) return;
+    setMaking(true);
+    try {
+      const { downloadRunReport } = await import("@/lib/run-report-pdf");
+      await downloadRunReport(loaded, branding.display_name);
+    } catch (e) {
+      toast({ title: "Couldn't make the PDF", description: (e as Error).message, variant: "destructive" });
+    } finally {
+      setMaking(false);
+    }
+  };
 
   // Load the run, and keep refreshing it every few seconds while it's
   // still going, so steps and the final status appear without a reload.
@@ -131,6 +151,22 @@ export default function NightlyRunDetailPage() {
               </p>
             )}
           </div>
+          {loaded && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void downloadPDF()}
+              disabled={making || loaded.status === "pending" || loaded.status === "in_progress"}
+              title={
+                loaded.status === "pending" || loaded.status === "in_progress"
+                  ? "Available once the run has finished"
+                  : "Download these results as a PDF"
+              }
+            >
+              {making ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileDown className="h-3.5 w-3.5" />}
+              Download PDF
+            </Button>
+          )}
         </div>
       </header>
 
