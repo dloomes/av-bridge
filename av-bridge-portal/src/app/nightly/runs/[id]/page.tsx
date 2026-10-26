@@ -25,6 +25,7 @@ import type {
   StepReading,
 } from "@/lib/api";
 import { readingLabel, STALE_READING_S } from "@/lib/api";
+import { summariseActual, summariseExpected } from "@/lib/step-summary";
 
 // Room Readiness — one-run detail.
 //
@@ -421,30 +422,51 @@ function PhaseChip({
 
 // Readings — where each judged device's reading came from. A reading
 // that wasn't a fresh poll, or was old, is called out.
-function Readings({ readings }: { readings: StepReading[] }) {
-  const named = readings.length > 1;
+function ReadingNote({ reading }: { reading: StepReading }) {
+  const stale =
+    reading.source !== "fresh" &&
+    (reading.source === "none" || (reading.age_s ?? 0) > STALE_READING_S);
   return (
-    <ul className="mt-1 space-y-0.5">
-      {readings.map((r, i) => {
-        const stale = r.source !== "fresh" && (r.source === "none" || (r.age_s ?? 0) > STALE_READING_S);
-        return (
-          <li
-            key={i}
-            title={r.at ? `Reading taken ${new Date(r.at).toLocaleString()}` : undefined}
-            className={`text-[11px] ${
-              stale
-                ? "font-medium [color:hsl(var(--warning))]"
-                : "text-muted-foreground"
-            }`}
-          >
-            {named && `${r.device}: `}
-            {readingLabel(r)}
-          </li>
-        );
-      })}
+    <span
+      title={reading.at ? `Reading taken ${new Date(reading.at).toLocaleString()}` : undefined}
+      className={`text-[11px] ${stale ? "font-medium [color:hsl(var(--warning))]" : "text-muted-foreground"}`}
+    >
+      {readingLabel(reading)}
+    </span>
+  );
+}
+
+// What a step found, a line per device, with where each reading came
+// from. The stored detail (command ids, raw replies) is under Raw.
+function Actual({ step }: { step: NightlyStepRow }) {
+  const lines = summariseActual(step);
+  return (
+    <ul className="space-y-1">
+      {lines.map((l, i) => (
+        <li key={i} className="leading-snug">
+          {l.device && <span className="text-muted-foreground">{l.device}: </span>}
+          <span className="font-medium">{l.value}</span>
+          {l.reading && (
+            <>
+              <span className="text-muted-foreground"> · </span>
+              <ReadingNote reading={l.reading} />
+            </>
+          )}
+        </li>
+      ))}
     </ul>
   );
 }
+
+const STEP_TYPE_LABELS: Record<string, string> = {
+  power_on: "Power on",
+  power_off: "Power off",
+  wait: "Wait",
+  section: "Section",
+  expect_status: "Expect status",
+  check_metric: "Check metric",
+  device_command: "Command",
+};
 
 function StepRow({ step }: { step: NightlyStepRow }) {
   return (
@@ -457,21 +479,26 @@ function StepRow({ step }: { step: NightlyStepRow }) {
       <td className="px-3 py-2.5 align-top">
         <div className="font-medium text-sm">{step.step_name}</div>
         <div className="text-[10px] text-muted-foreground uppercase tracking-wide">
-          {step.step_type}
+          {STEP_TYPE_LABELS[step.step_type] ?? step.step_type}
         </div>
       </td>
       <td className="px-3 py-2.5 align-top text-xs text-muted-foreground">
         {step.device_name ?? "—"}
       </td>
-      <td className="px-3 py-2.5 align-top text-xs font-mono max-w-[180px] break-all">
-        {step.expected !== undefined ? JSON.stringify(step.expected) : "—"}
+      <td className="px-3 py-2.5 align-top text-xs max-w-[180px] break-words">
+        {step.expected !== undefined ? summariseExpected(step) : "—"}
       </td>
-      <td className="px-3 py-2.5 align-top text-xs max-w-[200px]">
-        <div className="font-mono break-all">
-          {step.actual !== undefined ? JSON.stringify(step.actual) : "—"}
-        </div>
-        {step.readings && step.readings.length > 0 && (
-          <Readings readings={step.readings} />
+      <td className="px-3 py-2.5 align-top text-xs max-w-[260px] break-words">
+        {step.actual !== undefined || (step.readings?.length ?? 0) > 0 ? <Actual step={step} /> : "—"}
+        {(step.actual !== undefined || step.expected !== undefined) && (
+          <details className="mt-1">
+            <summary className="cursor-pointer text-[10px] text-muted-foreground hover:text-foreground">
+              Raw
+            </summary>
+            <pre className="mt-1 max-h-48 overflow-auto rounded bg-muted/50 p-2 text-[10px] leading-snug whitespace-pre-wrap break-all">
+              {JSON.stringify({ expected: step.expected, actual: step.actual, readings: step.readings }, null, 2)}
+            </pre>
+          </details>
         )}
       </td>
       <td className="px-3 py-2.5 align-top">

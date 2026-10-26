@@ -3,6 +3,7 @@
 
 import type { NightlyRunDetail, NightlyStepRow } from "@/lib/api";
 import { readingLabel } from "@/lib/api";
+import { summariseActual, summariseExpected } from "@/lib/step-summary";
 import { PRODUCT_NAME } from "@/lib/brand";
 
 const KIND: Record<string, string> = {
@@ -73,22 +74,13 @@ function value(v: unknown): string {
   return s.length > 120 ? s.slice(0, 117) + "..." : s;
 }
 
-// actualWithReadings is the Actual cell: what the step found and where the
-// reading came from. A step over several devices gets a line per device
-// ("Display: offline - Fresh poll") rather than its found values as JSON.
+// actualWithReadings is the Actual cell: what the step found, a line per
+// device, and where each reading came from ("Display: offline - Fresh poll").
 function actualWithReadings(s: NightlyStepRow): string {
-  const readings = s.readings ?? [];
-  if (readings.length === 0) return value(s.actual);
-  const byDevice =
-    s.actual && typeof s.actual === "object" && !Array.isArray(s.actual)
-      ? (s.actual as Record<string, unknown>)
-      : null;
-  if (readings.length > 1 && byDevice) {
-    return readings
-      .map((r) => `${r.device}: ${value(byDevice[r.device])} - ${readingLabel(r)}`)
-      .join("\n");
-  }
-  return [value(s.actual), ...readings.map(readingLabel)].join("\n");
+  if (s.actual === undefined && !(s.readings?.length)) return "-";
+  return summariseActual(s)
+    .map((l) => (l.device ? `${l.device}: ` : "") + l.value + (l.reading ? ` - ${readingLabel(l.reading)}` : ""))
+    .join("\n");
 }
 
 function slug(s: string): string {
@@ -205,7 +197,7 @@ export async function downloadRunReport(run: NightlyRunDetail, orgName?: string)
       s.step_index < 0 ? "-" : String(s.step_index + 1),
       pdfText(s.step_name),
       pdfText(s.device_name) || "-",
-      pdfText(value(s.expected)),
+      pdfText(s.expected === undefined ? "-" : summariseExpected(s)),
       pdfText(actualWithReadings(s)),
       s.passed ? "Pass" : pdfText(s.error ? `Fail: ${s.error}` : "Fail"),
     ];
