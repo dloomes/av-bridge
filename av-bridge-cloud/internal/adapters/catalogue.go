@@ -288,6 +288,39 @@ var catalogue = []Info{
 	},
 
 	{
+		ID:          "crestron",
+		Name:        "Crestron control processors",
+		Vendor:      "Crestron",
+		Kind:        KindVendor,
+		Description: "3-Series and 4-Series control processors through their console, over SSH (or CTP). Model, firmware, uptime and load, the program loaded, and every IP-ID device the program registers, with online or offline for each. No change to the room's program.",
+		DeviceTypes: []string{"control"},
+		Power:       PowerCapability{On: false, Off: false},
+		Commands:    []string{"restart_program", "reboot"},
+		Metrics: []string{
+			"model", "firmware", "firmware_date", "tsid", "mac", "hostname", "ssh_host_key",
+			"uptime_s", "cpu_load_pct", "ram_free_mb", "ram_total_mb", "ram_used_pct",
+			"program_file", "program_name", "program_compiled", "program_tool",
+			"ip_devices", "ip_devices_online", "ip_devices_offline", "offline_ip_devices",
+			"response_ms",
+		},
+		ConfigSchema: []ConfigField{
+			{Name: "address", Required: true, Description: "Processor IP (SSH port 22 is implied; 41795 with the console tag set to ctp).", Example: "192.168.10.40"},
+			{Name: "username", Required: true, Description: "A processor user that can log in to the console.", Example: "admin"},
+			{Name: "password", Required: true, Description: "That user's password."},
+			{Name: "poll_rate", Required: false, Description: "How often to poll. Defaults to 60s.", Example: "60s"},
+		},
+		ExampleConfig: `- id: court3-cp4
+  name: Court 3 processor
+  type: control
+  protocol: crestron
+  address: 192.168.10.40
+  username: admin
+  password: ${CRESTRON_PASSWORD}
+  tags:
+    program_slot: "1"`,
+	},
+
+	{
 		ID:          "poly_videoos",
 		Name:        "Poly VideoOS",
 		Vendor:      "HP / Poly",

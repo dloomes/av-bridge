@@ -76,6 +76,10 @@ func New(cfg config.DeviceConfig, deps Deps) (device.Device, error) {
 		// Aurora Multimedia DIDO 4x4 HDMI matrix / video wall processors —
 		// JSON over TCP (port 6970), the guide's TCP command set
 		return NewAuroraDIDOAdapter(cfg), nil
+	case "crestron":
+		// Crestron 3-Series / 4-Series control processors — the text
+		// console over SSH (or CTP 41795): health, program, IP table
+		return NewCrestronAdapter(cfg), nil
 	case "aten_pdu":
 		// ATEN eco PDU range (PE6108G and siblings) — Telnet CLI on port 23
 		// with per-outlet switching and per-outlet power metering
@@ -93,6 +97,6 @@ func New(cfg config.DeviceConfig, deps Deps) (device.Device, error) {
 		return NewFakeAdapter(cfg), nil
 
 	default:
-		return nil, fmt.Errorf("unsupported protocol: %q (supported: rest, websocket, telnet, serial, visca_over_ip, tesira, sony_bravia, philips_sicp, poly_videoos, cisco_roomos, cisco_tc, aurora_rxt, aurora_vpx, aurora_dido, aten_pdu, netgear_m4250, ping, fake)", cfg.Protocol)
+		return nil, fmt.Errorf("unsupported protocol: %q (supported: rest, websocket, telnet, serial, visca_over_ip, tesira, sony_bravia, philips_sicp, poly_videoos, cisco_roomos, cisco_tc, aurora_rxt, aurora_vpx, aurora_dido, crestron, aten_pdu, netgear_m4250, ping, fake)", cfg.Protocol)
 	}
 }

@@ -9,6 +9,7 @@ require (
 	github.com/kardianos/service v1.3.0
 	github.com/prometheus-community/pro-bing v0.9.1
 	go.bug.st/serial v1.6.2
+	golang.org/x/crypto v0.53.0
 	golang.org/x/sys v0.46.0
 	gopkg.in/yaml.v3 v3.0.1
 )
