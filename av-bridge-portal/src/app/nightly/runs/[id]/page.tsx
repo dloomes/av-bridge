@@ -22,7 +22,9 @@ import type {
   NightlyPhase,
   NightlyRunDetail,
   NightlyStepRow,
+  StepReading,
 } from "@/lib/api";
+import { readingLabel, STALE_READING_S } from "@/lib/api";
 
 // Room Readiness — one-run detail.
 //
@@ -417,6 +419,33 @@ function PhaseChip({
   return <span className={`${base} ${style}`}>{PHASE_LABELS[phase]}</span>;
 }
 
+// Readings — where each judged device's reading came from. A reading
+// that wasn't a fresh poll, or was old, is called out.
+function Readings({ readings }: { readings: StepReading[] }) {
+  const named = readings.length > 1;
+  return (
+    <ul className="mt-1 space-y-0.5">
+      {readings.map((r, i) => {
+        const stale = r.source !== "fresh" && (r.source === "none" || (r.age_s ?? 0) > STALE_READING_S);
+        return (
+          <li
+            key={i}
+            title={r.at ? `Reading taken ${new Date(r.at).toLocaleString()}` : undefined}
+            className={`text-[11px] ${
+              stale
+                ? "font-medium [color:hsl(var(--warning))]"
+                : "text-muted-foreground"
+            }`}
+          >
+            {named && `${r.device}: `}
+            {readingLabel(r)}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 function StepRow({ step }: { step: NightlyStepRow }) {
   return (
     <tr className="border-b last:border-0">
@@ -437,8 +466,13 @@ function StepRow({ step }: { step: NightlyStepRow }) {
       <td className="px-3 py-2.5 align-top text-xs font-mono max-w-[180px] break-all">
         {step.expected !== undefined ? JSON.stringify(step.expected) : "—"}
       </td>
-      <td className="px-3 py-2.5 align-top text-xs font-mono max-w-[180px] break-all">
-        {step.actual !== undefined ? JSON.stringify(step.actual) : "—"}
+      <td className="px-3 py-2.5 align-top text-xs max-w-[200px]">
+        <div className="font-mono break-all">
+          {step.actual !== undefined ? JSON.stringify(step.actual) : "—"}
+        </div>
+        {step.readings && step.readings.length > 0 && (
+          <Readings readings={step.readings} />
+        )}
       </td>
       <td className="px-3 py-2.5 align-top">
         {step.passed ? (

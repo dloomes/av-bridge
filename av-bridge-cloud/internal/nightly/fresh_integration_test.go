@@ -129,14 +129,38 @@ func TestChecksUseFreshReadings(t *testing.T) {
 	micsHear := mkStep(map[string]any{"type": "check_metric", "target": map[string]any{"device_type": "audio"},
 		"metric": "input_level_dbfs", "operator": "gt", "threshold": -40})
 
+	// source checks a step result recorded where its one reading came
+	// from, and that its age is within limits.
+	source := func(label string, r stepResult, want string, minAge, maxAge int) {
+		t.Helper()
+		if len(r.Readings) != 1 {
+			t.Errorf("%s: readings %+v, want one", label, r.Readings)
+			return
+		}
+		g := r.Readings[0]
+		if g.Source != want {
+			t.Errorf("%s: source %q, want %q", label, g.Source, want)
+		}
+		if want == "none" {
+			return
+		}
+		if g.At == nil || g.AgeS == nil || *g.AgeS < minAge || *g.AgeS > maxAge {
+			t.Errorf("%s: at %v, age %v s, want %d-%d s", label, g.At, g.AgeS, minAge, maxAge)
+		}
+	}
+
 	// Fresh readings win over the stale last report, even in dry-run.
-	if r := e.stepExpectStatus(ctx, run, expectOnline); !r.Passed {
+	r := e.stepExpectStatus(ctx, run, expectOnline)
+	if !r.Passed {
 		t.Errorf("expect_status with a fresh reading: %s", r.Error)
 	}
+	source("fresh expect_status", r, "fresh", 0, 5)
 	// The DSP has no telemetry stored at all; the fresh reading is enough.
-	if r := e.stepCheckMetric(ctx, run, micsHear); !r.Passed {
+	r = e.stepCheckMetric(ctx, run, micsHear)
+	if !r.Passed {
 		t.Errorf("check_metric with a fresh reading: %s", r.Error)
 	}
+	source("fresh check_metric", r, "fresh", 0, 5)
 
 	// An old Collector answers "unknown command": the step falls back to
 	// the last report, and says so when it fails.
@@ -146,10 +170,13 @@ func TestChecksUseFreshReadings(t *testing.T) {
 	if r := e.stepExpectStatus(ctx, run, expectOnline); r.Passed || !strings.Contains(r.Error, "last report") {
 		t.Errorf("fallback: passed=%v error=%q", r.Passed, r.Error)
 	}
-	exec(`UPDATE devices SET latest_status = 'online' WHERE id = $1`, display)
-	if r := e.stepExpectStatus(ctx, run, expectOnline); !r.Passed {
+	exec(`UPDATE devices SET latest_status = 'online', last_seen_at = now() - interval '42 seconds' WHERE id = $1`, display)
+	r = e.stepExpectStatus(ctx, run, expectOnline)
+	if !r.Passed {
 		t.Errorf("fallback with an online last report: %s", r.Error)
 	}
+	// A pass on the last report says so, and how old the report was.
+	source("fallback expect_status", r, "last_report", 40, 50)
 
 	// A Collector that never answers: the step waits only up to the
 	// fresh-reading timeout, then uses the last report.
@@ -158,7 +185,7 @@ func TestChecksUseFreshReadings(t *testing.T) {
 	mu.Unlock()
 	freshReadingTimeout = 500 * time.Millisecond
 	start := time.Now()
-	r := e.stepExpectStatus(ctx, run, expectOnline)
+	r = e.stepExpectStatus(ctx, run, expectOnline)
 	if !r.Passed || time.Since(start) > 3*time.Second {
 		t.Errorf("unanswered polls: passed=%v after %s (%s)", r.Passed, time.Since(start), r.Error)
 	}
@@ -176,9 +203,11 @@ func TestChecksUseFreshReadings(t *testing.T) {
 	if r := e.stepExpectStatus(ctx, run, pduOnline); !r.Passed {
 		t.Errorf("PDU expect_status from its last report: %s", r.Error)
 	}
-	if r := e.stepCheckMetric(ctx, run, pduDraw); !r.Passed {
+	r = e.stepCheckMetric(ctx, run, pduDraw)
+	if !r.Passed {
 		t.Errorf("PDU check_metric from a 5-minute-old reading: %s", r.Error)
 	}
+	source("PDU check_metric", r, "last_report", 295, 310)
 	if took := time.Since(start); took > 2*time.Second {
 		t.Errorf("PDU checks took %s; they shouldn't wait for a poll", took)
 	}

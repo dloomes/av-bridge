@@ -49,6 +49,9 @@ type publicReadinessStep struct {
 	Passed      bool            `json:"passed"`
 	Expected    json.RawMessage `json:"expected"`
 	Actual      json.RawMessage `json:"actual"`
+	// Readings: per device judged, where its reading came from — a fresh
+	// poll or the device's last report — when it was taken, and its age.
+	Readings json.RawMessage `json:"readings"`
 	Error       *string         `json:"error"`
 	StartedAt   *time.Time      `json:"started_at"`
 	CompletedAt *time.Time      `json:"completed_at"`
@@ -229,7 +232,7 @@ func (h *Handler) GetReadinessRun(w http.ResponseWriter, r *http.Request) {
 			SELECT sr.step_index, sr.step_name, sr.step_type,
 			       sr.device_id::text, d.name,
 			       sr.passed, sr.expected, sr.actual, sr.error,
-			       sr.started_at, sr.completed_at
+			       sr.started_at, sr.completed_at, sr.readings
 			  FROM nightly_step_result sr
 			  LEFT JOIN devices d ON d.id = sr.device_id
 			 WHERE sr.run_id = $1
@@ -240,13 +243,14 @@ func (h *Handler) GetReadinessRun(w http.ResponseWriter, r *http.Request) {
 		defer rows.Close()
 		for rows.Next() {
 			var s publicReadinessStep
-			var expected, actual []byte
+			var expected, actual, readings []byte
 			if err := rows.Scan(&s.Index, &s.Name, &s.Type, &s.DeviceID, &s.Device,
-				&s.Passed, &expected, &actual, &s.Error, &s.StartedAt, &s.CompletedAt); err != nil {
+				&s.Passed, &expected, &actual, &s.Error, &s.StartedAt, &s.CompletedAt, &readings); err != nil {
 				return err
 			}
 			s.Expected = rawOrNil(expected)
 			s.Actual = rawOrNil(actual)
+			s.Readings = rawOrNil(readings)
 			out.Steps = append(out.Steps, s)
 		}
 		return rows.Err()

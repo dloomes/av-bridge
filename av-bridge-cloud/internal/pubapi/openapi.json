@@ -707,6 +707,20 @@
           "passed": { "type": "boolean" },
           "expected": { "description": "What the step checked for, as configured in the routine." },
           "actual": { "description": "What the step found." },
+          "readings": {
+            "type": ["array", "null"],
+            "description": "Check steps only: for each device judged, where its reading came from. `fresh` is a poll made for the step; `last_report` is the device's last regular report (an ATEN PDU, or a fresh poll that didn't come back within 60 seconds); `none` means there was no reading. Null for other steps and for runs before readings were recorded.",
+            "items": {
+              "type": "object",
+              "required": ["device", "source"],
+              "properties": {
+                "device": { "type": "string" },
+                "source": { "type": "string", "enum": ["fresh", "last_report", "none"] },
+                "at": { "type": "string", "format": "date-time", "description": "When the reading was taken." },
+                "age_s": { "type": "integer", "description": "How old the reading was when the step judged it, in seconds." }
+              }
+            }
+          },
           "error": { "type": ["string", "null"] },
           "started_at": { "type": ["string", "null"], "format": "date-time" },
           "completed_at": { "type": ["string", "null"], "format": "date-time" }

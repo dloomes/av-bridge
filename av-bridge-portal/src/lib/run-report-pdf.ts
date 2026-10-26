@@ -2,6 +2,7 @@
 // loaded when a report is asked for, so it adds nothing to page loads.
 
 import type { NightlyRunDetail, NightlyStepRow } from "@/lib/api";
+import { readingLabel } from "@/lib/api";
 import { PRODUCT_NAME } from "@/lib/brand";
 
 const KIND: Record<string, string> = {
@@ -70,6 +71,24 @@ function value(v: unknown): string {
   }
   const s = typeof v === "string" ? v : JSON.stringify(v);
   return s.length > 120 ? s.slice(0, 117) + "..." : s;
+}
+
+// actualWithReadings is the Actual cell: what the step found and where the
+// reading came from. A step over several devices gets a line per device
+// ("Display: offline - Fresh poll") rather than its found values as JSON.
+function actualWithReadings(s: NightlyStepRow): string {
+  const readings = s.readings ?? [];
+  if (readings.length === 0) return value(s.actual);
+  const byDevice =
+    s.actual && typeof s.actual === "object" && !Array.isArray(s.actual)
+      ? (s.actual as Record<string, unknown>)
+      : null;
+  if (readings.length > 1 && byDevice) {
+    return readings
+      .map((r) => `${r.device}: ${value(byDevice[r.device])} - ${readingLabel(r)}`)
+      .join("\n");
+  }
+  return [value(s.actual), ...readings.map(readingLabel)].join("\n");
 }
 
 function slug(s: string): string {
@@ -187,7 +206,7 @@ export async function downloadRunReport(run: NightlyRunDetail, orgName?: string)
       pdfText(s.step_name),
       pdfText(s.device_name) || "-",
       pdfText(value(s.expected)),
-      pdfText(value(s.actual)),
+      pdfText(actualWithReadings(s)),
       s.passed ? "Pass" : pdfText(s.error ? `Fail: ${s.error}` : "Fail"),
     ];
     autoTable(doc, {

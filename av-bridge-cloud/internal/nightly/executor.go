@@ -247,6 +247,9 @@ type stepResult struct {
 	Error     string // "" when passed
 	Expected  any    // nil-safe; encoded as JSON to the expected column
 	Actual    any    // nil-safe; encoded as JSON to the actual column
+	// Readings: where each judged device's reading came from (check
+	// steps only); encoded to the readings column.
+	Readings  []stepReading
 	DeviceID  string // "" when step wasn't device-scoped
 	StartedAt time.Time
 	EndedAt   time.Time
@@ -471,12 +474,17 @@ func (e *Executor) stepExpectStatus(ctx context.Context, run RunContext, s step)
 		return failedResult(started, "target resolved to no devices")
 	}
 	fresh := e.freshReadings(ctx, run, devices)
+	judged := time.Now()
 	var mismatches []string
+	var readings []stepReading
 	actual := map[string]string{}
 	for _, d := range devices {
 		status, note := d.latestStatus, " (last report; no fresh reading)"
 		if r, ok := fresh[d.id]; ok {
 			status, note = r.status, ""
+			readings = append(readings, readingFrom(d.name, "fresh", &r.at, judged))
+		} else {
+			readings = append(readings, readingFrom(d.name, "last_report", d.lastSeen, judged))
 		}
 		actual[d.name] = status
 		if !strings.EqualFold(status, body.Status) {
@@ -490,6 +498,7 @@ func (e *Executor) stepExpectStatus(ctx context.Context, run RunContext, s step)
 			Error:     strings.Join(mismatches, "; "),
 			Expected:  map[string]any{"status": body.Status},
 			Actual:    actual,
+			Readings:  readings,
 			StartedAt: started,
 			EndedAt:   time.Now(),
 		}
@@ -498,6 +507,7 @@ func (e *Executor) stepExpectStatus(ctx context.Context, run RunContext, s step)
 		Passed:    true,
 		Expected:  map[string]any{"status": body.Status},
 		Actual:    actual,
+		Readings:  readings,
 		StartedAt: started,
 		EndedAt:   time.Now(),
 	}
@@ -536,12 +546,15 @@ func (e *Executor) stepCheckMetric(ctx context.Context, run RunContext, s step) 
 		return failedResult(started, "target resolved to no devices")
 	}
 	fresh := e.freshReadings(ctx, run, devices)
+	judged := time.Now()
 	var mismatches []string
+	var readings []stepReading
 	actual := map[string]any{}
 	for _, d := range devices {
 		if r, ok := fresh[d.id]; ok {
 			if v, ok := toFloat64(r.metrics[body.Metric]); ok {
 				actual[d.name] = v
+				readings = append(readings, readingFrom(d.name, "fresh", &r.at, judged))
 				if !compareMetric(v, body.Operator, body.Threshold) {
 					mismatches = append(mismatches,
 						fmt.Sprintf("%s: %s = %.4g (want %s %.4g)",
@@ -555,16 +568,19 @@ func (e *Executor) stepCheckMetric(ctx context.Context, run RunContext, s step) 
 			// Not polled on demand: its regular reading is the freshest.
 			window = slowDeviceSampleWindow
 		}
-		val, ok, terr := readLatestMetric(ctx, e.pool, d.id, body.Metric, window)
+		val, at, ok, terr := readLatestMetric(ctx, e.pool, d.id, body.Metric, window)
 		if terr != nil {
+			readings = append(readings, readingFrom(d.name, "none", nil, judged))
 			mismatches = append(mismatches, fmt.Sprintf("%s: telemetry read error: %s", d.name, terr.Error()))
 			continue
 		}
 		if !ok {
+			readings = append(readings, readingFrom(d.name, "none", nil, judged))
 			mismatches = append(mismatches, fmt.Sprintf("%s: no `%s` sample in the last %ds",
-				d.name, body.Metric, body.SampleWindowSecs))
+				d.name, body.Metric, window))
 			continue
 		}
+		readings = append(readings, readingFrom(d.name, "last_report", &at, judged))
 		actual[d.name] = val
 		if !compareMetric(val, body.Operator, body.Threshold) {
 			mismatches = append(mismatches,
@@ -578,6 +594,7 @@ func (e *Executor) stepCheckMetric(ctx context.Context, run RunContext, s step) 
 			Error:     strings.Join(mismatches, "; "),
 			Expected:  map[string]any{"metric": body.Metric, "operator": body.Operator, "threshold": body.Threshold},
 			Actual:    actual,
+			Readings:  readings,
 			StartedAt: started,
 			EndedAt:   time.Now(),
 		}
@@ -586,6 +603,7 @@ func (e *Executor) stepCheckMetric(ctx context.Context, run RunContext, s step) 
 		Passed:    true,
 		Expected:  map[string]any{"metric": body.Metric, "operator": body.Operator, "threshold": body.Threshold},
 		Actual:    actual,
+		Readings:  readings,
 		StartedAt: started,
 		EndedAt:   time.Now(),
 	}
@@ -844,6 +862,10 @@ func (e *Executor) insertStepResult(ctx context.Context, run RunContext, idx int
 	if r.Actual != nil {
 		actJSON, _ = json.Marshal(r.Actual)
 	}
+	var readJSON []byte
+	if len(r.Readings) > 0 {
+		readJSON, _ = json.Marshal(r.Readings)
+	}
 	var devArg any
 	if r.DeviceID != "" {
 		devArg = r.DeviceID
@@ -855,11 +877,11 @@ func (e *Executor) insertStepResult(ctx context.Context, run RunContext, idx int
 	_, err := e.pool.Exec(ctx, `
 		INSERT INTO nightly_step_result (
 		  customer_id, run_id, device_id, step_index, step_name, step_type,
-		  expected, actual, passed, error, started_at, completed_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9, $10, $11, $12)
+		  expected, actual, passed, error, started_at, completed_at, readings
+		) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9, $10, $11, $12, $13::jsonb)
 	`, run.CustomerID, run.RunID, devArg, idx, displayName(s), s.Type,
 		nullIfEmpty(expJSON), nullIfEmpty(actJSON), r.Passed, errArg,
-		r.StartedAt, r.EndedAt)
+		r.StartedAt, r.EndedAt, nullIfEmpty(readJSON))
 	return err
 }
 
@@ -884,6 +906,7 @@ type resolvedDevice struct {
 	kind         string // devices.type — 'vc' / 'dsp' / 'display' etc.
 	protocol     string // adapter, e.g. aten_pdu (see noFreshPoll)
 	latestStatus string
+	lastSeen     *time.Time // when latestStatus was reported
 }
 
 // resolveTargetDevices turns a routine step's target selector into the
@@ -922,7 +945,8 @@ func queryDevices(ctx context.Context, pool *pgxpool.Pool, roomID string, extra 
 		       COALESCE(name, reported_id, ''),
 		       COALESCE(type, ''),
 		       COALESCE(protocol, ''),
-		       COALESCE(latest_status, 'unknown')
+		       COALESCE(latest_status, 'unknown'),
+		       last_seen_at
 		  FROM devices
 		 WHERE room_id = $1
 		   AND deleted_at IS NULL ` + extra + `
@@ -935,7 +959,7 @@ func queryDevices(ctx context.Context, pool *pgxpool.Pool, roomID string, extra 
 	var out []resolvedDevice
 	for rows.Next() {
 		var d resolvedDevice
-		if err := rows.Scan(&d.id, &d.name, &d.kind, &d.protocol, &d.latestStatus); err != nil {
+		if err := rows.Scan(&d.id, &d.name, &d.kind, &d.protocol, &d.latestStatus, &d.lastSeen); err != nil {
 			return nil, err
 		}
 		out = append(out, d)
@@ -947,34 +971,39 @@ func queryDevices(ctx context.Context, pool *pgxpool.Pool, roomID string, extra 
 // within the sample window, then extracts the named metric from its
 // jsonb payload as a float. Returns (value, true, nil) on success,
 // (0, false, nil) when no sample or metric is missing.
-func readLatestMetric(ctx context.Context, pool *pgxpool.Pool, deviceID, metric string, windowSecs int) (float64, bool, error) {
-	var raw []byte
+// readLatestMetric returns the metric from the device's latest telemetry
+// within the window, and when that telemetry was taken.
+func readLatestMetric(ctx context.Context, pool *pgxpool.Pool, deviceID, metric string, windowSecs int) (float64, time.Time, bool, error) {
+	var (
+		raw []byte
+		ts  time.Time
+	)
 	err := pool.QueryRow(ctx, `
-		SELECT metrics FROM telemetry
+		SELECT metrics, ts FROM telemetry
 		 WHERE device_id = $1
 		   AND ts > now() - make_interval(secs => $2)
 		 ORDER BY ts DESC
 		 LIMIT 1
-	`, deviceID, windowSecs).Scan(&raw)
+	`, deviceID, windowSecs).Scan(&raw, &ts)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return 0, false, nil
+			return 0, ts, false, nil
 		}
-		return 0, false, err
+		return 0, ts, false, err
 	}
 	var m map[string]any
 	if err := json.Unmarshal(raw, &m); err != nil {
-		return 0, false, fmt.Errorf("telemetry metrics json: %w", err)
+		return 0, ts, false, fmt.Errorf("telemetry metrics json: %w", err)
 	}
 	v, ok := m[metric]
 	if !ok {
-		return 0, false, nil
+		return 0, ts, false, nil
 	}
 	f, ok := toFloat64(v)
 	if !ok {
-		return 0, false, fmt.Errorf("metric %q not numeric: %v", metric, v)
+		return 0, ts, false, fmt.Errorf("metric %q not numeric: %v", metric, v)
 	}
-	return f, true, nil
+	return f, ts, true, nil
 }
 
 func compareMetric(v float64, op string, threshold float64) bool {

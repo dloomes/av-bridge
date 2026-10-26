@@ -195,6 +195,7 @@ type nightlyStepRow struct {
 	DeviceName  string          `json:"device_name,omitempty"`
 	Expected    json.RawMessage `json:"expected,omitempty"`
 	Actual      json.RawMessage `json:"actual,omitempty"`
+	Readings    json.RawMessage `json:"readings,omitempty"` // where each device's reading came from
 	Passed      bool            `json:"passed"`
 	Error       string          `json:"error,omitempty"`
 	StartedAt   string          `json:"started_at,omitempty"`
@@ -295,7 +296,7 @@ func (h *Handler) GetNightlyRun(w http.ResponseWriter, r *http.Request) {
 			SELECT sr.step_index, sr.step_name, sr.step_type,
 			       sr.device_id::text, d.name,
 			       sr.expected, sr.actual, sr.passed, sr.error,
-			       sr.started_at, sr.completed_at
+			       sr.started_at, sr.completed_at, sr.readings
 			  FROM nightly_step_result sr
 			  LEFT JOIN devices d ON d.id = sr.device_id
 			 WHERE sr.run_id = $1
@@ -312,6 +313,7 @@ func (h *Handler) GetNightlyRun(w http.ResponseWriter, r *http.Request) {
 				deviceName  *string
 				expected    []byte
 				actual      []byte
+				readings    []byte
 				errStr      *string
 				stepStarted *time.Time
 				stepDone    *time.Time
@@ -320,7 +322,7 @@ func (h *Handler) GetNightlyRun(w http.ResponseWriter, r *http.Request) {
 				&step.StepIndex, &step.StepName, &step.StepType,
 				&deviceID, &deviceName,
 				&expected, &actual, &step.Passed, &errStr,
-				&stepStarted, &stepDone,
+				&stepStarted, &stepDone, &readings,
 			); err != nil {
 				return err
 			}
@@ -335,6 +337,9 @@ func (h *Handler) GetNightlyRun(w http.ResponseWriter, r *http.Request) {
 			}
 			if len(actual) > 0 {
 				step.Actual = json.RawMessage(actual)
+			}
+			if len(readings) > 0 {
+				step.Readings = json.RawMessage(readings)
 			}
 			if errStr != nil {
 				step.Error = *errStr

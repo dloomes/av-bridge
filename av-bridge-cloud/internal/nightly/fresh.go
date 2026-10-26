@@ -38,6 +38,32 @@ const slowDeviceSampleWindow = 600
 type freshReading struct {
 	status  string
 	metrics map[string]any
+	at      time.Time // when the poll's result came back
+}
+
+// stepReading says where one device's reading in a check step came from,
+// recorded on the step result (nightly_step_result.readings).
+type stepReading struct {
+	Device string `json:"device"`
+	// Source: "fresh" (polled for this step), "last_report" (the device's
+	// last regular report), or "none" (no reading to judge).
+	Source string     `json:"source"`
+	At     *time.Time `json:"at,omitempty"`    // when the reading was taken
+	AgeS   *int       `json:"age_s,omitempty"` // how old it was when judged
+}
+
+func readingFrom(device, source string, at *time.Time, judged time.Time) stepReading {
+	r := stepReading{Device: device, Source: source}
+	if at != nil && !at.IsZero() {
+		t := at.UTC()
+		r.At = &t
+		age := int(judged.Sub(t).Seconds())
+		if age < 0 {
+			age = 0
+		}
+		r.AgeS = &age
+	}
+	return r
 }
 
 // freshReadings asks each device's Collector to poll it now and returns the
@@ -106,7 +132,7 @@ func (e *Executor) freshReadings(ctx context.Context, run RunContext, devices []
 // are still pending or in progress.
 func (e *Executor) collectFresh(ctx context.Context, ids []string, cmdDevice map[string]string, out map[string]freshReading) (int, error) {
 	rows, err := e.pool.Query(ctx,
-		`SELECT id::text, status, result FROM commands WHERE id = ANY($1::uuid[])`, ids)
+		`SELECT id::text, status, result, COALESCE(completed_at, now()) FROM commands WHERE id = ANY($1::uuid[])`, ids)
 	if err != nil {
 		return 0, err
 	}
@@ -116,8 +142,9 @@ func (e *Executor) collectFresh(ctx context.Context, ids []string, cmdDevice map
 		var (
 			id, status string
 			result     []byte
+			done       time.Time
 		)
-		if err := rows.Scan(&id, &status, &result); err != nil {
+		if err := rows.Scan(&id, &status, &result, &done); err != nil {
 			return 0, err
 		}
 		switch commands.Status(status) {
@@ -131,7 +158,7 @@ func (e *Executor) collectFresh(ctx context.Context, ids []string, cmdDevice map
 				} `json:"parsed"`
 			}
 			if json.Unmarshal(result, &r) == nil && r.Parsed.Status != "" {
-				out[cmdDevice[id]] = freshReading{status: r.Parsed.Status, metrics: r.Parsed.Metrics}
+				out[cmdDevice[id]] = freshReading{status: r.Parsed.Status, metrics: r.Parsed.Metrics, at: done}
 			}
 		}
 	}

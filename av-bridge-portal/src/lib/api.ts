@@ -682,6 +682,29 @@ export type NightlyStatus =
 // Step result inside a run. Phase B populates these; slice 3 dry-run
 // leaves them empty (the runs list still works, detail page shows a
 // "no step results yet" hint until the routine runner lands).
+// Where one device's reading in a check step came from: a poll made for
+// the step, or the device's last regular report.
+export interface StepReading {
+  device: string;
+  source: "fresh" | "last_report" | "none";
+  at?: string;
+  age_s?: number;
+}
+
+// readingLabel says where a step's reading came from, in words.
+export function readingLabel(r: StepReading): string {
+  if (r.source === "fresh") return "Fresh poll";
+  if (r.source === "none") return "No reading";
+  if (r.age_s === undefined) return "Last report";
+  const s = r.age_s;
+  const age = s < 60 ? `${s} s` : s < 3600 ? `${Math.floor(s / 60)} m ${s % 60} s` : `${Math.floor(s / 3600)} h ${Math.floor((s % 3600) / 60)} m`;
+  return `Last report, ${age} old`;
+}
+
+// A reading older than this is flagged: it may predate what the step
+// was meant to catch (a power-on, a reboot).
+export const STALE_READING_S = 120;
+
 export interface NightlyStepRow {
   step_index: number;
   step_name: string;
@@ -694,6 +717,7 @@ export interface NightlyStepRow {
   error?: string;
   started_at?: string;
   completed_at?: string;
+  readings?: StepReading[];   // check steps: where each device's reading came from
 }
 
 export interface NightlyRunDetail extends NightlyRunRow {
