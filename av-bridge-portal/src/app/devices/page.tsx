@@ -26,6 +26,7 @@ import { UserMenu } from "@/components/user-menu";
 import { Modal } from "@/components/modal";
 import { DeviceForm } from "@/components/device-form";
 import { BulkCommandForm } from "@/components/bulk-command";
+import { RoomReadinessCard } from "@/components/room-readiness-card";
 import { useSession } from "@/hooks/useSession";
 import { usePolling } from "@/hooks/usePolling";
 import { api } from "@/lib/api";
@@ -119,6 +120,36 @@ export default function DevicesPage() {
   // whoami so it Just Works for helpdesk callers).
   const canCreateDevices = hasPermission(session.user, "device.crud");
   const canSendBulk = hasPermission(session.user, "command.bulk");
+  const canViewReadiness = hasPermission(session.user, "nightly.view");
+
+  // Filtered to a room: find it (by name, and by building when that's
+  // filtered too) so its Room Readiness results can be shown. Names can
+  // repeat across buildings; each match gets its own card.
+  const [readinessRooms, setReadinessRooms] = useState<{ id: string; building: string }[]>([]);
+  useEffect(() => {
+    if (!roomFilter || !canViewReadiness) {
+      setReadinessRooms([]);
+      return;
+    }
+    const ctrl = new AbortController();
+    Promise.all([api.listRooms(ctrl.signal), api.listBuildings(ctrl.signal)])
+      .then(([rooms, buildings]) => {
+        const bName = new Map(buildings.map((b) => [b.id, b.name]));
+        const want = roomFilter.toLowerCase();
+        const wantB = buildingFilter.toLowerCase();
+        setReadinessRooms(
+          rooms
+            .filter((r) => r.name.toLowerCase() === want)
+            .map((r) => ({ id: r.id, building: bName.get(r.parent_id ?? "") ?? "" }))
+            .filter((r) => !wantB || r.building.toLowerCase() === wantB)
+            .slice(0, 3)
+        );
+      })
+      .catch(() => {
+        if (!ctrl.signal.aborted) setReadinessRooms([]);
+      });
+    return () => ctrl.abort();
+  }, [roomFilter, buildingFilter, canViewReadiness]);
 
   const fetcher = useCallback(
     (signal: AbortSignal) =>
@@ -298,6 +329,14 @@ export default function DevicesPage() {
               )}
             </div>
           )}
+
+          {readinessRooms.map((r) => (
+            <RoomReadinessCard
+              key={r.id}
+              roomId={r.id}
+              title={readinessRooms.length > 1 ? r.building : undefined}
+            />
+          ))}
 
           <div className="flex flex-wrap gap-2">
             <div className="relative flex-1 min-w-[240px]">

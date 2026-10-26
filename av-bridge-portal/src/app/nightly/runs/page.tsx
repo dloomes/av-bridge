@@ -117,6 +117,12 @@ export default function NightlyRunsPage() {
   const [roomFilter, setRoomFilter] = useState<string>("");
   const [kindFilter, setKindFilter] = useState<"" | NightlyRunKind>("");
 
+  // A room's "All runs" link arrives with ?room_id=: open on that room.
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get("room_id");
+    if (id) setRoomFilter(id);
+  }, []);
+
   const [runs, setRuns] = useState<NightlyRunRow[] | null>(null);
   const [rooms, setRooms] = useState<NightlyRoomRow[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
