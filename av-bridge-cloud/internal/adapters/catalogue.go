@@ -250,6 +250,44 @@ var catalogue = []Info{
 	},
 
 	{
+		ID:          "aurora_dido",
+		Name:        "Aurora DIDO",
+		Vendor:      "Aurora Multimedia",
+		Kind:        KindVendor,
+		Description: "4x4 HDMI matrix switchers and video wall processors. JSON over TCP on port 6970: video and audio routing, output resolutions, volumes and presets.",
+		DeviceTypes: []string{"control"},
+		Power:       PowerCapability{On: false, Off: false},
+		Commands: []string{
+			"route_out1", "route_out2", "route_out3", "route_out4", "route_all",
+			"set_volume", "mute_linein", "unmute_linein",
+			"recall_preset",
+			"lock_buttons", "unlock_buttons",
+			"reboot",
+		},
+		Metrics: []string{
+			"fw_version", "api_version", "serial_number", "mac", "ip_address", "ip_mode",
+			"out1_source", "out2_source", "out3_source", "out4_source",
+			"resolution_mode",
+			"out1_resolution", "out2_resolution", "out3_resolution", "out4_resolution",
+			"lineout_audio", "dante_audio", "out1_audio", "out2_audio", "out3_audio", "out4_audio",
+			"lineout_volume", "linein_volume", "linein_mute",
+			"buttons_locked",
+			"presets", "preset_count",
+			"response_ms",
+		},
+		ConfigSchema: []ConfigField{
+			{Name: "address", Required: true, Description: "DIDO IP (port 6970 is implied).", Example: "192.168.10.30"},
+			{Name: "poll_rate", Required: false, Description: "How often to poll. Defaults to 60s.", Example: "60s"},
+		},
+		ExampleConfig: `- id: court3-dido
+  name: Court 3 DIDO
+  type: control
+  protocol: aurora_dido
+  address: 192.168.10.30
+  poll_rate: 60s`,
+	},
+
+	{
 		ID:          "poly_videoos",
 		Name:        "Poly VideoOS",
 		Vendor:      "HP / Poly",
