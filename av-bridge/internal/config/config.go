@@ -247,7 +247,7 @@ func validate(cfg *Config) error {
 		if !map[string]bool{"rest": true, "websocket": true, "telnet": true, "serial": true, "tesira": true, "sony_bravia": true, "philips_sicp": true, "poly_videoos": true, "cisco_roomos": true, "cisco_tc": true, "aurora_rxt": true, "aurora_vpx": true, "aurora_dido": true, "crestron": true, "netgear_m4250": true, "ping": true}[d.Protocol] {
 			return fmt.Errorf("device %q: unsupported protocol %q", d.ID, d.Protocol)
 		}
-		if !map[string]bool{"display": true, "conferencing": true, "audio": true, "camera": true, "control": true}[d.Type] {
+		if !map[string]bool{"display": true, "conferencing": true, "audio": true, "camera": true, "control": true, "avoip": true, "power": true}[d.Type] {
 			return fmt.Errorf("device %q: unsupported type %q", d.ID, d.Type)
 		}
 	}

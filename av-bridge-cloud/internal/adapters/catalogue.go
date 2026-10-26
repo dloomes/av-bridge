@@ -102,7 +102,7 @@ var catalogue = []Info{
 		Vendor:      "ATEN",
 		Kind:        KindVendor,
 		Description: "ATEN eco PDU range (PE6108G and siblings) over the Telnet CLI on port 23. Per-outlet on/off/reboot control and per-outlet power metering; device-level voltage and total power draw. Polled every 5 minutes by default.",
-		DeviceTypes: []string{"control"},
+		DeviceTypes: []string{"power"},
 		Power:       PowerCapability{On: false, Off: false},
 		Commands:    []string{"outlet_on", "outlet_off", "outlet_reboot"},
 		Metrics: []string{
@@ -126,7 +126,7 @@ var catalogue = []Info{
 		},
 		ExampleConfig: `- id: rack-a-pdu
   name: Rack A PDU
-  type: control
+  type: power
   protocol: aten_pdu
   address: 192.168.90.10
   username: teladmin
@@ -221,7 +221,7 @@ var catalogue = []Info{
 		Vendor:      "Aurora Multimedia",
 		Kind:        KindVendor,
 		Description: "AV-over-IP encoders and decoders. JSON over Telnet on port 6970; encoder vs decoder mode is auto-detected at connect.",
-		DeviceTypes: []string{"display"},
+		DeviceTypes: []string{"avoip"},
 		Power:       PowerCapability{On: false, Off: false},
 		Commands: []string{
 			"reboot", "identify", "stop_identify",
@@ -243,7 +243,7 @@ var catalogue = []Info{
 		},
 		ExampleConfig: `- id: boardroom-vpx
   name: Boardroom VPX Decoder
-  type: display
+  type: avoip
   protocol: aurora_vpx
   address: 192.168.10.20
   poll_rate: 30s`,
@@ -589,7 +589,7 @@ var catalogue = []Info{
 		Name:        "Generic REST",
 		Kind:        KindTransport,
 		Description: "HTTP GET-based polling for devices that expose a plain REST endpoint. Use as a starting point when no vendor adapter fits.",
-		DeviceTypes: []string{"display", "conferencing", "audio", "camera", "control"},
+		DeviceTypes: []string{"display", "conferencing", "audio", "camera", "control", "avoip", "power"},
 		Power:       PowerCapability{On: false, Off: false},
 		ConfigSchema: []ConfigField{
 			{Name: "address", Required: true, Description: "Full URL to the endpoint being polled.", Example: "http://192.168.50.10/api/status"},
@@ -609,7 +609,7 @@ var catalogue = []Info{
 		Name:        "Generic WebSocket",
 		Kind:        KindTransport,
 		Description: "Long-lived WebSocket connection with periodic keep-alive probes. Suitable for devices that push state as JSON frames.",
-		DeviceTypes: []string{"display", "conferencing", "audio", "camera", "control"},
+		DeviceTypes: []string{"display", "conferencing", "audio", "camera", "control", "avoip", "power"},
 		Power:       PowerCapability{On: false, Off: false},
 		ConfigSchema: []ConfigField{
 			{Name: "address", Required: true, Description: "ws:// or wss:// URL of the endpoint.", Example: "wss://192.168.60.10/socket"},
@@ -665,7 +665,7 @@ var catalogue = []Info{
 		Name:        "ICMP Ping",
 		Kind:        KindProbe,
 		Description: "Network reachability probe. Sends ICMP echoes and records loss and latency. Use for devices with no vendor API — a switch, an unmanaged panel, an IP camera.",
-		DeviceTypes: []string{"display", "conferencing", "audio", "camera", "control"},
+		DeviceTypes: []string{"display", "conferencing", "audio", "camera", "control", "avoip", "power"},
 		Power:       PowerCapability{On: false, Off: false},
 		Commands:    []string{"ping"},
 		Metrics: []string{
@@ -691,7 +691,7 @@ var catalogue = []Info{
 		Name:        "Fake device (load test)",
 		Kind:        KindProbe,
 		Description: "Synthetic device for load testing and capacity benchmarking. Does no network I/O — every poll returns generated telemetry with configurable latency, jitter, flap probability, and event rate. Use to spin up hundreds or thousands of devices against a single Collector to measure real throughput. Not intended for production fleets.",
-		DeviceTypes: []string{"display", "conferencing", "audio", "camera", "control"},
+		DeviceTypes: []string{"display", "conferencing", "audio", "camera", "control", "avoip", "power"},
 		Power:       PowerCapability{On: false, Off: false},
 		Commands:    []string{"noop", "set_status"},
 		Metrics: []string{

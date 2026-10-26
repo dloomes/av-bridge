@@ -37,6 +37,7 @@ import type {
   DeviceSummary,
   DeviceType,
 } from "@/lib/types";
+import { DEVICE_TYPE_LABELS, DEVICE_TYPES } from "@/lib/types";
 
 // /devices — flat listing of every device the caller can see, with
 // query-string filters. Reached via:
@@ -63,13 +64,7 @@ const STATUS_TONE: Record<
   switched_off: { label: "Switched off", variant: "switchedOff", icon: Moon },
 };
 
-const TYPE_LABEL: Record<DeviceType, string> = {
-  display: "Display",
-  conferencing: "Conferencing",
-  audio: "Audio",
-  camera: "Camera",
-  control: "Control",
-};
+const TYPE_LABEL = DEVICE_TYPE_LABELS;
 
 type StatusFilter = "all" | DeviceStatus;
 type TypeFilter = "all" | DeviceType;
@@ -371,11 +366,11 @@ export default function DevicesPage() {
               aria-label="Filter by type"
             >
               <option value="all">All types</option>
-              <option value="display">Display</option>
-              <option value="conferencing">Conferencing</option>
-              <option value="audio">Audio</option>
-              <option value="camera">Camera</option>
-              <option value="control">Control</option>
+              {DEVICE_TYPES.map((t) => (
+                <option key={t} value={t}>
+                  {DEVICE_TYPE_LABELS[t]}
+                </option>
+              ))}
             </select>
           </div>
 

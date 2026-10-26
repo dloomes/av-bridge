@@ -1131,13 +1131,13 @@ func (h *Handler) DeleteRoom(w http.ResponseWriter, r *http.Request) {
 // bridge module so we duplicate the enum — small, stable, and worth catching
 // bad input here before the bridge silently drops the device.
 
-// allowedTypes stays local — the five device categories are a stable UI
+// allowedTypes stays local — the device categories are a stable UI
 // contract, not an adapter concern. Protocol allowlisting reads from the
 // adapter catalogue (see internal/adapters/catalogue.go) so adding a new
 // adapter automatically permits it in device-create/update payloads.
 var allowedTypes = map[string]bool{
 	"display": true, "conferencing": true, "audio": true,
-	"camera": true, "control": true,
+	"camera": true, "control": true, "avoip": true, "power": true,
 }
 
 // Subscription mirrors the bridge's SubscriptionSpec (and bridgecfg's

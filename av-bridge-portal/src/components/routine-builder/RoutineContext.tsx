@@ -10,7 +10,7 @@
 import { createContext, useContext, type ReactNode } from "react";
 import type { AdapterInfo, DeviceSummary } from "@/lib/types";
 
-// Constrain device type UI to the five categories the platform uses.
+// Constrain device type UI to the categories the platform uses.
 // Kept as data (not an enum) so the label text is easy to iterate on
 // without touching consuming components.
 export const DEVICE_TYPE_OPTIONS: Array<{ value: string; label: string }> = [
@@ -19,6 +19,8 @@ export const DEVICE_TYPE_OPTIONS: Array<{ value: string; label: string }> = [
   { value: "conferencing", label: "Video codec" },
   { value: "audio", label: "DSP / audio" },
   { value: "control", label: "Control panel" },
+  { value: "avoip", label: "AV-over-IP" },
+  { value: "power", label: "Power / PDU" },
 ];
 
 interface RoutineContextValue {

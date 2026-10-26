@@ -28,8 +28,9 @@ import type {
   Subscription,
   UpdateDeviceBody,
 } from "@/lib/types";
+import { DEVICE_TYPE_LABELS, DEVICE_TYPES } from "@/lib/types";
 
-const TYPES = ["display", "conferencing", "audio", "camera", "control"] as const;
+const TYPES = DEVICE_TYPES;
 
 // Human-readable labels for the adapter-kind optgroups in the protocol
 // picker. Order here is display order in the dropdown — vendor integrations
@@ -739,7 +740,7 @@ export function DeviceForm({
             <option value="">— Select —</option>
             {TYPES.map((t) => (
               <option key={t} value={t}>
-                {t}
+                {DEVICE_TYPE_LABELS[t]}
               </option>
             ))}
           </select>
