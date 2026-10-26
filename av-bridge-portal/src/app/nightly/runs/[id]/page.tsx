@@ -4,13 +4,13 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
-  ArrowLeft,
   CheckCircle2,
   Loader2,
   Moon,
   XCircle,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { BackLink } from "@/components/back-link";
 import { Card, CardContent } from "@/components/ui/card";
 import { api } from "@/lib/api";
 import type {
@@ -113,13 +113,7 @@ export default function NightlyRunDetailPage() {
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
-              <Link
-                href="/nightly/runs"
-                className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-              >
-                <ArrowLeft aria-hidden="true" className="h-3 w-3" />
-                All runs
-              </Link>
+              <BackLink href="/nightly/runs" label="All runs" />
             </div>
             <h1 className="text-xl font-semibold leading-tight">
               {loaded?.room_name ?? "Run"}

@@ -7,8 +7,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { ArrowLeft, Download, Loader2, RefreshCw, ScrollText, Search } from "lucide-react";
+import { Download, Loader2, RefreshCw, ScrollText, Search } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { BackLink } from "@/components/back-link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { UserMenu } from "@/components/user-menu";
@@ -128,10 +129,7 @@ export default function CollectorLogsPage() {
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex min-w-0 items-center gap-3">
             <Button asChild variant="ghost" size="sm" className="shrink-0">
-              <Link href="/collectors">
-                <ArrowLeft className="h-3.5 w-3.5" />
-                Collectors
-              </Link>
+              <BackLink href="/collectors" label="Collectors" iconClassName="h-3.5 w-3.5" />
             </Button>
             <div className="h-9 w-9 shrink-0 rounded-md bg-primary/10 flex items-center justify-center">
               <ScrollText aria-hidden="true" className="h-4 w-4 text-primary" />

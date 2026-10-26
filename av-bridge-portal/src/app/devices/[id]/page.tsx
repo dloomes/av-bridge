@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import {
-  ArrowLeft,
   ExternalLink,
   History,
   MapPin,
@@ -14,6 +13,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { BackLink } from "@/components/back-link";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ConnectionIndicator } from "@/components/connection-indicator";
@@ -119,10 +119,7 @@ export default function DeviceDetailPage() {
     return (
       <div className="p-6 max-w-2xl mx-auto">
         <Button asChild variant="ghost" size="sm" className="mb-4">
-          <Link href="/">
-            <ArrowLeft className="h-3.5 w-3.5" />
-            Back
-          </Link>
+          <BackLink href="/devices" label="Devices" iconClassName="h-3.5 w-3.5" />
         </Button>
         <Card className="border-destructive/30 bg-destructive/5">
           <CardContent className="p-6 text-sm">
@@ -153,10 +150,7 @@ export default function DeviceDetailPage() {
       <header className="flex flex-wrap items-center justify-between gap-3 border-b bg-card/50 px-6 py-4">
         <div className="flex items-center gap-3 min-w-0">
           <Button asChild variant="ghost" size="sm">
-            <Link href="/">
-              <ArrowLeft className="h-3.5 w-3.5" />
-              Back
-            </Link>
+            <BackLink href="/devices" label="Devices" iconClassName="h-3.5 w-3.5" />
           </Button>
           <div className="h-9 w-9 rounded-md bg-primary/10 flex items-center justify-center text-primary">
             <DeviceIcon type={device.type} />

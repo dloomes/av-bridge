@@ -9,6 +9,7 @@ import { ToastProvider } from "@/components/toast";
 import { useSession } from "@/hooks/useSession";
 import { api } from "@/lib/api";
 import { signIn, signOut } from "@/lib/session";
+import { trackPath } from "@/lib/nav-history";
 
 // AppShell owns the top-level chrome decision: sign-in screen gets the full
 // viewport with no sidebar; every other route gets the sidebar + content
@@ -32,6 +33,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     pathname === "/reset-password" ||
     // Wall screens: full screen, and a display link needs no session.
     pathname === "/display";
+
+  // The trail Back links use to return where the user came from.
+  useEffect(() => {
+    trackPath(pathname);
+  }, [pathname]);
 
   useEffect(() => {
     if (!session.hydrated) return;

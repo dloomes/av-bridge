@@ -3,8 +3,9 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, FileCode2, Loader2, PlayCircle } from "lucide-react";
+import { FileCode2, Loader2, PlayCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { BackLink } from "@/components/back-link";
 import { Card, CardContent } from "@/components/ui/card";
 import { Modal } from "@/components/modal";
 import { useToast } from "@/components/toast";
@@ -269,13 +270,7 @@ export default function RoutineEditorPage() {
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
-              <Link
-                href="/nightly/routines"
-                className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-              >
-                <ArrowLeft aria-hidden="true" className="h-3 w-3" />
-                All routines
-              </Link>
+              <BackLink href="/nightly/routines" label="All routines" />
             </div>
             <h1 className="text-xl font-semibold leading-tight">
               {loaded?.name ?? "Routine"}

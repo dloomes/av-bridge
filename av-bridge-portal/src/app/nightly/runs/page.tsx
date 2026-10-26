@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
-  ArrowLeft,
   CheckCircle2,
   ChevronRight,
   Download,
@@ -13,6 +12,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { BackLink } from "@/components/back-link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { api } from "@/lib/api";
@@ -232,13 +232,7 @@ export default function NightlyRunsPage() {
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
-              <Link
-                href="/nightly/schedule"
-                className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-              >
-                <ArrowLeft aria-hidden="true" className="h-3 w-3" />
-                Room Readiness
-              </Link>
+              <BackLink href="/nightly/schedule" label="Room Readiness" />
             </div>
             <h1 className="text-xl font-semibold leading-tight">Run history</h1>
             <p className="text-sm text-muted-foreground leading-tight">

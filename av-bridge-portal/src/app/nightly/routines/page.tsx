@@ -4,7 +4,6 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
-  ArrowLeft,
   FileCode2,
   Loader2,
   Pencil,
@@ -12,6 +11,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { BackLink } from "@/components/back-link";
 import { Card, CardContent } from "@/components/ui/card";
 import { Modal } from "@/components/modal";
 import { useToast } from "@/components/toast";
@@ -111,13 +111,7 @@ export default function RoutinesListPage() {
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
-              <Link
-                href="/nightly/schedule?tab=readiness"
-                className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-              >
-                <ArrowLeft aria-hidden="true" className="h-3 w-3" />
-                Readiness checks
-              </Link>
+              <BackLink href="/nightly/schedule?tab=readiness" label="Readiness checks" />
             </div>
             <h1 className="text-xl font-semibold leading-tight">
               Test routines
