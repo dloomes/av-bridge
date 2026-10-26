@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/dloomes/av-bridge/internal/config"
@@ -64,6 +65,12 @@ type SonyBraviaAdapter struct {
 	client  *http.Client
 	baseURL string
 	psk     string
+
+	// System information (firmware, model, Pro mode), read at connect
+	// and refreshed every sonySysInfoEvery; reported with each poll.
+	sysMu     sync.Mutex
+	sysInfo   map[string]string
+	sysInfoAt time.Time
 }
 
 // sonyRequest is the JSON-RPC envelope used by all Sony Bravia REST calls.
@@ -122,23 +129,9 @@ func (a *SonyBraviaAdapter) Connect(ctx context.Context) error {
 		}
 	}
 
-	result, err := a.call(ctx, "system", "getSystemInformation", nil)
-	if err != nil {
+	if err := a.refreshSystemInfo(ctx); err != nil {
 		a.SetStatus(device.StatusOffline)
 		return fmt.Errorf("sony bravia connect %s: %w", a.Cfg.ID, err)
-	}
-	if len(result) > 0 {
-		if info, ok := result[0].(map[string]any); ok {
-			a.setTags(map[string]string{
-				"model":            stringVal(info, "model"),
-				"serial":           stringVal(info, "serial"),
-				"mac_address":      stringVal(info, "macAddr"),
-				"firmware_version": stringVal(info, "fwVersion"),
-				"generation":       stringVal(info, "generation"),
-				"device_name":      stringVal(info, "name"),
-				"language":         stringVal(info, "language"),
-			})
-		}
 	}
 
 	if net, err := a.call(ctx, "system", "getNetworkSettings", nil); err == nil {
@@ -230,11 +223,90 @@ func (a *SonyBraviaAdapter) Poll(ctx context.Context) (*device.Telemetry, error)
 		}
 	}
 
+	// Firmware and the like, read at connect and every few hours after,
+	// so an update shows without a reconnect. As readings: the cloud
+	// takes a device's firmware from its readings.
+	if a.sysInfoStale() {
+		_ = a.refreshSystemInfo(ctx)
+	}
+	for k, v := range a.systemInfo() {
+		metrics[k] = v
+	}
+
 	metrics["response_ms"] = time.Since(start).Milliseconds()
 	a.SetStatus(device.StatusOnline)
 	t.Status = device.StatusOnline
 	t.Metrics = metrics
 	return t, nil
+}
+
+// sonySysInfoEvery is how often Poll re-reads system information.
+const sonySysInfoEvery = 6 * time.Hour
+
+// refreshSystemInfo reads getSystemInformation. Version 1.7 carries the
+// firmware (fwVersion), Android version and Pro mode; displays that don't
+// offer 1.7 are asked for 1.0, which has model and serial only.
+func (a *SonyBraviaAdapter) refreshSystemInfo(ctx context.Context) error {
+	result, err := a.callVersion(ctx, "system", "getSystemInformation", "1.7", nil)
+	if err != nil {
+		var apiErr *SonyAPIError
+		if !errors.As(err, &apiErr) {
+			return err
+		}
+		if result, err = a.call(ctx, "system", "getSystemInformation", nil); err != nil {
+			return err
+		}
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	info, ok := result[0].(map[string]any)
+	if !ok {
+		return nil
+	}
+	a.setTags(map[string]string{
+		"model":            stringVal(info, "model"),
+		"serial":           stringVal(info, "serial"),
+		"mac_address":      stringVal(info, "macAddr"),
+		"firmware_version": stringVal(info, "fwVersion"),
+		"generation":       stringVal(info, "generation"),
+		"device_name":      stringVal(info, "name"),
+		"language":         stringVal(info, "language"),
+	})
+	readings := map[string]string{}
+	for key, field := range map[string]string{
+		"firmware_version": "fwVersion",
+		"model":            "model",
+		"serial_number":    "serial",
+		"generation":       "generation",
+		"android_os":       "androidOs",
+		"pro_mode":         "mode",
+	} {
+		if v := stringVal(info, field); v != "" {
+			readings[key] = v
+		}
+	}
+	a.sysMu.Lock()
+	a.sysInfo = readings
+	a.sysInfoAt = time.Now()
+	a.sysMu.Unlock()
+	return nil
+}
+
+func (a *SonyBraviaAdapter) sysInfoStale() bool {
+	a.sysMu.Lock()
+	defer a.sysMu.Unlock()
+	return a.sysInfoAt.IsZero() || time.Since(a.sysInfoAt) > sonySysInfoEvery
+}
+
+func (a *SonyBraviaAdapter) systemInfo() map[string]string {
+	a.sysMu.Lock()
+	defer a.sysMu.Unlock()
+	out := make(map[string]string, len(a.sysInfo))
+	for k, v := range a.sysInfo {
+		out[k] = v
+	}
+	return out
 }
 
 // ── SendCommand ───────────────────────────────────────────────────────────────
@@ -378,8 +450,14 @@ func (a *SonyBraviaAdapter) ResolveCommand(req device.CommandRequest) (service, 
 
 // ── Sony JSON-RPC transport ───────────────────────────────────────────────────
 
-// call sends a JSON-RPC request to the given Sony service and returns the result array.
+// call sends a JSON-RPC request (version 1.0) to the given Sony service and
+// returns the result array.
 func (a *SonyBraviaAdapter) call(ctx context.Context, service, method string, params []any) ([]any, error) {
+	return a.callVersion(ctx, service, method, "1.0", params)
+}
+
+// callVersion is call for a method version other than 1.0.
+func (a *SonyBraviaAdapter) callVersion(ctx context.Context, service, method, version string, params []any) ([]any, error) {
 	if params == nil {
 		params = []any{}
 	}
@@ -388,7 +466,7 @@ func (a *SonyBraviaAdapter) call(ctx context.Context, service, method string, pa
 		Method:  method,
 		Params:  params,
 		ID:      1,
-		Version: "1.0",
+		Version: version,
 	}
 
 	b, err := json.Marshal(reqBody)
@@ -460,6 +538,7 @@ var sonyBraviaCapabilities = device.Capabilities{
 		"power_status", "power_saving_mode",
 		"current_input", "input_title", "input_source",
 		"volume_speaker", "mute_speaker",
+		"firmware_version", "model", "serial_number", "generation", "android_os", "pro_mode",
 		"response_ms",
 	},
 }

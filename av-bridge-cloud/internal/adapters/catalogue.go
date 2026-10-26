@@ -499,6 +499,7 @@ var catalogue = []Info{
 			"power_status", "power_saving_mode",
 			"current_input", "input_title", "input_source",
 			"volume_speaker", "mute_speaker",
+			"firmware_version", "model", "serial_number", "generation", "android_os", "pro_mode",
 			"response_ms",
 		},
 		ConfigSchema: []ConfigField{
