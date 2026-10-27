@@ -22,23 +22,27 @@ import (
 // Every field here is a stable contract — renames become breaking
 // changes. Anything speculative should land on a later /pub/v2.
 type publicDevice struct {
-	ID              string            `json:"id"`
-	Name            string            `json:"name"`
-	Type            string            `json:"type"`
-	Protocol        string            `json:"protocol"`
-	Status          string            `json:"status"`
-	IPAddress       string            `json:"ip_address,omitempty"`
-	Make            string            `json:"make,omitempty"`
-	Model           string            `json:"model,omitempty"`
-	SerialNumber    string            `json:"serial_number,omitempty"`
-	FirmwareVersion string            `json:"firmware_version,omitempty"`
-	MACAddress      string            `json:"mac_address,omitempty"`
-	RoomID          string            `json:"room_id,omitempty"`
-	Room            string            `json:"room,omitempty"`
-	BuildingID      string            `json:"building_id,omitempty"`
-	Building        string            `json:"building,omitempty"`
-	LastSeenAt      *time.Time        `json:"last_seen_at,omitempty"`
-	Tags            map[string]string `json:"tags,omitempty"`
+	ID              string `json:"id"`
+	Name            string `json:"name"`
+	Type            string `json:"type"`
+	Protocol        string `json:"protocol"`
+	Status          string `json:"status"`
+	IPAddress       string `json:"ip_address,omitempty"`
+	Make            string `json:"make,omitempty"`
+	Model           string `json:"model,omitempty"`
+	SerialNumber    string `json:"serial_number,omitempty"`
+	FirmwareVersion string `json:"firmware_version,omitempty"`
+	// TargetFirmware is the firmware set as the target for the device's
+	// make and model on the Firmware page; FirmwareStatus compares the two.
+	TargetFirmware string            `json:"target_firmware_version,omitempty"`
+	FirmwareStatus string            `json:"firmware_status"`
+	MACAddress     string            `json:"mac_address,omitempty"`
+	RoomID         string            `json:"room_id,omitempty"`
+	Room           string            `json:"room,omitempty"`
+	BuildingID     string            `json:"building_id,omitempty"`
+	Building       string            `json:"building,omitempty"`
+	LastSeenAt     *time.Time        `json:"last_seen_at,omitempty"`
+	Tags           map[string]string `json:"tags,omitempty"`
 }
 
 // scanDeviceRow reads one row of the shared device SELECT into a
@@ -48,9 +52,9 @@ type publicDevice struct {
 // The make/model/serial/firmware/mac fields fall back through several
 // sources so a mixed fleet (some adapters emit rich identity, some
 // don't) still populates:
-//   1. devices.<field> — for older columns that were explicit
-//   2. tags->>'<field>' — if the admin edited it in the portal
-//   3. latest_metrics->>'<field>' — as reported by the adapter
+//  1. devices.<field> — for older columns that were explicit
+//  2. tags->>'<field>' — if the admin edited it in the portal
+//  3. latest_metrics->>'<field>' — as reported by the adapter
 //
 // Order matters: explicit columns win over tags, tags win over
 // live-reported metrics (so a portal-authored override sticks).
@@ -71,7 +75,9 @@ var publicDeviceColumns = `
 	       COALESCE(NULLIF(d.make,''), NULLIF(d.tags->>'make',''), COALESCE(d.latest_metrics->>'make','')) AS make,
 	       COALESCE(NULLIF(d.model,''), NULLIF(d.tags->>'model',''), COALESCE(d.latest_metrics->>'model','')) AS model,
 	       COALESCE(NULLIF(d.tags->>'serial_number',''), COALESCE(d.latest_metrics->>'serial_number','')) AS serial_number,
-	       COALESCE(NULLIF(d.tags->>'firmware_version',''), COALESCE(d.latest_metrics->>'firmware_version','')) AS firmware_version,
+	       fw.firmware AS firmware_version,
+	       COALESCE(ft.target_version, '') AS target_firmware_version,
+	       ` + firmwareStatusSQL + ` AS firmware_status,
 	       COALESCE(NULLIF(d.tags->>'mac_address',''), COALESCE(d.latest_metrics->>'mac_address','')) AS mac_address,
 	       COALESCE(d.room_id::text, ''),
 	       COALESCE(r.name, ''),
@@ -84,7 +90,38 @@ const publicDeviceFrom = `
 	  FROM devices d
 	  LEFT JOIN rooms r     ON r.id = d.room_id
 	  LEFT JOIN buildings b ON b.id = r.building_id
-	  LEFT JOIN collectors c ON c.id = d.collector_id`
+	  LEFT JOIN collectors c ON c.id = d.collector_id` + firmwareFrom
+
+// firmwareFrom works out each device's make, model and firmware as the
+// portal's Firmware page does, and joins the firmware target for that
+// make and model. Make and model: the linked asset's (what people typed),
+// then what the adapter reported. Firmware: a portal tag override, then
+// the stored value (ingest takes it from any of the adapters' reading
+// names), then the latest readings.
+const firmwareFrom = `
+	  LEFT JOIN assets a ON a.id = d.asset_id
+	  CROSS JOIN LATERAL (
+	      SELECT COALESCE(NULLIF(a.manufacturer, ''), NULLIF(d.make, ''), NULLIF(d.tags->>'make', ''), '') AS make,
+	             COALESCE(NULLIF(a.model, ''), NULLIF(d.model, ''), NULLIF(d.tags->>'model', ''), '') AS model,
+	             COALESCE(NULLIF(d.tags->>'firmware_version', ''), NULLIF(d.firmware_version, ''),
+	                      NULLIF(d.latest_metrics->>'firmware_version', ''), NULLIF(d.latest_metrics->>'fw_version', ''),
+	                      NULLIF(d.latest_metrics->>'firmware', ''), '') AS firmware
+	  ) fw
+	  LEFT JOIN firmware_targets ft ON ft.make = fw.make AND ft.model = fw.model`
+
+// firmwareStatusSQL compares a device's firmware with its target:
+// matches_target, differs_from_target, no_target (none set for its make
+// and model), or not_reported (the device hasn't reported firmware).
+const firmwareStatusSQL = `CASE
+	        WHEN fw.firmware = '' THEN 'not_reported'
+	        WHEN COALESCE(ft.target_version, '') = '' THEN 'no_target'
+	        WHEN fw.firmware = ft.target_version THEN 'matches_target'
+	        ELSE 'differs_from_target' END`
+
+// firmwareStatuses are the values firmware_status takes.
+var firmwareStatuses = map[string]bool{
+	"matches_target": true, "differs_from_target": true, "no_target": true, "not_reported": true,
+}
 
 var publicDeviceBaseSelect = publicDeviceColumns + publicDeviceFrom
 
@@ -122,7 +159,7 @@ func scanDevice(scan func(dest ...any) error) (publicDevice, error) {
 	var tags []byte
 	if err := scan(
 		&d.ID, &d.Name, &d.Type, &d.Protocol, &d.Status, &d.IPAddress,
-		&d.Make, &d.Model, &d.SerialNumber, &d.FirmwareVersion, &d.MACAddress,
+		&d.Make, &d.Model, &d.SerialNumber, &d.FirmwareVersion, &d.TargetFirmware, &d.FirmwareStatus, &d.MACAddress,
 		&d.RoomID, &d.Room, &d.BuildingID, &d.Building,
 		&d.LastSeenAt, &tags,
 	); err != nil {
@@ -137,10 +174,12 @@ func scanDevice(scan func(dest ...any) error) (publicDevice, error) {
 // ListDevices — GET /pub/v1/devices
 //
 // Filters (all optional, all query-string):
-//   building_id = <uuid>   only devices in that building
-//   room_id     = <uuid>   only devices in that room
-//   status      = <string> exact match on latest_status
-//   cursor + limit         standard pagination
+//
+//	building_id = <uuid>   only devices in that building
+//	room_id     = <uuid>   only devices in that room
+//	status      = <string> exact match on latest_status
+//	firmware_status = matches_target | differs_from_target | no_target | not_reported
+//	cursor + limit         standard pagination
 //
 // Requires the view.dashboard scope. Ordered by (last_seen_at, id) so
 // the cursor is stable and integrators polling for recently-active
@@ -158,6 +197,11 @@ func (h *Handler) ListDevices(w http.ResponseWriter, r *http.Request) {
 	buildingFilter := strings.TrimSpace(r.URL.Query().Get("building_id"))
 	roomFilter := strings.TrimSpace(r.URL.Query().Get("room_id"))
 	statusFilter := strings.TrimSpace(r.URL.Query().Get("status"))
+	firmwareFilter := strings.TrimSpace(r.URL.Query().Get("firmware_status"))
+	if firmwareFilter != "" && !firmwareStatuses[firmwareFilter] {
+		writeErr(w, http.StatusBadRequest, "firmware_status must be matches_target, differs_from_target, no_target or not_reported")
+		return
+	}
 
 	sql := publicDeviceBaseSelect + " WHERE d.deleted_at IS NULL"
 	args := []any{}
@@ -183,6 +227,9 @@ func (h *Handler) ListDevices(w http.ResponseWriter, r *http.Request) {
 		// Filter on effective status so an integrator asking for
 		// status=online never sees a stale-on-offline-collector row.
 		sql += " AND (" + devicestatus.EffectiveStatusSQL + ") = " + arg(statusFilter)
+	}
+	if firmwareFilter != "" {
+		sql += " AND (" + firmwareStatusSQL + ") = " + arg(firmwareFilter)
 	}
 	// Cursor: page forward from wherever the previous response left
 	// off. Never-seen devices sort last as neverSeen, and a cursor that
@@ -274,7 +321,7 @@ func (h *Handler) GetDevice(w http.ResponseWriter, r *http.Request) {
 		var metrics []byte
 		err := row.Scan(
 			&out.ID, &out.Name, &out.Type, &out.Protocol, &out.Status, &out.IPAddress,
-			&out.Make, &out.Model, &out.SerialNumber, &out.FirmwareVersion, &out.MACAddress,
+			&out.Make, &out.Model, &out.SerialNumber, &out.FirmwareVersion, &out.TargetFirmware, &out.FirmwareStatus, &out.MACAddress,
 			&out.RoomID, &out.Room, &out.BuildingID, &out.Building,
 			&out.LastSeenAt, &tags, &metrics,
 		)
@@ -417,4 +464,3 @@ func itoa(n int) string {
 	}
 	return string(buf)
 }
-

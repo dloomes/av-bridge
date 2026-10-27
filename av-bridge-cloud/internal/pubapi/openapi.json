@@ -10,6 +10,7 @@
   "tags": [
     { "name": "Meta", "description": "Health and identity of the calling token." },
     { "name": "Devices", "description": "AV endpoints under management — displays, cameras, DSPs, control processors." },
+    { "name": "Firmware", "description": "Firmware versions across the fleet, against the targets set on the Firmware page. Needs the view.firmware scope." },
     { "name": "Hierarchy", "description": "Physical structure: buildings and rooms." },
     { "name": "Assets", "description": "The CMDB inventory — every physical thing the tenant owns, monitored or not. Broader than Devices: includes mounts, cables, spares, retired gear." },
     { "name": "Alerts", "description": "Open + historical incidents raised on devices and collectors." },
@@ -51,6 +52,7 @@
           { "$ref": "#/components/parameters/BuildingID" },
           { "$ref": "#/components/parameters/RoomID" },
           { "name": "status", "in": "query", "description": "Exact match on latest known status.", "schema": { "type": "string", "enum": ["online", "offline", "unknown", "switched_off"] } },
+          { "name": "firmware_status", "in": "query", "description": "Only devices whose firmware has this status against its target. `differs_from_target` lists the devices to update.", "schema": { "type": "string", "enum": ["matches_target", "differs_from_target", "no_target", "not_reported"] } },
           { "$ref": "#/components/parameters/Limit" },
           { "$ref": "#/components/parameters/Cursor" }
         ],
@@ -140,6 +142,24 @@
           "401": { "$ref": "#/components/responses/Unauthorized" },
           "403": { "$ref": "#/components/responses/Forbidden" },
           "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/pub/v1/firmware": {
+      "get": {
+        "tags": ["Firmware"],
+        "summary": "List firmware versions",
+        "description": "The fleet's firmware: one row per make, model and firmware version, with how many devices run it and how it compares with the target set on the Firmware page. Use `firmware_status=differs_from_target` for what needs updating, then `GET /pub/v1/devices?firmware_status=differs_from_target` for the devices themselves. Requires the `view.firmware` scope.",
+        "parameters": [
+          { "$ref": "#/components/parameters/BuildingID" },
+          { "$ref": "#/components/parameters/RoomID" },
+          { "name": "firmware_status", "in": "query", "description": "Only versions with this status against their target.", "schema": { "type": "string", "enum": ["matches_target", "differs_from_target", "no_target", "not_reported"] } }
+        ],
+        "responses": {
+          "200": { "description": "Firmware versions, by make and model, most used first.", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/FirmwareVersion" } } } } },
+          "400": { "description": "An unknown firmware_status.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
         }
       }
     },
@@ -512,14 +532,16 @@
         "properties": {
           "id": { "type": "string", "format": "uuid" },
           "name": { "type": "string", "description": "The device's display name. Falls back to the adapter's reported id when no override is set in the portal." },
-          "type": { "type": "string", "description": "Adapter type key — e.g. `sony-bravia`, `biamp-tesira`, `visca-over-ip`." },
-          "protocol": { "type": "string", "description": "Wire protocol the adapter speaks, e.g. `tesira`, `visca`, `bravia-rest`." },
+          "type": { "type": "string", "description": "Device category: `display`, `conferencing`, `audio`, `camera`, `control`, `avoip` (AV-over-IP) or `power`." },
+          "protocol": { "type": "string", "description": "The adapter the Collector uses for the device, e.g. `sony_bravia`, `tesira`, `cisco_roomos`, `aten_pdu`." },
           "status": { "type": "string", "enum": ["online", "offline", "unknown", "switched_off"], "description": "`unknown` when the device's Collector isn't reporting; `switched_off` while Room Readiness has it switched off for the night." },
           "ip_address": { "type": "string" },
           "make": { "type": "string" },
           "model": { "type": "string" },
           "serial_number": { "type": "string" },
-          "firmware_version": { "type": "string" },
+          "firmware_version": { "type": "string", "description": "The device's firmware, as on the Firmware page: a `firmware_version` tag set in the portal, otherwise what the device last reported." },
+          "target_firmware_version": { "type": "string", "description": "The target firmware set for the device's make and model on the Firmware page. Absent when none is set." },
+          "firmware_status": { "type": "string", "enum": ["matches_target", "differs_from_target", "no_target", "not_reported"], "description": "How the firmware compares with the target set for the device's make and model on the Firmware page: `matches_target`, `differs_from_target`, `no_target` (no target set) or `not_reported` (the device hasn't reported firmware)." },
           "mac_address": { "type": "string" },
           "room_id": { "type": "string", "format": "uuid" },
           "room": { "type": "string" },
@@ -531,14 +553,16 @@
         "example": {
           "id": "3f8b0f2c-1c1e-4c6b-9b2a-d0d9d4d1d3d4",
           "name": "Boardroom display",
-          "type": "sony-bravia",
-          "protocol": "bravia-rest",
+          "type": "display",
+          "protocol": "sony_bravia",
           "status": "online",
           "ip_address": "10.11.12.13",
           "make": "Sony",
           "model": "FW-65BZ40L",
           "serial_number": "S01234567",
           "firmware_version": "PKG6.6510",
+          "target_firmware_version": "PKG6.6510",
+          "firmware_status": "matches_target",
           "mac_address": "00:11:22:33:44:55",
           "room_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
           "room": "Boardroom",
@@ -731,6 +755,19 @@
           { "$ref": "#/components/schemas/ReadinessRun" },
           { "type": "object", "required": ["steps"], "properties": { "steps": { "type": "array", "items": { "$ref": "#/components/schemas/ReadinessStep" } } } }
         ]
+      },
+      "FirmwareVersion": {
+        "type": "object",
+        "required": ["make", "model", "firmware_version", "firmware_status", "device_count"],
+        "properties": {
+          "make": { "type": "string", "description": "Empty when the devices haven't reported one." },
+          "model": { "type": "string" },
+          "firmware_version": { "type": "string", "description": "Empty for devices that haven't reported firmware." },
+          "target_firmware_version": { "type": "string", "description": "The target set for this make and model. Absent when none is set." },
+          "firmware_status": { "type": "string", "enum": ["matches_target", "differs_from_target", "no_target", "not_reported"], "description": "How the firmware compares with the target set for the device's make and model on the Firmware page: `matches_target`, `differs_from_target`, `no_target` (no target set) or `not_reported` (the device hasn't reported firmware)." },
+          "device_count": { "type": "integer", "description": "Devices of this make and model on this firmware." }
+        },
+        "example": { "make": "Sony", "model": "FW-65BZ40L", "firmware_version": "PKG6.5603.0175", "target_firmware_version": "PKG6.6510.0185", "firmware_status": "differs_from_target", "device_count": 12 }
       },
       "ReadinessRoom": {
         "type": "object",

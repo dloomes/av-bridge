@@ -350,7 +350,7 @@ func upsertDeviceFromTelemetry(ctx context.Context, tx pgx.Tx, customerID, colle
 		// software_version covers Poly / Cisco / other vendors that report firmware
 		// under a "software" naming; firmware_version and sw_version stay for the
 		// tesira / display drivers that use those keys.
-		nilIfEmpty(pick(t.Metrics, t.LensMetrics, "firmware_version", "firmware", "sw_version", "software_version", "software_build")),
+		nilIfEmpty(pick(t.Metrics, t.LensMetrics, "firmware_version", "fw_version", "firmware", "sw_version", "software_version", "software_build")),
 		nilIfEmpty(pick(t.LensMetrics, t.Metrics, "mac_address", "mac")),
 		nilIfEmpty(firstNonEmpty(t.Tags["ip_address"], pick(t.Metrics, t.LensMetrics, "ip_address", "ip"))),
 		jsonbStringMap(t.Tags),

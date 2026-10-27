@@ -559,6 +559,7 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 			"/pub/v1/room-readiness/rooms",
 			"/pub/v1/room-readiness/runs",
 			"/pub/v1/room-readiness/runs/{id}",
+			"/pub/v1/firmware",
 		} {
 			mux.Handle("OPTIONS "+p, optionsPreflight)
 		}
@@ -572,6 +573,11 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 			pubWrapScope(portalauth.PermViewDashboard, pubAPI.Handler.GetDeviceTelemetry))
 		mux.Handle("GET /pub/v1/devices/{id}/events",
 			pubWrapScope(portalauth.PermViewDashboard, pubAPI.Handler.GetDeviceEvents))
+
+		// Firmware — the fleet's versions against the targets set on the
+		// Firmware page. Its own scope, view.firmware.
+		mux.Handle("GET /pub/v1/firmware",
+			pubWrapScope(portalauth.PermViewFirmware, pubAPI.Handler.ListFirmware))
 
 		// Hierarchy — flat lists, no pagination.
 		mux.Handle("GET /pub/v1/buildings",
