@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Clock, GitFork, Info, MapPin, Play, Power, PowerOff, Radio, Signal } from "lucide-react";
+import { Clock, GitFork, Info, MapPin, Play, Power, PowerOff, Radar, Radio, Signal } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { api } from "@/lib/api";
 import type { DeviceSummary, NamedRow } from "@/lib/types";
@@ -34,6 +34,7 @@ const STEP_ORDER: StepType[] = [
   "device_command",
   "expect_status",
   "check_metric",
+  "ping",
 ];
 
 const STEP_ICON: Record<StepType, React.ComponentType<{ className?: string }>> = {
@@ -44,6 +45,7 @@ const STEP_ICON: Record<StepType, React.ComponentType<{ className?: string }>> =
   device_command: Play,
   expect_status: Signal,
   check_metric: Radio,
+  ping: Radar,
 };
 
 interface StepPaletteProps {

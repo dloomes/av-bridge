@@ -465,6 +465,7 @@ const STEP_TYPE_LABELS: Record<string, string> = {
   section: "Section",
   expect_status: "Expect status",
   check_metric: "Check metric",
+  ping: "Ping",
   device_command: "Command",
 };
 

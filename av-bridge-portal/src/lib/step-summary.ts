@@ -38,6 +38,13 @@ export function summariseExpected(step: NightlyStepRow): string {
   if (!isObject(e)) return e === undefined ? "-" : text(e);
   const many = typeof e.target_devices === "number" && e.target_devices > 1 ? ` (${e.target_devices} devices)` : "";
   if ("status" in e) return text(e.status);
+  if ("replies" in e) {
+    const limits = [
+      typeof e.max_loss_pct === "number" ? `loss <= ${e.max_loss_pct}%` : "",
+      typeof e.max_response_ms === "number" ? `<= ${e.max_response_ms} ms` : "",
+    ].filter(Boolean);
+    return "Replies to ping" + (limits.length ? ` (${limits.join(", ")})` : "");
+  }
   if ("metric" in e) return `${text(e.metric)} ${OP[String(e.operator)] ?? text(e.operator)} ${text(e.threshold)}`;
   if ("command" in e) return text(e.command) + many;
   if ("action" in e) return (e.action === "power_on" ? "Power on" : e.action === "power_off" ? "Power off" : text(e.action)) + many;
@@ -54,6 +61,22 @@ function commandOutcome(r: Record<string, unknown>): string {
   return r.error ? `${status}: ${text(r.error)}` : status;
 }
 
+// finding reads one device's result: a ping as "Replied 3/3, 4 ms",
+// anything else as itself.
+function finding(v: unknown): string {
+  if (isObject(v)) {
+    if (v.error) return text(v.error);
+    if ("replies" in v) {
+      const replies = Number(v.replies);
+      const sent = text(v.sent);
+      if (replies === 0) return `No reply (0/${sent})`;
+      const ms = typeof v.response_ms === "number" ? `, ${v.response_ms} ms` : "";
+      return `Replied ${replies}/${sent}${ms}`;
+    }
+  }
+  return text(v);
+}
+
 // summariseActual says what the step found, a line per device.
 export function summariseActual(step: NightlyStepRow): ActualLine[] {
   const a = step.actual;
@@ -65,9 +88,9 @@ export function summariseActual(step: NightlyStepRow): ActualLine[] {
     if (readings.length === 1) {
       const r = readings[0];
       const v = byDevice ? byDevice[r.device] ?? Object.values(byDevice)[0] : a;
-      return [{ value: text(v), reading: r }];
+      return [{ value: finding(v), reading: r }];
     }
-    return readings.map((r) => ({ device: r.device, value: text(byDevice?.[r.device]), reading: r }));
+    return readings.map((r) => ({ device: r.device, value: finding(byDevice?.[r.device]), reading: r }));
   }
 
   if (isObject(a)) {

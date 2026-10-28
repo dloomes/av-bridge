@@ -725,7 +725,7 @@
         "properties": {
           "index": { "type": "integer", "description": "Position in the routine, from 0. The scheduled power off and power on come first, as -2 and -1." },
           "name": { "type": "string" },
-          "type": { "type": "string", "description": "e.g. `power_off`, `power_on`, `wait`, `expect_status`, `check_metric`, `device_command`." },
+          "type": { "type": "string", "description": "e.g. `power_off`, `power_on`, `wait`, `expect_status`, `check_metric`, `ping`, `device_command`." },
           "device_id": { "type": ["string", "null"], "format": "uuid", "description": "Null for steps that aren't about one device." },
           "device": { "type": ["string", "null"] },
           "passed": { "type": "boolean" },

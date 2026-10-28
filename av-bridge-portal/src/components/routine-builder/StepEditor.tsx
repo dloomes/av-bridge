@@ -15,6 +15,7 @@ import {
   type ExpectStatusStep,
   type MetricOperator,
   type OnFailure,
+  type PingStep,
   type PowerStep,
   type SectionStep,
   type Step,
@@ -49,6 +50,9 @@ export function StepEditor({ step, onChange, disabled }: StepEditorProps) {
       )}
       {step.type === "check_metric" && (
         <CheckMetricFields step={step} onChange={onChange} disabled={disabled} />
+      )}
+      {step.type === "ping" && (
+        <PingFields step={step} onChange={onChange} disabled={disabled} />
       )}
       {(step.type === "power_on" || step.type === "power_off") && (
         <PowerFields step={step} onChange={onChange} disabled={disabled} />
@@ -400,6 +404,78 @@ function CheckMetricFields({
         onChange={(v) => onChange({ ...step, on_failure: v })}
         disabled={disabled}
       />
+    </Grid>
+  );
+}
+
+// optionalNumber reads a number input that may be left blank (no limit).
+function optionalNumber(v: string): number | undefined {
+  if (v.trim() === "") return undefined;
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 0 ? n : undefined;
+}
+
+function PingFields({
+  step,
+  onChange,
+  disabled,
+}: {
+  step: PingStep;
+  onChange: (s: Step) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <Grid>
+      <TargetField
+        target={step.target}
+        onChange={(target) => onChange({ ...step, target })}
+        disabled={disabled}
+      />
+      <Field label="Pings per device" hint="1 to 10, each allowed a second to reply.">
+        <input
+          type="number"
+          min={1}
+          max={10}
+          value={step.count ?? 3}
+          onChange={(e) =>
+            onChange({ ...step, count: Math.min(10, Math.max(1, Number(e.target.value) || 3)) })
+          }
+          disabled={disabled}
+          className={inputCls}
+        />
+      </Field>
+      <Field label="Max packet loss % (optional)" hint="Blank: any reply passes.">
+        <input
+          type="number"
+          min={0}
+          max={100}
+          value={step.max_loss_pct ?? ""}
+          placeholder="Any reply"
+          onChange={(e) => onChange({ ...step, max_loss_pct: optionalNumber(e.target.value) })}
+          disabled={disabled}
+          className={inputCls}
+        />
+      </Field>
+      <Field label="Max response time, ms (optional)" hint="Average round trip.">
+        <input
+          type="number"
+          min={0}
+          value={step.max_response_ms ?? ""}
+          placeholder="No limit"
+          onChange={(e) => onChange({ ...step, max_response_ms: optionalNumber(e.target.value) })}
+          disabled={disabled}
+          className={inputCls}
+        />
+      </Field>
+      <OnFailureField
+        value={step.on_failure}
+        onChange={(v) => onChange({ ...step, on_failure: v })}
+        disabled={disabled}
+      />
+      <p className="col-span-2 text-[11px] text-muted-foreground">
+        Pings each device&apos;s own address from its Collector, whatever kind of device it is.
+        Serial devices are left out of a whole-room or device-type target.
+      </p>
     </Grid>
   );
 }

@@ -26,6 +26,7 @@ import {
   Play,
   Power,
   PowerOff,
+  Radar,
   Radio,
   Signal,
   Trash2,
@@ -59,6 +60,7 @@ const STEP_ICON: Record<StepType, React.ComponentType<{ className?: string }>> =
   device_command: Play,
   expect_status: Signal,
   check_metric: Radio,
+  ping: Radar,
 };
 
 interface StepCanvasProps {
@@ -272,6 +274,8 @@ function summarise(step: Step): string {
       return `expect ${step.status} on ${targetSummary(step.target)}`;
     case "check_metric":
       return `${step.metric || "?"} ${step.operator} ${step.threshold} on ${targetSummary(step.target)}`;
+    case "ping":
+      return `ping ${targetSummary(step.target)}`;
     case "power_on":
       return `power on ${targetSummary(step.target)}`;
     case "power_off":

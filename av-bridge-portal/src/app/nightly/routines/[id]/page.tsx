@@ -375,7 +375,8 @@ export default function RoutineEditorPage() {
                       <span className="font-mono">wait</span>,{" "}
                       <span className="font-mono">device_command</span>,{" "}
                       <span className="font-mono">check_metric</span>,{" "}
-                      <span className="font-mono">expect_status</span>.
+                      <span className="font-mono">expect_status</span>,{" "}
+                      <span className="font-mono">ping</span>.
                     </p>
                     <textarea
                       value={stepsText}

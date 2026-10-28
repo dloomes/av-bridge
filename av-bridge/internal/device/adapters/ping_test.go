@@ -34,3 +34,29 @@ func TestPingIntervalDefault(t *testing.T) {
 		t.Fatalf("tagged interval = %v, want 250ms", b.interval)
 	}
 }
+
+// A Ping step pings whatever address a device has, in its adapter's form.
+func TestHostFromAddress(t *testing.T) {
+	for _, c := range []struct {
+		addr, host string
+		ok         bool
+	}{
+		{"10.0.0.5", "10.0.0.5", true},
+		{"10.0.0.5:23", "10.0.0.5", true},
+		{" display.local:20060 ", "display.local", true},
+		{"https://10.0.0.9/api/v1", "10.0.0.9", true},
+		{"http://user:pw@codec.local:8080", "codec.local", true},
+		{"[fe80::1]:80", "fe80::1", true},
+		{"fe80::1", "fe80::1", true},
+		{"10.0.0.7/24", "10.0.0.7", true},
+		{"compute-1", "compute-1", true},
+		{"COM3", "", false},
+		{"/dev/ttyUSB0", "", false},
+		{"", "", false},
+	} {
+		host, ok := HostFromAddress(c.addr)
+		if host != c.host || ok != c.ok {
+			t.Errorf("HostFromAddress(%q) = %q, %v; want %q, %v", c.addr, host, ok, c.host, c.ok)
+		}
+	}
+}

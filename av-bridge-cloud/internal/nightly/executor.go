@@ -15,6 +15,7 @@
 //   section       — real (structural only; always passes)
 //   expect_status — real (reads devices.latest_status)
 //   check_metric  — real (reads telemetry table)
+//   ping          — real (pings each device's address from its Collector)
 //   power_on/off  — dry-run log (matches existing scheduler behaviour)
 //   device_command — dry-run log
 //
@@ -392,6 +393,8 @@ func (e *Executor) dispatchStep(ctx context.Context, run RunContext, s step) ste
 		return e.stepExpectStatus(ctx, run, s)
 	case "check_metric":
 		return e.stepCheckMetric(ctx, run, s)
+	case "ping":
+		return e.stepPing(ctx, run, s)
 	case "power_on":
 		return e.stepPowerAction(ctx, run, s, "power_on")
 	case "power_off":

@@ -28,6 +28,7 @@ import (
 
 	"github.com/dloomes/av-bridge/internal/config"
 	"github.com/dloomes/av-bridge/internal/device"
+	"github.com/dloomes/av-bridge/internal/device/adapters"
 	"github.com/dloomes/av-bridge/internal/hub"
 	"github.com/dloomes/av-bridge/internal/update"
 )
@@ -41,6 +42,11 @@ const CommandReconnectName = "_reconnect"
 // reading of a device (Room Readiness checks): the device is polled now and
 // the reading comes back as the command result. Mirrors the cloud constant.
 const CommandPollName = "_poll"
+
+// CommandPingName is the reserved command the cloud uses to ping a device's
+// address from the Collector (a Room Readiness Ping step), whatever adapter
+// the device uses. Mirrors the cloud constant.
+const CommandPingName = "_ping"
 
 // Poller polls the cloud for pending commands on a tick, dispatches them
 // through the local hub, and posts results back. Uses the same HMAC signing
@@ -293,6 +299,11 @@ func (p *Poller) execute(ctx context.Context, cmd bridgeCommand) {
 		return
 	}
 
+	if cmd.Name == CommandPingName {
+		p.ping(ctx, cmd)
+		return
+	}
+
 	if cmd.Name == CommandPollName {
 		tel, err := p.hub.PollNow(ctx, cmd.ReportedID)
 		if err != nil {
@@ -350,4 +361,52 @@ func (p *Poller) signedPost(ctx context.Context, path string, body []byte) (*htt
 	mac.Write(body)
 	req.Header.Set("X-Signature", "sha256="+hex.EncodeToString(mac.Sum(nil)))
 	return p.http.Do(req)
+}
+
+// ping answers a _ping: ICMP echoes to the device's address. The result
+// carries the stats whether or not anything replied; the cloud judges them.
+func (p *Poller) ping(ctx context.Context, cmd bridgeCommand) {
+	cfg, ok := p.hub.DeviceConfig(cmd.ReportedID)
+	if !ok {
+		p.report(ctx, cmd.ID, nil, fmt.Errorf("device not present on this collector: %s", cmd.ReportedID))
+		return
+	}
+	host, ok := adapters.HostFromAddress(cfg.Address)
+	if cfg.Protocol == "serial" || !ok {
+		p.report(ctx, cmd.ID, nil, fmt.Errorf("no network address to ping (%q)", cfg.Address))
+		return
+	}
+	opts := adapters.DefaultPingOptions()
+	var args struct {
+		Count int `json:"count"`
+	}
+	if len(cmd.Args) > 0 && json.Unmarshal(cmd.Args, &args) == nil && args.Count > 0 {
+		opts.Count = min(args.Count, 10)
+	}
+	switch cfg.Tags["ping_privileged"] {
+	case "true":
+		opts.Privileged = true
+	case "false":
+		opts.Privileged = false
+	}
+	stats, err := adapters.PingHost(ctx, host, opts)
+	if err != nil {
+		p.report(ctx, cmd.ID, nil, err)
+		return
+	}
+	parsed := map[string]any{
+		"host":            host,
+		"packets_sent":    stats.PacketsSent,
+		"packets_recv":    stats.PacketsRecv,
+		"packet_loss_pct": stats.PacketLoss,
+	}
+	if stats.PacketsRecv > 0 {
+		parsed["avg_ms"] = stats.AvgRtt.Milliseconds()
+		parsed["min_ms"] = stats.MinRtt.Milliseconds()
+		parsed["max_ms"] = stats.MaxRtt.Milliseconds()
+	}
+	p.report(ctx, cmd.ID, &device.CommandResponse{
+		Raw:    fmt.Sprintf("%s: %d/%d replies", host, stats.PacketsRecv, stats.PacketsSent),
+		Parsed: parsed,
+	}, nil)
 }

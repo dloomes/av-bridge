@@ -17,6 +17,7 @@ export type StepType =
   | "section"
   | "expect_status"
   | "check_metric"
+  | "ping"
   | "power_on"
   | "power_off"
   | "device_command";
@@ -26,6 +27,7 @@ export const STEP_TYPE_LABEL: Record<StepType, string> = {
   section: "Section",
   expect_status: "Expect status",
   check_metric: "Check metric",
+  ping: "Ping",
   power_on: "Power on",
   power_off: "Power off",
   device_command: "Device command",
@@ -36,6 +38,7 @@ export const STEP_TYPE_SUBLABEL: Record<StepType, string> = {
   section: "Structural heading, always passes",
   expect_status: "Assert devices report a given status",
   check_metric: "Compare a telemetry metric to a threshold",
+  ping: "Ping devices' addresses from the Collector",
   power_on: "Send power-on to matching devices",
   power_off: "Send power-off to matching devices",
   device_command: "Send a named command with optional args",
@@ -103,6 +106,18 @@ export interface CheckMetricStep extends StepCommon {
   on_failure?: OnFailure;
 }
 
+// PingStep pings each target device's address from its Collector, whatever
+// adapter the device uses. Passes when every device replies, within the
+// optional loss and response-time limits.
+export interface PingStep extends StepCommon {
+  type: "ping";
+  target: Target;
+  count?: number;
+  max_loss_pct?: number;
+  max_response_ms?: number;
+  on_failure?: OnFailure;
+}
+
 export interface PowerStep extends StepCommon {
   type: "power_on" | "power_off";
   target: Target;
@@ -125,6 +140,7 @@ export type Step =
   | SectionStep
   | ExpectStatusStep
   | CheckMetricStep
+  | PingStep
   | PowerStep
   | DeviceCommandStep;
 
@@ -162,6 +178,13 @@ export function newStepOfType(t: StepType): Step {
         operator: "gt",
         threshold: 0,
         sample_window_seconds: 5,
+        on_failure: "continue",
+      };
+    case "ping":
+      return {
+        type: "ping",
+        target: { scope: "room" },
+        count: 3,
         on_failure: "continue",
       };
     case "power_on":
@@ -225,6 +248,7 @@ export function canDeviceDo(
     case "section":
       return true;
     case "expect_status":
+    case "ping":
       return true;
     case "check_metric":
       return (cap.metrics?.length ?? 0) > 0;

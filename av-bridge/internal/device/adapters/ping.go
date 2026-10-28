@@ -3,7 +3,10 @@ package adapters
 import (
 	"context"
 	"fmt"
+	"net"
+	"net/url"
 	"runtime"
+	"strings"
 	"time"
 
 	probing "github.com/prometheus-community/pro-bing"
@@ -159,14 +162,44 @@ func (a *PingAdapter) SendCommand(ctx context.Context, cmd device.CommandRequest
 // timers we don't want to keep hot between polls, and the setup
 // cost (few ms) is trivial next to the network round-trip.
 func (a *PingAdapter) run(ctx context.Context, count int) (*probing.Statistics, error) {
-	pinger, err := probing.NewPinger(a.Cfg.Address)
-	if err != nil {
-		return nil, fmt.Errorf("resolving %q: %w", a.Cfg.Address, err)
+	return PingHost(ctx, a.Cfg.Address, PingOptions{Count: count, Timeout: a.timeout, Interval: a.interval, Privileged: a.privileged})
+}
+
+// PingOptions tunes PingHost. Zero values take the ping adapter's defaults.
+type PingOptions struct {
+	Count      int
+	Timeout    time.Duration // per echo
+	Interval   time.Duration
+	Privileged bool
+}
+
+// DefaultPingOptions are the ping adapter's defaults, for pinging a host
+// that isn't a ping device (a Room Readiness Ping step).
+func DefaultPingOptions() PingOptions {
+	return PingOptions{Count: 3, Timeout: time.Second, Interval: 100 * time.Millisecond, Privileged: runtime.GOOS == "windows"}
+}
+
+// PingHost sends ICMP echoes to host and returns the stats. No replies is
+// not an error: the stats say so.
+func PingHost(ctx context.Context, host string, o PingOptions) (*probing.Statistics, error) {
+	d := DefaultPingOptions()
+	if o.Count <= 0 {
+		o.Count = d.Count
 	}
-	pinger.Count = count
-	pinger.Timeout = a.timeout * time.Duration(count)
-	pinger.Interval = a.interval
-	pinger.SetPrivileged(a.privileged)
+	if o.Timeout <= 0 {
+		o.Timeout = d.Timeout
+	}
+	if o.Interval <= 0 {
+		o.Interval = d.Interval
+	}
+	pinger, err := probing.NewPinger(host)
+	if err != nil {
+		return nil, fmt.Errorf("resolving %q: %w", host, err)
+	}
+	pinger.Count = o.Count
+	pinger.Timeout = o.Timeout * time.Duration(o.Count)
+	pinger.Interval = o.Interval
+	pinger.SetPrivileged(o.Privileged)
 
 	done := make(chan error, 1)
 	go func() { done <- pinger.RunWithContext(ctx) }()
@@ -181,6 +214,36 @@ func (a *PingAdapter) run(ctx context.Context, count int) (*probing.Statistics, 
 		return nil, ctx.Err()
 	}
 	return pinger.Statistics(), nil
+}
+
+// HostFromAddress is the host part of a device address, whatever form the
+// device's adapter takes it in: "10.0.0.5", "10.0.0.5:23", "[fe80::1]:80",
+// "https://display.local/api". ok is false for addresses with no network
+// host (a serial port).
+func HostFromAddress(addr string) (host string, ok bool) {
+	addr = strings.TrimSpace(addr)
+	if addr == "" {
+		return "", false
+	}
+	if i := strings.Index(addr, "://"); i >= 0 {
+		u, err := url.Parse(addr)
+		if err != nil || u.Hostname() == "" {
+			return "", false
+		}
+		return u.Hostname(), true
+	}
+	if h, _, err := net.SplitHostPort(addr); err == nil {
+		addr = h
+	}
+	addr = strings.Trim(addr, "[]")
+	if i := strings.IndexByte(addr, '/'); i >= 0 {
+		addr = addr[:i]
+	}
+	lower := strings.ToLower(addr)
+	if addr == "" || strings.HasPrefix(lower, "com") && len(lower) <= 6 && isDigits(lower[3:]) {
+		return "", false
+	}
+	return addr, true
 }
 
 // ── Capabilities ─────────────────────────────────────────────────────────────
