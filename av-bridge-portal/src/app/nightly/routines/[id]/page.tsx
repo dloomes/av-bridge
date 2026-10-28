@@ -15,6 +15,7 @@ import { hasPermission } from "@/lib/session";
 import type { NightlyRoutineDetail, UpdateNightlyRoutineBody } from "@/lib/api";
 import type { AdapterInfo, BuildingRow, DeviceSummary, NamedRow } from "@/lib/types";
 import { groupRoomsByBuilding } from "@/lib/room-groups";
+import { RoutineDiagram } from "@/components/routine-builder/RoutineDiagram";
 import {
   RoutineBuilder,
   hydrateSteps,
@@ -32,7 +33,7 @@ import {
 // Both edit the same underlying `steps` array — switching tabs re-syncs
 // from whichever side was last edited.
 
-type Mode = "builder" | "json";
+type Mode = "builder" | "diagram" | "json";
 
 export default function RoutineEditorPage() {
   const params = useParams<{ id: string }>();
@@ -102,16 +103,17 @@ export default function RoutineEditorPage() {
     return () => ctrl.abort();
   }, []);
 
-  // Builder is the source of truth by default. When the user switches
-  // to Advanced JSON we serialize the current builder state into the
-  // textarea; on switch back we parse the textarea back into UISteps.
-  // This avoids drift while keeping either editor honest.
+  // Builder is the source of truth by default; the diagram draws the
+  // builder's steps. When the user switches to Advanced JSON we serialize
+  // the current builder state into the textarea; on switch away we parse
+  // the textarea back into UISteps. This avoids drift while keeping
+  // either editor honest.
   const switchMode = (next: Mode) => {
     if (next === mode) return;
-    if (mode === "builder" && next === "json") {
+    if (mode !== "json" && next === "json") {
       setStepsText(JSON.stringify(serializeSteps(uiSteps), null, 2));
       setStepsError(null);
-    } else if (mode === "json" && next === "builder") {
+    } else if (mode === "json") {
       // Try to parse the current JSON; if it fails, stay in JSON mode
       // and surface the error rather than silently discarding edits.
       const trimmed = stepsText.trim();
@@ -323,6 +325,17 @@ export default function RoutineEditorPage() {
                   </button>
                   <button
                     type="button"
+                    onClick={() => switchMode("diagram")}
+                    className={`px-3 py-1 rounded-sm transition-colors ${
+                      mode === "diagram"
+                        ? "bg-primary text-primary-foreground"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    Diagram
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => switchMode("json")}
                     className={`px-3 py-1 rounded-sm transition-colors ${
                       mode === "json"
@@ -342,6 +355,12 @@ export default function RoutineEditorPage() {
                   disabled={inputsDisabled}
                   devices={devices}
                   adapters={adapters}
+                />
+              ) : mode === "diagram" ? (
+                <RoutineDiagram
+                  steps={serializeSteps(uiSteps)}
+                  title={name || loaded.name}
+                  devices={devices}
                 />
               ) : (
                 <Card>
