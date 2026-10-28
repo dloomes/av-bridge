@@ -45,6 +45,28 @@ type AuroraDIDOAdapter struct {
 	// cmdMu serialises requests: the device answers one at a time on the
 	// connection, and Poll and SendCommand share it.
 	cmdMu sync.Mutex
+
+	// fullUntil: the DIDO turned us away because all its control
+	// connections were taken. Connect doesn't try again before then, so
+	// the Collector isn't knocking while it's full.
+	fullMu    sync.Mutex
+	fullUntil time.Time
+}
+
+// didoFullWait is how long Connect holds off after the DIDO says it has
+// no free connections. var so tests can shorten it.
+var didoFullWait = 2 * time.Minute
+
+// errDIDOFull: the DIDO refused the connection ("connections maxed out,
+// cannot open more"). Some other system, or sessions the DIDO hasn't
+// released yet, hold all its control connections.
+var errDIDOFull = errors.New("the DIDO has no free control connections: another system may be using them, or it hasn't released earlier sessions (power-cycling it clears those)")
+
+// didoFullReply reports whether the device's text is its "no free
+// connections" refusal.
+func didoFullReply(raw string) bool {
+	r := strings.ToLower(raw)
+	return strings.Contains(r, "connections maxed out") || strings.Contains(r, "cannot open more")
 }
 
 const auroraDIDODefaultPort = 6970
@@ -63,6 +85,14 @@ func NewAuroraDIDOAdapter(cfg config.DeviceConfig) *AuroraDIDOAdapter {
 // ── Connection ────────────────────────────────────────────────────────────────
 
 func (a *AuroraDIDOAdapter) Connect(ctx context.Context) error {
+	a.fullMu.Lock()
+	until := a.fullUntil
+	a.fullMu.Unlock()
+	if time.Now().Before(until) {
+		a.SetStatus(device.StatusOffline)
+		return fmt.Errorf("aurora_dido connect %s: %w (retrying after %s)", a.Cfg.ID, errDIDOFull, until.Format("15:04:05"))
+	}
+
 	d := net.Dialer{Timeout: 10 * time.Second}
 	conn, err := d.DialContext(ctx, "tcp", a.address)
 	if err != nil {
@@ -83,6 +113,14 @@ func (a *AuroraDIDOAdapter) Connect(ctx context.Context) error {
 	resp, err := a.request(ctx, "get_fw_version")
 	if err != nil {
 		a.SetStatus(device.StatusOffline)
+		if errors.Is(err, errDIDOFull) {
+			a.fullMu.Lock()
+			a.fullUntil = time.Now().Add(didoFullWait)
+			a.fullMu.Unlock()
+			slog.Warn("aurora_dido: device has no free control connections; holding off",
+				"device", a.Cfg.ID, "address", a.address, "retry_in", didoFullWait)
+			return fmt.Errorf("aurora_dido connect %s: %w", a.Cfg.ID, errDIDOFull)
+		}
 		return fmt.Errorf("aurora_dido probe %s: %w", a.Cfg.ID, err)
 	}
 	a.SetStatus(device.StatusOnline)
@@ -641,6 +679,9 @@ func (a *AuroraDIDOAdapter) request(ctx context.Context, cmd string) (map[string
 		// the next request: this connection is done.
 		snippet := a.rawTail(conn, 160)
 		a.dropConn(conn)
+		if didoFullReply(snippet) {
+			return nil, errDIDOFull
+		}
 		if snippet != "" {
 			return nil, fmt.Errorf("aurora_dido decode reply to %q: %w (device sent: %q)", cmd, err, snippet)
 		}

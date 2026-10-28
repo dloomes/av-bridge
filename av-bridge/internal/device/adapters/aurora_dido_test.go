@@ -2,7 +2,10 @@ package adapters
 
 import (
 	"context"
+	"errors"
+	"net"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -188,5 +191,57 @@ func TestAuroraDIDOReboot(t *testing.T) {
 	tel, _ := a.Poll(context.Background())
 	if tel.Status != device.StatusOnline {
 		t.Fatalf("after reboot: %s (%s)", tel.Status, tel.Error)
+	}
+}
+
+// A DIDO with no free connections says so in plain text and closes. The
+// error says what that means, and Connect holds off for a while rather
+// than dialling again straight away.
+func TestAuroraDIDOConnectionsFull(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	var dials atomic.Int32
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			dials.Add(1)
+			// Read the command first: closing with it unread resets the
+			// connection on Windows, losing the message.
+			_ = c.SetReadDeadline(time.Now().Add(time.Second))
+			_, _ = c.Read(make([]byte, 256))
+			_, _ = c.Write([]byte("connections maxed out, cannot open more\r\n"))
+			_ = c.Close()
+		}
+	}()
+	old := didoFullWait
+	didoFullWait = 300 * time.Millisecond
+	defer func() { didoFullWait = old }()
+
+	a := NewAuroraDIDOAdapter(config.DeviceConfig{ID: "dido-1", Protocol: "aurora_dido", Address: ln.Addr().String()})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err = a.Connect(ctx)
+	if !errors.Is(err, errDIDOFull) || !strings.Contains(err.Error(), "no free control connections") {
+		t.Fatalf("first connect: %v", err)
+	}
+	// Held off: no second dial.
+	if err := a.Connect(ctx); !errors.Is(err, errDIDOFull) || dials.Load() != 1 {
+		t.Fatalf("second connect: %v, dials %d", err, dials.Load())
+	}
+	tel, _ := a.Poll(ctx)
+	if tel.Status != device.StatusOffline || !strings.Contains(tel.Error, "no free control connections") || dials.Load() != 1 {
+		t.Fatalf("poll while full: %s %q, dials %d", tel.Status, tel.Error, dials.Load())
+	}
+	// After the wait it tries again.
+	time.Sleep(350 * time.Millisecond)
+	_ = a.Connect(ctx)
+	if dials.Load() != 2 {
+		t.Fatalf("dials after the wait: %d, want 2", dials.Load())
 	}
 }
