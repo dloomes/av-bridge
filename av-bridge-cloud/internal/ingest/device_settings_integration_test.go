@@ -108,3 +108,65 @@ func TestTelemetryKeepsPortalEdits(t *testing.T) {
 		t.Errorf("telemetry with the current stamp = %q", got)
 	}
 }
+
+// An event from a device with no telemetry in the same push goes through
+// upsertDeviceMinimal, for a known device and a new one. It once passed
+// one argument too few, failing every push that carried such an event.
+func TestEventOnlyDeviceUpsert(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set — skipping event-only upsert test")
+	}
+	ctx := context.Background()
+	quiet := slog.New(slog.NewTextHandler(io.Discard, nil))
+	if err := db.Migrate(ctx, dsn, quiet); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	su, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer su.Close(ctx)
+	as := func(user, pass string) string {
+		u, _ := url.Parse(dsn)
+		u.User = url.UserPassword(user, pass)
+		return u.String()
+	}
+	st, err := db.New(ctx, as("app_admin", "app_admin_dev"), as("app_tenant", "app_tenant_dev"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	var cust, col, known string
+	if err := su.QueryRow(ctx, `INSERT INTO customers (name) VALUES ('event-only') RETURNING id::text`).Scan(&cust); err != nil {
+		t.Fatal(err)
+	}
+	if err := su.QueryRow(ctx, `INSERT INTO collectors (customer_id, bridge_collector_id, name, hmac_secret_enc)
+	          VALUES ($1::uuid, 'eo-' || $1::text, 'eo', '\x00') RETURNING id::text`, cust).Scan(&col); err != nil {
+		t.Fatal(err)
+	}
+	if err := su.QueryRow(ctx, `INSERT INTO devices (customer_id, collector_id, reported_id, name, type, protocol, tags, config_updated_at)
+	          VALUES ($1, $2, 'codec', 'Codec', 'conferencing', 'cisco_roomos', '{"a":"1"}', now()) RETURNING id::text`, cust, col).Scan(&known); err != nil {
+		t.Fatal(err)
+	}
+	for _, reported := range []string{"codec", "new-device"} {
+		var id string
+		if err := st.WithTenant(ctx, cust, func(tx pgx.Tx) error {
+			var err error
+			id, err = upsertDeviceMinimal(ctx, tx, cust, col, reported, "Name", "conferencing")
+			return err
+		}); err != nil {
+			t.Fatalf("%s: %v", reported, err)
+		}
+		if id == "" || (reported == "codec" && id != known) {
+			t.Errorf("%s: id %q (known %s)", reported, id, known)
+		}
+	}
+	var tags string
+	if err := su.QueryRow(ctx, `SELECT tags::text FROM devices WHERE id = $1`, known).Scan(&tags); err != nil {
+		t.Fatal(err)
+	}
+	if tags != `{"a": "1"}` {
+		t.Errorf("event upsert changed tags: %s", tags)
+	}
+}

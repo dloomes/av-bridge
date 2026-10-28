@@ -377,6 +377,7 @@ func upsertDeviceMinimal(ctx context.Context, tx pgx.Tx, customerID, collectorID
 		nilIfEmpty(name), nilIfEmpty(typ), nil,
 		nil, nil, nil, nil, nil, nil,
 		nil, nil, nil, nil, nil,
+		"", // config stamp: none, and no tags to take
 	).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil
