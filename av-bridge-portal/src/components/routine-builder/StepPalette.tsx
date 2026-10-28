@@ -5,6 +5,7 @@ import { Clock, GitFork, Info, MapPin, Play, Power, PowerOff, Radar, Radio, Sign
 import { Card, CardContent } from "@/components/ui/card";
 import { api } from "@/lib/api";
 import type { DeviceSummary, NamedRow } from "@/lib/types";
+import { groupRoomsByBuilding } from "@/lib/room-groups";
 import {
   STEP_TYPE_LABEL,
   STEP_TYPE_SUBLABEL,
@@ -55,6 +56,8 @@ interface StepPaletteProps {
 
 export function StepPalette({ disabled, onAdd }: StepPaletteProps) {
   const [rooms, setRooms] = useState<NamedRow[]>([]);
+  const [buildings, setBuildings] = useState<NamedRow[]>([]);
+  const [locations, setLocations] = useState<NamedRow[]>([]);
   const [devices, setDevices] = useState<DeviceSummary[]>([]);
   const [roomID, setRoomID] = useState<string>("");
 
@@ -73,8 +76,17 @@ export function StepPalette({ disabled, onAdd }: StepPaletteProps) {
         setRoomID((firstWithDevices ?? rs[0])?.id ?? "");
       })
       .catch(() => {});
+    // Building and site names label the room picker; it still works
+    // (rooms under "Other rooms") if they fail to load.
+    api.listBuildings(ctrl.signal).then((b) => !ctrl.signal.aborted && setBuildings(b)).catch(() => {});
+    api.listLocations(ctrl.signal).then((l) => !ctrl.signal.aborted && setLocations(l)).catch(() => {});
     return () => ctrl.abort();
   }, []);
+
+  const roomGroups = useMemo(
+    () => groupRoomsByBuilding(rooms, buildings, locations),
+    [rooms, buildings, locations]
+  );
 
   const roomDevices = useMemo(
     () => (roomID ? devices.filter((d) => d.room_id === roomID) : []),
@@ -105,10 +117,14 @@ export function StepPalette({ disabled, onAdd }: StepPaletteProps) {
             className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             <option value="">— No room selected —</option>
-            {rooms.map((r) => (
-              <option key={r.id} value={r.id}>
-                {r.name}
-              </option>
+            {roomGroups.map((g) => (
+              <optgroup key={g.label} label={g.label}>
+                {g.rooms.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {g.building} · {r.name}
+                  </option>
+                ))}
+              </optgroup>
             ))}
           </select>
           <div className="text-[11px] text-muted-foreground">
