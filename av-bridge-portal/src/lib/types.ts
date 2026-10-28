@@ -99,6 +99,9 @@ export interface DeviceAssetInput {
 // second /assets fetch.
 export interface DeviceDetail extends DeviceSummary {
   collector_id: string;
+  // When the device last answered its Collector ("Last contacted").
+  // Absent when it hasn't within the records kept.
+  last_online_at?: string;
   room_id?: string | null;
   asset_id?: string | null;
   asset?: DeviceAssetInput;

@@ -273,9 +273,10 @@ func replayedTooLate(ts time.Time) bool {
 const upsertDeviceSQL = `
 INSERT INTO devices (customer_id, collector_id, reported_id, name, type, protocol,
                      make, model, serial_number, firmware_version, mac_address, ip_address,
-                     tags, latest_status, latest_metrics, last_seen_at, capabilities)
+                     tags, latest_status, latest_metrics, last_seen_at, capabilities, last_online_at)
 SELECT $1::uuid,$2::uuid,$3::text,$4::text,$5::text,$6::text,$7::text,$8::text,$9::text,$10::text,$11::text,$12::text,
-       $13::jsonb,$14::text,$15::jsonb,$16::timestamptz,$17::jsonb
+       $13::jsonb,$14::text,$15::jsonb,$16::timestamptz,$17::jsonb,
+       CASE WHEN $14::text = 'online' THEN $16::timestamptz END
  WHERE NOT EXISTS (SELECT 1 FROM collector_device_tombstones t
                     WHERE t.collector_id = $2::uuid AND t.reported_id = $3::text)
     OR EXISTS (SELECT 1 FROM devices d
@@ -315,6 +316,9 @@ ON CONFLICT (collector_id, reported_id) DO UPDATE SET
                           THEN COALESCE(EXCLUDED.latest_metrics, devices.latest_metrics)
                           ELSE devices.latest_metrics END,
   last_seen_at     = GREATEST(EXCLUDED.last_seen_at, devices.last_seen_at),
+  -- last_online_at: when the device last answered (online telemetry
+  -- only); last_seen_at moves on failed polls too. Migration 0069.
+  last_online_at   = GREATEST(EXCLUDED.last_online_at, devices.last_online_at),
   capabilities     = COALESCE(EXCLUDED.capabilities, devices.capabilities)
 WHERE devices.deleted_at IS NULL
 RETURNING id::text`

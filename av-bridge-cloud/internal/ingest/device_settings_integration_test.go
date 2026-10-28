@@ -170,3 +170,75 @@ func TestEventOnlyDeviceUpsert(t *testing.T) {
 		t.Errorf("event upsert changed tags: %s", tags)
 	}
 }
+
+// last_online_at moves only with online telemetry: a failed poll (offline
+// telemetry) moves last_seen_at but not when the device last answered.
+func TestLastOnlineAt(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set — skipping last_online_at test")
+	}
+	ctx := context.Background()
+	quiet := slog.New(slog.NewTextHandler(io.Discard, nil))
+	if err := db.Migrate(ctx, dsn, quiet); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	su, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer su.Close(ctx)
+	as := func(user, pass string) string {
+		u, _ := url.Parse(dsn)
+		u.User = url.UserPassword(user, pass)
+		return u.String()
+	}
+	st, err := db.New(ctx, as("app_admin", "app_admin_dev"), as("app_tenant", "app_tenant_dev"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	var cust, col string
+	if err := su.QueryRow(ctx, `INSERT INTO customers (name) VALUES ('last-online') RETURNING id::text`).Scan(&cust); err != nil {
+		t.Fatal(err)
+	}
+	if err := su.QueryRow(ctx, `INSERT INTO collectors (customer_id, bridge_collector_id, name, hmac_secret_enc)
+	          VALUES ($1::uuid, 'lo-' || $1::text, 'lo', '\x00') RETURNING id::text`, cust).Scan(&col); err != nil {
+		t.Fatal(err)
+	}
+	push := func(status string, at time.Time) {
+		t.Helper()
+		if err := st.WithTenant(ctx, cust, func(tx pgx.Tx) error {
+			_, err := upsertDeviceFromTelemetry(ctx, tx, cust, col, telemetryDTO{
+				DeviceID: "disp", DeviceName: "Display", DeviceType: "display", Protocol: "sony_bravia",
+				Status: status, Timestamp: at,
+			})
+			return err
+		}); err != nil {
+			t.Fatalf("upsert: %v", err)
+		}
+	}
+	times := func() (online, seen *time.Time) {
+		t.Helper()
+		if err := su.QueryRow(ctx, `SELECT last_online_at, last_seen_at FROM devices WHERE collector_id = $1 AND reported_id = 'disp'`, col).Scan(&online, &seen); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	t0 := time.Now().Add(-10 * time.Minute).UTC().Truncate(time.Microsecond)
+
+	push("offline", t0) // first seen offline: never answered
+	if on, _ := times(); on != nil {
+		t.Errorf("offline first report set last_online_at %v", on)
+	}
+	push("online", t0.Add(time.Minute))
+	push("offline", t0.Add(2*time.Minute))
+	on, seen := times()
+	if on == nil || !on.Equal(t0.Add(time.Minute)) || seen == nil || !seen.Equal(t0.Add(2*time.Minute)) {
+		t.Errorf("after online then offline: last_online_at %v, last_seen_at %v", on, seen)
+	}
+	push("online", t0.Add(30*time.Second)) // a late, older reading doesn't move it back
+	if on, _ := times(); on == nil || !on.Equal(t0.Add(time.Minute)) {
+		t.Errorf("older online reading moved last_online_at to %v", on)
+	}
+}

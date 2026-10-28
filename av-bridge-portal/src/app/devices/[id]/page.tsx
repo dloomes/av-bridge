@@ -35,7 +35,7 @@ import { useSession } from "@/hooks/useSession";
 import { api, API_BASE, currentToken } from "@/lib/api";
 import { hasPermission } from "@/lib/session";
 import type { DeviceDetail, Telemetry } from "@/lib/types";
-import { formatRelative } from "@/lib/utils";
+import { formatRelative, formatTimestamp } from "@/lib/utils";
 
 export default function DeviceDetailPage() {
   const params = useParams<{ id: string }>();
@@ -190,6 +190,8 @@ export default function DeviceDetailPage() {
                   </span>
                 </>
               )}
+              <span>·</span>
+              <LastContacted device={device} telemetry={telemetry.data} />
             </div>
           </div>
         </div>
@@ -361,10 +363,29 @@ export default function DeviceDetailPage() {
             <LevelsCard subscriptions={device.subscriptions ?? []} metrics={telemetry.data?.metrics} />
           </div>
           <aside className="space-y-6 min-w-0">
-            <DeviceEventHistory deviceId={device.id} />
+            <DeviceEventHistory deviceId={device.id} limit={5} />
           </aside>
         </div>
       </div>
     </div>
+  );
+}
+
+// LastContacted: when the device last answered its Collector. The latest
+// reading is fresher than the device record (loaded once) when it's an
+// online one; otherwise the stored time, which failed polls don't move.
+function LastContacted({ device, telemetry }: { device: DeviceDetail; telemetry?: Telemetry | null }) {
+  const at =
+    telemetry?.status === "online" && telemetry.timestamp
+      ? telemetry.timestamp
+      : device.last_online_at;
+  const stale = device.status !== "online" && !!at;
+  return (
+    <span
+      title={at ? formatTimestamp(at) : "No answer from this device in the records kept"}
+      className={stale ? "[color:hsl(var(--warning))]" : undefined}
+    >
+      Last contacted {at ? formatRelative(at) : "unknown"}
+    </span>
   );
 }

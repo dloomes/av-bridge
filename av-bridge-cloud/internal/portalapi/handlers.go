@@ -560,6 +560,9 @@ func (h *Handler) GetDevice(w http.ResponseWriter, r *http.Request) {
 		// detail's touch-panel button so panels on subnets the browser
 		// can't reach directly still open through the bridge proxy.
 		CollectorLocalURL string            `json:"collector_local_url,omitempty"`
+		// LastOnlineAt: when the device last answered its Collector
+		// ("Last contacted"). Absent if it hasn't in the records kept.
+		LastOnlineAt     *time.Time        `json:"last_online_at,omitempty"`
 		Tags             map[string]string `json:"tags,omitempty"`
 		Commands         map[string]string `json:"commands,omitempty"`
 		Subscriptions    []subscription    `json:"subscriptions,omitempty"`
@@ -602,6 +605,7 @@ func (h *Handler) GetDevice(w http.ResponseWriter, r *http.Request) {
 			       ` + devicestatus.EffectiveStatusSQL + `,
 			       ` + devicestatus.CollectorStatusSQL + `,
 			       COALESCE(c.local_url, ''),
+			       d.last_online_at,
 			       d.tags, d.commands, d.subscriptions, d.capabilities
 			  FROM devices d
 			  LEFT JOIN rooms r ON r.id = d.room_id
@@ -613,6 +617,7 @@ func (h *Handler) GetDevice(w http.ResponseWriter, r *http.Request) {
 				&o.Address, &o.IPAddress, &baudRate, &pollRate,
 				&o.PowerWattsOn, &o.PowerWattsStandby,
 				&o.Status, &o.CollectorStatus, &o.CollectorLocalURL,
+				&o.LastOnlineAt,
 				&tags, &cmds, &subs, &caps)
 		if errors.Is(err, pgx.ErrNoRows) {
 			notFound = true
