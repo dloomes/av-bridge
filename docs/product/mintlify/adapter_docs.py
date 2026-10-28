@@ -33,6 +33,12 @@ PROMPTS = {
     "outlet_reboot": "Asks for the outlet number (power-cycles it).",
     "dial": "Asks for the address to dial: SIP URI, H.323 address or phone number.",
     "set_volume": "Asks for the level, 0–100.",
+    "route_out1": "Asks for the input, 1–4.",
+    "route_out2": "Asks for the input, 1–4.",
+    "route_out3": "Asks for the input, 1–4.",
+    "route_out4": "Asks for the input, 1–4.",
+    "route_all": "Asks for the input, 1–4, and shows it on every output.",
+    "recall_preset": "Asks for the preset's name, as saved on the device.",
     "poe_reset": "Asks for the port, such as `5` or `0/5`, and power-cycles its PoE.",
     "poe_on": "Asks for the port.",
     "poe_off": "Asks for the port.",
@@ -57,7 +63,8 @@ CATEGORIES = [
     ("conferencing", "Video conferencing"),
     ("audio", "Audio"),
     ("cameras", "Cameras"),
-    ("control", "Control and AV-over-IP"),
+    ("control", "Control"),
+    ("avoip", "AV-over-IP"),
     ("power-network", "Power and network"),
 ]
 
@@ -67,6 +74,8 @@ DEVICE_TYPE = {
     "audio": "Audio",
     "camera": "Camera",
     "control": "Control",
+    "avoip": "AV-over-IP",
+    "power": "Power",
 }
 
 SUPPLEMENT: dict[str, dict] = {
@@ -82,6 +91,7 @@ SUPPLEMENT: dict[str, dict] = {
         ],
         "notes": [
             "> **Power-on:** M.A.R.C.U.S. sends a Wake-on-LAN packet straight to the display's address, then the IP-control power command. The display's MAC address is learned automatically the first time it's reached while switched on; set the `mac_address` tag if you need power-on to work before that.",
+            "> **Firmware:** the display's software version shows as **Firmware Version** (such as `PKG6.5603.0175`), with its Android version and Pro mode, and appears on the **Firmware** page. Older displays that don't report it show model and serial only. It's read when the display is first reached and every six hours after.",
         ],
     },
     "philips_sicp": {
@@ -158,12 +168,25 @@ SUPPLEMENT: dict[str, dict] = {
             "Every Tesira reports its identity and health on each poll: hostname, part number, "
             "serial number, software version, IP and MAC address, fault count and the active fault list.\n\n"
             "Readings from your own DSP blocks are added per device in the **Readings** section of the device form:\n\n"
-            "- **Add meter readings** takes a meter block's instance tag and a channel range such as `1-8`, and adds one reading per channel.\n"
+            "- **Add readings for a DSP block** takes the block type, its instance tag, and a channel range such as `1-8`:\n"
+            "  - **Meter**: one snapshot reading per channel, in dB.\n"
+            "  - **Level**: each channel's level (dB) and mute, updated live.\n"
+            "  - **Mute**: each channel's mute, updated live.\n"
+            "  - **Logic meter**: each channel's logic state, updated live.\n"
+            "  - **VoIP call state**: the phone's call state, updated live, plus an `_active_calls` reading that counts calls in progress.\n"
             "- **Snapshot** reads a value on every poll, which suits meters. **Live** updates the moment a value changes and records each change as an event, which suits mute or call state.\n"
+            "- Mutes and logic states read as true or false, and levels and meters as numbers, so Room Readiness routines can check them, for example that a microphone isn't muted. The all-channel attributes `levels` and `mutes` read as a list of every channel.\n"
         ),
         "commands_text": (
             "Tesira commands are TTP strings you define per device in the **Commands** section of the device form. Each command becomes a button on the device page.\n\n"
-            "- **Add standard commands** takes a level or mute block's instance tag, channel and step size, and adds mute, unmute, toggle mute, volume up/down and set level.\n"
+            "- **Add commands for a DSP block** takes the block type and its instance tag:\n"
+            "  - **Level**: mute, unmute, toggle mute, volume up and down by the step you choose, and set level.\n"
+            "  - **Mute**: mute, unmute and toggle mute.\n"
+            "  - **Logic state**: on, off and toggle.\n"
+            "  - **Source selector**: select source, which asks for the source number (0 selects none).\n"
+            "  - **VoIP phone**: dial (asks for the number), answer and hang up, on the line you choose.\n\n"
+            "  Use channel 0 for a ganged block. Press each new command once from the device page to check it against your design.\n"
+            "- Once the device is saved and its Collector has connected, the **Instance tag** boxes suggest the blocks in the DSP's design. The Collector reads them each time it connects, so a newly loaded design appears after its next reconnect.\n"
             "- **Add preset recall** adds `DEVICE recallPreset {preset}`.\n"
             "- Put `{name}` in a command to ask for a value when the button is pressed, for example `master_level set level 1 {level}`.\n\n"
             "The TTP form is `<instance tag> <verb> <attribute> <channel> [value]`, for example `master_level set mute 1 true`."
@@ -193,12 +216,44 @@ SUPPLEMENT: dict[str, dict] = {
         ],
     },
     "aurora_vpx": {
-        "category": "control",
+        "category": "avoip",
         "sidebar": "Aurora VPX", "icon": "tower-broadcast",
         "models": "Aurora Multimedia VPX-series AV-over-IP encoders and decoders.",
         "connection": "JSON over Telnet (TCP 6970)",
         "before": [
             "Check the Collector can reach the unit on TCP 6970. Encoder or decoder mode is detected automatically.",
+        ],
+    },
+    "aurora_dido": {
+        "category": "control",
+        "sidebar": "Aurora DIDO", "icon": "table-cells",
+        "models": "Aurora Multimedia DIDO 4x4 HDMI matrix switchers and video wall processors.",
+        "connection": "JSON over TCP (port 6970)",
+        "before": [
+            "Check the Collector can reach the DIDO on TCP 6970.",
+            "To recall presets from the portal, save them on the DIDO first (in its web interface). Their names appear in the **Presets** reading.",
+        ],
+        "notes": [
+            "> **Readings:** the input shown on each output (**Out1 Source** to **Out4 Source**), each output's resolution, the audio routing, line-out and line-in volume, whether the front panel is locked, and the saved presets.",
+            "> **Commands:** **Route Out1** to **Route Out4** switch one output to an input; **Route All** switches every output. **Set Volume** sets the line-out level. **Recall Preset** applies a saved preset; it takes the DIDO two or three seconds.",
+            "> **New firmware:** if a reading shows as **... Reply** with the device's raw answer instead of a value, the firmware answers in a form the Collector doesn't recognise yet. Send the reply to support so it can be added.",
+        ],
+    },
+    "crestron": {
+        "category": "control",
+        "sidebar": "Crestron processors", "icon": "microchip",
+        "models": "Crestron 3-Series and 4-Series control processors, such as the CP4, MC4, RMC4, CP3 and PRO3.",
+        "connection": "Processor console over SSH (TCP 22), or CTP (TCP 41795)",
+        "before": [
+            "Note a processor user that can log in to its console (the same login Crestron Toolbox uses). 4-Series processors require authentication; turn it on for a 3-Series that doesn't have it.",
+            "Check the Collector can reach the processor on TCP 22. If SSH is turned off on the processor, add the tag `console: ctp` and allow TCP 41795 instead.",
+            "On a 4-Series running its program in a slot other than 1, add the tag `program_slot` with that slot number.",
+        ],
+        "notes": [
+            "> **No change to the room's program.** The Collector reads what the processor's own console reports. Nothing is loaded onto the processor.",
+            "> **Connected devices:** every device the program registers by IP ID (touch panels, DM and NVX endpoints, expanders) is listed with its status, as readings such as **Ipid 03 Status**. **Ip Devices Offline** counts those that are offline, and **Offline Ip Devices** names them, so a check or alert can catch a panel that has dropped off.",
+            "> **Commands interrupt the room.** **Restart Program** restarts the program in its slot, and **Reboot** restarts the processor. The room stops working until it's back, usually within a minute or two.",
+            "> **Unrecognised output:** console output differs between firmware versions. If a reading shows as **... Reply** with the processor's raw output instead of a value, send it to support so it can be added.",
         ],
     },
     "aten_pdu": {
@@ -209,9 +264,11 @@ SUPPLEMENT: dict[str, dict] = {
         "before": [
             "Enable Telnet on the PDU and note its Telnet username and password. These are separate from the web interface login; PE-series PDUs typically ship with `teladmin` / `telpwd`.",
             "For models with more than 8 outlets, set the `outlet_count` tag on the device.",
+            "To label outlets, add tags such as `outlet_1_name: Codec` and `outlet_2_name: Display`. The PDU's Telnet interface can't report the names set in its web interface.",
         ],
         "notes": [
-            "> **Power readings:** per-outlet current and power show the live draw of whatever is plugged in. Energy estimates in Reports use the **Power on** and **Power standby** wattage set on each device's own record.",
+            "> **Power readings:** each outlet reports its state, current and power, and the PDU its voltage, total power and total current. They show the live draw of whatever is plugged in. Energy estimates in Reports use the **Power on** and **Power standby** wattage set on each device's own record. A reading the model doesn't measure is left out.",
+            "> **Outlet control:** **Outlet On**, **Outlet Off** and **Outlet Reboot** switch an outlet straight away, ignoring any delay set on the PDU. Older firmwares use a different command form; the Collector detects that on the first command and remembers it.",
         ],
     },
     "netgear_m4250": {

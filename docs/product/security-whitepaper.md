@@ -25,7 +25,7 @@ Every statement below is verifiable — either by inspection of the platform, by
 ## Contents
 
 1. Architecture and trust boundaries
-2. Collector-to-Cloud communication
+2. Collector-to-Cloud communication (including remote access, §2.6)
 3. Identity and access
 4. Tenant isolation
 5. Data protection in transit
@@ -47,7 +47,7 @@ M.A.R.C.U.S. separates three tiers, each with its own trust boundary.
 | Tier | Location | Trust boundary |
 |---|---|---|
 | **AV devices** | Customer LAN / AV VLAN | Never contact the internet directly. Only the M.A.R.C.U.S. Collector talks to them. |
-| **M.A.R.C.U.S. Collector** | Customer network (site or shared) | Initiates outbound HTTPS only. Holds a per-Collector HMAC key and no user credentials. |
+| **M.A.R.C.U.S. Collector** | Customer network (site or shared) | Initiates outbound HTTPS only. Holds a per-Collector HMAC key and no portal user credentials. |
 | **M.A.R.C.U.S. Cloud** | AWS London region (`eu-west-2`) | Terminates every customer connection at the edge. Multi-tenant, row-level isolated. |
 
 The Collector-to-Cloud connection is always **initiated from the customer side**. M.A.R.C.U.S. Cloud never dials in to any customer network. There are no inbound firewall rules to open at any customer location.
@@ -64,15 +64,20 @@ This is the same pattern used by every mainstream SaaS agent — Datadog, CrowdS
 
 ### 2.2 The outbound request surface
 
-The M.A.R.C.U.S. Collector makes exactly three types of outbound POST to M.A.R.C.U.S. Cloud, each authenticated end-to-end.
+The M.A.R.C.U.S. Collector only makes outbound connections, all to M.A.R.C.U.S. Cloud on TCP 443 over TLS 1.2 minimum.
 
 | Endpoint | Purpose | Direction of application data |
 |---|---|---|
+| `POST` / `PUT /bridge/config` | Fetch the desired device configuration for this Collector, and seed it from the Collector's local file when the cloud holds none. | Both |
 | `POST /bridge/poll` | Claim any commands queued for this Collector; long-polls when the queue is empty. | Cloud → Collector (in the response body) |
 | `POST /bridge/commands/{id}/result` | Report the outcome of a claimed command. | Collector → Cloud |
-| `POST` / `PUT /bridge/config` | Fetch and confirm the desired device configuration set for this Collector. | Both |
+| `POST /ingest` | Upload device telemetry and events. | Collector → Cloud |
+| `POST /bridge/update-status` | Report the progress and outcome of a Collector software update. | Collector → Cloud |
+| `GET /bridge/tunnel` | Open the remote access tunnel (a WebSocket), used only while an administrator has a remote access session open (§2.6). | Both, inside the tunnel |
 
-A telemetry push endpoint (used to carry periodic device metrics and events to the cloud) operates under the same posture. All are Collector-initiated, over TLS 1.2 minimum on TCP 443, and every request carries an `X-Signature: sha256=<hex>` header computed from the Collector's per-instance HMAC-SHA256 key. M.A.R.C.U.S. Cloud rejects any request whose signature does not verify.
+Every HTTP request carries an `X-Signature: sha256=<hex>` header computed from the Collector's per-instance HMAC-SHA256 key, and M.A.R.C.U.S. Cloud rejects any request whose signature does not verify. The remote access tunnel is authenticated once, when it opens, with a signed, time-limited handshake; it then carries device web traffic inside the TLS connection.
+
+When an administrator starts a Collector update, the Collector also downloads the new software from M.A.R.C.U.S. Cloud. That download is not HMAC-signed; instead the Collector checks the file's SHA-256 digest and Involve's release signature before installing it (see *M.A.R.C.U.S. — Deployment Guide*, §11).
 
 ### 2.3 Long-polling — how commands reach devices in near real time
 
@@ -103,12 +108,37 @@ A transport-level failure (connection reset, DNS failure, TLS error) causes the 
 
 Assurances that hold for the outbound-only model:
 
-- **No listening service on the Collector host.** Nothing accepts connections from the internet at the customer site. There is no port to fingerprint, and no attack surface accessible from outside the customer network.
+- **No internet-facing listening service on the Collector host.** Nothing accepts connections from the internet at the customer site. There is no port to fingerprint from outside the customer network. (An optional local API on TCP 8080 can be enabled for health checks and metrics; it is for the internal network only and is not used by the cloud.)
 - **Destination pinning is available.** The Collector's outbound destination is `*.involvecloud.com` on TCP 443; on request, it can be pinned to a specific regional hostname or IP set for stricter allow-lists.
-- **Commands are only accepted from the authenticated cloud.** A command arrives *inside the response* to a request the Collector itself signed. There is no other input path.
-- **Message-level authenticity independent of transport.** Every request and response is bound to the Collector's HMAC-SHA256 key; a middlebox that terminated TLS would be unable to inject an accepted response.
+- **Commands are only accepted from the authenticated cloud.** A command arrives *inside the response* to a request the Collector itself signed. The only other path from the cloud to the Collector is the remote access tunnel, which carries web traffic only to that Collector's own devices on permitted ports (§2.6).
+- **Message-level authenticity independent of transport.** Every HTTP request from the Collector is signed with its HMAC-SHA256 key, so the cloud never acts on a request that did not come from the Collector. The remote access tunnel is authenticated by a signed, time-limited handshake when it opens. Responses, and traffic inside the tunnel, are protected by TLS, with the Collector validating the cloud's certificate.
 - **Blast radius is a single Collector.** Compromise of one Collector's HMAC key affects only that Collector; keys can be rotated or revoked from the portal without any customer-side firewall change.
 - **The failure mode is limited to loss of function.** If the outbound connection is blocked, commands do not arrive. There is no failure mode in which "commands do not arrive" becomes "an attacker reaches devices at the customer site".
+
+### 2.6 Remote access to device web interfaces
+
+Administrators can open a device's own web interface — for example a codec's or display's configuration pages — from the portal, without a VPN and without any inbound port at the customer site.
+
+**How it works.** The portal opens the session in a new browser tab. Traffic is relayed from M.A.R.C.U.S. Cloud, through the Collector's outbound tunnel (§2.2), to the device on the local network. The Collector opens the tunnel itself, on TCP 443, so the outbound-only posture is unchanged.
+
+**What the Collector will connect to.** Through the tunnel, the Collector connects only to devices it already manages, and only on ports 80, 443, 8080 or 8443, the device's own control port, or the port set in the device's `web_port` tag. It does not connect to any other address on the customer network.
+
+**Who can use it.** Remote access requires the **Remote access** permission (`device.remote_access`). It is granted to the admin role by default and can be added to any custom role. Physical scope applies as for every other device action.
+
+**Session controls.**
+
+| Control | Detail |
+|---|---|
+| Session address | Each session has its own address (`<session>.access.<domain>`), so one session's pages cannot read another's. |
+| Launch link | Single use, valid for 5 minutes. |
+| Session cookie | Bound to the browser that opened the session; the session address does not work from another browser. |
+| Idle timeout | 15 minutes without traffic. |
+| Maximum duration | 8 hours. |
+| Termination | An administrator can end any open session from the portal. |
+| Audit | Session start and end are recorded in the audit log, with who opened it, the device, the duration and the bytes transferred. |
+| Content | Session content is not recorded. |
+
+The device's own login, if it has one, still applies: remote access gives the administrator a network path to the device, not the device's credentials.
 
 ## 3. Identity and access
 
@@ -127,7 +157,7 @@ Assurances that hold for the outbound-only model:
 ### Collector authentication
 
 - Each M.A.R.C.U.S. Collector is enrolled via a one-time bootstrap flow originating in the portal. Enrolment issues a **Collector-scoped HMAC-SHA256 key** unique to that Collector.
-- Every Collector-to-Cloud request is signed with that key. Signature failures result in immediate 401 responses; keys can be rotated or revoked from the portal.
+- Every Collector-to-Cloud API request, and the remote access tunnel handshake, is signed with that key. Signature failures result in immediate 401 responses; keys can be rotated or revoked from the portal.
 - Compromise of one Collector's key affects only that Collector.
 
 ## 4. Tenant isolation
@@ -145,7 +175,7 @@ Multi-tenant isolation is enforced at the **database row level**, not at the app
 - **TLS 1.2 minimum** on every connection to M.A.R.C.U.S. Cloud (portal, Public API, Collector channel). TLS 1.3 preferred where the client supports it.
 - Cipher suites follow the AWS Application Load Balancer `ELBSecurityPolicy-TLS13-1-2-2021-06` policy — modern suites only, no legacy support.
 - The Collector performs standard TLS certificate validation against the cloud endpoint before initiating any request.
-- All Collector requests carry an HMAC-SHA256 signature in addition to the TLS channel, providing message-level authenticity independent of the transport.
+- All Collector API requests carry an HMAC-SHA256 signature in addition to the TLS channel, providing message-level authenticity independent of the transport. The remote access tunnel is authenticated with a signed, time-limited handshake and then relies on TLS.
 
 ## 6. Data protection at rest
 
@@ -153,6 +183,7 @@ Multi-tenant isolation is enforced at the **database row level**, not at the app
 - Automated database snapshots are encrypted using the same key material and retained for 35 days.
 - Object storage (asset attachments, log archives) is stored in **Amazon S3 with server-side encryption (SSE-KMS)**.
 - Secrets used by cloud services (database credentials, HMAC keys, external API keys) are stored in **AWS Secrets Manager** and rotated on a 90-day cadence.
+- Default retention: raw telemetry 90 days (configurable); daily telemetry summaries per device 400 days (reports cover up to 12 months); device events 90 days; alerts 12 months after they are resolved (open and acknowledged alerts are kept); command history 90 days after completion; Room Readiness run history 90 days by default, set per customer between 30 and 365 days; remote access session records 90 days after the session ends; audit log 24 months (§9); application logs 30 days (§9).
 
 ## 7. Application security
 
@@ -198,11 +229,12 @@ Multi-tenant isolation is enforced at the **database row level**, not at the app
 - Every security-relevant action performed by users, tokens, and Collectors is written to a dedicated `audit_log` table.
 - Audit records include actor, action, target, before / after payloads (where applicable), and timestamp.
 - Audit records are tenant-scoped and readable only to that tenant's authorised roles.
+- Remote access sessions are recorded at start and end, with who opened them, the device, the duration and the bytes transferred.
 - Retention: 24 months.
 
 ### Operational logging
 
-- Application logs are shipped to **Amazon CloudWatch Logs** with a retention of 90 days.
+- Application logs are shipped to **Amazon CloudWatch Logs** with a retention of 30 days.
 - Logs are tenant-tagged where they cross the tenant boundary, so operational triage does not require reading raw tenant data.
 
 ### Monitoring

@@ -34,12 +34,21 @@ SPEC = REPO / "av-bridge-cloud" / "internal" / "pubapi" / "openapi.json"
 SERVER_GO = REPO / "av-bridge-cloud" / "internal" / "api" / "server.go"
 PERMISSIONS_GO = REPO / "av-bridge-cloud" / "internal" / "portalauth" / "permissions.go"
 SECTION = "api-reference"
-DEFAULT_API_BASE = "https://api.uat.involvecloud.com"
+PRODUCTION_API_BASE = "https://api.involvecloud.com"
+UAT_API_BASE = "https://api.uat.involvecloud.com"
+# UAT until production exists: the playground and examples use this one.
+DEFAULT_API_BASE = UAT_API_BASE
+# The spec's `servers`, in the order Mintlify's playground offers them.
+SERVERS = [
+    {"url": UAT_API_BASE, "description": "UAT"},
+    {"url": PRODUCTION_API_BASE, "description": "Production"},
+]
 
 # Sidebar order and icons for the spec's tags.
 TAGS = [
     ("Meta", "Token check", "key"),
     ("Devices", "Devices", "display"),
+    ("Firmware", "Firmware", "microchip"),
     ("Hierarchy", "Buildings and rooms", "building"),
     ("Assets", "Assets", "boxes-stacked"),
     ("Alerts", "Alerts", "bell"),
@@ -53,6 +62,7 @@ SCOPE_LABEL = {
     "view.dashboard": "Read fleet + devices",
     "view.assets": "Read assets (CMDB)",
     "view.audit": "Read audit log",
+    "view.firmware": "Read firmware",
     "nightly.view": "Read Room Readiness",
 }
 
@@ -83,7 +93,11 @@ def customer_spec(spec: dict, api_base: str, scopes: dict[str, str | None]) -> d
             info[k] = info[k].replace("av-bridge", "M.A.R.C.U.S.")
     # No per-token rate limiting is enforced, so don't promise one.
     info["description"] = re.sub(r"Rate limits are per-token; ", "", info["description"])
-    s["servers"] = [{"url": api_base.rstrip("/"), "description": "M.A.R.C.U.S. Cloud (UK)"}]
+    # Production first, then UAT. A different --api-base is listed ahead of both.
+    base = api_base.rstrip("/")
+    s["servers"] = [dict(x) for x in SERVERS]
+    if base not in {x["url"] for x in SERVERS}:
+        s["servers"].insert(0, {"url": base, "description": "M.A.R.C.U.S. Cloud"})
     # Event ids are bigserial numbers sent as strings, not UUIDs; strict
     # generated clients would reject them if the schema said uuid.
     ev = s.get("components", {}).get("schemas", {}).get("Event", {}).get("properties", {})

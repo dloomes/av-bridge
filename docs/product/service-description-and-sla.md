@@ -143,8 +143,8 @@ Response is measured from ticket receipt (email or portal). Response and restora
 
 ## 8. Data and confidentiality
 
-- Customer data is stored, processed, and backed up exclusively in the AWS London region (`eu-west-2`).
-- Data retention (default): telemetry 90 days; alerts 12 months; audit log 24 months; database backups 35 days point-in-time recovery.
+- Customer data is stored, processed, and backed up in the AWS London region (`eu-west-2`). The exceptions are the optional Multi-Region Enterprise add-on (an encrypted backup copy in AWS Ireland, enabled only with the customer's written agreement), the global CDN that serves the portal's static files, and the published sub-processors.
+- Data retention (default): raw telemetry 90 days (configurable); daily telemetry summaries per device 400 days (reports cover up to 12 months); device events 90 days; alerts 12 months after they are resolved (open and acknowledged alerts are kept); command history 90 days after completion; Room Readiness run history 90 days by default, set per customer between 30 and 365 days; remote access session records 90 days after the session ends (their audit entries follow the audit log); audit log 24 months; application logs 30 days; Collector logs 30 days; database backups 35 days point-in-time recovery.
 - A signed Data Processing Agreement is available on request; contact privacy@involve.vc.
 - Involve does not use customer data for training, marketing, or any purpose beyond delivering the service.
 

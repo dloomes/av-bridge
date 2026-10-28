@@ -132,7 +132,7 @@ Security incidents follow the incident response runbook in *M.A.R.C.U.S. — Sec
 
 - **Credential rotation** — all HMAC keys, database passwords, and API tokens rotated on suspected compromise.
 - **Selective revocation** — a single tenant's tokens or a single Collector's key can be revoked from the portal without customer-side change.
-- **Immutable audit trail** — the tenant-scoped audit log supports post-incident forensics; audit records are append-only and retained for 24 months.
+- **Immutable audit trail** — the tenant-scoped audit log supports post-incident forensics; audit records are append-only and retained for 24 months, including the start and end records of every remote access session.
 
 ### 5.5 Bad deployment
 

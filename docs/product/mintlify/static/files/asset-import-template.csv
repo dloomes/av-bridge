@@ -1,0 +1,7 @@
+asset_tag,name,category,manufacturer,model,serial_number,status,region,location,building,room,purchase_date,warranty_end,notes
+AV-0001,Boardroom display,display,Sony,FW-85BZ40L,,in_service,North,Leeds,Park House,Boardroom,2025-03-14,2028-03-13,
+AV-0002,Boardroom codec,conferencing,Cisco,Room Kit Pro,,in_service,North,Leeds,Park House,Boardroom,2025-03-14,2028-03-13,
+AV-0003,Boardroom DSP,audio,Biamp,TesiraFORTE X 400,,in_service,North,Leeds,Park House,Boardroom,2025-03-14,2028-03-13,
+AV-0004,Boardroom display mount,mount,Chief,LTM1U,,in_service,North,Leeds,Park House,Boardroom,,,
+AV-0005,Huddle 1 display,display,Samsung,QM55C,,in_service,North,Leeds,Park House,Huddle 1,2024-11-02,2027-11-01,
+AV-0006,Spare touch panel,touch_panel,Crestron,TSW-1070,,in_storage,,,,,2024-06-20,,AV store cupboard

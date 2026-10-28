@@ -1,0 +1,247 @@
+---
+title: "Onboarding a new estate"
+sidebarTitle: "Onboarding"
+description: "Set up your locations, buildings and rooms, import your assets from a spreadsheet, and start monitoring devices."
+icon: "list-check"
+---
+
+This guide takes a new organisation from an empty portal to a fully mapped estate. You'll build it in this order:
+
+<Steps>
+  <Step title="Places">
+    **Regions**, **locations**, **buildings** and **rooms**, created on the **Locations** page.
+  </Step>
+  <Step title="Assets">
+    Everything you own in each room, imported from a CSV file on the **Assets** page.
+  </Step>
+  <Step title="Devices">
+    The assets M.A.R.C.U.S. should monitor and control, set up from the asset list.
+  </Step>
+</Steps>
+
+Build in this order, because each step looks up the one before it. The asset import places each asset by building and room name, so those rooms must already exist. A device set up from an asset picks up that asset's details.
+
+### Assets and devices
+
+- An **asset** is anything you own and want on record: a display, a codec, a wall mount, a cable, a spare remote. It holds the asset tag, make, model, serial number, warranty and where it is.
+- A **device** is an asset that M.A.R.C.U.S. monitors. A Collector polls it for status and readings, and you can send it commands.
+
+Every device can be linked to one asset, and the **Assets** list marks linked assets as **Monitored**. A wall mount stays an asset only, while the display on it is an asset and a device.
+
+### Before you start
+
+You need:
+
+- the **Manage locations**, **Manage assets** and **Manage devices** permissions. The **admin** role has all three; see [Roles and permissions](/admin/roles).
+- at least one Collector installed and online. See [Quickstart](/quickstart) and [Deploy the Collector](/deploy/overview).
+- your list of sites, buildings and rooms, and your asset register, if you have one.
+
+<Tip>
+Agree on names before you start, and use them exactly the same way everywhere. The asset import matches building and room names letter for letter. Capitals don't matter, but `Park House` and `Park Hse` are different buildings.
+</Tip>
+
+## 1. Build your places
+
+Your estate is organised in four levels:
+
+| Level | What it is | Example |
+| --- | --- | --- |
+| **Region** | A group of locations, for reporting and access | North |
+| **Location** | A site or campus | Leeds |
+| **Building** | A building on that site, with an address and map position | Park House |
+| **Room** | A space with equipment in it | Boardroom |
+
+You can limit a user's access to particular regions, locations, buildings or rooms. Choose your levels with that in mind: if a team looks after one site, make that site a location. See [Users and access](/admin/users-and-access).
+
+### Create a region
+
+1. Go to **Locations**, under **Manage** in the sidebar.
+2. Select **New region**, enter a **Name** and select **Create**.
+
+Every location belongs to a region. If you don't need regions, create one region, such as your organisation's name, and put everything in it.
+
+<Note>
+If your organisation uses business units, the **Business units** section appears at the top of **Locations**. Create the business units first, then choose one for each region.
+</Note>
+
+### Add locations, buildings and rooms
+
+Each row on the **Locations** page has a button that adds the next level down:
+
+1. On the region, select **+ Location** and enter the location's name.
+2. On the location, select **+ Building**. As well as the **Name**, fill in:
+   - **Address**: the building's postal address.
+   - **Timezone**: such as `Europe/London`.
+   - **Map coordinates**: select **Geocode from address** to fill in the **Latitude** and **Longitude**, or enter them yourself. Buildings without coordinates don't appear on the **Map**.
+3. On the building, select **+ Room** and enter the room's name. Repeat for every room.
+
+Use the pencil to rename anything, and the bin to delete it. Before deleting, the portal tells you what's inside, such as rooms and devices.
+
+## 2. Import your assets
+
+### Get the template
+
+Download the [asset import template](/files/asset-import-template.csv) and open it in Excel or any spreadsheet program. It has every column, and example rows you can overwrite.
+
+<Accordion title="Show the template">
+If the download doesn't start, copy this into a text editor and save it as `asset-import-template.csv`:
+
+```csv asset-import-template.csv
+asset_tag,name,category,manufacturer,model,serial_number,status,region,location,building,room,purchase_date,warranty_end,notes
+AV-0001,Boardroom display,display,Sony,FW-85BZ40L,,in_service,North,Leeds,Park House,Boardroom,2025-03-14,2028-03-13,
+AV-0002,Boardroom codec,conferencing,Cisco,Room Kit Pro,,in_service,North,Leeds,Park House,Boardroom,2025-03-14,2028-03-13,
+AV-0003,Boardroom DSP,audio,Biamp,TesiraFORTE X 400,,in_service,North,Leeds,Park House,Boardroom,2025-03-14,2028-03-13,
+AV-0004,Boardroom display mount,mount,Chief,LTM1U,,in_service,North,Leeds,Park House,Boardroom,,,
+AV-0005,Huddle 1 display,display,Samsung,QM55C,,in_service,North,Leeds,Park House,Huddle 1,2024-11-02,2027-11-01,
+AV-0006,Spare touch panel,touch_panel,Crestron,TSW-1070,,in_storage,,,,,2024-06-20,,AV store cupboard
+```
+</Accordion>
+
+If you already have assets in M.A.R.C.U.S., select **Export** on the **Assets** page instead. You get every asset you can see, in the same layout, ready to edit and import back.
+
+### Fill in the columns
+
+Only `name` and `category` are required. Leave out any other column, or leave its cells blank. Columns are matched by their heading, so their order doesn't matter, and columns the import doesn't recognise are ignored.
+
+| Column | Required | What to enter |
+| --- | --- | --- |
+| `asset_tag` | Recommended | Your inventory tag, such as `AV-0042`. It must be unique within your organisation. See [Asset tags and re-importing](#asset-tags-and-re-importing). |
+| `name` | Yes | A name people will recognise, such as `Boardroom display`. |
+| `category` | Yes | One of the [categories](#categories) below, written exactly as shown. |
+| `manufacturer` | | Such as `Sony`. |
+| `model` | | Such as `FW-85BZ40L`. |
+| `serial_number` | | The manufacturer's serial number. |
+| `status` | | One of the [statuses](#statuses) below. Leave blank for `in_service`. |
+| `region` | | Needed only if two buildings have the same name. See [Placing assets](#placing-assets). |
+| `location` | | Needed only if two buildings have the same name. |
+| `building` | | The building's name, as on **Locations**. |
+| `room` | | The room's name, as on **Locations**. |
+| `purchase_date` | | `YYYY-MM-DD`, such as `2025-03-14`. |
+| `warranty_end` | | `YYYY-MM-DD`. |
+| `notes` | | Anything else, such as a supplier or support contract reference. |
+
+#### Categories
+
+| Value | | Value | | Value | |
+| --- | --- | --- | --- | --- | --- |
+| `display` | Display | `cable` | Cable | `projector` | Projector |
+| `camera` | Camera | `mount` | Mount | `screen` | Projection screen |
+| `audio` | Audio, such as DSPs and amplifiers | `rack` | Rack | `computer` | Computer |
+| `conferencing` | Video codec or room system | `remote` | Remote control | `furniture` | Furniture |
+| `control_panel` | Control processor | `microphone` | Microphone | `storage` | Storage |
+| `touch_panel` | Touch panel | `speaker` | Speaker | `other` | Anything else |
+
+#### Statuses
+
+| Value | Meaning |
+| --- | --- |
+| `in_service` | Installed and in use |
+| `in_storage` | In a store, not installed |
+| `in_repair` | Away for repair |
+| `retired` | No longer in use, kept for the record |
+
+Categories and statuses are written in lower case, with underscores, exactly as in these tables.
+
+#### Placing assets
+
+Fill in `building` and `room` together, or leave both blank. An asset with neither is **unplaced**: it's on record, but not in a room, which suits spares and stock.
+
+<Warning>
+Only users who can see your whole estate can see unplaced assets. Users whose access is limited to some locations, buildings or rooms don't see them.
+</Warning>
+
+If two buildings have the same name, such as a `Main Building` on two sites, fill in `region` and `location` too, so the import knows which one you mean. Otherwise `region` and `location` are for your reference, and the import doesn't check them.
+
+### Save the file as CSV
+
+In Excel, select **File** > **Save As** and choose **CSV UTF-8 (Comma delimited)**. Other programs call it something like "CSV, UTF-8". UTF-8 keeps characters such as `é` and `–` intact. The file can be up to 4 MB, which is tens of thousands of assets.
+
+### Import it
+
+1. Go to **Assets**, under **Manage** in the sidebar.
+2. Select **Import** and choose your file.
+3. Read the result:
+   - **Processed**, **Created** and **Updated** show what happened.
+   - If any row has a problem, **nothing is imported**. The portal lists each problem with its row number, which is the row number in your spreadsheet. Fix those rows and import the whole file again.
+
+Every import is recorded in the [audit log](/admin/audit-log) as **asset.import**, with the number of assets created and updated.
+
+#### Common problems
+
+| Problem | What to do |
+| --- | --- |
+| `CSV missing required column: name` (or `category`) | Check the heading row. Headings must be spelled as in the template; capitals don't matter. |
+| `category '…' not in allowlist` | Use one of the [category values](#categories), in lower case, such as `touch_panel`, not `Touch Panel`. |
+| `status '…' not in allowlist` | Use one of the [status values](#statuses), or leave it blank. |
+| `building '…' not found` | Check the spelling against **Locations**, or create the building first. You can also see this if your access doesn't include that building. |
+| `room '…' not found in building '…'` | Check the spelling, or add the room to that building. |
+| `building and room must both be filled or both blank` | Fill in both, or neither for an unplaced asset. |
+| `building '…' ambiguous` | Two buildings share that name. Fill in `region` and `location`. |
+| `purchase_date must be YYYY-MM-DD` (or `warranty_end`) | Write dates as `2025-03-14`. If Excel has changed them to `14/03/2025`, format the column as **Text**, or use a custom format of `yyyy-mm-dd`, then save again. |
+
+### Asset tags and re-importing
+
+The asset tag is how the import recognises an asset it has seen before:
+
+- **A row with a new asset tag** creates an asset.
+- **A row with an asset tag that already exists** updates that asset.
+- **A row without an asset tag** always creates a new asset.
+
+So give every asset a tag if you can. Then you can keep your register in a spreadsheet and import it whenever it changes. The usual way to make changes in bulk is:
+
+1. Select **Export** on **Assets**.
+2. Edit the file: move assets, correct serial numbers, mark old kit **retired**.
+3. Import it back.
+
+<Warning>
+An update replaces every field of the asset with what's in the row, **including blank cells**. If you import a row with a blank `serial_number`, the asset's serial number is cleared. A row with blank `building` and `room` makes the asset unplaced. Export first and edit the export, rather than importing a file that has only some of the columns filled in.
+
+Rows without an asset tag are never matched, so importing the same untagged file twice creates every asset twice.
+</Warning>
+
+## 3. Start monitoring devices
+
+Now choose the assets M.A.R.C.U.S. should monitor: the displays, codecs, DSPs, cameras, touch panels, PDUs and switches on your network. See [Supported devices](/devices/overview) for what each one needs.
+
+### From the asset list (recommended)
+
+1. On **Assets**, find the asset. Filter by building or category to narrow the list.
+2. In the **Monitored** column, select **Set up**.
+3. The device form opens with the asset's details already filled in. Choose the **Collector** that can reach the device, its **Protocol** and **Address**, and enter its credentials if it has any.
+4. Select **Create device**.
+
+The device is linked to the asset and is in the asset's room. Its Collector picks it up within seconds, and the asset shows as **Monitored**.
+
+### From the Devices page
+
+You can also select **New device** on **Devices**. Choose the **Room**, then choose the asset under **Linked asset**, which lists only assets not yet linked to a device.
+
+If the equipment isn't in your asset register yet, leave **Linked asset** blank and fill in the **Physical inventory (CMDB)** section. It creates the asset and links it in one go. Later, when you edit the device, **Pull from device** fills in the make, model and serial number from what the device reports.
+
+<Tip>
+Many devices report their own model, serial number and firmware. Once a device is online, open it and compare **Device Information** with its asset to catch typos in your register.
+</Tip>
+
+## 4. Check your work
+
+- **Places**, in the sidebar, shows every region, building and room with their devices and a status dot for each.
+- **Overview** has a tile for each building. Devices in the **Unassigned** tile have no room: edit each one and choose its **Room**.
+- **Map** shows a pin for each building with devices. Buildings listed under **Missing coordinates** need a latitude and longitude on **Locations**.
+- **Assets**: filter by building to check each room's contents. Assets that should be monitored but don't show as **Monitored** still need a device.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Alerts and notifications" icon="bell" href="/admin/notifications">
+    Send alerts to email, Microsoft Teams or your service desk.
+  </Card>
+  <Card title="Room Readiness" icon="moon" href="/portal/room-readiness">
+    Switch rooms off overnight and check they're ready each morning.
+  </Card>
+  <Card title="Users and access" icon="users" href="/admin/users-and-access">
+    Invite your team, and limit who sees which places.
+  </Card>
+  <Card title="Dashboards" icon="table-columns" href="/portal/dashboards">
+    Build a dashboard or a wallboard for your estate.
+  </Card>
+</CardGroup>

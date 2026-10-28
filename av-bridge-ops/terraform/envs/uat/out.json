@@ -1,0 +1,463 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "av-bridge Public API",
+    "version": "1.0.0",
+    "summary": "Programmatic access to a customer's AV fleet.",
+    "description": "Read-only integration API for the av-bridge monitoring platform. Use it to sync device inventory into a CMDB, mirror alerts into an incident tool, or feed dashboards with live fleet state. Every route is scoped to the token's tenant — one token, one customer's data.\n\nRate limits are per-token; polling intervals of once per minute are ample for most use cases. Cursor-based pagination keeps list endpoints stable under concurrent inserts."
+  },
+  "servers": [
+    { "url": "https://{host}", "description": "Cloud environment", "variables": { "host": { "default": "cloud.example.com", "description": "Your av-bridge cloud host — replace with the value your operator gave you." } } }
+  ],
+  "security": [{ "bearerAuth": [] }],
+  "tags": [
+    { "name": "Meta", "description": "Health and identity of the calling token." },
+    { "name": "Devices", "description": "AV endpoints under management — displays, cameras, DSPs, control processors." },
+    { "name": "Hierarchy", "description": "Physical structure: buildings and rooms." },
+    { "name": "Alerts", "description": "Open + historical incidents raised on devices and collectors." },
+    { "name": "Events", "description": "Device-emitted events — state changes, adapter messages, telemetry deltas." }
+  ],
+  "paths": {
+    "/pub/v1/ping": {
+      "get": {
+        "tags": ["Meta"],
+        "summary": "Verify a token",
+        "description": "Returns the tenant id, token name, and granted scopes. Useful for smoke-testing that your bearer header is set correctly and that the token targets the tenant you expect.",
+        "responses": {
+          "200": {
+            "description": "Valid token.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/PingResponse" },
+                "example": {
+                  "tenant_id": "00000000-0000-0000-0000-000000000000",
+                  "token_name": "Facilities BI export",
+                  "scopes": ["view.dashboard"],
+                  "time": "2026-08-26T09:15:22Z"
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/pub/v1/devices": {
+      "get": {
+        "tags": ["Devices"],
+        "summary": "List devices",
+        "description": "Every device visible to the token, ordered by most-recently-seen. Supports building / room / status filters and cursor pagination.",
+        "parameters": [
+          { "$ref": "#/components/parameters/BuildingID" },
+          { "$ref": "#/components/parameters/RoomID" },
+          { "name": "status", "in": "query", "description": "Exact match on latest known status.", "schema": { "type": "string", "enum": ["online", "offline", "degraded", "unknown"] } },
+          { "$ref": "#/components/parameters/Limit" },
+          { "$ref": "#/components/parameters/Cursor" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Page of devices.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    { "$ref": "#/components/schemas/Page" },
+                    { "type": "object", "properties": { "data": { "type": "array", "items": { "$ref": "#/components/schemas/Device" } } } }
+                  ]
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+    "/pub/v1/devices/{id}": {
+      "get": {
+        "tags": ["Devices"],
+        "summary": "Get a device",
+        "description": "Full device record including the latest metrics snapshot. Use this after resolving an id from an event, alert, or CMDB record.",
+        "parameters": [
+          { "$ref": "#/components/parameters/DeviceIDPath" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Device detail.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DeviceDetail" } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/pub/v1/devices/{id}/telemetry": {
+      "get": {
+        "tags": ["Devices"],
+        "summary": "Get latest telemetry",
+        "description": "The most recent telemetry snapshot the collector produced for the device. Metrics shape is adapter-dependent — see your adapter reference for keys.",
+        "parameters": [
+          { "$ref": "#/components/parameters/DeviceIDPath" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Latest telemetry.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Telemetry" } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/pub/v1/devices/{id}/events": {
+      "get": {
+        "tags": ["Devices"],
+        "summary": "List events for a device",
+        "description": "Cursor-paginated event feed for one device, most recent first.",
+        "parameters": [
+          { "$ref": "#/components/parameters/DeviceIDPath" },
+          { "$ref": "#/components/parameters/Limit" },
+          { "$ref": "#/components/parameters/Cursor" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Page of events.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    { "$ref": "#/components/schemas/Page" },
+                    { "type": "object", "properties": { "data": { "type": "array", "items": { "$ref": "#/components/schemas/Event" } } } }
+                  ]
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/pub/v1/buildings": {
+      "get": {
+        "tags": ["Hierarchy"],
+        "summary": "List buildings",
+        "description": "Every building in the tenant, alphabetically. Includes address, timezone, optional coordinates, and location + region names.",
+        "responses": {
+          "200": {
+            "description": "Buildings.",
+            "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Building" } } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+    "/pub/v1/rooms": {
+      "get": {
+        "tags": ["Hierarchy"],
+        "summary": "List rooms",
+        "description": "Every room in the tenant, optionally filtered by parent building. Each row carries the building id + name so a picker or sync task doesn't need to join.",
+        "parameters": [
+          { "$ref": "#/components/parameters/BuildingID" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Rooms.",
+            "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Room" } } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+    "/pub/v1/alerts": {
+      "get": {
+        "tags": ["Alerts"],
+        "summary": "List alerts",
+        "description": "Alerts raised on devices or collectors, most recent first. Filter by status and severity to sync only open critical incidents into your on-call tool.",
+        "parameters": [
+          { "name": "status", "in": "query", "description": "Exact match.", "schema": { "type": "string", "enum": ["open", "acknowledged", "resolved"] } },
+          { "name": "severity", "in": "query", "description": "Exact match.", "schema": { "type": "string", "enum": ["critical", "warning", "info"] } },
+          { "$ref": "#/components/parameters/Limit" },
+          { "$ref": "#/components/parameters/Cursor" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Page of alerts.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    { "$ref": "#/components/schemas/Page" },
+                    { "type": "object", "properties": { "data": { "type": "array", "items": { "$ref": "#/components/schemas/Alert" } } } }
+                  ]
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+    "/pub/v1/events": {
+      "get": {
+        "tags": ["Events"],
+        "summary": "List events",
+        "description": "Cross-fleet event stream, most recent first. Filter by device_id to narrow, or omit the filter to poll every device the token can see.",
+        "parameters": [
+          { "$ref": "#/components/parameters/DeviceIDQuery" },
+          { "$ref": "#/components/parameters/Limit" },
+          { "$ref": "#/components/parameters/Cursor" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Page of events.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    { "$ref": "#/components/schemas/Page" },
+                    { "type": "object", "properties": { "data": { "type": "array", "items": { "$ref": "#/components/schemas/Event" } } } }
+                  ]
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "avb_<prefix>_<secret>",
+        "description": "Mint a token from the portal at Settings → API tokens. Send it as `Authorization: Bearer avb_...` on every request. Query-string tokens are NOT accepted — the URL ends up in access logs."
+      }
+    },
+    "parameters": {
+      "Limit": {
+        "name": "limit",
+        "in": "query",
+        "description": "Rows per page. Default 100, maximum 500.",
+        "schema": { "type": "integer", "minimum": 1, "maximum": 500, "default": 100 }
+      },
+      "Cursor": {
+        "name": "cursor",
+        "in": "query",
+        "description": "Opaque pagination cursor from a previous response's `next_cursor`. Omit on the first call. Treat this as an opaque string — its shape may change.",
+        "schema": { "type": "string" }
+      },
+      "BuildingID": {
+        "name": "building_id",
+        "in": "query",
+        "description": "Restrict results to one building.",
+        "schema": { "type": "string", "format": "uuid" }
+      },
+      "RoomID": {
+        "name": "room_id",
+        "in": "query",
+        "description": "Restrict results to one room.",
+        "schema": { "type": "string", "format": "uuid" }
+      },
+      "DeviceIDQuery": {
+        "name": "device_id",
+        "in": "query",
+        "description": "Restrict results to one device.",
+        "schema": { "type": "string", "format": "uuid" }
+      },
+      "DeviceIDPath": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "description": "Device id (UUID).",
+        "schema": { "type": "string", "format": "uuid" }
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "Malformed request — invalid JSON, unknown filter value, or corrupt cursor.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      },
+      "Unauthorized": {
+        "description": "Missing, malformed, revoked, or expired bearer token.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      },
+      "Forbidden": {
+        "description": "Token authenticated but doesn't hold the scope this endpoint requires.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      },
+      "NotFound": {
+        "description": "Resource missing or invisible to this token.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "required": ["error"],
+        "properties": {
+          "error": {
+            "type": "object",
+            "required": ["message", "code"],
+            "properties": {
+              "message": { "type": "string", "description": "Human-readable summary. Not intended for parsing." },
+              "code": { "type": "string", "enum": ["bad_request", "unauthorized", "forbidden", "not_found", "internal_error", "error"], "description": "Stable machine-readable identifier." }
+            }
+          }
+        },
+        "example": { "error": { "message": "token missing scope: view.dashboard", "code": "forbidden" } }
+      },
+      "Page": {
+        "type": "object",
+        "required": ["data", "next_cursor"],
+        "properties": {
+          "data": { "type": "array", "items": {} },
+          "next_cursor": { "type": ["string", "null"], "description": "Pass this back as `?cursor=` on the next call. `null` means this page is the last one." }
+        }
+      },
+      "PingResponse": {
+        "type": "object",
+        "required": ["tenant_id", "token_name", "scopes", "time"],
+        "properties": {
+          "tenant_id": { "type": "string", "format": "uuid" },
+          "token_name": { "type": "string" },
+          "scopes": { "type": "array", "items": { "type": "string" } },
+          "time": { "type": "string", "format": "date-time" }
+        }
+      },
+      "Device": {
+        "type": "object",
+        "required": ["id", "name", "type", "protocol", "status"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "name": { "type": "string", "description": "The device's display name. Falls back to the adapter's reported id when no override is set in the portal." },
+          "type": { "type": "string", "description": "Adapter type key — e.g. `sony-bravia`, `biamp-tesira`, `visca-over-ip`." },
+          "protocol": { "type": "string", "description": "Wire protocol the adapter speaks, e.g. `tesira`, `visca`, `bravia-rest`." },
+          "status": { "type": "string", "enum": ["online", "offline", "degraded", "unknown"] },
+          "ip_address": { "type": "string" },
+          "make": { "type": "string" },
+          "model": { "type": "string" },
+          "serial_number": { "type": "string" },
+          "firmware_version": { "type": "string" },
+          "mac_address": { "type": "string" },
+          "room_id": { "type": "string", "format": "uuid" },
+          "room": { "type": "string" },
+          "building_id": { "type": "string", "format": "uuid" },
+          "building": { "type": "string" },
+          "last_seen_at": { "type": ["string", "null"], "format": "date-time" },
+          "tags": { "type": "object", "additionalProperties": { "type": "string" } }
+        },
+        "example": {
+          "id": "3f8b0f2c-1c1e-4c6b-9b2a-d0d9d4d1d3d4",
+          "name": "Boardroom display",
+          "type": "sony-bravia",
+          "protocol": "bravia-rest",
+          "status": "online",
+          "ip_address": "10.11.12.13",
+          "make": "Sony",
+          "model": "FW-65BZ40L",
+          "serial_number": "S01234567",
+          "firmware_version": "PKG6.6510",
+          "mac_address": "00:11:22:33:44:55",
+          "room_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+          "room": "Boardroom",
+          "building_id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+          "building": "HQ",
+          "last_seen_at": "2026-08-26T09:14:03Z",
+          "tags": { "site": "hq", "row": "front" }
+        }
+      },
+      "DeviceDetail": {
+        "allOf": [
+          { "$ref": "#/components/schemas/Device" },
+          {
+            "type": "object",
+            "properties": {
+              "metrics": { "type": "object", "additionalProperties": true, "description": "Adapter-specific latest-known metrics. Shape varies by adapter." }
+            }
+          }
+        ]
+      },
+      "Telemetry": {
+        "type": "object",
+        "required": ["device_id", "status"],
+        "properties": {
+          "device_id": { "type": "string", "format": "uuid" },
+          "status": { "type": "string" },
+          "timestamp": { "type": ["string", "null"], "format": "date-time" },
+          "metrics": { "type": "object", "additionalProperties": true },
+          "error": { "type": "string" }
+        }
+      },
+      "Building": {
+        "type": "object",
+        "required": ["id", "name"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "name": { "type": "string" },
+          "address": { "type": "string" },
+          "timezone": { "type": "string", "description": "IANA zone, e.g. `Europe/London`." },
+          "latitude": { "type": ["number", "null"] },
+          "longitude": { "type": ["number", "null"] },
+          "location": { "type": "string" },
+          "region": { "type": "string" }
+        }
+      },
+      "Room": {
+        "type": "object",
+        "required": ["id", "name", "building_id", "building"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "name": { "type": "string" },
+          "building_id": { "type": "string", "format": "uuid" },
+          "building": { "type": "string" }
+        }
+      },
+      "Alert": {
+        "type": "object",
+        "required": ["id", "subject_kind", "alert_key", "severity", "message", "status", "opened_at"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "subject_kind": { "type": "string", "enum": ["device", "collector"] },
+          "device_id": { "type": "string", "format": "uuid" },
+          "device_name": { "type": "string" },
+          "collector_id": { "type": "string", "format": "uuid" },
+          "collector_name": { "type": "string" },
+          "alert_key": { "type": "string", "description": "Stable identifier for the rule that fired, e.g. `device.offline`, `collector.stale`." },
+          "severity": { "type": "string", "enum": ["critical", "warning", "info"] },
+          "message": { "type": "string" },
+          "payload": { "type": "object", "additionalProperties": true },
+          "status": { "type": "string", "enum": ["open", "acknowledged", "resolved"] },
+          "opened_at": { "type": "string", "format": "date-time" },
+          "acknowledged_at": { "type": ["string", "null"], "format": "date-time" },
+          "resolved_at": { "type": ["string", "null"], "format": "date-time" }
+        }
+      },
+      "Event": {
+        "type": "object",
+        "required": ["id", "device_id", "device_name", "event_type", "timestamp"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "device_id": { "type": "string", "format": "uuid" },
+          "device_name": { "type": "string" },
+          "event_type": { "type": "string", "description": "Adapter-emitted event key, e.g. `power.on`, `input.changed`." },
+          "payload": { "type": "object", "additionalProperties": true },
+          "timestamp": { "type": "string", "format": "date-time" }
+        }
+      }
+    }
+  }
+}

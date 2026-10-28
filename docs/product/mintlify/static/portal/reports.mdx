@@ -1,0 +1,64 @@
+---
+title: "Reports"
+sidebarTitle: "Reports"
+description: "Uptime, room usage, device events, warranty and power across your estate."
+icon: "chart-column"
+---
+
+**Reports** shows how your estate has been doing over a period: which devices have been down, which rooms are used, which are noisy, which assets are going out of warranty, and how much power the rooms use. Go to **Reports** in the sidebar. You need the **View reports** permission. If your access is limited to some locations, buildings or rooms, reports only cover those.
+
+## Choose the period
+
+Use **Window** at the top to choose the period: **24h**, **7d**, **30d** or **90d**. **Warranty** isn't windowed, because it's about each asset's end date, so the picker hides for it.
+
+## Export
+
+Select **CSV** to download the report you're looking at, for the period you've chosen, ready to open in a spreadsheet.
+
+## Device uptime
+
+The share of polls in the period in which each device reported online, with its location, how many polls it had, its current status and when it was last seen. The cards at the top count the devices observed, and how many are at 99% uptime or above, and below it.
+
+A device that hasn't been polled in the period, such as one just added, shows **—** rather than 0%: it hasn't been observed, not necessarily down.
+
+## Room usage
+
+How much each room is used. A room is in use for any hour in which a video codec reported a call or a camera counted people in it. For each room you see:
+
+| Column | What it shows |
+|---|---|
+| **Hours in use** | Hours the room was in use in the period. |
+| **In calls** | Hours a codec was in a call. |
+| **Occupied** | Hours a camera counted people. |
+| **Peak people** | The most people counted at once. |
+| **Days used** | Days with any use. |
+| **Hours a day** | Average hours in use a day. |
+| **Displays on** | Hours a display reported power on. |
+
+**Displays on** is shown separately and isn't counted as use, because Room Readiness switches displays on every morning whether anyone comes in or not. It leaves out the time Room Readiness runs were working on the room.
+
+A room with no device that reports calls or people says **No usage data** rather than showing as unused.
+
+## Device events
+
+How many events each room's devices raised in the period, split into **Alerts**, such as devices going offline or reporting faults, and **Messages**, which devices send unprompted, such as Telnet output or DSP updates. Normal polling isn't counted.
+
+A high count points at a noisy or faulty device, not a busy room. For how much a room is used, see **Room usage**.
+
+## Warranty
+
+Every asset's warranty end date and the days left, grouped as **Expired**, within 30, 90 or 365 days, **Later**, or **No date** for assets without an end date recorded. Retired assets are left out. Add warranty dates on the **Assets** page.
+
+## Power
+
+An estimate of each room's energy use in kWh for the period, worked out from its devices' power ratings and uptime, and the kWh saved by the Room Readiness overnight power-down.
+
+Only devices with a power rating count. Devices without one are counted as **Unrated**, so you can see where ratings are missing. Add them in **Power on (watts)** and **Power standby (watts)** when you edit a device.
+
+## How up to date reports are
+
+**Device uptime**, **Room usage** and **Power** are worked out from daily summaries of each device's readings:
+
+- Periods are whole days, in UTC.
+- They can be up to about 20 minutes behind the newest readings.
+- They cover up to a year of history. Raw readings are kept for 90 days, and daily summaries for 400 days.

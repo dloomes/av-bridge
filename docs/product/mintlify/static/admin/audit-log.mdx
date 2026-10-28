@@ -20,4 +20,8 @@ Every device page has an **Activity** button showing just that device's history:
 
 ## Keep or analyse the log elsewhere
 
-The page shows the latest 100 entries. For the full history, a longer retention, or to feed a SIEM, read the log through the Public API with a token that has the **Read audit log** scope. The API can filter by action, kind of record, record, person and date range. See [List audit entries](/api-reference/audit/list-audit-entries).
+The page shows the latest 100 entries. For the full history, a longer retention, or to feed a SIEM, read the log through the Public API with a token that has the **Read audit log** scope. The API can filter by action, kind of record, record, person and date range. It can also filter by device, room, building or location, each including everything in it: its devices, their commands, assets and Room Readiness runs. For a rolling window, such as the last 15 minutes, use `last=15m`. See [List audit entries](/api-reference/audit/list-audit-entries).
+
+## How long it's kept
+
+The audit log is kept for 24 months, then deleted.

@@ -38,5 +38,8 @@
       "Bash(git -C /c/Code/av-bridge status)",
       "Bash(git -C /c/Code/av-bridge diff --stat)"
     ]
+  },
+  "enabledPlugins": {
+    "superpowers@anthropic-plugin-directory": true
   }
 }

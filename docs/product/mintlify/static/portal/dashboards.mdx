@@ -7,7 +7,7 @@ icon: "grip"
 
 A dashboard is your own page of widgets: open alerts, rooms that need attention, last night's Room Readiness results, room usage and more, laid out in the order you want. Go to **Dashboards** in the sidebar.
 
-Everyone can build dashboards for themselves. Administrators can also share dashboards with the whole organisation, such as a wall screen for the service desk.
+Everyone with the **View dashboard** permission, which every built-in role has, can build dashboards for themselves. A dashboard can hold up to 40 widgets. Administrators can also share dashboards with the whole organisation, such as a wall screen for the service desk.
 
 ## Create a dashboard
 
@@ -27,7 +27,7 @@ The dashboard you last opened opens next time you come to **Dashboards**. Switch
 5. Select a widget's settings button to change what it shows, or its cross to remove it.
 6. Select **Save**, or **Cancel** to leave the dashboard as it was.
 
-Widgets refresh on their own, every 30 seconds for live information and less often for reports.
+Widgets refresh on their own: every 30 seconds for live information, every 10 minutes for **Warranty** and **Firmware**, and every 15 minutes for **Room usage** and **Lowest uptime**.
 
 ## Widgets
 
@@ -37,7 +37,7 @@ Widgets refresh on their own, every 30 seconds for live information and less oft
 | **Open alerts** | The newest open alerts, with their device. | Severity, how many |
 | **Rooms needing attention** | Rooms with devices offline or not reporting, worst first. | Building, how many |
 | **Room Readiness, last 24 hours** | Runs passed, failed and running, and the rooms that failed with the reason. | Power schedule, readiness checks or both; how many |
-| **Room usage** | The busiest or least-used rooms, in hours a day. Uses the same calls and people counts as the **Room usage** report under **Reports**. | Busiest or least used, period, how many |
+| **Room usage** | The busiest or least-used rooms, in hours a day. Uses the same calls and people counts as the **Room usage** report under [Reports](/portal/reports). | Busiest or least used, period, how many |
 | **Lowest uptime** | The devices with the lowest uptime. | Period, how many |
 | **Collectors** | Collectors online, and any that aren't with when they were last seen. | |
 | **Warranty** | Assets out of warranty, and those expiring within 90 days. | How many |
@@ -46,7 +46,7 @@ Widgets refresh on their own, every 30 seconds for live information and less oft
 | **Device** | One device's status and its latest readings. | Device |
 | **Recent activity** | The latest changes and commands from the activity log. | How many |
 | **Rooms in use now** | Rooms in a call or with people in them right now, from codecs and people-counting cameras. | How many |
-| **Building status** | Every building as a tile: green when all is well, amber when devices aren't reporting, red when any are offline. | Region |
+| **Building status** | Every building as a tile: green when all is well, amber when devices aren't reporting, red when any are offline, blue when devices are switched off. | Region |
 | **Map** | Buildings on a map, coloured by status, as on the **Map** page. | |
 | **Big number** | One figure in large type: devices offline or not reporting, open or critical alerts, rooms needing attention, Room Readiness failures, Collectors not online, or rooms in use now. It turns red once it reaches the number you set. | Figure, red from, label |
 | **Clock** | The time and date. | Time zone, 12- or 24-hour, seconds |
@@ -68,13 +68,13 @@ A display link shows one or more shared dashboards on a screen with no one signe
 
 1. Go to **Dashboards** and select **Display links**.
 2. Give the link a **Name**, such as the screen's location.
-3. Tick the shared dashboards to show, in the order you want them. With more than one, choose how long to show each.
+3. Tick the shared dashboards to show, in the order you want them. With more than one, choose how long to show each: 30 seconds, or 1, 2 or 5 minutes. A link can show up to 10 dashboards.
 4. Select **Create display link**, then **Copy** the address. It's shown only once.
 5. Open the address in the screen's browser.
 
-A display link can only view: it can't change anything, can't see the activity log, and sees no more of the estate than the person who created it. Anyone with the address can see those dashboards, so treat it like a password. The list of display links shows when each screen was last seen.
+A display link can only view: it can't change anything, can't see the activity log, and sees no more of the estate than the person who created it could see when they created it. Anyone with the address can see those dashboards, so treat it like a password. The list of display links shows when each screen was last seen.
 
-To stop a screen, select **Revoke**. It stops updating at once and says the link has been revoked. If you stop sharing a dashboard, it's taken off every display link straight away.
+To stop a screen, select **Revoke**. The screen checks its link every minute, so within a minute it stops updating and says the link has been revoked. If you stop sharing a dashboard, it leaves every display link's screen within a minute too.
 
 Creating and revoking display links is recorded in the activity log.
 

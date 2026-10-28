@@ -6,7 +6,7 @@
     "kind": "vendor",
     "description": "ATEN eco PDU range (PE6108G and siblings) over the Telnet CLI on port 23. Per-outlet on/off/reboot control and per-outlet power metering; device-level voltage and total power draw. Polled every 5 minutes by default.",
     "device_types": [
-      "control"
+      "power"
     ],
     "power": {
       "on": false,
@@ -93,7 +93,7 @@
         "example": "Codec"
       }
     ],
-    "example_config": "- id: rack-a-pdu\n  name: Rack A PDU\n  type: control\n  protocol: aten_pdu\n  address: 192.168.90.10\n  username: teladmin\n  password: ${ATEN_PASSWORD}\n  poll_rate: 300s",
+    "example_config": "- id: rack-a-pdu\n  name: Rack A PDU\n  type: power\n  protocol: aten_pdu\n  address: 192.168.90.10\n  username: teladmin\n  password: ${ATEN_PASSWORD}\n  poll_rate: 300s",
     "device_count": 0
   },
   {
@@ -258,7 +258,7 @@
     "kind": "vendor",
     "description": "AV-over-IP encoders and decoders. JSON over Telnet on port 6970; encoder vs decoder mode is auto-detected at connect.",
     "device_types": [
-      "display"
+      "avoip"
     ],
     "power": {
       "on": false,
@@ -308,7 +308,149 @@
         "example": "30s"
       }
     ],
-    "example_config": "- id: boardroom-vpx\n  name: Boardroom VPX Decoder\n  type: display\n  protocol: aurora_vpx\n  address: 192.168.10.20\n  poll_rate: 30s",
+    "example_config": "- id: boardroom-vpx\n  name: Boardroom VPX Decoder\n  type: avoip\n  protocol: aurora_vpx\n  address: 192.168.10.20\n  poll_rate: 30s",
+    "device_count": 0
+  },
+  {
+    "id": "aurora_dido",
+    "name": "Aurora DIDO",
+    "vendor": "Aurora Multimedia",
+    "kind": "vendor",
+    "description": "4x4 HDMI matrix switchers and video wall processors. JSON over TCP on port 6970: video and audio routing, output resolutions, volumes and presets.",
+    "device_types": [
+      "control"
+    ],
+    "power": {
+      "on": false,
+      "off": false
+    },
+    "commands": [
+      "route_out1",
+      "route_out2",
+      "route_out3",
+      "route_out4",
+      "route_all",
+      "set_volume",
+      "mute_linein",
+      "unmute_linein",
+      "recall_preset",
+      "lock_buttons",
+      "unlock_buttons",
+      "reboot"
+    ],
+    "metrics": [
+      "fw_version",
+      "api_version",
+      "serial_number",
+      "mac",
+      "ip_address",
+      "ip_mode",
+      "out1_source",
+      "out2_source",
+      "out3_source",
+      "out4_source",
+      "resolution_mode",
+      "out1_resolution",
+      "out2_resolution",
+      "out3_resolution",
+      "out4_resolution",
+      "lineout_audio",
+      "dante_audio",
+      "out1_audio",
+      "out2_audio",
+      "out3_audio",
+      "out4_audio",
+      "lineout_volume",
+      "linein_volume",
+      "linein_mute",
+      "buttons_locked",
+      "presets",
+      "preset_count",
+      "response_ms"
+    ],
+    "config_schema": [
+      {
+        "name": "address",
+        "required": true,
+        "description": "DIDO IP (port 6970 is implied).",
+        "example": "192.168.10.30"
+      },
+      {
+        "name": "poll_rate",
+        "required": false,
+        "description": "How often to poll. Defaults to 60s.",
+        "example": "60s"
+      }
+    ],
+    "example_config": "- id: court3-dido\n  name: Court 3 DIDO\n  type: control\n  protocol: aurora_dido\n  address: 192.168.10.30\n  poll_rate: 60s",
+    "device_count": 0
+  },
+  {
+    "id": "crestron",
+    "name": "Crestron control processors",
+    "vendor": "Crestron",
+    "kind": "vendor",
+    "description": "3-Series and 4-Series control processors through their console, over SSH (or CTP). Model, firmware, uptime and load, the program loaded, and every IP-ID device the program registers, with online or offline for each. No change to the room's program.",
+    "device_types": [
+      "control"
+    ],
+    "power": {
+      "on": false,
+      "off": false
+    },
+    "commands": [
+      "restart_program",
+      "reboot"
+    ],
+    "metrics": [
+      "model",
+      "firmware",
+      "firmware_date",
+      "tsid",
+      "mac",
+      "hostname",
+      "ssh_host_key",
+      "uptime_s",
+      "cpu_load_pct",
+      "ram_free_mb",
+      "ram_total_mb",
+      "ram_used_pct",
+      "program_file",
+      "program_name",
+      "program_compiled",
+      "program_tool",
+      "ip_devices",
+      "ip_devices_online",
+      "ip_devices_offline",
+      "offline_ip_devices",
+      "response_ms"
+    ],
+    "config_schema": [
+      {
+        "name": "address",
+        "required": true,
+        "description": "Processor IP (SSH port 22 is implied; 41795 with the console tag set to ctp).",
+        "example": "192.168.10.40"
+      },
+      {
+        "name": "username",
+        "required": true,
+        "description": "A processor user that can log in to the console.",
+        "example": "admin"
+      },
+      {
+        "name": "password",
+        "required": true,
+        "description": "That user's password."
+      },
+      {
+        "name": "poll_rate",
+        "required": false,
+        "description": "How often to poll. Defaults to 60s.",
+        "example": "60s"
+      }
+    ],
+    "example_config": "- id: court3-cp4\n  name: Court 3 processor\n  type: control\n  protocol: crestron\n  address: 192.168.10.40\n  username: admin\n  password: ${CRESTRON_PASSWORD}\n  tags:\n    program_slot: \"1\"",
     "device_count": 0
   },
   {
@@ -611,6 +753,12 @@
       "input_source",
       "volume_speaker",
       "mute_speaker",
+      "firmware_version",
+      "model",
+      "serial_number",
+      "generation",
+      "android_os",
+      "pro_mode",
       "response_ms"
     ],
     "config_schema": [
@@ -746,7 +894,9 @@
       "conferencing",
       "audio",
       "camera",
-      "control"
+      "control",
+      "avoip",
+      "power"
     ],
     "power": {
       "on": false,
@@ -783,7 +933,9 @@
       "conferencing",
       "audio",
       "camera",
-      "control"
+      "control",
+      "avoip",
+      "power"
     ],
     "power": {
       "on": false,
@@ -873,7 +1025,9 @@
       "conferencing",
       "audio",
       "camera",
-      "control"
+      "control",
+      "avoip",
+      "power"
     ],
     "power": {
       "on": false,

@@ -31,7 +31,7 @@ If a device doesn't switch back on, the room fails, with the device named. A dev
 
 | Setting | What it does |
 |---|---|
-| **Enable** | Turns the power schedule on for every room. Off until you switch it on, so you can set everything up first. |
+| **Nightly lifecycle** switch | Turns the power schedule on for every room. Off until you switch it on, so you can set everything up first. |
 | **Power off at** / **Power on at** | For example off at 19:00 and back on at 07:30 the next morning, in the timezone on the Settings tab. |
 | **Days** | The days the cycle runs. On other days rooms stay on overnight. |
 
@@ -39,11 +39,22 @@ Select **Save changes** when you're done.
 
 ### Customise a room
 
-The rooms table lists every room by building, with the times it's switched off and on. Select **Customise** on a room and tick **Customise** next to **Power off at**, **Power on at** or **Days of week** to give it its own; leave a field unticked to follow the default.
+The rooms table lists every room by building, with the times it's switched off and on. Select **Customise** on a room (**Edit** once it's customised) and tick **Customise** next to **Power off at**, **Power on at** or **Days of week** to give it its own; leave a field unticked to follow the default.
 
 You can also **exclude** a room up to and including a date, with a reason such as planned maintenance or a device awaiting replacement. An excluded room is neither switched off nor checked, and has no runs for those days.
 
-Customised rooms show **Customised**. Select **Reset** to return a room to the defaults.
+Customised rooms show **Customised**, and their button reads **Edit**. Select **Reset** to return a room to the defaults.
+
+### One-off dates
+
+For a day that differs from the weekly schedule, add a date under **One-off dates** on the **Power schedule** tab. Select **Add a date**, pick the day and the rooms it applies to (one room, or **Every room**), and choose:
+
+| On this day | What happens |
+|---|---|
+| **Closed** | Rooms aren't switched back on that morning, and their readiness check doesn't run. Use it for bank holidays, closures and works. |
+| **Open** | Rooms are in use, even on a day the weekly schedule skips (a Saturday sitting). Set **Power on at** and **Power off at** for that day only (a late finish, an early start), or leave them blank for the room's usual times. The readiness check runs that morning too. |
+
+A room's own date wins over one for every room, so you can close the whole estate and keep one court open. Dates are in the organisation's timezone, and an excluded room stays excluded whatever its dates say. Select the bin on a date to remove it; the weekly schedule applies again. You need **Manage Room Readiness** to add or remove dates.
 
 ### Defer tonight
 
@@ -54,6 +65,8 @@ If a room is in use this evening, select **Defer tonight**. The room skips tonig
 A device that the power schedule has switched off shows as **Switched off**, not offline, from power-off until the morning warm-up is over. A device that stays reachable in standby keeps showing **Online**.
 
 It also doesn't raise an offline alert while the room is powered down, or during the morning warm-up. If it's still offline after the warm-up, it alerts as usual, within 30 minutes, and the run shows which device didn't come back. Devices that weren't switched off, including any whose power-off failed, alert overnight as normal.
+
+A run that fails raises one alert for the room, through the same channels as other alerts (email, Teams, ServiceNow). A failed readiness check raises **Readiness check failed**, naming the steps that failed and why; a failed power cycle raises **Power cycle failed**, with the reason. If the room fails again before the alert is resolved, the same alert is updated rather than a new one raised. The next run that passes resolves it, and closes any ServiceNow incident with it.
 
 ## Readiness checks
 
@@ -72,7 +85,7 @@ If a room's power cycle is still running at its check time, for example still wa
 
 ### Customise a room
 
-The rooms table shows each room's routine, time and days. Select **Customise** to give a room its own **Routine**, **Run at** time or **Days**, such as a different routine for a video-conferencing room, or a later time for a room that powers on later. A room's own routine is shown in darker text than the default. Select **Reset** to return it to the default.
+The rooms table shows each room's routine, time and days. Select **Customise** to give a room its own **Routine**, **Run at** time or **Days**, such as a different routine for a video-conferencing room, or a later time for a room that powers on later. Once a room is customised, its button reads **Edit**. A room's own routine is shown in darker text than the default. Select **Reset** to return it to the default.
 
 A room whose check time falls while its power schedule has it switched off shows **Room switched off then**. Move the check after the power-on time, or it will fail.
 
@@ -89,17 +102,25 @@ Settings shared by both:
 | **Timezone** | The timezone the power schedule and readiness checks run in. |
 | **Helpdesk email** | Copies the morning digest to your helpdesk, so incidents are picked up without anyone forwarding them. Optional. |
 | **Morning digest** | Select **Send test digest** to send one now and check who receives it. |
-| **Keep detailed step results for (days)** | How long each step's result is kept. At least 30 days. The pass or fail of each run is kept for good. |
+| **Keep run history for (days)** | How long runs are kept, from 30 to 365 days. Runs older than this are deleted automatically, with their step results. |
 
 ## Check the results
 
-Select **View runs** for the run history: one row per room for each power cycle and each readiness check, with its type, when it was scheduled, its status, and how long it took. A power run's duration is how long the room took to be ready after power-on; a readiness run's is how long its routine took. Filter by date, room, type and status.
+Select **View runs**, on any of the three tabs, for the run history: one row per room for each power cycle and each readiness check, with its type, when it was scheduled, its status, and how long it took. A power run's duration is how long the room took to be ready after power-on; a readiness run's is how long its routine took. Filter by date, room, type and status.
+
+To see one room's results, open the room from **Places** in the sidebar, or filter **Devices** to it. A **Room Readiness** card above its devices shows the latest readiness check and overnight power cycle, which steps failed and why if the latest check failed, and a mark for each check over the last 14 days. Select any of them for that run, or **All runs for this room** for its full history. You need **View Room Readiness** to see the card.
 
 Select a run for its details: how far it got, and every step, with what it checked, on which device, what it expected, what it found and any error. For a power run, the steps are which devices switched off and back on.
 
+Each step's result is summarised in a line per device: what it looked for (such as `Judge_Level > -4`), and what it found (such as `online` or `Succeeded`). Select **Raw** under a result for everything the step recorded, including each device's raw reply.
+
+For **Expect status** and **Check metric** steps, each result says where its reading came from. **Fresh poll** means the device was polled for that step, which is the usual case. **Last report, 42 s old** means the step used the device's last regular report instead: ATEN PDUs always do, and so does any device whose fresh poll didn't come back within 60 seconds. A last report more than two minutes old is highlighted, because it may predate what the step was checking, such as a power-on or a reboot.
+
+To keep or share a run's results, select **Download PDF** on the run. The report shows the room and its place, whether it passed, when it ran and how long it took, why it failed, and every step's result. It's available once the run has finished.
+
 | Status | Meaning |
 |---|---|
-| **Succeeded** | The room came back on (power), or every step passed (readiness). |
+| **Ready** | The room came back on (power), or every step passed (readiness). The status filter calls this **Succeeded**. |
 | **Failed** | A device didn't come back, or a step failed. The run shows which and why. |
 | **In progress** | Running now. |
 | **Pending** | Scheduled, or waiting for the room's power cycle to finish. |

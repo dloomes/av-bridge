@@ -31,12 +31,23 @@ The room picker above the step list is only a preview: it greys out step types t
 | **Device command** | Sends a named command, such as `dial` or `recall_preset`, with optional parameters. The commands offered are the ones the target devices support. | Every device completes the command |
 | **Expect status** | Checks the target devices are online, or offline. | Every device has that status |
 | **Check metric** | Compares a reading, such as a microphone input level, against a threshold: greater than, at least, less than, at most or equal to. | Every device's reading meets the threshold |
+| **Ping** | Pings each target device's address from its Collector, whatever kind of device it is. You can set a maximum packet loss and response time. | Every device replies, within any limits set |
+
+### Ping
+
+**Ping** checks the network path to a device, not the device's own control connection. Use it on one device or on the whole room. Devices on a serial port have no address to ping, so a whole-room or device-type ping leaves them out.
+
+Each device gets 3 pings by default, up to 10, and each ping has a second to reply. With no limits set, any reply passes. The result shows each device's replies and average response time, such as **Replied 3/3, 4 ms**.
+
+Ping steps need Collector version 1.0.69 or later. On an older Collector the step fails and says the Collector needs updating.
 
 ### Up-to-date readings
 
-**Expect status** and **Check metric** ask the Collector to check each device there and then, so they see the room as it is now, not as it was at the last scheduled check, which can be several minutes earlier. Allow up to a minute for a step that checks many devices, or a slow device such as a PDU.
+**Expect status** and **Check metric** ask the Collector to check each device there and then, so they see the room as it is now, not as it was at the last scheduled check, which can be several minutes earlier. Allow up to a minute for a step that checks many devices.
 
-If a device's Collector can't take a reading (it's offline, or older than version 1.0.35), the step uses the device's last report instead and says so if it fails. For **Check metric** that last report must be from within the **Sample window** (30 seconds by default). Update older Collectors from the **Collectors** page.
+PDUs are the exception. They aren't checked on demand, because they log in for each reading; steps use their latest regular reading instead, which can be up to 10 minutes old.
+
+If a device's Collector can't take a reading (it's offline, or older than version 1.0.35), the step uses the device's last report instead and says so if it fails. For **Check metric** that last report must be from within the **Sample window**: 5 seconds for a new step, or 30 seconds if you leave it empty. Update older Collectors from the **Collectors** page.
 
 ### Choose the devices
 
@@ -59,6 +70,10 @@ Set **On failure** on each step:
 | **retry:1**, **retry:3** | Tries the step again up to that many times before failing it. |
 
 Any failed step marks the room as **Failed**, whichever option you choose. A step that runs past its **Timeout (seconds)** fails.
+
+### Diagram
+
+Select **Diagram** to see the routine as a flow chart: each step in order, sections as bands around their steps, and what happens when each step fails (the run stops, carries on, or retries). It shows the routine as it is in the builder, including changes you haven't saved yet. Download it as **PNG** for documents and email, or **SVG** to scale it in Word or PowerPoint.
 
 ### Advanced JSON
 

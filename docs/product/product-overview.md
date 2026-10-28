@@ -20,7 +20,7 @@ audience: All buyers, executive summary, RFI responses
 
 *One intelligent platform to manage, understand and optimise complex AV and video collaboration estates.*
 
-> **UK-hosted exclusively.** M.A.R.C.U.S. Cloud runs in the AWS London region. Every byte of customer data — configuration, telemetry, audit, backups — is stored, processed, and recovered within the United Kingdom. No customer data ever transits to non-UK regions.
+> **UK-hosted.** M.A.R.C.U.S. Cloud runs in the AWS London region. Customer data — configuration, telemetry, audit, backups — is stored, processed, and recovered within the United Kingdom. The only exceptions are the optional Multi-Region Enterprise add-on (an encrypted backup copy in AWS Ireland, enabled only with the customer's written agreement), the global CDN that serves the portal's static files, and the published sub-processors.
 
 ---
 
@@ -48,7 +48,7 @@ M.A.R.C.U.S. is delivered as a two-part SaaS platform:
 | Component | Where it runs | What it does |
 |---|---|---|
 | **M.A.R.C.U.S. Cloud** | AWS London (`eu-west-2`), operated by Involve | Multi-tenant portal, public API, alert engine, automation, historical analytics |
-| **M.A.R.C.U.S. Collector** | Customer network (Linux, Windows, ARM64) | On-premise agent that speaks native vendor protocols to AV devices; makes one outbound HTTPS connection to M.A.R.C.U.S. Cloud |
+| **M.A.R.C.U.S. Collector** | Customer network (Linux, Windows, ARM64) | On-premise agent that speaks native vendor protocols to AV devices; connects to M.A.R.C.U.S. Cloud outbound only, over HTTPS 443 |
 
 Customers deploy one M.A.R.C.U.S. Collector per site, or a shared Collector serving multiple sites — both models are supported and can be mixed within a single tenant.
 
@@ -80,7 +80,7 @@ Customers deploy one M.A.R.C.U.S. Collector per site, or a shared Collector serv
 M.A.R.C.U.S. is built for organisations where "who can do what" isn't a one-size-fits-all decision. The permission model is fine-grained, per tenant, and combines with physical scope so a user's authority is bounded to their remit.
 
 - **Per-tenant role catalogue** — customers define their own roles alongside the three seeded defaults (admin, operator, viewer). Roles never leak between tenants.
-- **Fine-grained permissions** — 24 discrete permission keys covering reads, device commands, bulk actions, alert lifecycle, hierarchy CRUD, user and role management, notifications, firmware targets, audit access, nightly-schedule defer, and Business Unit administration.
+- **Fine-grained permissions** — 34 discrete permission keys covering reads, device commands, bulk actions, remote access, alert lifecycle, hierarchy and Collector management, user and role management, sign-in mappings, notifications, firmware targets, audit access, Room Readiness, shared dashboards, branding, API tokens, and Business Unit administration.
 - **Multi-role users** — a single user may hold multiple roles simultaneously; effective permissions are the union. Common pattern: *"London Operator + Global Viewer"*.
 - **Physical scope** — restrict a user to specific buildings or business units, orthogonal to their role. Roles say *what*, scope says *where*.
 - **Optional Business Unit tier** — for enterprise and multi-agency deployments, an optional BU hierarchy sits above Region so that HMCTS, HMPPS, or MoJ (for example) each get their own operational surface within one tenant.
@@ -98,6 +98,8 @@ M.A.R.C.U.S. is built for organisations where "who can do what" isn't a one-size
 - **Filter, search, tag** across the fleet.
 - **Nightly digest** email summarising fleet health, issues, and follow-ups.
 - **Reports & exports** on device uptime, room usage (hours in calls and occupied, from the devices themselves), device events, warranty, and power consumption.
+- **Customisable dashboards** — build personal dashboards by dragging and dropping widgets, or publish shared dashboards for the whole organisation.
+- **Wall screens** — show a dashboard full-screen on a NOC or service-desk screen through a read-only display link, without signing the screen in.
 
 ### 3. Assets & lifecycle
 
@@ -113,6 +115,7 @@ M.A.R.C.U.S. is built for organisations where "who can do what" isn't a one-size
 - **Bulk fan-out** — issue one action against many devices at once (a room, a floor, a site, or a saved selection).
 - **Vendor-native controls** — power on / off, mute, reboot, reconnect, and vendor-specific custom commands.
 - **Reconnect on demand** — send a device a controlled disconnect / reconnect to clear a wedged session without a truck-roll.
+- **Remote access to device web interfaces** — administrators open a device's own web interface from the portal in a new tab, relayed through the Collector's outbound tunnel. No inbound ports; each session is time-limited and audited.
 - **Touch-panel proxy** — reach in-room touch panels on customer LANs through the Collector, without exposing them to the internet.
 - **Command history + audit log** — every dispatched action is recorded with actor, target, timing, and outcome.
 
@@ -134,9 +137,9 @@ M.A.R.C.U.S. is built for organisations where "who can do what" isn't a one-size
 
 ### 7. Extensibility & integrations
 
-- **Vendor-native adapters** — Cisco RoomOS, Poly VideoOS, Philips Professional Displays, Sony Bravia Professional, Biamp Tesira, ATEN eco PDU, NETGEAR M4250 / M4350 switches, Aurora RXT touch panels, Aurora VPX AV-over-IP, VISCA-over-IP PTZ cameras.
-- **Custom devices via generic transports** — REST, WebSocket, Telnet, and RS-232 serial adapters cover any device with a documented control interface.
-- **Public REST API v1** with **OpenAPI 3.1 + Swagger UI** — every field visible in the portal is available via the API.
+- **Vendor-native adapters** — Cisco RoomOS, Cisco TC (TC7), Poly VideoOS, Philips Professional Displays, Sony Bravia Professional, Biamp Tesira, ATEN eco PDU, NETGEAR M4250 / M4350 switches (per-port PoE), Aurora RXT touch panels, Aurora VPX AV-over-IP, VISCA-over-IP PTZ cameras.
+- **Custom devices via generic transports** — REST, WebSocket, Telnet, and RS-232 serial adapters cover any device with a documented control interface; ICMP ping covers devices with no control API.
+- **Public REST API v1** with **OpenAPI 3.1 + Swagger UI** — read-only access to devices and telemetry, alerts, events, assets, locations, buildings and rooms, the audit log, and Room Readiness results. Reports, dashboards, and user and notification management are available in the portal only.
 - **Bearer-token authentication**, cursor pagination, versioned endpoints — designed for machine consumption at scale.
 - **Adapter SDK** — customers and partners can add new device types without waiting for a platform release.
 
@@ -162,18 +165,18 @@ Ideal for **managed service providers** presenting M.A.R.C.U.S. as their own ope
 - **Automatic configuration sync** — device changes made in the portal reach the Collector within seconds; no manual roll-out.
 - **Self-updating Collectors** — signed updates from the portal, on demand or on a schedule, with automatic rollback if an update fails its health check.
 - **Resilient by design** — a Collector keeps polling through a cloud outage and sends its buffered telemetry when the link returns; an optional standby Collector takes over automatically if the primary fails.
-- **UK-hosted** exclusively on AWS London (`eu-west-2`). Customer data never leaves the United Kingdom. Multi-tenant with row-level tenant isolation enforced by the database engine.
+- **UK-hosted** on AWS London (`eu-west-2`), where customer data is stored and processed (exceptions are listed under *Security & compliance*). Multi-tenant with row-level tenant isolation enforced by the database engine.
 - **Terraform-managed infrastructure** — every environment reproducible from source.
 
 ### 9. Security & compliance
 
 - **Zero inbound firewall rules** at any customer site.
 - **TLS 1.2 minimum** on every connection; TLS 1.3 preferred.
-- **HMAC-SHA256 request signing** between every Collector and M.A.R.C.U.S. Cloud — message-level authenticity independent of the transport.
+- **HMAC-SHA256 request signing** between every Collector and M.A.R.C.U.S. Cloud — message-level authenticity independent of the transport. The remote access tunnel is authenticated with a signed, time-limited handshake.
 - **Row-level tenant isolation** enforced by PostgreSQL Row-Level Security.
 - **Microsoft Entra ID SSO** with MFA enforced by customer conditional-access policy.
 - **Full tenant-scoped audit trail** readable only by that tenant's authorised roles.
-- **UK data sovereignty** — every byte of customer data stored, processed, and backed up exclusively in the AWS London region (`eu-west-2`). No data ever transits to non-UK regions.
+- **UK data sovereignty** — customer data is stored, processed, and backed up in the AWS London region (`eu-west-2`). Exceptions: the optional Multi-Region Enterprise add-on, which keeps an encrypted backup copy in AWS Ireland and is enabled only with the customer's written agreement; the global CDN that serves the portal's static files; and the published sub-processors.
 - **GDPR compliant** — Data Processing Agreement available; sub-processor list published.
 
 See *M.A.R.C.U.S. — Security & Trust*, *M.A.R.C.U.S. — Service Description & SLA*, and *M.A.R.C.U.S. — Business Continuity & Disaster Recovery* for full detail.
@@ -183,10 +186,10 @@ See *M.A.R.C.U.S. — Security & Trust*, *M.A.R.C.U.S. — Service Description &
 ## How it works
 
 1. A small **M.A.R.C.U.S. Collector** service sits on your network. It speaks every AV vendor's native protocol locally — no changes to your devices, no cloud reach into your AV VLAN.
-2. The Collector makes one outbound HTTPS connection to **M.A.R.C.U.S. Cloud** — the only firewall rule you add.
+2. The Collector connects outbound to **M.A.R.C.U.S. Cloud** over HTTPS 443 — the only firewall rule you add.
 3. Your teams work in the **portal** (SSO via Microsoft Entra ID), and your systems consume the **Public API** via revocable bearer tokens.
 
-Zero inbound firewall rules. No public exposure of AV devices. UK-hosted exclusively.
+Zero inbound firewall rules. No public exposure of AV devices. UK-hosted.
 
 ## What makes M.A.R.C.U.S. different
 
@@ -194,8 +197,8 @@ Zero inbound firewall rules. No public exposure of AV devices. UK-hosted exclusi
 - **Sub-second command dispatch.** Portal actions land on the device in under a second — no polling delay.
 - **Role flexibility that matches the real org chart.** Per-tenant role catalogue, multi-role users, and building-level scope. Not three hardcoded personas.
 - **Multi-tenant to the row level.** Isolation is enforced at the database engine, not the application — critical for MSPs and multi-BU enterprises.
-- **API-first.** Every field visible in the portal is available via the Public API. No feature gap between what humans see and what systems can consume.
-- **Assets and lifecycle first-class.** Warranty, power, and utilisation reporting on the same platform as live monitoring — no separate CMDB required.
+- **API-first.** A read-only Public API exposes devices and telemetry, alerts, events, assets, locations, the audit log, and Room Readiness results to ITSM, CMDB, and BI systems.
+- **Assets and lifecycle first-class.** Warranty, power, and room usage reporting on the same platform as live monitoring — no separate CMDB required.
 
 ---
 

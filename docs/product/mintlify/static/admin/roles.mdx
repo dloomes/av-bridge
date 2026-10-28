@@ -5,7 +5,7 @@ description: "The built-in roles, and how to create your own from individual per
 icon: "user-shield"
 ---
 
-A role is a named set of permissions. Every user has at least one role; a user with several roles can do everything any of them allows. Anyone who can see users can see the **Roles** page; creating, editing and deleting roles needs the **Manage roles** permission.
+A role is a named set of permissions. Users need a role to see anything: someone who signs in with single sign-on and has no mapped role sees a **You don't have access yet** page. A user with several roles can do everything any of them allows. People with the **Manage roles** permission see **Roles** in the sidebar, and can create, edit and delete roles.
 
 ## Built-in roles
 
@@ -13,7 +13,7 @@ Every organisation starts with three roles. They can't be edited or deleted, so 
 
 | Role | Can do |
 |---|---|
-| **admin** | Everything: manage devices, locations, users, roles, notifications, firmware targets, assets, Room Readiness, API tokens and branding, plus all monitoring and control, opening devices' web interfaces through **Remote access**, and sharing dashboards with the organisation. |
+| **admin** | Everything: manage devices, locations, Collectors (and read their logs), business units, users, roles, notifications, firmware targets, assets, Room Readiness, API tokens and branding, plus all monitoring and control, opening devices' web interfaces through **Remote access**, and sharing dashboards with the organisation. |
 | **operator** | All monitoring; send commands, including to many devices at once; reconnect devices; acknowledge and resolve alerts; test notification channels; view Room Readiness and defer tonight's power-down. No user or role management. |
 | **viewer** | Read-only monitoring. No control actions. |
 
@@ -21,7 +21,7 @@ Every organisation starts with three roles. They can't be edited or deleted, so 
 
 1. Go to **Roles** and select **New role**.
 2. Give it a **Role name** and a **Description**. The names admin, operator and viewer are reserved.
-3. Tick its **Permissions**. They're grouped by area, and each group has **select all** and **clear all**.
+3. Tick its **Permissions**. They're grouped by area, and each group has a single toggle that selects or clears the whole group.
 4. Select **Create role**.
 
 A role can't be deleted while users still have it. Give those users another role first.
@@ -33,9 +33,9 @@ When you give roles to users, you can only give roles whose permissions you hold
 | Area | Permissions |
 |---|---|
 | **Reads** | View dashboard (fleet summary, devices, live events) · View audit log · View reports · View firmware · View notifications · View users · View assets |
-| **Device control** | Send device commands · Bulk command fan-out (up to 200 devices) · Reconnect device |
+| **Device control** | Send device commands · Bulk command fan-out (up to 200 devices) · Reconnect device · Remote access (open a device's web interface from the portal through its Collector) |
 | **Alerts** | Acknowledge alerts · Resolve alerts |
-| **Fleet management** | Manage devices · Manage locations · Manage business units · Manage collectors |
+| **Fleet management** | Manage devices · Manage locations · Manage business units · Manage collectors · View Collector logs (read what Collectors send of their own log, kept 30 days) · Share dashboards (publish dashboards for the organisation, and edit or delete them) |
 | **Notifications** | Manage notification channels · Test notification channel |
 | **Firmware** | Manage firmware targets |
 | **Users and roles** | Create users · Update users · Reset user passwords · Delete users · Manage roles · Manage sign-in mappings |

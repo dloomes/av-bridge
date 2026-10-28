@@ -121,9 +121,17 @@ These requirements are the same for every deployment option.
 |---|---|---|---|
 | Collector host | `*.involvecloud.com` | TCP 443 | Long-polled command channel, telemetry push, configuration sync and the remote access tunnel |
 
-This is the only external firewall rule required. Every connection uses TLS 1.2 or higher. Each request is also signed with an HMAC-SHA256 key unique to the Collector, so messages are authenticated independently of the transport.
+This is the only external firewall rule required for the Collector. Every connection uses TLS 1.2 or higher. The Collector's requests, and the handshake that opens the remote access tunnel, are signed with an HMAC-SHA256 key unique to the Collector, so they are authenticated independently of the transport.
 
-The remote access tunnel, which lets administrators open a device's web interface from the portal, is a WebSocket on the same port. If outbound traffic passes through a proxy or TLS-inspecting firewall, it must allow WebSocket upgrades to `*.involvecloud.com`. Through the tunnel, the Collector only connects to its own devices, on web ports (80, 443, 8080, 8443, the device's own port or its `web_port` tag), never to anything else on the network.
+The remote access tunnel, which lets administrators open a device's web interface from the portal, is a WebSocket on the same port. If outbound traffic passes through a proxy or TLS-inspecting firewall, it must allow WebSocket upgrades to `*.involvecloud.com`. Through the tunnel, the Collector only connects to its own devices, on ports 80, 443, 8080 or 8443, the device's own control port, or the port in its `web_port` tag, never to anything else on the network.
+
+### Browsers used for remote access
+
+| From | To | Port | Purpose |
+|---|---|---|---|
+| Administrators' browsers | `*.access.involvecloud.com` | TCP 443 | Remote access sessions to device web interfaces |
+
+Each remote access session has its own address, such as `<session>.access.involvecloud.com`. That is one label deeper than `*.involvecloud.com`, and many web proxies and allow-lists match a wildcard to one level only, so allow `*.access.involvecloud.com` explicitly.
 
 If your allow-list needs specific hostnames rather than a wildcard, Involve will give you the exact hostnames for your tenant on request.
 
@@ -247,7 +255,7 @@ The Collector then downloads its device list from the cloud automatically. The w
 | Binary | `/usr/local/bin/av-bridge` |
 | Configuration | `/etc/av-bridge/config.yaml` and `/etc/av-bridge/env` |
 | State | `/var/lib/av-bridge/` |
-| Logs | `/var/log/av-bridge/` and the systemd journal |
+| Logs | The systemd journal, and the portal (see §12) |
 | Service | `av-bridge.service`, running as user `av-bridge` |
 
 **Follow the logs:** `journalctl -u av-bridge -f`
@@ -370,7 +378,7 @@ spec:
           image: "[registry]/av-bridge:[version]"
           resources:
             requests: { cpu: "500m", memory: "512Mi" }
-            limits:   { cpu: "2000m", memory: "2Gi" }
+            limits:   { cpu: "2000m", memory: "4Gi" }
           volumeMounts:
             - name: config
               mountPath: /etc/av-bridge
@@ -383,6 +391,8 @@ spec:
         - name: state
           persistentVolumeClaim: { claimName: marcus-collector-state }
 ```
+
+The limits match the minimum host in §4 (2 vCPU, 4 GB). For the recommended size, raise them to `cpu: "4000m"` and `memory: "8Gi"`. The requests reserve enough for the measured load of a 5,000-device Collector.
 
 Keep `replicas: 1` and the `Recreate` strategy. To scale out, add another Deployment for each additional Collector.
 
@@ -398,7 +408,7 @@ The configuration contains the Collector's HMAC key, so mount it from a `Secret`
 
 To run the image without operating a container platform, use your cloud's managed option. You need the image and enrolled configuration described in §7.
 
-- **AWS ECS on Fargate:** a task of 0.5 vCPU and 1 GB runs a Collector of up to 1,000 devices; use 2 vCPU and 4 GB for up to 5,000 (§4). Keep state on Amazon EFS so it survives task replacement. Reference the configuration from AWS Secrets Manager in the task definition's `secrets` block, and set `desiredCount: 1`.
+- **AWS ECS on Fargate:** size the task as in §4 — 1 vCPU and 2 GB for up to 1,000 devices; 2 vCPU and 4 GB at minimum, or 4 vCPU and 8 GB recommended, for up to 5,000. Keep state on Amazon EFS so it survives task replacement. Reference the configuration from AWS Secrets Manager in the task definition's `secrets` block, and set `desiredCount: 1`.
 - **Azure Container Instances:** run a single container group with `--restart-policy Always`, and mount the configuration from Azure Files.
 - **Google Compute Engine:** run the image on Container-Optimized OS, one container per VM, with `--container-restart-policy=always`. Size the VM as in §4.
 
@@ -473,11 +483,22 @@ Collector releases use semantic version tags. The current cloud release always s
 
 ### Logs
 
+**In the portal.** From version 1.0.55, every Collector sends its log to M.A.R.C.U.S. Cloud with each update, so you can read it without signing in to the host: on the **Collectors** page, select **Logs** under the Collector's name. You can search, show only warnings and errors, follow new lines as they arrive, and download the lines as a text file. Lines logged while the cloud is unreachable are buffered with the telemetry and arrive when the connection returns.
+
+- What's sent: the Collector's normal (Info) level and above, not debug output.
+- Kept for 30 days, in the UK, separately for each organisation.
+- Never included: passwords, keys and tokens are never logged, and are removed if they ever appear. Usernames are masked to their first letter.
+- Who can see it: users with the **View Collector logs** permission, which administrators have, and Involve support.
+
+**On the host:**
+
 | Runtime | Where to find logs |
 |---|---|
-| Linux | The systemd journal (`journalctl -u av-bridge`) and `/var/log/av-bridge/` |
-| Windows | `C:\ProgramData\av-bridge\logs\` |
+| Linux | The systemd journal: `journalctl -u av-bridge` |
+| Windows | `C:\ProgramData\av-bridge\logs\av-bridge.log`, kept to 10 MB, with the five previous files alongside it (from version 1.0.55) |
 | Docker and Kubernetes | stdout and stderr. Forward these to your logging platform, such as Amazon CloudWatch Logs, Azure Monitor, Google Cloud Logging or a self-hosted equivalent. |
+
+To keep Collector logs in your own logging or SIEM platform for longer, forward the journal (Linux) or the log file (Windows) with your usual agent.
 
 ## 13. Outages, backup and replacement
 

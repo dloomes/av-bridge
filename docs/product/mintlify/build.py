@@ -30,9 +30,12 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import sys
+import time
+import urllib.parse
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -52,7 +55,7 @@ PAGES: dict[str, dict] = {}
 STATIC_GROUPS: list[dict] = [
     {"group": "Using the portal", "icon": "computer-mouse", "folder": "portal",
      "pages": ["getting-around", "overview-and-map", "dashboards", "devices", "alerts",
-               "room-readiness", "test-routines"]},
+               "reports", "room-readiness", "test-routines"]},
     {"group": "Administration", "icon": "user-gear", "folder": "admin",
      "pages": ["users-and-access", "roles", "single-sign-on", "notifications",
                "api-tokens", "branding", "audit-log"]},
@@ -358,14 +361,184 @@ def guide_nav(guide: dict) -> dict:
     return {"group": guide["group"], "icon": guide.get("icon"), "pages": pages}
 
 
+_DOWNLOAD_LINK = re.compile(r"\[([^\]]+)\]\(/(files/[^)\s]+\.csv)\)")
+
+
+def inline_downloads(mdx: str, static: Path) -> str:
+    """Rewrites [text](/files/x.csv) as a link that carries the file as a
+    data: URL with a download attribute, so it downloads on any Mintlify plan
+    (the plain path only works on Enterprise). A UTF-8 byte-order mark is
+    added so Excel opens accented characters correctly; the asset import
+    accepts it."""
+    def repl(m: re.Match) -> str:
+        path = static / m.group(2)
+        if not path.exists():
+            raise SystemExit(f"{m.group(2)} is linked but missing from static/")
+        data = urllib.parse.quote("\ufeff" + path.read_text(encoding="utf-8"), safe="")
+        return f'<a href="data:text/csv;charset=utf-8,{data}" download="{path.name}">{m.group(1)}</a>'
+    return _DOWNLOAD_LINK.sub(repl, mdx)
+
+
+# Every page this build writes gets a footer, "Updated 23 Oct 2026 14:52 ·
+# page a1b2c3d": when the page's content last changed, and a fingerprint of
+# that content. Both stay the same while the page does (the date is carried
+# over from the previous build's docs-build.json), so an unchanged page is
+# byte-for-byte the same and a publish only touches pages that changed.
+# Compare a live page's footer with out/docs-build.json to see whether it's
+# the latest. A page with no footer came from static/ rather than out/.
+_STAMP = re.compile(r"\n*<p className=\"docs-build-stamp\"[^\n]*</p>\n*\Z")
+
+
+def stamp_pages(out_dir: Path, since: float) -> int:
+    manifest_path = out_dir / "docs-build.json"
+    previous: dict[str, dict] = {}
+    if manifest_path.exists():
+        for slug, v in json.loads(manifest_path.read_text(encoding="utf-8")).get("pages", {}).items():
+            if isinstance(v, dict):
+                previous[slug] = v
+    now = time.strftime("%d %b %Y %H:%M")
+    pages: dict[str, dict] = {}
+    for path in sorted(out_dir.rglob("*.mdx")):
+        if path.stat().st_mtime < since:
+            continue  # not written by this build (a page from an older one)
+        text = _STAMP.sub("\n", path.read_text(encoding="utf-8")).rstrip("\n") + "\n"
+        page = hashlib.sha256(text.encode("utf-8")).hexdigest()[:7]
+        slug = path.relative_to(out_dir).with_suffix("").as_posix()
+        prev = previous.get(slug, {})
+        updated = prev["updated"] if prev.get("page") == page else now
+        pages[slug] = {"page": page, "updated": updated}
+        path.write_text(
+            text + f'\n<p className="docs-build-stamp" style={{{{fontSize: "0.75rem", opacity: 0.6, marginTop: "3rem"}}}}>'
+            f"Updated {updated} · page {page}</p>\n",
+            encoding="utf-8", newline="\n")
+    manifest_path.write_text(json.dumps({"built": now, "pages": pages}, indent=2) + "\n", encoding="utf-8")
+    return len(pages)
+
+
+# ── Sync into the Mintlify repo ───────────────────────────────────────────────
+#
+# The published site builds from a separate repo (path in .mintlify-repo).
+# After a build, everything in out/ is copied there, except the
+# build's own working files; the repo's docs.json keeps its settings and
+# only gets its navigation replaced. .marcus-build.json in the repo records
+# what the sync wrote, with a hash of each file, so the next sync can:
+#  - leave alone a page edited in the repo since (say on GitHub), and say
+#    so: bring the change into static/ or the source documents, or --force;
+#  - delete a page it wrote that the build no longer produces, but never a
+#    file it didn't write (README, index.mdx, logos...).
+# Nothing is committed or pushed: review and push from the repo.
+
+REPO_CONFIG = HERE / ".mintlify-repo"
+REPO_MANIFEST = ".marcus-build.json"
+# out/ files that are the build's own, not site content.
+NOT_SYNCED = {"docs.json", "docs-navigation.json", "docs-build.json"}
+
+
+def configured_repo() -> Path | None:
+    if not REPO_CONFIG.exists():
+        return None
+    line = REPO_CONFIG.read_text(encoding="utf-8").strip()
+    return Path(line) if line else None
+
+
+def _sha(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def sync_repo(out_dir: Path, repo: Path, force: bool, since: float) -> int:
+    if not (repo / "docs.json").exists():
+        print(f"{repo} doesn't look like a Mintlify repo (no docs.json); not synced", file=sys.stderr)
+        return 1
+    manifest_path = repo / REPO_MANIFEST
+    previous: dict[str, str] = {}
+    if manifest_path.exists():
+        previous = json.loads(manifest_path.read_text(encoding="utf-8")).get("files", {})
+
+    written: dict[str, str] = {}
+    copied, unchanged, kept = [], 0, []
+    for src in sorted(p for p in out_dir.rglob("*") if p.is_file()):
+        rel = src.relative_to(out_dir).as_posix()
+        # Only what this build wrote: out/ can hold pages from older builds
+        # (a renamed API endpoint, say), which mustn't be published.
+        if rel in NOT_SYNCED or src.stat().st_mtime < since:
+            continue
+        dest = repo / rel
+        new = _sha(src)
+        if dest.exists():
+            current = _sha(dest)
+            if current == new:
+                written[rel] = new
+                unchanged += 1
+                continue
+            # Changed in the repo since we last wrote it: someone edited it there.
+            if rel in previous and current != previous[rel] and not force:
+                kept.append(rel)
+                written[rel] = previous[rel]
+                continue
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(src.read_bytes())
+        written[rel] = new
+        copied.append(rel)
+
+    # Pages a previous sync wrote that the build no longer produces, unless
+    # they've been edited in the repo since.
+    removed = []
+    for rel, h in previous.items():
+        if rel in written:
+            continue
+        dest = repo / rel
+        if dest.exists() and _sha(dest) == h:
+            dest.unlink()
+            removed.append(rel)
+
+    # docs.json: keep everything, replace the navigation.
+    docs_json = repo / "docs.json"
+    cfg = json.loads(docs_json.read_text(encoding="utf-8"))
+    nav = json.loads((out_dir / "docs-navigation.json").read_text(encoding="utf-8"))
+    nav_changed = cfg.get("navigation") != nav
+    if nav_changed:
+        cfg["navigation"] = nav
+        docs_json.write_text(json.dumps(cfg, indent=2, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
+
+    build = json.loads((out_dir / "docs-build.json").read_text(encoding="utf-8"))
+    manifest_path.write_text(json.dumps({"built": build["built"], "files": written}, indent=2) + "\n",
+                             encoding="utf-8", newline="\n")
+    ignore = repo / ".mintignore"
+    lines = ignore.read_text(encoding="utf-8").splitlines() if ignore.exists() else []
+    if REPO_MANIFEST not in lines:
+        ignore.write_text("\n".join(lines + ["", "# The av-bridge docs build's record of the files it manages", REPO_MANIFEST]) + "\n",
+                          encoding="utf-8", newline="\n")
+
+    print(f"\nsynced into {repo}: {len(copied)} updated, {unchanged} unchanged, {len(removed)} removed"
+          + (", docs.json navigation updated" if nav_changed else ""))
+    for rel in copied:
+        print(f"  updated {rel}")
+    for rel in removed:
+        print(f"  removed {rel}")
+    if kept:
+        print("\nedited in the repo since the last sync, so left as they are (bring the change into the"
+              " av-bridge docs, or re-run with --force to overwrite):")
+        for rel in kept:
+            print(f"  {rel}")
+    print(f"\nreview and publish:  cd \"{repo}\"  &&  git status  &&  git add -A  &&  git commit  &&  git push")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("docs", nargs="*", help="documents to build (default: all)")
     ap.add_argument("--out", type=Path, default=HERE / "out")
+    ap.add_argument("--repo", type=Path, default=None,
+                    help="Mintlify docs repo to sync the build into (default: the path in .mintlify-repo)")
+    ap.add_argument("--no-sync", action="store_true", help="build into --out only; don't sync the Mintlify repo")
+    ap.add_argument("--force", action="store_true",
+                    help="sync over pages edited in the Mintlify repo since the last sync")
     ap.add_argument("--api-base", default=None,
                     help="API server shown in the API reference and used by its playground "
                          "(default: the UAT API)")
     args = ap.parse_args()
+    # A second's slack: some filesystems keep modification times to the second.
+    started = time.time() - 1
 
     # "devices" is the Supported devices section, generated from the adapter
     # catalogue by adapter_docs.py rather than from a Markdown source.
@@ -382,7 +555,7 @@ def main() -> int:
     # Navigation is two sections. Documentation starts with the hand-written
     # Introduction (static/quickstart.mdx); the API reference tab is filled
     # by api_docs. docs-navigation.json is the whole "navigation" value.
-    doc_groups = [{"group": "Introduction", "icon": "book-open", "pages": ["quickstart"]}]
+    doc_groups = [{"group": "Introduction", "icon": "book-open", "pages": ["quickstart", "onboarding"]}]
     for g in STATIC_GROUPS:
         folder = HERE / "static" / g["folder"]
         present = sorted(p.stem for p in folder.glob("*.mdx")) if folder.exists() else []
@@ -426,10 +599,18 @@ def main() -> int:
 
     # Hand-written Mintlify-only pages (no Word equivalent), e.g. quickstart.
     static = HERE / "static"
-    for src in sorted(static.rglob("*.mdx")):
+    # Downloads the pages link to, such as the asset import template, are
+    # copied too, but Mintlify only serves .csv files on its Enterprise plan;
+    # elsewhere the link 404s. So a page's links to /files/*.csv are also
+    # rewritten to carry the file itself (inline_downloads), which works on
+    # any plan.
+    for src in sorted([*static.rglob("*.mdx"), *static.rglob("*.csv")]):
         dest = args.out / src.relative_to(static)
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(src.read_bytes())
+        if src.suffix == ".mdx":
+            dest.write_text(inline_downloads(src.read_text(encoding="utf-8"), static), encoding="utf-8")
+        else:
+            dest.write_bytes(src.read_bytes())
         print(f"wrote {dest}")
 
     # Brand assets (generated by logo/make_logo.py) — docs.json points at
@@ -441,6 +622,12 @@ def main() -> int:
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(src.read_bytes())
             print(f"wrote {dest}")
+    n = stamp_pages(args.out, started)
+    print(f"stamped {n} pages (out/docs-build.json lists each page's fingerprint)")
+
+    repo = args.repo or configured_repo()
+    if repo and not args.no_sync:
+        return sync_repo(args.out, repo, args.force, started)
     return 0
 
 

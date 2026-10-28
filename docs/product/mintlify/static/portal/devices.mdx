@@ -23,6 +23,8 @@ Select **View** on a device to open its page. The header shows its status, room,
 
 Sony displays also show their power state next to their status: **Power on** or **Standby**. A display in standby still answers on the network, so it shows as **Online** as well. The power state shows on the **Devices** list too.
 
+Video codecs show their call state next to their status in the same way: **In a call** (or **In 2 calls**), **Ringing**, **Connecting**, **On hold** or **Idle**. It shows on the **Devices** list and the device page while the codec is online. Cisco and Poly codecs report it; see [Supported devices](/devices/overview).
+
 ### Device Information
 
 **Device Information** shows everything the device reports, refreshed every 10 seconds: identity such as model, serial number and firmware version, network details, and the device's own readings, such as power state, input, volume or temperature. Which readings appear depends on the device; see [Supported devices](/devices/overview).
@@ -70,7 +72,7 @@ Each session:
 
 The **Web interface** window lists the device's open sessions. Select **End** to end one straight away.
 
-You need the **Remote access** permission, which administrators have. The device's Collector must be online and on version 1.0.41 or later; if it isn't, the portal says so and you can [update it](/deploy/updates).
+You need the **Remote access** permission, which administrators have. The device's Collector must be online and on version 1.0.41 or later. If it isn't, the portal says the Collector isn't connected for remote access; it may need [updating](/deploy/updates) to the latest version.
 
 <Note>
 Only the device's web page is relayed. Remote desktop, SSH and Telnet aren't available yet.
@@ -103,7 +105,7 @@ Each device runs the command if it has it, and the summary shows how many were q
 
 Administrators with the **Manage devices** permission can select **New device** on the **Devices** page, or **Edit** on a device page. See [Supported devices](/devices/overview) for what to enter for each kind of device.
 
-Leave **Poll rate (seconds)** blank to use the default for the kind of device: every 60 seconds for most, every 5 minutes for power distribution units, which log in for each reading. Set a value only where you need faster or slower updates.
+Leave **Poll rate (seconds)** blank to use the default for the kind of device: every 60 seconds for most, every 5 minutes for ATEN power distribution units, which log in for each reading. Set a value only where you need faster or slower updates.
 
 ### Move a device to another Collector
 
