@@ -790,6 +790,15 @@ export interface ReadinessRoomRow {
   effective_test_routine_name?: string;
   effective_run_time: string;
   effective_days_of_week: number[];
+  // The room tag the room's check comes from, when one of its tags has a
+  // check; and what the room inherits (from that tag, else the default)
+  // for the fields it doesn't set itself.
+  tag_id?: string;
+  tag_name?: string;
+  inherited_test_routine_id?: string;
+  inherited_test_routine_name?: string;
+  inherited_run_time: string;
+  inherited_days_of_week: number[];
   has_override: boolean;
   override_test_routine_id?: string;
   override_run_time?: string;
@@ -798,6 +807,22 @@ export interface ReadinessRoomRow {
   power_enabled: boolean;
   power_off_time?: string;
   power_on_time?: string;
+}
+
+// A room tag's readiness check (GET /api/v1/readiness/tags), in priority
+// order. configured: the tag has a check; its unset fields inherit the
+// default.
+export interface ReadinessTagRow {
+  tag_id: string;
+  name: string;
+  colour: string;
+  priority?: number;
+  room_count: number;
+  configured: boolean;
+  test_routine_id?: string;
+  test_routine_name?: string;
+  run_time?: string;
+  days_of_week?: number[];
 }
 
 // Three-state like UpdateRoomOverrideBody: undefined = leave, null =
@@ -1119,6 +1144,28 @@ export const api = {
   resetReadinessRoom: (roomID: string) =>
     request<void>(`/api/v1/readiness/rooms/${encodeURIComponent(roomID)}`, {
       method: "DELETE",
+    }),
+
+  listReadinessTags: (signal?: AbortSignal) =>
+    request<ReadinessTagRow[]>("/api/v1/readiness/tags", { signal }),
+
+  // Same three-state body as a room's.
+  updateReadinessTag: (tagID: string, body: UpdateReadinessRoomBody) =>
+    request<void>(`/api/v1/readiness/tags/${encodeURIComponent(tagID)}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+
+  resetReadinessTag: (tagID: string) =>
+    request<void>(`/api/v1/readiness/tags/${encodeURIComponent(tagID)}`, {
+      method: "DELETE",
+    }),
+
+  // The tags in priority order: the first with a check wins for a room.
+  setReadinessTagOrder: (tagIDs: string[]) =>
+    request<void>("/api/v1/readiness/tag-order", {
+      method: "PUT",
+      body: JSON.stringify({ tag_ids: tagIDs }),
     }),
 
   listNightlyRuns: (opts?: ListRunsOpts, signal?: AbortSignal) => {

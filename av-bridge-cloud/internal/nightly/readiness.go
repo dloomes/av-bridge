@@ -37,18 +37,19 @@ type readinessRoom struct {
 func (s *Scheduler) collectReadinessRooms(ctx context.Context) ([]readinessRoom, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT rs.customer_id::text, r.id::text, r.name,
-		       COALESCE(rrc.test_routine_id, rs.test_routine_id)::text,
-		       COALESCE(rrc.run_time, rs.run_time),
-		       COALESCE(rrc.days_of_week, rs.days_of_week),
+		       COALESCE(rrc.test_routine_id, rtr.test_routine_id, rs.test_routine_id)::text,
+		       COALESCE(rrc.run_time, rtr.run_time, rs.run_time),
+		       COALESCE(rrc.days_of_week, rtr.days_of_week, rs.days_of_week),
 		       COALESCE(ns.timezone, 'Europe/London'),
 		       rnc.excluded_until
 		  FROM readiness_schedule rs
 		  JOIN rooms r                       ON r.customer_id = rs.customer_id
 		  LEFT JOIN room_readiness_config rrc ON rrc.room_id = r.id
+		  LEFT JOIN room_tag_readiness rtr    ON rtr.room_id = r.id
 		  LEFT JOIN room_nightly_config rnc   ON rnc.room_id = r.id
 		  LEFT JOIN nightly_schedule ns       ON ns.customer_id = rs.customer_id
 		 WHERE rs.enabled = true
-		   AND COALESCE(rrc.test_routine_id, rs.test_routine_id) IS NOT NULL`)
+		   AND COALESCE(rrc.test_routine_id, rtr.test_routine_id, rs.test_routine_id) IS NOT NULL`)
 	if err != nil {
 		return nil, err
 	}

@@ -5,11 +5,14 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
+  ArrowDown,
+  ArrowUp,
   FileCode2,
   Loader2,
   Play,
   RotateCcw,
   Settings2,
+  Tags,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -19,10 +22,11 @@ import { useToast } from "@/components/toast";
 import { api } from "@/lib/api";
 import type { RoomTag } from "@/lib/api";
 import type { NamedRow } from "@/lib/types";
-import { RoomTagChips, TagFilter } from "@/components/room-tags";
+import { RoomTagChips, TagChip, TagFilter } from "@/components/room-tags";
 import type {
   NightlyRoutineRow,
   ReadinessRoomRow,
+  ReadinessTagRow,
   ReadinessSchedule,
   UpdateReadinessRoomBody,
   UpdateReadinessScheduleBody,
@@ -37,8 +41,9 @@ import {
 
 // Readiness checks — the routine half of Room Readiness, on its own
 // schedule, separate from the power schedule. A default (routine, time,
-// days) for every room, and a room's own where it needs different checks
-// or a different time.
+// days) for every room; a room tag's, for rooms with that tag; and a
+// room's own where it needs different checks or a different time. Each
+// field resolves room → tag → default (migration 0071).
 
 const inputClass =
   "w-full rounded-md border bg-background px-3 py-2 text-sm disabled:opacity-50";
@@ -136,15 +141,18 @@ export function ReadinessPanel({ canManage }: { canManage: boolean }) {
   const [tags, setTags] = useState<RoomTag[]>([]);
   const [tagsByRoom, setTagsByRoom] = useState<Map<string, string[]>>(new Map());
   const [tagFilter, setTagFilter] = useState("");
+  const [readinessTags, setReadinessTags] = useState<ReadinessTagRow[]>([]);
+  const [editingTag, setEditingTag] = useState<ReadinessTagRow | null>(null);
 
   const load = useCallback(async (signal?: AbortSignal) => {
     try {
-      const [s, rs, rt, tg, roomList] = await Promise.all([
+      const [s, rs, rt, tg, roomList, rtags] = await Promise.all([
         api.getReadinessSchedule(signal),
         api.listReadinessRooms(signal),
         api.listNightlyRoutines(signal),
         api.listRoomTags(signal).catch(() => [] as RoomTag[]),
         api.listRooms(signal).catch(() => [] as NamedRow[]),
+        api.listReadinessTags(signal).catch(() => [] as ReadinessTagRow[]),
       ]);
       if (signal?.aborted) return;
       setLoaded(s);
@@ -156,6 +164,7 @@ export function ReadinessPanel({ canManage }: { canManage: boolean }) {
       setRoutines(rt);
       setTags(tg);
       setTagsByRoom(new Map(roomList.map((r) => [r.id, r.tag_ids ?? []])));
+      setReadinessTags(rtags);
       setError(null);
     } catch (e) {
       if (!signal?.aborted) setError((e as Error).message);
@@ -371,6 +380,16 @@ export function ReadinessPanel({ canManage }: { canManage: boolean }) {
         </CardContent>
       </Card>
 
+      {/* ── By room tag ──────────────────────────────────────────────── */}
+      {readinessTags.length > 0 && (
+        <ReadinessTagsCard
+          tags={readinessTags}
+          canManage={canManage}
+          onEdit={setEditingTag}
+          onChanged={() => void load()}
+        />
+      )}
+
       {/* ── Rooms ─────────────────────────────────────────────────────── */}
       <Card>
         <CardContent className="p-6 space-y-4">
@@ -378,8 +397,8 @@ export function ReadinessPanel({ canManage }: { canManage: boolean }) {
             <div>
               <h2 className="text-sm font-semibold">Rooms</h2>
               <p className="mt-1 text-xs text-muted-foreground">
-                Each room uses the default check unless you customise it. Excluded
-                rooms (set on the Power schedule tab) are skipped.
+                Each room uses its tag&apos;s check, or the default, unless you
+                customise it. Excluded rooms (set on the Power schedule tab) are skipped.
               </p>
             </div>
             <div className="flex shrink-0 flex-wrap items-center gap-3">
@@ -456,6 +475,8 @@ export function ReadinessPanel({ canManage }: { canManage: boolean }) {
                                 <Badge variant="warning">Excluded until {r.excluded_until}</Badge>
                               ) : r.has_override ? (
                                 <Badge variant="secondary">Customised</Badge>
+                              ) : r.tag_name ? (
+                                <span className="text-xs text-muted-foreground">From tag {r.tag_name}</span>
                               ) : (
                                 <span className="text-xs text-muted-foreground">Inherits default</span>
                               )}
@@ -528,13 +549,53 @@ export function ReadinessPanel({ canManage }: { canManage: boolean }) {
       </Card>
 
       {editing && (
-        <ReadinessRoomModal
-          room={editing}
-          defaults={loaded}
+        <ReadinessCheckModal
+          title={`Readiness check for "${editing.room_name}"`}
+          what="this room's check"
+          own={{
+            routineID: editing.override_test_routine_id,
+            runTime: editing.override_run_time,
+            days: editing.override_days_of_week,
+          }}
+          inherits={{
+            from: editing.tag_name ? `the ${editing.tag_name} tag` : "the default",
+            routineID: editing.inherited_test_routine_id,
+            routineName: editing.inherited_test_routine_name,
+            runTime: editing.inherited_run_time,
+            days: editing.inherited_days_of_week,
+          }}
           routines={routines}
+          save={(body) => api.updateReadinessRoom(editing.room_id, body)}
+          savedMessage={`Saved the check for "${editing.room_name}"`}
           onClose={() => setEditing(null)}
           onSaved={() => {
             setEditing(null);
+            void load();
+          }}
+        />
+      )}
+      {editingTag && (
+        <ReadinessCheckModal
+          title={`Readiness check for rooms tagged ${editingTag.name}`}
+          what="this tag's check"
+          own={{
+            routineID: editingTag.test_routine_id,
+            runTime: editingTag.run_time,
+            days: editingTag.days_of_week,
+          }}
+          inherits={{
+            from: "the default",
+            routineID: loaded.test_routine_id,
+            routineName: loaded.test_routine_name,
+            runTime: loaded.run_time,
+            days: loaded.days_of_week,
+          }}
+          routines={routines}
+          save={(body) => api.updateReadinessTag(editingTag.tag_id, body)}
+          savedMessage={`Saved the check for ${editingTag.name}`}
+          onClose={() => setEditingTag(null)}
+          onSaved={() => {
+            setEditingTag(null);
             void load();
           }}
         />
@@ -543,31 +604,40 @@ export function ReadinessPanel({ canManage }: { canManage: boolean }) {
   );
 }
 
-// A room's own check: tick Customise on a field to override the default;
-// leave it unticked to inherit.
-function ReadinessRoomModal({
-  room,
-  defaults,
+// A room's or a tag's own check: tick Customise on a field to set it;
+// leave it unticked to inherit (a room from its tag or the default, a tag
+// from the default).
+function ReadinessCheckModal({
+  title,
+  what,
+  own,
+  inherits,
   routines,
+  save,
+  savedMessage,
   onClose,
   onSaved,
 }: {
-  room: ReadinessRoomRow;
-  defaults: ReadinessSchedule;
+  title: string;
+  what: string; // "this room's check", for the discard prompt
+  own: { routineID?: string; runTime?: string; days?: number[] };
+  inherits: { from: string; routineID?: string; routineName?: string; runTime: string; days: number[] };
   routines: NightlyRoutineRow[];
+  save: (body: UpdateReadinessRoomBody) => Promise<void>;
+  savedMessage: string;
   onClose: () => void;
   onSaved: () => void;
 }) {
   const { toast } = useToast();
-  const [customRoutine, setCustomRoutine] = useState(room.override_test_routine_id !== undefined);
-  const [customTime, setCustomTime] = useState(room.override_run_time !== undefined);
-  const [customDays, setCustomDays] = useState(room.override_days_of_week !== undefined);
+  const [customRoutine, setCustomRoutine] = useState(own.routineID !== undefined);
+  const [customTime, setCustomTime] = useState(own.runTime !== undefined);
+  const [customDays, setCustomDays] = useState(own.days !== undefined);
   const [routineID, setRoutineID] = useState(
-    room.override_test_routine_id ?? defaults.test_routine_id ?? routines[0]?.id ?? ""
+    own.routineID ?? inherits.routineID ?? routines[0]?.id ?? ""
   );
-  const [runTime, setRunTime] = useState(room.override_run_time ?? defaults.run_time);
+  const [runTime, setRunTime] = useState(own.runTime ?? inherits.runTime);
   const [days, setDays] = useState<number[]>(
-    [...(room.override_days_of_week ?? defaults.days_of_week)].sort((a, b) => a - b)
+    [...(own.days ?? inherits.days)].sort((a, b) => a - b)
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -581,8 +651,8 @@ function ReadinessRoomModal({
       days_of_week: customDays ? days : null,
     };
     try {
-      await api.updateReadinessRoom(room.room_id, body);
-      toast({ title: `Saved the check for "${room.room_name}"`, variant: "success" });
+      await save(body);
+      toast({ title: savedMessage, variant: "success" });
       onSaved();
     } catch (e) {
       setError((e as Error).message);
@@ -615,7 +685,7 @@ function ReadinessRoomModal({
         editor
       ) : (
         <div className="text-xs text-muted-foreground">
-          Uses the default: <span className="font-mono text-foreground">{inherit}</span>
+          Uses {inherits.from}: <span className="font-mono text-foreground">{inherit}</span>
         </div>
       )}
     </div>
@@ -625,17 +695,17 @@ function ReadinessRoomModal({
     <Modal
       open
       onClose={onClose}
-      title={`Readiness check for "${room.room_name}"`}
+      title={title}
       wide={false}
       dirty
-      dirtyPrompt="Discard changes to this room's check?"
+      dirtyPrompt={`Discard changes to ${what}?`}
     >
       <div className="space-y-5">
         {row(
           "Routine",
           customRoutine,
           () => setCustomRoutine((v) => !v),
-          defaults.test_routine_name ?? "none",
+          inherits.routineName ?? "none",
           routines.length === 0 ? (
             <div className="text-xs text-muted-foreground">
               No routines yet.{" "}
@@ -652,7 +722,7 @@ function ReadinessRoomModal({
           "Run at",
           customTime,
           () => setCustomTime((v) => !v),
-          defaults.run_time,
+          inherits.runTime,
           <input
             type="time"
             value={runTime}
@@ -666,7 +736,7 @@ function ReadinessRoomModal({
           "Days",
           customDays,
           () => setCustomDays((v) => !v),
-          summariseDays(defaults.days_of_week),
+          summariseDays(inherits.days),
           <DayButtons days={days} onChange={setDays} disabled={saving} />
         )}
         {error && (
@@ -685,5 +755,127 @@ function ReadinessRoomModal({
         </div>
       </div>
     </Modal>
+  );
+}
+
+// ReadinessTagsCard: a check per room tag, for every room with the tag
+// that doesn't set its own. A room with several tags takes the first one
+// here that has a check, so the order matters; move tags up and down.
+function ReadinessTagsCard({
+  tags,
+  canManage,
+  onEdit,
+  onChanged,
+}: {
+  tags: ReadinessTagRow[];
+  canManage: boolean;
+  onEdit: (tag: ReadinessTagRow) => void;
+  onChanged: () => void;
+}) {
+  const { toast } = useToast();
+  const [busy, setBusy] = useState(false);
+
+  const move = async (index: number, by: -1 | 1) => {
+    const ids = tags.map((t) => t.tag_id);
+    const [id] = ids.splice(index, 1);
+    ids.splice(index + by, 0, id);
+    setBusy(true);
+    try {
+      await api.setReadinessTagOrder(ids);
+      onChanged();
+    } catch (e) {
+      toast({ title: "Couldn't reorder the tags", description: (e as Error).message, variant: "destructive" });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const reset = async (t: ReadinessTagRow) => {
+    setBusy(true);
+    try {
+      await api.resetReadinessTag(t.tag_id);
+      toast({ title: `Removed the check for ${t.name}`, variant: "success" });
+      onChanged();
+    } catch (e) {
+      toast({ title: "Couldn't remove the check", description: (e as Error).message, variant: "destructive" });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card>
+      <CardContent className="p-6 space-y-4">
+        <div>
+          <h2 className="flex items-center gap-2 text-sm font-semibold">
+            <Tags aria-hidden="true" className="h-4 w-4 text-muted-foreground" />
+            By room tag
+          </h2>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Give a tag its own check, and every room with that tag uses it instead of the default,
+            unless the room is customised. A room with several tags uses the highest one in this list
+            that has a check.
+          </p>
+        </div>
+        <ol className="divide-y rounded-md border" role="list">
+          {tags.map((t, i) => (
+            <li key={t.tag_id} className="flex flex-wrap items-center gap-3 px-3 py-2.5">
+              {canManage && (
+                <span className="flex flex-col">
+                  <button
+                    type="button"
+                    disabled={busy || i === 0}
+                    onClick={() => move(i, -1)}
+                    aria-label={`Move ${t.name} up`}
+                    className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-30"
+                  >
+                    <ArrowUp className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busy || i === tags.length - 1}
+                    onClick={() => move(i, 1)}
+                    aria-label={`Move ${t.name} down`}
+                    className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-30"
+                  >
+                    <ArrowDown className="h-3.5 w-3.5" />
+                  </button>
+                </span>
+              )}
+              <TagChip tag={{ name: t.name, colour: t.colour }} />
+              <span className="text-[11px] text-muted-foreground">
+                {t.room_count} room{t.room_count === 1 ? "" : "s"}
+              </span>
+              <span className="min-w-0 flex-1 text-xs text-muted-foreground">
+                {t.configured ? (
+                  <span className="text-foreground">
+                    <FileCode2 aria-hidden="true" className="mr-1 inline h-3 w-3" />
+                    {t.test_routine_name ?? "Default routine"}
+                    <span className="ml-2 font-mono">{t.run_time ?? "default time"}</span>
+                    <span className="ml-2">{t.days_of_week ? summariseDays(t.days_of_week) : "default days"}</span>
+                  </span>
+                ) : (
+                  "Uses the default"
+                )}
+              </span>
+              {canManage && (
+                <span className="flex items-center gap-1">
+                  <Button variant="ghost" size="sm" className="h-8" disabled={busy} onClick={() => onEdit(t)}>
+                    <Settings2 aria-hidden="true" className="h-3.5 w-3.5" />
+                    {t.configured ? "Edit" : "Set a check"}
+                  </Button>
+                  {t.configured && (
+                    <Button variant="ghost" size="sm" className="h-8" disabled={busy} onClick={() => reset(t)}>
+                      <RotateCcw aria-hidden="true" className="h-3.5 w-3.5" />
+                      Remove
+                    </Button>
+                  )}
+                </span>
+              )}
+            </li>
+          ))}
+        </ol>
+      </CardContent>
+    </Card>
   );
 }

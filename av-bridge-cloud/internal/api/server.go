@@ -372,6 +372,12 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 		mux.Handle("GET /api/v1/readiness/rooms", wrapPerm(portalauth.PermNightlyView, portal.Portal.ListReadinessRooms))
 		mux.Handle("PATCH /api/v1/readiness/rooms/{id}", wrapPerm(portalauth.PermNightlyManage, portal.Portal.UpdateReadinessRoom))
 		mux.Handle("DELETE /api/v1/readiness/rooms/{id}", wrapPerm(portalauth.PermNightlyManage, portal.Portal.ResetReadinessRoom))
+		// Readiness checks by room tag (migration 0071), and the tags'
+		// priority order for rooms with several.
+		mux.Handle("GET /api/v1/readiness/tags", wrapPerm(portalauth.PermNightlyView, portal.Portal.ListReadinessTags))
+		mux.Handle("PATCH /api/v1/readiness/tags/{id}", wrapPerm(portalauth.PermNightlyManage, portal.Portal.UpdateReadinessTag))
+		mux.Handle("DELETE /api/v1/readiness/tags/{id}", wrapPerm(portalauth.PermNightlyManage, portal.Portal.ResetReadinessTag))
+		mux.Handle("PUT /api/v1/readiness/tag-order", wrapPerm(portalauth.PermNightlyManage, portal.Portal.SetReadinessTagOrder))
 		// Test routines — slice 2B. Read gated on nightly.view (viewers
 		// can browse existing routines); writes on nightly.manage.
 		mux.Handle("GET /api/v1/nightly/routines", wrapPerm(portalauth.PermNightlyView, portal.Portal.ListNightlyRoutines))

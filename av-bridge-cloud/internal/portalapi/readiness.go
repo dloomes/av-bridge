@@ -223,6 +223,16 @@ type readinessRoomRow struct {
 	EffectiveRunTime     string  `json:"effective_run_time"`
 	EffectiveDays        []int   `json:"effective_days_of_week"`
 
+	// The tag the room's settings come from (room_tag_readiness), when
+	// one of its tags has a check; and what the room inherits, from that
+	// tag or the default, for the fields it doesn't set itself.
+	TagID                *string `json:"tag_id,omitempty"`
+	TagName              *string `json:"tag_name,omitempty"`
+	InheritedRoutineID   *string `json:"inherited_test_routine_id,omitempty"`
+	InheritedRoutineName *string `json:"inherited_test_routine_name,omitempty"`
+	InheritedRunTime     string  `json:"inherited_run_time"`
+	InheritedDays        []int   `json:"inherited_days_of_week"`
+
 	HasOverride       bool    `json:"has_override"`
 	OverrideRoutineID *string `json:"override_test_routine_id,omitempty"`
 	OverrideRunTime   *string `json:"override_run_time,omitempty"`
@@ -246,8 +256,12 @@ func (h *Handler) ListReadinessRooms(w http.ResponseWriter, r *http.Request) {
 		rows, err := tx.Query(ctx, `
 			SELECT r.id::text, r.name, b.id::text, b.name, loc.name, reg.name,
 			       tr.id::text, tr.name,
-			       COALESCE(rrc.run_time, rs.run_time),
-			       COALESCE(rrc.days_of_week, rs.days_of_week),
+			       COALESCE(rrc.run_time, rtr.run_time, rs.run_time),
+			       COALESCE(rrc.days_of_week, rtr.days_of_week, rs.days_of_week),
+			       rtr.tag_id::text, rtr.tag_name,
+			       itr.id::text, itr.name,
+			       COALESCE(rtr.run_time, rs.run_time),
+			       COALESCE(rtr.days_of_week, rs.days_of_week),
 			       (rrc.id IS NOT NULL),
 			       rrc.test_routine_id::text, rrc.run_time, rrc.days_of_week,
 			       rnc.excluded_until,
@@ -260,9 +274,11 @@ func (h *Handler) ListReadinessRooms(w http.ResponseWriter, r *http.Request) {
 			  LEFT JOIN regions reg               ON reg.id = loc.region_id
 			  LEFT JOIN readiness_schedule rs     ON rs.customer_id = r.customer_id
 			  LEFT JOIN room_readiness_config rrc ON rrc.room_id = r.id
+			  LEFT JOIN room_tag_readiness rtr    ON rtr.room_id = r.id
 			  LEFT JOIN room_nightly_config rnc   ON rnc.room_id = r.id
 			  LEFT JOIN nightly_schedule ns       ON ns.customer_id = r.customer_id
-			  LEFT JOIN nightly_test_routine tr   ON tr.id = COALESCE(rrc.test_routine_id, rs.test_routine_id)
+			  LEFT JOIN nightly_test_routine tr   ON tr.id = COALESCE(rrc.test_routine_id, rtr.test_routine_id, rs.test_routine_id)
+			  LEFT JOIN nightly_test_routine itr  ON itr.id = COALESCE(rtr.test_routine_id, rs.test_routine_id)
 			 ORDER BY reg.name NULLS LAST, loc.name NULLS LAST, b.name NULLS LAST, r.name`)
 		if err != nil {
 			return err
@@ -275,6 +291,8 @@ func (h *Handler) ListReadinessRooms(w http.ResponseWriter, r *http.Request) {
 				locName, regName  *string
 				runTime           time.Time
 				days              []int32
+				inTime            time.Time
+				inDays            []int32
 				ovTime            *time.Time
 				ovDays            []int32
 				excluded          *time.Time
@@ -283,6 +301,8 @@ func (h *Handler) ListReadinessRooms(w http.ResponseWriter, r *http.Request) {
 			if err := rows.Scan(&row.RoomID, &row.RoomName, &bID, &bName, &locName, &regName,
 				&row.EffectiveRoutineID, &row.EffectiveRoutineName,
 				&runTime, &days,
+				&row.TagID, &row.TagName,
+				&row.InheritedRoutineID, &row.InheritedRoutineName, &inTime, &inDays,
 				&row.HasOverride, &row.OverrideRoutineID, &ovTime, &ovDays,
 				&excluded, &row.PowerEnabled, &powerOff, &powerOn); err != nil {
 				return err
@@ -291,6 +311,8 @@ func (h *Handler) ListReadinessRooms(w http.ResponseWriter, r *http.Request) {
 			row.LocationName, row.RegionName = deref(locName), deref(regName)
 			row.EffectiveRunTime = runTime.Format("15:04")
 			row.EffectiveDays = int32sToInts(days)
+			row.InheritedRunTime = inTime.Format("15:04")
+			row.InheritedDays = int32sToInts(inDays)
 			if ovTime != nil {
 				t := ovTime.Format("15:04")
 				row.OverrideRunTime = &t
@@ -333,57 +355,10 @@ func (h *Handler) UpdateReadinessRoom(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	type field struct {
-		col        string
-		set, clear bool
-		v          any
-	}
-	var fields []field
-	parse := func(col string, raw json.RawMessage, check func(json.RawMessage) (any, string)) string {
-		if len(raw) == 0 {
-			return ""
-		}
-		if string(raw) == "null" {
-			fields = append(fields, field{col: col, set: true, clear: true})
-			return ""
-		}
-		v, msg := check(raw)
-		if msg != "" {
-			return col + " " + msg
-		}
-		fields = append(fields, field{col: col, set: true, v: v})
-		return ""
-	}
-	var routine string
-	for _, msg := range []string{
-		parse("test_routine_id", req.TestRoutineID, func(raw json.RawMessage) (any, string) {
-			if json.Unmarshal(raw, &routine) != nil || routine == "" {
-				return nil, "must be a routine id or null"
-			}
-			return routine, ""
-		}),
-		parse("run_time", req.RunTime, func(raw json.RawMessage) (any, string) {
-			var t string
-			if json.Unmarshal(raw, &t) != nil || !isHHMM(t) {
-				return nil, "must be HH:MM or null"
-			}
-			return t, ""
-		}),
-		parse("days_of_week", req.DaysOfWeek, func(raw json.RawMessage) (any, string) {
-			var d []int
-			if json.Unmarshal(raw, &d) != nil {
-				return nil, "must be an array of ISO weekdays or null"
-			}
-			if msg := checkDays(d); msg != "" {
-				return nil, msg
-			}
-			return d, ""
-		}),
-	} {
-		if msg != "" {
-			writeErr(w, http.StatusBadRequest, msg)
-			return
-		}
+	fields, routine, msg := parseReadinessFields(req)
+	if msg != "" {
+		writeErr(w, http.StatusBadRequest, msg)
+		return
 	}
 
 	p, _ := portalauth.From(r.Context())
@@ -413,17 +388,8 @@ func (h *Handler) UpdateReadinessRoom(w http.ResponseWriter, r *http.Request) {
 			ON CONFLICT (room_id) DO NOTHING`, customerID, roomID); err != nil {
 			return err
 		}
-		set, args := []string{}, []any{roomID}
 		payload := map[string]any{"room_id": roomID}
-		for _, f := range fields {
-			var v any
-			if !f.clear {
-				v = f.v
-			}
-			args = append(args, v)
-			set = append(set, fmt.Sprintf("%s = $%d", f.col, len(args)))
-			payload[f.col] = v
-		}
+		set, args := setReadinessFields(fields, []any{roomID}, payload)
 		if len(set) > 0 {
 			if _, err := tx.Exec(ctx, "UPDATE room_readiness_config SET "+strings.Join(set, ", ")+
 				" WHERE room_id = $1", args...); err != nil {
@@ -447,6 +413,82 @@ func (h *Handler) UpdateReadinessRoom(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// readinessField is one setting from a PATCH: set to v, or cleared to
+// inherit.
+type readinessField struct {
+	col        string
+	set, clear bool
+	v          any
+}
+
+// parseReadinessFields reads the routine, time and days of a room's or a
+// tag's readiness PATCH: absent = no change, null = inherit, value = set.
+// routine is the routine id being set, if any, for the caller to check
+// it's the customer's.
+func parseReadinessFields(req updateReadinessRoomReq) (fields []readinessField, routine, msg string) {
+	parse := func(col string, raw json.RawMessage, check func(json.RawMessage) (any, string)) string {
+		if len(raw) == 0 {
+			return ""
+		}
+		if string(raw) == "null" {
+			fields = append(fields, readinessField{col: col, set: true, clear: true})
+			return ""
+		}
+		v, msg := check(raw)
+		if msg != "" {
+			return col + " " + msg
+		}
+		fields = append(fields, readinessField{col: col, set: true, v: v})
+		return ""
+	}
+	for _, m := range []string{
+		parse("test_routine_id", req.TestRoutineID, func(raw json.RawMessage) (any, string) {
+			if json.Unmarshal(raw, &routine) != nil || routine == "" {
+				return nil, "must be a routine id or null"
+			}
+			return routine, ""
+		}),
+		parse("run_time", req.RunTime, func(raw json.RawMessage) (any, string) {
+			var t string
+			if json.Unmarshal(raw, &t) != nil || !isHHMM(t) {
+				return nil, "must be HH:MM or null"
+			}
+			return t, ""
+		}),
+		parse("days_of_week", req.DaysOfWeek, func(raw json.RawMessage) (any, string) {
+			var d []int
+			if json.Unmarshal(raw, &d) != nil {
+				return nil, "must be an array of ISO weekdays or null"
+			}
+			if msg := checkDays(d); msg != "" {
+				return nil, msg
+			}
+			return d, ""
+		}),
+	} {
+		if m != "" {
+			return nil, "", m
+		}
+	}
+	return fields, routine, ""
+}
+
+// setReadinessFields builds "col = $n" for each field, after args'
+// existing entries, and the audit payload's values.
+func setReadinessFields(fields []readinessField, args []any, payload map[string]any) ([]string, []any) {
+	set := []string{}
+	for _, f := range fields {
+		var v any
+		if !f.clear {
+			v = f.v
+		}
+		args = append(args, v)
+		set = append(set, fmt.Sprintf("%s = $%d", f.col, len(args)))
+		payload[f.col] = v
+	}
+	return set, args
 }
 
 // ResetReadinessRoom — DELETE /api/v1/readiness/rooms/{id}

@@ -299,7 +299,7 @@ func (h *Handler) ListReadinessRooms(w http.ResponseWriter, r *http.Request) {
 			SELECT r.id::text, r.name, b.id::text, b.name,
 			       tr.id::text, tr.name,
 			       CASE WHEN tr.id IS NOT NULL
-			            THEN to_char(COALESCE(rrc.run_time, rs.run_time), 'HH24:MI') END,
+			            THEN to_char(COALESCE(rrc.run_time, rtr.run_time, rs.run_time), 'HH24:MI') END,
 			       to_char(rnc.excluded_until, 'YYYY-MM-DD'),
 			       lp.id::text, lr.id::text
 			  FROM rooms r
@@ -307,7 +307,8 @@ func (h *Handler) ListReadinessRooms(w http.ResponseWriter, r *http.Request) {
 			  LEFT JOIN room_nightly_config rnc   ON rnc.room_id = r.id
 			  LEFT JOIN readiness_schedule rs     ON rs.customer_id = r.customer_id
 			  LEFT JOIN room_readiness_config rrc ON rrc.room_id = r.id
-			  LEFT JOIN nightly_test_routine tr   ON tr.id = COALESCE(rrc.test_routine_id, rs.test_routine_id)
+			  LEFT JOIN room_tag_readiness rtr    ON rtr.room_id = r.id
+			  LEFT JOIN nightly_test_routine tr   ON tr.id = COALESCE(rrc.test_routine_id, rtr.test_routine_id, rs.test_routine_id)
 			  LEFT JOIN LATERAL (
 			        SELECT id FROM nightly_run WHERE room_id = r.id AND kind = 'power'
 			         ORDER BY scheduled_at DESC, id DESC LIMIT 1) lp ON true

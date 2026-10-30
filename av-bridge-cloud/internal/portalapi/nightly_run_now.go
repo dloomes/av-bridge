@@ -107,9 +107,10 @@ func (h *Handler) SendRoutineRunNow(w http.ResponseWriter, r *http.Request) {
 		} else {
 			var resolved *string
 			if err := tx.QueryRow(ctx, `
-				SELECT COALESCE(rrc.test_routine_id, rs.test_routine_id)::text
+				SELECT COALESCE(rrc.test_routine_id, rtr.test_routine_id, rs.test_routine_id)::text
 				  FROM readiness_schedule rs
 				  LEFT JOIN room_readiness_config rrc ON rrc.room_id = $1
+				  LEFT JOIN room_tag_readiness rtr    ON rtr.room_id = $1
 				 WHERE rs.customer_id = current_setting('app.current_customer', true)::uuid
 			`, roomID).Scan(&resolved); err != nil {
 				if errors.Is(err, pgx.ErrNoRows) {
