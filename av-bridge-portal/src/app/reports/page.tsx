@@ -15,6 +15,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { UserMenu } from "@/components/user-menu";
 import { api } from "@/lib/api";
+import type { RoomTag } from "@/lib/api";
+import { TagFilter } from "@/components/room-tags";
 import { formatRelative } from "@/lib/utils";
 import type {
   DeviceUptimeRow,
@@ -58,6 +60,14 @@ const TAB_HAS_WINDOW: Record<Tab, boolean> = {
 export default function ReportsPage() {
   const [tab, setTab] = useState<Tab>("uptime");
   const [days, setDays] = useState<Window>(7);
+  // Room tag: every report, and its CSV, covers only rooms with the tag.
+  const [tag, setTag] = useState("");
+  const [roomTags, setRoomTags] = useState<RoomTag[]>([]);
+  useEffect(() => {
+    const ctrl = new AbortController();
+    api.listRoomTags(ctrl.signal).then(setRoomTags).catch(() => {});
+    return () => ctrl.abort();
+  }, []);
 
   return (
     <div className="flex h-app flex-col">
@@ -90,7 +100,8 @@ export default function ReportsPage() {
             ))}
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <TagFilter tags={roomTags} value={tag} onChange={setTag} className="py-1 text-xs" />
             {TAB_HAS_WINDOW[tab] && (
               <>
                 <span className="text-xs text-muted-foreground">Window:</span>
@@ -112,7 +123,7 @@ export default function ReportsPage() {
             )}
             <Button asChild variant="outline" size="sm">
               <a
-                href={api.reportCSVUrl(TAB_CSV_KIND[tab], days)}
+                href={api.reportCSVUrl(TAB_CSV_KIND[tab], days, tag)}
                 download
               >
                 <Download className="h-3.5 w-3.5" />
@@ -122,11 +133,11 @@ export default function ReportsPage() {
           </div>
         </div>
 
-        {tab === "uptime" && <UptimeReport days={days} />}
-        {tab === "usage" && <UsageReport days={days} />}
-        {tab === "events" && <EventsReport days={days} />}
-        {tab === "warranty" && <WarrantyReport />}
-        {tab === "power" && <PowerReport days={days} />}
+        {tab === "uptime" && <UptimeReport days={days} tag={tag} />}
+        {tab === "usage" && <UsageReport days={days} tag={tag} />}
+        {tab === "events" && <EventsReport days={days} tag={tag} />}
+        {tab === "warranty" && <WarrantyReport tag={tag} />}
+        {tab === "power" && <PowerReport days={days} tag={tag} />}
       </div>
     </div>
   );
@@ -134,20 +145,20 @@ export default function ReportsPage() {
 
 // --- Device uptime ---------------------------------------------------------
 
-function UptimeReport({ days }: { days: Window }) {
+function UptimeReport({ days, tag }: { days: Window; tag: string }) {
   const [rows, setRows] = useState<DeviceUptimeRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async (signal?: AbortSignal) => {
     try {
-      const data = await api.deviceUptimeReport(days, signal);
+      const data = await api.deviceUptimeReport(days, signal, tag);
       if (signal?.aborted) return;
       setRows(data);
       setError(null);
     } catch (e) {
       if (!signal?.aborted) setError((e as Error).message);
     }
-  }, [days]);
+  }, [days, tag]);
 
   useEffect(() => {
     setRows(null);
@@ -258,20 +269,20 @@ function UptimeReport({ days }: { days: Window }) {
 // camera counted people. Display power is shown separately, because Room
 // Readiness switches displays on whether the room is used or not.
 
-function UsageReport({ days }: { days: Window }) {
+function UsageReport({ days, tag }: { days: Window; tag: string }) {
   const [rows, setRows] = useState<RoomUsageRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async (signal?: AbortSignal) => {
     try {
-      const data = await api.roomUsageReport(days, signal);
+      const data = await api.roomUsageReport(days, signal, tag);
       if (signal?.aborted) return;
       setRows(data);
       setError(null);
     } catch (e) {
       if (!signal?.aborted) setError((e as Error).message);
     }
-  }, [days]);
+  }, [days, tag]);
 
   useEffect(() => {
     setRows(null);
@@ -400,20 +411,20 @@ function UsageReport({ days }: { days: Window }) {
 // DSP subscription updates), not normal polling, so this shows noisy or
 // faulty rooms, not busy ones. Room use is the Room usage report.
 
-function EventsReport({ days }: { days: Window }) {
+function EventsReport({ days, tag }: { days: Window; tag: string }) {
   const [rows, setRows] = useState<DeviceEventsRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async (signal?: AbortSignal) => {
     try {
-      const data = await api.deviceEventsReport(days, signal);
+      const data = await api.deviceEventsReport(days, signal, tag);
       if (signal?.aborted) return;
       setRows(data);
       setError(null);
     } catch (e) {
       if (!signal?.aborted) setError((e as Error).message);
     }
-  }, [days]);
+  }, [days, tag]);
 
   useEffect(() => {
     setRows(null);
@@ -538,20 +549,20 @@ function bucketToneClass(b: WarrantyBucket): string {
   }
 }
 
-function WarrantyReport() {
+function WarrantyReport({ tag }: { tag: string }) {
   const [rows, setRows] = useState<WarrantyRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async (signal?: AbortSignal) => {
     try {
-      const data = await api.warrantyReport(signal);
+      const data = await api.warrantyReport(signal, tag);
       if (signal?.aborted) return;
       setRows(data);
       setError(null);
     } catch (e) {
       if (!signal?.aborted) setError((e as Error).message);
     }
-  }, []);
+  }, [tag]);
 
   useEffect(() => {
     setRows(null);
@@ -663,20 +674,20 @@ function WarrantyReport() {
 
 // --- Power -----------------------------------------------------------------
 
-function PowerReport({ days }: { days: Window }) {
+function PowerReport({ days, tag }: { days: Window; tag: string }) {
   const [rows, setRows] = useState<PowerRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async (signal?: AbortSignal) => {
     try {
-      const data = await api.powerReport(days, signal);
+      const data = await api.powerReport(days, signal, tag);
       if (signal?.aborted) return;
       setRows(data);
       setError(null);
     } catch (e) {
       if (!signal?.aborted) setError((e as Error).message);
     }
-  }, [days]);
+  }, [days, tag]);
 
   useEffect(() => {
     setRows(null);

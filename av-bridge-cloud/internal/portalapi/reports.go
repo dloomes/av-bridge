@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/dloomes/av-bridge-cloud/internal/devicestatus"
@@ -45,6 +46,27 @@ func reportDays(r *http.Request) int {
 	return n
 }
 
+// reportTag reads ?tag=<room tag id>: only rooms with that tag (room_tags,
+// migration 0070). ok is false, with a 400 written, for a malformed id.
+func reportTag(w http.ResponseWriter, r *http.Request) (tag string, ok bool) {
+	tag = strings.TrimSpace(r.URL.Query().Get("tag"))
+	if tag != "" && !uuidRe.MatchString(tag) {
+		writeErr(w, http.StatusBadRequest, "tag must be a room tag id")
+		return "", false
+	}
+	return tag, true
+}
+
+// tagRoomFilter is " AND <roomCol> is a room with the tag", or "" for no
+// tag. The id is written into the SQL: reportTag has checked it's a UUID,
+// and some report queries take no parameters to add it to.
+func tagRoomFilter(roomCol, tag string) string {
+	if tag == "" {
+		return ""
+	}
+	return " AND " + roomCol + " IN (SELECT room_id FROM room_tag_assignments WHERE tag_id = '" + tag + "')"
+}
+
 // DeviceUptimeReport — GET /api/v1/reports/device-uptime?days=N[&format=csv]
 //
 // Returns one row per device with its sampled uptime percentage over the
@@ -54,6 +76,10 @@ func reportDays(r *http.Request) int {
 func (h *Handler) DeviceUptimeReport(w http.ResponseWriter, r *http.Request) {
 	days := reportDays(r)
 	wantCSV := r.URL.Query().Get("format") == "csv"
+	tag, valid := reportTag(w, r)
+	if !valid {
+		return
+	}
 
 	type row struct {
 		DeviceID      string     `json:"device_id"`
@@ -65,7 +91,7 @@ func (h *Handler) DeviceUptimeReport(w http.ResponseWriter, r *http.Request) {
 		CurrentStatus string     `json:"current_status"`
 		LastSeenAt    *time.Time `json:"last_seen_at,omitempty"`
 	}
-	out, ok := cachedReport(reportKey(r, "device-uptime", days), func() ([]row, bool) {
+	out, ok := cachedReport(reportKey(r, "device-uptime|"+tag, days), func() ([]row, bool) {
 		out := []row{}
 		ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
 			// We cast the parameter to text + concat with '::interval' inline so
@@ -95,7 +121,7 @@ func (h *Handler) DeviceUptimeReport(w http.ResponseWriter, r *http.Request) {
 				-- Daily summaries (internal/telemetry), whole UTC days.
 				LEFT JOIN telemetry_daily t ON t.device_id = d.id
 				      AND t.day >= ((SELECT since FROM win) AT TIME ZONE 'UTC')::date
-				WHERE d.deleted_at IS NULL
+				WHERE d.deleted_at IS NULL`+tagRoomFilter("d.room_id", tag)+`
 				GROUP BY d.id, d.name, d.reported_id, r.name, b.name, d.latest_status, d.last_seen_at, c.last_seen_at, c.serving_seen_at
 				ORDER BY uptime_pct ASC NULLS LAST, dev_name`, days))
 			if err != nil {
@@ -162,6 +188,10 @@ func (h *Handler) DeviceUptimeReport(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) DeviceEventsReport(w http.ResponseWriter, r *http.Request) {
 	days := reportDays(r)
 	wantCSV := r.URL.Query().Get("format") == "csv"
+	tag, valid := reportTag(w, r)
+	if !valid {
+		return
+	}
 
 	type row struct {
 		RoomID       string     `json:"room_id"`
@@ -196,6 +226,7 @@ func (h *Handler) DeviceEventsReport(w http.ResponseWriter, r *http.Request) {
 			  FROM rooms r
 			  LEFT JOIN buildings b ON b.id = r.building_id
 			  LEFT JOIN ev ON ev.room_id = r.id
+			 WHERE true`+tagRoomFilter("r.id", tag)+`
 			 ORDER BY COALESCE(ev.events, 0) DESC, r.name`, days)
 		if err != nil {
 			return err
@@ -250,6 +281,10 @@ func (h *Handler) DeviceEventsReport(w http.ResponseWriter, r *http.Request) {
 // Not windowed — warranty is a lifetime state, not a rolling metric.
 func (h *Handler) WarrantyReport(w http.ResponseWriter, r *http.Request) {
 	wantCSV := r.URL.Query().Get("format") == "csv"
+	tag, valid := reportTag(w, r)
+	if !valid {
+		return
+	}
 
 	type row struct {
 		AssetID       string `json:"asset_id"`
@@ -291,7 +326,7 @@ func (h *Handler) WarrantyReport(w http.ResponseWriter, r *http.Request) {
 			  FROM assets a
 			  LEFT JOIN rooms rm     ON rm.id = a.room_id
 			  LEFT JOIN buildings b  ON b.id  = rm.building_id
-			 WHERE a.status <> 'retired'
+			 WHERE a.status <> 'retired'`+tagRoomFilter("a.room_id", tag)+`
 			 ORDER BY a.warranty_end NULLS LAST, a.name`)
 		if err != nil {
 			return err
@@ -382,6 +417,10 @@ func warrantyBucket(daysLeft *int) string {
 func (h *Handler) RoomUsageReport(w http.ResponseWriter, r *http.Request) {
 	days := reportDays(r)
 	wantCSV := r.URL.Query().Get("format") == "csv"
+	tag, valid := reportTag(w, r)
+	if !valid {
+		return
+	}
 
 	type row struct {
 		RoomID         string  `json:"room_id"`
@@ -397,7 +436,7 @@ func (h *Handler) RoomUsageReport(w http.ResponseWriter, r *http.Request) {
 		PeakPeople     *int    `json:"peak_people"`
 		DisplayOnHours int     `json:"display_on_hours"`
 	}
-	out, ok := cachedReport(reportKey(r, "room-usage", days), func() ([]row, bool) {
+	out, ok := cachedReport(reportKey(r, "room-usage|"+tag, days), func() ([]row, bool) {
 		out := []row{}
 		ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
 			rows, err := tx.Query(ctx, `
@@ -457,6 +496,7 @@ func (h *Handler) RoomUsageReport(w http.ResponseWriter, r *http.Request) {
 				  FROM rooms r
 				  LEFT JOIN buildings b ON b.id = r.building_id
 				  LEFT JOIN per_room p ON p.room_id = r.id
+				 WHERE true`+tagRoomFilter("r.id", tag)+`
 				 ORDER BY COALESCE(p.signal, false) DESC, COALESCE(p.in_use, 0) DESC, r.name`, days)
 			if err != nil {
 				return err
@@ -527,6 +567,10 @@ func (h *Handler) RoomUsageReport(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) PowerReport(w http.ResponseWriter, r *http.Request) {
 	days := reportDays(r)
 	wantCSV := r.URL.Query().Get("format") == "csv"
+	tag, valid := reportTag(w, r)
+	if !valid {
+		return
+	}
 
 	type row struct {
 		RoomID         string  `json:"room_id"`
@@ -633,6 +677,7 @@ func (h *Handler) PowerReport(w http.ResponseWriter, r *http.Request) {
 			  LEFT JOIN buildings b   ON b.id = r.building_id
 			  LEFT JOIN room_rollup rr ON rr.room_id = r.id
 			  LEFT JOIN room_nightly rn ON rn.room_id = r.id
+			 WHERE true`+tagRoomFilter("r.id", tag)+`
 			 ORDER BY consumed_kwh DESC, r.name`,
 			days, windowHours, windowHours, windowHours))
 		if err != nil {

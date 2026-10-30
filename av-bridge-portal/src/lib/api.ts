@@ -441,6 +441,11 @@ export interface Branding {
 // on the backend for the schema.
 // RoomTag — a customer's own label for rooms (Room tags page), any
 // number per room. colour is a key of TAG_COLOURS (components/room-tags).
+// tagParam is "&tag=<id>" for a room tag filter, or "" for none.
+function tagParam(tag?: string): string {
+  return tag ? `&tag=${encodeURIComponent(tag)}` : "";
+}
+
 export interface RoomTag {
   id: string;
   name: string;
@@ -1970,29 +1975,30 @@ export const api = {
 
   // -- reports -----------------------------------------------------------------
 
-  deviceUptimeReport: (days: number, signal?: AbortSignal) =>
+  // Each report takes an optional room tag id: only rooms with that tag.
+  deviceUptimeReport: (days: number, signal?: AbortSignal, tag?: string) =>
     request<DeviceUptimeRow[]>(
-      `/api/v1/reports/device-uptime?days=${days}`,
+      `/api/v1/reports/device-uptime?days=${days}${tagParam(tag)}`,
       { signal }
     ),
 
-  deviceEventsReport: (days: number, signal?: AbortSignal) =>
+  deviceEventsReport: (days: number, signal?: AbortSignal, tag?: string) =>
     request<DeviceEventsRow[]>(
-      `/api/v1/reports/device-events?days=${days}`,
+      `/api/v1/reports/device-events?days=${days}${tagParam(tag)}`,
       { signal }
     ),
 
-  warrantyReport: (signal?: AbortSignal) =>
-    request<WarrantyRow[]>(`/api/v1/reports/warranty`, { signal }),
+  warrantyReport: (signal?: AbortSignal, tag?: string) =>
+    request<WarrantyRow[]>(`/api/v1/reports/warranty?${tagParam(tag).slice(1)}`, { signal }),
 
-  roomUsageReport: (days: number, signal?: AbortSignal) =>
+  roomUsageReport: (days: number, signal?: AbortSignal, tag?: string) =>
     request<RoomUsageRow[]>(
-      `/api/v1/reports/room-usage?days=${days}`,
+      `/api/v1/reports/room-usage?days=${days}${tagParam(tag)}`,
       { signal }
     ),
 
-  powerReport: (days: number, signal?: AbortSignal) =>
-    request<PowerRow[]>(`/api/v1/reports/power?days=${days}`, { signal }),
+  powerReport: (days: number, signal?: AbortSignal, tag?: string) =>
+    request<PowerRow[]>(`/api/v1/reports/power?days=${days}${tagParam(tag)}`, { signal }),
 
   // reportCSVUrl builds the URL for a downloadable CSV including the bearer
   // token as a query param. Used directly in <a download> so the browser
@@ -2004,10 +2010,11 @@ export const api = {
       | "warranty"
       | "room-usage"
       | "power",
-    days: number
+    days: number,
+    tag?: string
   ): string => {
     const tok = currentToken();
-    const auth = tok ? `&token=${encodeURIComponent(tok)}` : "";
+    const auth = (tok ? `&token=${encodeURIComponent(tok)}` : "") + tagParam(tag);
     // Warranty is a lifetime state — no window param.
     if (kind === "warranty") {
       return `${API_BASE}/api/v1/reports/warranty?format=csv${auth}`;

@@ -32,6 +32,7 @@ import {
   type DashboardSummary,
   type DashboardWidget,
   type DashboardWidgetSize,
+  type RoomTag,
 } from "@/lib/api";
 import type { DeviceSummary, NamedRow } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -459,6 +460,7 @@ function WidgetSettings({ widget, onDone }: { widget: DashboardWidget; onDone: (
   const [buildings, setBuildings] = useState<NamedRow[]>([]);
   const [regions, setRegions] = useState<NamedRow[]>([]);
   const [rooms, setRooms] = useState<NamedRow[]>([]);
+  const [roomTags, setRoomTags] = useState<RoomTag[]>([]);
   const [devices, setDevices] = useState<DeviceSummary[]>([]);
   useEffect(() => {
     if (!needsPlaces) return;
@@ -466,6 +468,7 @@ function WidgetSettings({ widget, onDone }: { widget: DashboardWidget; onDone: (
     api.listBuildings(ctrl.signal).then(setBuildings).catch(() => {});
     api.listRegions(ctrl.signal).then(setRegions).catch(() => {});
     api.listRooms(ctrl.signal).then(setRooms).catch(() => {});
+    api.listRoomTags(ctrl.signal).then(setRoomTags).catch(() => {});
     api.listDevices(ctrl.signal).then(setDevices).catch(() => {});
     return () => ctrl.abort();
   }, [needsPlaces]);
@@ -527,6 +530,8 @@ function WidgetSettings({ widget, onDone }: { widget: DashboardWidget; onDone: (
       options = [...buildings].sort((a, b) => a.name.localeCompare(b.name)).map((b) => ({ value: b.name, label: b.name }));
     } else if (f.kind === "room") {
       options = [...rooms].sort((a, b) => a.name.localeCompare(b.name)).map((r) => ({ value: r.id, label: r.name }));
+    } else if (f.kind === "roomtag") {
+      options = roomTags.map((t) => ({ value: t.id, label: t.name }));
     } else {
       options = [...devices]
         .sort((a, b) => a.name.localeCompare(b.name))
@@ -544,6 +549,7 @@ function WidgetSettings({ widget, onDone }: { widget: DashboardWidget; onDone: (
             // Room and device widgets keep the name for their heading.
             if (f.kind === "room") set(v, { room_name: rooms.find((r) => r.id === v)?.name ?? "" });
             else if (f.kind === "device") set(v, { device_name: devices.find((d) => d.id === v)?.name ?? "" });
+            else if (f.kind === "roomtag") set(v, { tag_name: roomTags.find((t) => t.id === v)?.name ?? "" });
             else set(v);
           }}
         >

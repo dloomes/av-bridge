@@ -1,10 +1,12 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AlertCircle, CheckCircle2, Loader2, Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
 import type { BulkCommandResult, DeviceSummary } from "@/lib/types";
+import type { RoomTag } from "@/lib/api";
+import { TagFilter } from "@/components/room-tags";
 
 interface Props {
   devices: DeviceSummary[];
@@ -29,17 +31,40 @@ export function BulkCommandForm({ devices, onClose }: Props) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [results, setResults] = useState<BulkCommandResult[] | null>(null);
+  // Narrow the list to a building and/or a room tag, then Select visible:
+  // e.g. every Courtroom in one court.
+  const [building, setBuilding] = useState("");
+  const [tag, setTag] = useState("");
+  const [roomTags, setRoomTags] = useState<RoomTag[]>([]);
+  const [tagsByRoom, setTagsByRoom] = useState<Map<string, string[]>>(new Map());
+  useEffect(() => {
+    const ctrl = new AbortController();
+    Promise.all([api.listRoomTags(ctrl.signal), api.listRooms(ctrl.signal)])
+      .then(([tg, rooms]) => {
+        if (ctrl.signal.aborted) return;
+        setRoomTags(tg);
+        setTagsByRoom(new Map(rooms.map((r) => [r.id, r.tag_ids ?? []])));
+      })
+      .catch(() => {});
+    return () => ctrl.abort();
+  }, []);
+  const buildings = useMemo(
+    () => Array.from(new Set(devices.map((d) => d.building).filter((b): b is string => !!b))).sort(),
+    [devices]
+  );
 
   const filteredDevices = useMemo(() => {
     const q = filter.trim().toLowerCase();
-    if (!q) return devices;
     return devices.filter(
       (d) =>
-        d.name.toLowerCase().includes(q) ||
-        d.location.toLowerCase().includes(q) ||
-        d.type.toLowerCase().includes(q)
+        (!building || d.building === building) &&
+        (!tag || (!!d.room_id && !!tagsByRoom.get(d.room_id)?.includes(tag))) &&
+        (!q ||
+          d.name.toLowerCase().includes(q) ||
+          d.location.toLowerCase().includes(q) ||
+          d.type.toLowerCase().includes(q))
     );
-  }, [devices, filter]);
+  }, [devices, filter, building, tag, tagsByRoom]);
 
   const toggle = (id: string) =>
     setSelected((prev) => {
@@ -228,12 +253,30 @@ export function BulkCommandForm({ devices, onClose }: Props) {
             {allFilteredSelected ? "Deselect visible" : "Select visible"}
           </button>
         </div>
-        <input
-          className="h-8 w-full rounded-md border border-input bg-background px-3 text-sm mb-2"
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-          placeholder="Filter by name, type, or location…"
-        />
+        <div className="mb-2 flex flex-wrap gap-2">
+          {buildings.length > 1 && (
+            <select
+              aria-label="Filter by building"
+              value={building}
+              onChange={(e) => setBuilding(e.target.value)}
+              className="h-8 rounded-md border border-input bg-background px-2 text-sm"
+            >
+              <option value="">All buildings</option>
+              {buildings.map((b) => (
+                <option key={b} value={b}>
+                  {b}
+                </option>
+              ))}
+            </select>
+          )}
+          <TagFilter tags={roomTags} value={tag} onChange={setTag} className="h-8 py-0" />
+          <input
+            className="h-8 min-w-[12rem] flex-1 rounded-md border border-input bg-background px-3 text-sm"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            placeholder="Filter by name, type, or location…"
+          />
+        </div>
         <ul className="max-h-64 overflow-y-auto rounded-md border">
           {filteredDevices.length === 0 && (
             <li className="p-3 text-center text-xs text-muted-foreground">

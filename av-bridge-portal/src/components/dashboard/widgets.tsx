@@ -41,7 +41,7 @@ export type WidgetConfig = Record<string, unknown>;
 // A setting shown in the widget's settings panel.
 export type ConfigField =
   | { key: string; label: string; kind: "select"; options: { value: string; label: string }[]; default: string }
-  | { key: string; label: string; kind: "building" | "region" | "room" | "device"; optional?: boolean }
+  | { key: string; label: string; kind: "building" | "region" | "room" | "device" | "roomtag"; optional?: boolean }
   | { key: string; label: string; kind: "text"; placeholder?: string; multiline?: boolean; maxLength: number }
   | { key: string; label: string; kind: "number"; default: number; min: number; max: number };
 
@@ -76,6 +76,15 @@ const DAYS_FIELD: ConfigField = {
   options: [{ value: "1", label: "24 hours" }, { value: "7", label: "7 days" }, { value: "30", label: "30 days" }],
 };
 const BUILDING_FIELD: ConfigField = { key: "building", label: "Building", kind: "building", optional: true };
+// Only rooms with this room tag (and their devices). The settings panel
+// keeps the tag's name as tag_name, for the heading.
+const TAG_FIELD: ConfigField = { key: "tag", label: "Room tag", kind: "roomtag", optional: true };
+
+// withTag adds the room tag to a widget's heading, when it's filtered.
+const withTag = (title: string, c: WidgetConfig) => {
+  const tag = str(c, "tag_name");
+  return str(c, "tag") && tag ? `${title} · ${tag}` : undefined;
+};
 
 // ── Shared pieces ────────────────────────────────────────────────────────
 
@@ -164,11 +173,45 @@ function sharedDevices(): Promise<DeviceSummary[]> {
   return deviceCache.list;
 }
 
-function useDevices(building: string) {
+// Which rooms have which tags, shared like the device list.
+let roomTagCache: { at: number; map: Promise<Map<string, string[]>> } | null = null;
+
+function sharedRoomTags(): Promise<Map<string, string[]>> {
+  if (!roomTagCache || Date.now() - roomTagCache.at > 60_000) {
+    const map = api.listRooms().then((rooms) => new Map(rooms.map((r) => [r.id, r.tag_ids ?? []])));
+    roomTagCache = { at: Date.now(), map };
+    map.catch(() => {
+      roomTagCache = null;
+    });
+  }
+  return roomTagCache.map;
+}
+
+// useTaggedRooms: with a tag, a test of whether a room has it (null
+// until the rooms are loaded); without one, everything passes.
+function useTaggedRooms(tag: string) {
+  const state = usePolling<Map<string, string[]> | null>(
+    () => (tag ? sharedRoomTags() : Promise.resolve(null)),
+    REFRESH_MS,
+    [tag]
+  );
+  return useMemo(() => {
+    if (!tag) return (_room?: string | null) => true;
+    if (!state.data) return null;
+    const map = state.data;
+    return (room?: string | null) => !!room && !!map.get(room)?.includes(tag);
+  }, [tag, state.data]);
+}
+
+function useDevices(building: string, tag = "") {
   const state = usePolling<DeviceSummary[]>(() => sharedDevices(), REFRESH_MS);
+  const inTag = useTaggedRooms(tag);
   const data = useMemo(
-    () => (state.data ? state.data.filter((d) => !building || d.building === building) : null),
-    [state.data, building]
+    () =>
+      state.data && inTag
+        ? state.data.filter((d) => (!building || d.building === building) && inTag(d.room_id))
+        : null,
+    [state.data, building, inTag]
   );
   return { data, error: state.error };
 }
@@ -184,12 +227,13 @@ function devicesHref(params: Record<string, string | undefined>) {
 
 function StatusWidget({ config }: { config: WidgetConfig }) {
   const building = str(config, "building");
-  const state = useDevices(building);
+  const tag = str(config, "tag");
+  const state = useDevices(building, tag);
   return (
     <Load state={state}>
       {(devs) => {
         const count = (s: DeviceStatus) => devs.filter((d) => d.status === s).length;
-        const href = (status: string) => devicesHref({ status, building });
+        const href = (status: string) => devicesHref({ status, building, tag });
         return (
           <div className="grid grid-cols-2 gap-2">
             <Tile label="Online" value={count("online")} tone="ok" href={href("online")} />
@@ -206,7 +250,22 @@ function StatusWidget({ config }: { config: WidgetConfig }) {
 function AlertsWidget({ config }: { config: WidgetConfig }) {
   const severity = str(config, "severity", "any");
   const limit = num(config, "limit", 5);
-  const state = usePolling((s) => api.listAlerts({ status: "open", limit: 200 }, s), REFRESH_MS);
+  const tag = str(config, "tag");
+  const alertsState = usePolling((s) => api.listAlerts({ status: "open", limit: 200 }, s), REFRESH_MS);
+  // With a tag: room alerts by their room, device alerts by their device's.
+  const inTag = useTaggedRooms(tag);
+  const devices = useDevices("");
+  const state = useMemo(() => {
+    if (!tag) return alertsState;
+    if (!alertsState.data || !inTag || !devices.data) return { data: null, error: alertsState.error ?? devices.error };
+    const roomOf = new Map(devices.data.map((d) => [d.id, d.room_id]));
+    return {
+      data: alertsState.data.filter((a) =>
+        a.subject_kind === "collector" ? false : inTag(a.subject_kind === "room" ? a.room_id : roomOf.get(a.device_id))
+      ),
+      error: null,
+    };
+  }, [tag, alertsState, inTag, devices.data, devices.error]);
   return (
     <Load state={state}>
       {(alerts) => {
@@ -241,7 +300,7 @@ function AlertsWidget({ config }: { config: WidgetConfig }) {
 function AttentionWidget({ config }: { config: WidgetConfig }) {
   const building = str(config, "building");
   const limit = num(config, "limit", 5);
-  const state = useDevices(building);
+  const state = useDevices(building, str(config, "tag"));
   return (
     <Load state={state}>
       {(devs) => {
@@ -282,7 +341,8 @@ function AttentionWidget({ config }: { config: WidgetConfig }) {
 function ReadinessWidget({ config }: { config: WidgetConfig }) {
   const kind = str(config, "kind", "any");
   const limit = num(config, "limit", 5);
-  const state = usePolling(
+  const inTag = useTaggedRooms(str(config, "tag"));
+  const runsState = usePolling(
     (s) =>
       api.listNightlyRuns(
         {
@@ -294,6 +354,13 @@ function ReadinessWidget({ config }: { config: WidgetConfig }) {
       ),
     REFRESH_MS,
     [kind]
+  );
+  const state = useMemo(
+    () => ({
+      data: runsState.data && inTag ? runsState.data.filter((r) => inTag(r.room_id)) : null,
+      error: runsState.error,
+    }),
+    [runsState.data, runsState.error, inTag]
   );
   return (
     <Load state={state}>
@@ -330,7 +397,8 @@ function UsageWidget({ config }: { config: WidgetConfig }) {
   const days = num(config, "days", 7);
   const mode = str(config, "mode", "busiest");
   const limit = num(config, "limit", 5);
-  const state = usePolling((s) => api.roomUsageReport(days, s), REPORT_REFRESH_MS, [days]);
+  const tag = str(config, "tag");
+  const state = usePolling((s) => api.roomUsageReport(days, s, tag), REPORT_REFRESH_MS, [days, tag]);
   return (
     <Load state={state}>
       {(rows) => {
@@ -363,7 +431,8 @@ function UsageWidget({ config }: { config: WidgetConfig }) {
 function UptimeWidget({ config }: { config: WidgetConfig }) {
   const days = num(config, "days", 7);
   const limit = num(config, "limit", 5);
-  const state = usePolling((s) => api.deviceUptimeReport(days, s), REPORT_REFRESH_MS, [days]);
+  const tag = str(config, "tag");
+  const state = usePolling((s) => api.deviceUptimeReport(days, s, tag), REPORT_REFRESH_MS, [days, tag]);
   return (
     <Load state={state}>
       {(rows) => {
@@ -416,7 +485,8 @@ function CollectorsWidget() {
 
 function WarrantyWidget({ config }: { config: WidgetConfig }) {
   const limit = num(config, "limit", 5);
-  const state = usePolling((s) => api.warrantyReport(s), 10 * 60_000);
+  const tag = str(config, "tag");
+  const state = usePolling((s) => api.warrantyReport(s, tag), 10 * 60_000, [tag]);
   return (
     <Load state={state}>
       {(rows) => {
@@ -797,8 +867,11 @@ export const WIDGETS: WidgetDef[] = [
   {
     type: "status", title: "Estate status", icon: Radio, defaultSize: "m",
     description: "Devices online, offline, unknown and switched off.",
-    fields: [BUILDING_FIELD],
-    heading: (c) => (str(c, "building") ? `Estate status · ${str(c, "building")}` : undefined),
+    fields: [BUILDING_FIELD, TAG_FIELD],
+    heading: (c) =>
+      [str(c, "building"), str(c, "tag") && str(c, "tag_name")].filter(Boolean).length
+        ? ["Estate status", str(c, "building"), str(c, "tag") ? str(c, "tag_name") : ""].filter(Boolean).join(" · ")
+        : undefined,
     render: (c) => <StatusWidget config={c} />,
   },
   {
@@ -807,14 +880,17 @@ export const WIDGETS: WidgetDef[] = [
     fields: [
       { key: "severity", label: "Severity", kind: "select", default: "any",
         options: [{ value: "any", label: "All" }, { value: "warning", label: "Warning and critical" }, { value: "critical", label: "Critical only" }] },
+      TAG_FIELD,
       LIMIT_FIELD,
     ],
+    heading: (c) => withTag("Open alerts", c),
     render: (c) => <AlertsWidget config={c} />,
   },
   {
     type: "attention", title: "Rooms needing attention", icon: AlertTriangle, defaultSize: "m",
     description: "Rooms with devices offline or not reporting.",
-    fields: [BUILDING_FIELD, LIMIT_FIELD],
+    fields: [BUILDING_FIELD, TAG_FIELD, LIMIT_FIELD],
+    heading: (c) => withTag("Rooms needing attention", c),
     render: (c) => <AttentionWidget config={c} />,
   },
   {
@@ -823,8 +899,10 @@ export const WIDGETS: WidgetDef[] = [
     fields: [
       { key: "kind", label: "Runs", kind: "select", default: "any",
         options: [{ value: "any", label: "All" }, { value: "power", label: "Power schedule" }, { value: "readiness", label: "Readiness checks" }] },
+      TAG_FIELD,
       LIMIT_FIELD,
     ],
+    heading: (c) => withTag("Room Readiness, last 24 hours", c),
     render: (c) => <ReadinessWidget config={c} />,
   },
   {
@@ -833,15 +911,19 @@ export const WIDGETS: WidgetDef[] = [
     fields: [
       { key: "mode", label: "Show", kind: "select", default: "busiest",
         options: [{ value: "busiest", label: "Busiest rooms" }, { value: "least", label: "Least-used rooms" }] },
-      DAYS_FIELD, LIMIT_FIELD,
+      DAYS_FIELD, TAG_FIELD, LIMIT_FIELD,
     ],
-    heading: (c) => (str(c, "mode") === "least" ? "Least-used rooms" : "Busiest rooms"),
+    heading: (c) => {
+      const title = str(c, "mode") === "least" ? "Least-used rooms" : "Busiest rooms";
+      return withTag(title, c) ?? title;
+    },
     render: (c) => <UsageWidget config={c} />,
   },
   {
     type: "uptime", title: "Lowest uptime", icon: Gauge, defaultSize: "m",
     description: "Devices with the lowest uptime over a period.",
-    fields: [DAYS_FIELD, LIMIT_FIELD],
+    fields: [DAYS_FIELD, TAG_FIELD, LIMIT_FIELD],
+    heading: (c) => withTag("Lowest uptime", c),
     render: (c) => <UptimeWidget config={c} />,
   },
   {
@@ -853,7 +935,8 @@ export const WIDGETS: WidgetDef[] = [
   {
     type: "warranty", title: "Warranty", icon: CalendarClock, defaultSize: "m",
     description: "Assets out of warranty or expiring within 90 days.",
-    fields: [LIMIT_FIELD],
+    fields: [TAG_FIELD, LIMIT_FIELD],
+    heading: (c) => withTag("Warranty", c),
     render: (c) => <WarrantyWidget config={c} />,
   },
   {

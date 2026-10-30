@@ -29,6 +29,8 @@ import type {
   UpdateRoomOverrideBody,
 } from "@/lib/api";
 import { EXCLUSION_REASON_LABELS } from "@/lib/api";
+import type { RoomTag } from "@/lib/api";
+import { TagFilter } from "@/components/room-tags";
 import { DatesPanel } from "./dates-panel";
 import { ReadinessPanel } from "./readiness-panel";
 import { DAY_BUTTONS, isFutureDate, summariseDays } from "./shared";
@@ -107,11 +109,22 @@ export default function NightlySchedulePage() {
     }
   }, []);
 
+  // Room tags: filter the rooms list, and act on every room with a tag.
+  const [roomTags, setRoomTags] = useState<RoomTag[]>([]);
+  const [tagsByRoom, setTagsByRoom] = useState<Map<string, string[]>>(new Map());
+  const [roomTagFilter, setRoomTagFilter] = useState("");
+
   const loadRooms = useCallback(async (signal?: AbortSignal) => {
     try {
-      const list = await api.listNightlyRooms(signal);
+      const [list, tg, roomList] = await Promise.all([
+        api.listNightlyRooms(signal),
+        api.listRoomTags(signal).catch(() => [] as RoomTag[]),
+        api.listRooms(signal).catch(() => []),
+      ]);
       if (signal?.aborted) return;
       setRooms(list);
+      setRoomTags(tg);
+      setTagsByRoom(new Map(roomList.map((r) => [r.id, r.tag_ids ?? []])));
       setRoomsError(null);
     } catch (e) {
       if (!signal?.aborted) setRoomsError((e as Error).message);
@@ -296,6 +309,7 @@ export default function NightlySchedulePage() {
       }
     >();
     for (const r of rooms) {
+      if (roomTagFilter && !tagsByRoom.get(r.room_id)?.includes(roomTagFilter)) continue;
       const key = `${r.region_name ?? ""}|${r.location_name ?? ""}|${r.building_id}`;
       if (!map.has(key)) {
         map.set(key, {
@@ -309,7 +323,8 @@ export default function NightlySchedulePage() {
       map.get(key)!.rows.push(r);
     }
     return Array.from(map.values());
-  }, [rooms]);
+  }, [rooms, roomTagFilter, tagsByRoom]);
+  const taggedRooms = useMemo(() => roomGroups.flatMap((g) => g.rows), [roomGroups]);
 
   // Per-building collapsed state — keyed by the same group key the memo
   // above emits. Set semantics (present = collapsed, absent = expanded)
@@ -562,6 +577,12 @@ export default function NightlySchedulePage() {
                         (for a fit-out, refurb, or bank holiday closure).
                       </p>
                     </div>
+                    <TagFilter
+                      tags={roomTags}
+                      value={roomTagFilter}
+                      onChange={setRoomTagFilter}
+                      className="shrink-0 py-1 text-xs"
+                    />
                     {roomGroups.length > 1 && (
                       <Button
                         variant="ghost"
@@ -594,6 +615,16 @@ export default function NightlySchedulePage() {
                     <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs [color:hsl(var(--destructive))]">
                       {roomsError}
                     </div>
+                  )}
+
+                  {roomTagFilter && (canDefer || canManage) && (
+                    <TagRoomsActions
+                      rooms={taggedRooms}
+                      tagName={roomTags.find((t) => t.id === roomTagFilter)?.name ?? "this tag"}
+                      canDefer={canDefer}
+                      canManage={canManage}
+                      onDone={() => void loadRooms()}
+                    />
                   )}
 
                   {rooms === null && !roomsError && (
@@ -1419,6 +1450,160 @@ function OverrideRow({
         <div className="text-xs text-muted-foreground">
           Inherits customer default:{" "}
           <span className="font-mono text-foreground">{inheritValue}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// TagRoomsActions: with the rooms list filtered to a tag, defer tonight's
+// power-down for all of them, or exclude them all until a date (or clear
+// their exclusions). One request per room, through the same endpoints as
+// a room's own buttons, so each is checked and audited as usual.
+function TagRoomsActions({
+  rooms,
+  tagName,
+  canDefer,
+  canManage,
+  onDone,
+}: {
+  rooms: NightlyRoomRow[];
+  tagName: string;
+  canDefer: boolean;
+  canManage: boolean;
+  onDone: () => void;
+}) {
+  const { toast } = useToast();
+  const [busy, setBusy] = useState(false);
+  const [excluding, setExcluding] = useState(false);
+  const [until, setUntil] = useState("");
+  const [reason, setReason] = useState<ExclusionReason | "">("");
+  const [note, setNote] = useState("");
+  const excluded = rooms.filter((r) => r.excluded_until && isFutureDate(r.excluded_until));
+  const n = rooms.length;
+  const plural = (k: number) => `${k} room${k === 1 ? "" : "s"}`;
+
+  // run applies fn to each room, then reports how many worked.
+  const run = async (list: NightlyRoomRow[], fn: (r: NightlyRoomRow) => Promise<unknown>, done: string) => {
+    setBusy(true);
+    const results = await Promise.allSettled(list.map(fn));
+    const failed = results.filter((r) => r.status === "rejected").length;
+    setBusy(false);
+    onDone();
+    if (failed === 0) {
+      toast({ title: done, variant: "success" });
+    } else {
+      toast({
+        title: `${failed} of ${list.length} rooms failed`,
+        description: (results.find((r) => r.status === "rejected") as PromiseRejectedResult).reason?.message,
+        variant: "destructive",
+      });
+    }
+  };
+
+  if (n === 0) return null;
+  return (
+    <div className="rounded-md border bg-muted/40 px-3 py-2 text-sm space-y-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-muted-foreground">
+          {plural(n)} tagged {tagName}
+          {excluded.length > 0 && ` · ${excluded.length} excluded`}
+        </span>
+        <span className="ml-auto" />
+        {canDefer && (
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={busy}
+            onClick={() =>
+              run(rooms, (r) => api.deferRoomTonight(r.room_id), `${plural(n)} will stay on tonight`)
+            }
+          >
+            {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Moon className="h-3.5 w-3.5" />}
+            Defer tonight
+          </Button>
+        )}
+        {canManage && (
+          <Button size="sm" variant="outline" disabled={busy} onClick={() => setExcluding((v) => !v)}>
+            <CalendarOff className="h-3.5 w-3.5" />
+            Exclude…
+          </Button>
+        )}
+        {canManage && excluded.length > 0 && (
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={busy}
+            onClick={() =>
+              run(
+                excluded,
+                (r) =>
+                  api.updateRoomOverride(r.room_id, {
+                    excluded_until: null,
+                    excluded_reason: null,
+                    excluded_note: null,
+                  }),
+                `Cleared exclusions on ${plural(excluded.length)}`
+              )
+            }
+          >
+            <RotateCcw className="h-3.5 w-3.5" />
+            Clear exclusions
+          </Button>
+        )}
+      </div>
+      {excluding && (
+        <div className="flex flex-wrap items-end gap-2 border-t pt-2">
+          <label className="text-xs">
+            <span className="mb-1 block font-medium">Exclude until</span>
+            <input
+              type="date"
+              value={until}
+              onChange={(e) => setUntil(e.target.value)}
+              className="rounded-md border bg-background px-2 py-1 text-sm"
+            />
+          </label>
+          <label className="text-xs">
+            <span className="mb-1 block font-medium">Reason</span>
+            <select
+              value={reason}
+              onChange={(e) => setReason(e.target.value as ExclusionReason | "")}
+              className="rounded-md border bg-background px-2 py-1 text-sm"
+            >
+              <option value="">Select a reason…</option>
+              {(Object.keys(EXCLUSION_REASON_LABELS) as ExclusionReason[]).map((k) => (
+                <option key={k} value={k}>
+                  {EXCLUSION_REASON_LABELS[k]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="min-w-[10rem] flex-1 text-xs">
+            <span className="mb-1 block font-medium">Note (optional)</span>
+            <input
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              className="w-full rounded-md border bg-background px-2 py-1 text-sm"
+            />
+          </label>
+          <Button
+            size="sm"
+            disabled={busy || !until || !reason}
+            onClick={() =>
+              run(
+                rooms,
+                (r) =>
+                  api.updateRoomOverride(r.room_id, {
+                    excluded_until: until,
+                    excluded_reason: reason || null,
+                    excluded_note: note.trim() || null,
+                  }),
+                `Excluded ${plural(n)} until ${until}`
+              ).then(() => setExcluding(false))
+            }
+          >
+            Exclude {plural(n)}
+          </Button>
         </div>
       )}
     </div>

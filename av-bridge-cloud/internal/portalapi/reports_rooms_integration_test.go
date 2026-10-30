@@ -186,4 +186,44 @@ func TestRoomUsageAndDeviceEventsReports(t *testing.T) {
 	if ev[1].EventCount != 0 || ev[2].EventCount != 0 {
 		t.Errorf("rooms without events = %+v", ev[1:])
 	}
+
+	// ?tag= keeps each report to rooms with the tag (and its devices).
+	tag := q(`INSERT INTO room_tags (customer_id, name) VALUES ($1, 'Huddle rooms') RETURNING id::text`, cust)
+	q(`INSERT INTO room_tag_assignments (customer_id, room_id, tag_id) VALUES ($1, $2, $3) RETURNING room_id::text`, cust, huddle, tag)
+	names := func(fn http.HandlerFunc, path, field string) []string {
+		t.Helper()
+		var out []map[string]any
+		_ = json.Unmarshal(get(fn, path).Body.Bytes(), &out)
+		var got []string
+		for _, r := range out {
+			got = append(got, r[field].(string))
+		}
+		return got
+	}
+	for _, c := range []struct {
+		name  string
+		fn    http.HandlerFunc
+		field string
+		want  string
+	}{
+		{"room usage", h.RoomUsageReport, "room_name", "Huddle"},
+		{"device events", h.DeviceEventsReport, "room_name", "Huddle"},
+		{"power", h.PowerReport, "room_name", "Huddle"},
+		{"device uptime", h.DeviceUptimeReport, "name", "tv"},
+	} {
+		if got := names(c.fn, "/r?days=1&tag="+tag, c.field); strings.Join(got, ",") != c.want {
+			t.Errorf("%s by tag = %v, want %s", c.name, got, c.want)
+		}
+	}
+	// Unfiltered results aren't served from the filtered cache, or vice versa.
+	if got := names(h.RoomUsageReport, "/r?days=1", "room_name"); len(got) != 3 {
+		t.Errorf("room usage without tag after a tagged request = %v", got)
+	}
+	req := httptest.NewRequest("GET", "/r?tag=junk", nil)
+	req = req.WithContext(portalauth.ContextWithPrincipal(req.Context(), admin))
+	rec := httptest.NewRecorder()
+	h.RoomUsageReport(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("bad tag = %d", rec.Code)
+	}
 }
