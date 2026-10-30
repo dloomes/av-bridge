@@ -337,8 +337,39 @@ func coordPairValid(lat, lon *float64) bool {
 	}
 	return true
 }
+// ListRooms — GET /api/v1/rooms. Each room with its building (parent_id)
+// and its tag ids (room_tags, migration 0070).
 func (h *Handler) ListRooms(w http.ResponseWriter, r *http.Request) {
-	h.listSimple(w, r, `SELECT id::text, name, building_id::text FROM rooms ORDER BY name`)
+	type roomRow struct {
+		namedRow
+		TagIDs []string `json:"tag_ids"`
+	}
+	out := []roomRow{}
+	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `
+			SELECT r.id::text, r.name, r.building_id::text,
+			       COALESCE(array_agg(a.tag_id::text ORDER BY a.tag_id) FILTER (WHERE a.tag_id IS NOT NULL), '{}')
+			  FROM rooms r
+			  LEFT JOIN room_tag_assignments a ON a.room_id = r.id
+			 GROUP BY r.id
+			 ORDER BY r.name`)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var rr roomRow
+			if err := rows.Scan(&rr.ID, &rr.Name, &rr.ParentID, &rr.TagIDs); err != nil {
+				return err
+			}
+			out = append(out, rr)
+		}
+		return rows.Err()
+	})
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // ----- hierarchy updates -----------------------------------------------------

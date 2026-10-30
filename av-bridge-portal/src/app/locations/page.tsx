@@ -1,8 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   Briefcase,
+  CheckSquare,
+  Square,
+  Tags,
+  X,
   Building2,
   ChevronRight,
   DoorOpen,
@@ -26,7 +32,9 @@ import {
 import { ConfirmDelete, type ImpactCounts } from "@/components/confirm-delete";
 import { useSession } from "@/hooks/useSession";
 import { api } from "@/lib/api";
-import type { Branding, BusinessUnit } from "@/lib/api";
+import type { Branding, BusinessUnit, RoomTag } from "@/lib/api";
+import { RoomTagChips, TagChip, TagFilter, TagPicker } from "@/components/room-tags";
+import { useToast } from "@/components/toast";
 import { hasPermission } from "@/lib/session";
 import type { BuildingRow, DeviceSummary, NamedRow } from "@/lib/types";
 
@@ -69,6 +77,19 @@ export default function LocationsPage() {
   const [deleteTarget, setDeleteTarget] = useState<DeleteState | null>(null);
   const [deleteBU, setDeleteBU] = useState<BusinessUnit | null>(null);
   const [deletingBU, setDeletingBU] = useState(false);
+  // Room tags: the list, the room whose tags are being edited, and the
+  // "Select rooms" mode for tagging many at once.
+  const [tags, setTags] = useState<RoomTag[]>([]);
+  const [tagRoom, setTagRoom] = useState<NamedRow | null>(null);
+  const [selecting, setSelecting] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const { toast } = useToast();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  // ?tag=<id>: only rooms with that tag (and the places above them).
+  const tagFilter = searchParams.get("tag") ?? "";
+  const setTagFilter = (id: string) =>
+    router.replace(id ? `/locations?tag=${encodeURIComponent(id)}` : "/locations");
 
   const load = useCallback(async (signal?: AbortSignal) => {
     try {
@@ -77,7 +98,7 @@ export default function LocationsPage() {
       // none, so a failure to load is treated as "no BUs" rather than
       // a hard error (keeps the page working for the 99% of tenants that
       // never enable the feature).
-      const [rg, lc, bd, rm, dv, br, bus] = await Promise.all([
+      const [rg, lc, bd, rm, dv, br, bus, tg] = await Promise.all([
         api.listRegions(signal),
         api.listLocations(signal),
         api.listBuildings(signal),
@@ -85,6 +106,7 @@ export default function LocationsPage() {
         api.listDevices(signal),
         api.getBranding(signal).catch(() => ({} as Branding)),
         api.listBusinessUnits(signal).catch(() => [] as BusinessUnit[]),
+        api.listRoomTags(signal).catch(() => [] as RoomTag[]),
       ]);
       if (signal?.aborted) return;
       setRegions(rg);
@@ -94,6 +116,7 @@ export default function LocationsPage() {
       setDevices(dv);
       setBUFlagOn(Boolean(br.business_units_enabled));
       setBusinessUnits(bus);
+      setTags(tg);
       setLoadError(null);
     } catch (e) {
       if (!signal?.aborted) setLoadError((e as Error).message);
@@ -140,12 +163,38 @@ export default function LocationsPage() {
     const m = new Map<string, NamedRow[]>();
     (rooms ?? []).forEach((r) => {
       if (!r.parent_id) return;
+      if (tagFilter && !r.tag_ids?.includes(tagFilter)) return;
       const arr = m.get(r.parent_id) ?? [];
       arr.push(r);
       m.set(r.parent_id, arr);
     });
     return m;
-  }, [rooms]);
+  }, [rooms, tagFilter]);
+
+  // With a tag filter, only the places that hold a tagged room are shown.
+  const shown = useMemo(() => {
+    if (!tagFilter) return null;
+    const buildingIDs = new Set(roomsByBuilding.keys());
+    const locationIDs = new Set(
+      (buildings ?? []).filter((b) => buildingIDs.has(b.id)).map((b) => b.parent_id ?? "")
+    );
+    const regionIDs = new Set(
+      (locations ?? []).filter((l) => locationIDs.has(l.id)).map((l) => l.parent_id ?? "")
+    );
+    return { buildingIDs, locationIDs, regionIDs };
+  }, [tagFilter, roomsByBuilding, buildings, locations]);
+  const filterTag = tags.find((t) => t.id === tagFilter);
+
+  const toggleSelected = (ids: string[], on: boolean) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      ids.forEach((id) => (on ? next.add(id) : next.delete(id)));
+      return next;
+    });
+  const stopSelecting = () => {
+    setSelecting(false);
+    setSelected(new Set());
+  };
 
   const devicesByRoom = useMemo(() => {
     const m = new Map<string, number>();
@@ -225,7 +274,18 @@ export default function LocationsPage() {
             Regions, sites, buildings, rooms
           </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <TagFilter tags={tags} value={tagFilter} onChange={setTagFilter} />
+          {admin && tags.length > 0 && (
+            <Button
+              size="sm"
+              variant={selecting ? "secondary" : "outline"}
+              onClick={() => (selecting ? stopSelecting() : setSelecting(true))}
+            >
+              <CheckSquare className="h-3.5 w-3.5" />
+              {selecting ? "Done selecting" : "Select rooms"}
+            </Button>
+          )}
           {admin && (
             <Button
               size="sm"
@@ -323,6 +383,20 @@ export default function LocationsPage() {
               </Button>
             </div>
           </div>
+        </Modal>
+      )}
+
+      {tagRoom && (
+        <Modal open onClose={() => setTagRoom(null)} title={`Tags for ${tagRoom.name}`} wide={false}>
+          <RoomTagsEditor
+            room={tagRoom}
+            tags={tags}
+            onCancel={() => setTagRoom(null)}
+            onSaved={() => {
+              setTagRoom(null);
+              void load();
+            }}
+          />
         </Modal>
       )}
 
@@ -432,6 +506,24 @@ export default function LocationsPage() {
           </Card>
         )}
 
+        {tagFilter && (
+          <div className="mb-3 flex flex-wrap items-center gap-2 rounded-md border bg-muted/40 px-3 py-2 text-sm">
+            <span className="text-muted-foreground">Showing rooms tagged</span>
+            {filterTag ? <TagChip tag={filterTag} /> : <span>(unknown tag)</span>}
+            <button
+              type="button"
+              onClick={() => setTagFilter("")}
+              className="ml-1 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+            >
+              <X className="h-3 w-3" />
+              Clear
+            </button>
+            {shown && shown.regionIDs.size === 0 && (
+              <span className="text-xs text-muted-foreground">No rooms have this tag yet.</span>
+            )}
+          </div>
+        )}
+
         {isLoading ? (
           <div className="flex flex-col gap-2">
             {[0, 1, 2].map((i) => (
@@ -440,10 +532,12 @@ export default function LocationsPage() {
           </div>
         ) : regions && regions.length > 0 ? (
           <div className="space-y-3">
-            {regions.map((region) => {
+            {regions.filter((r) => !shown || shown.regionIDs.has(r.id)).map((region) => {
               const regionKey = `region:${region.id}`;
               const regionOpen = !collapsed.has(regionKey);
-              const regionLocations = locationsByRegion.get(region.id) ?? [];
+              const regionLocations = (locationsByRegion.get(region.id) ?? []).filter(
+                (l) => !shown || shown.locationIDs.has(l.id)
+              );
               return (
                 <Card key={region.id}>
                   <CardContent className="p-3 space-y-2">
@@ -533,8 +627,9 @@ export default function LocationsPage() {
                         {regionLocations.map((loc) => {
                           const locKey = `location:${loc.id}`;
                           const locOpen = !collapsed.has(locKey);
-                          const locBuildings =
-                            buildingsByLocation.get(loc.id) ?? [];
+                          const locBuildings = (
+                            buildingsByLocation.get(loc.id) ?? []
+                          ).filter((b) => !shown || shown.buildingIDs.has(b.id));
                           return (
                             <div key={loc.id} className="space-y-2">
                               <div className="flex items-center gap-2">
@@ -622,6 +717,23 @@ export default function LocationsPage() {
                                     return (
                                       <div key={bld.id} className="space-y-1">
                                         <div className="flex items-center gap-2">
+                                          {selecting && bRooms.length > 0 && (() => {
+                                            const all = bRooms.every((r) => selected.has(r.id));
+                                            return (
+                                              <button
+                                                type="button"
+                                                aria-label={`${all ? "Deselect" : "Select"} every room in ${bld.name}`}
+                                                onClick={() => toggleSelected(bRooms.map((r) => r.id), !all)}
+                                                className="text-muted-foreground hover:text-foreground"
+                                              >
+                                                {all ? (
+                                                  <CheckSquare className="h-4 w-4 text-primary" />
+                                                ) : (
+                                                  <Square className="h-4 w-4" />
+                                                )}
+                                              </button>
+                                            );
+                                          })()}
                                           <button
                                             type="button"
                                             onClick={() => toggle(bKey)}
@@ -713,18 +825,45 @@ export default function LocationsPage() {
                                                     key={room.id}
                                                     className="group flex items-center gap-2 text-sm text-muted-foreground"
                                                   >
+                                                    {selecting && (
+                                                      <button
+                                                        type="button"
+                                                        role="checkbox"
+                                                        aria-checked={selected.has(room.id)}
+                                                        aria-label={`Select ${room.name}`}
+                                                        onClick={() => toggleSelected([room.id], !selected.has(room.id))}
+                                                        className="hover:text-foreground"
+                                                      >
+                                                        {selected.has(room.id) ? (
+                                                          <CheckSquare className="h-4 w-4 text-primary" />
+                                                        ) : (
+                                                          <Square className="h-4 w-4" />
+                                                        )}
+                                                      </button>
+                                                    )}
                                                     <DoorOpen className="h-3 w-3" />
-                                                    <span className="flex-1">
-                                                      {room.name}
+                                                    <span className="flex flex-1 flex-wrap items-center gap-x-2 gap-y-1">
+                                                      <span>{room.name}</span>
                                                       {deviceCount > 0 && (
-                                                        <span className="ml-2 text-[11px] text-muted-foreground/70">
+                                                        <span className="text-[11px] text-muted-foreground/70">
                                                           · {deviceCount} device
                                                           {deviceCount === 1 ? "" : "s"}
                                                         </span>
                                                       )}
+                                                      <RoomTagChips tagIDs={room.tag_ids} tags={tags} />
                                                     </span>
                                                     {admin && (
                                                       <>
+                                                    <Button
+                                                      size="sm"
+                                                      variant="ghost"
+                                                      aria-label={`Tags for ${room.name}`}
+                                                      title="Tags"
+                                                      className="transition-opacity can-hover:opacity-0 can-hover:group-hover:opacity-100 focus-visible:opacity-100"
+                                                      onClick={() => setTagRoom(room)}
+                                                    >
+                                                      <Tags className="h-3 w-3" />
+                                                    </Button>
                                                     <Button
                                                       size="sm"
                                                       variant="ghost"
@@ -800,10 +939,149 @@ export default function LocationsPage() {
           </Card>
         )}
       </div>
+      {selecting && (
+        <BulkTagBar
+          tags={tags}
+          selected={[...selected]}
+          onClear={() => setSelected(new Set())}
+          onDone={stopSelecting}
+          onApplied={(msg) => {
+            toast({ title: msg, variant: "success" });
+            void load();
+          }}
+        />
+      )}
     </div>
   );
 }
 
+function RoomTagsEditor({
+  room,
+  tags,
+  onCancel,
+  onSaved,
+}: {
+  room: NamedRow;
+  tags: RoomTag[];
+  onCancel: () => void;
+  onSaved: () => void;
+}) {
+  const [chosen, setChosen] = useState<string[]>(room.tag_ids ?? []);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const save = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      await api.setRoomTags(room.id, chosen);
+      onSaved();
+    } catch (e) {
+      setError((e as Error).message);
+      setSaving(false);
+    }
+  };
+  return (
+    <div className="space-y-4">
+      <TagPicker tags={tags} selected={chosen} onChange={setChosen} disabled={saving} />
+      {tags.length === 0 && (
+        <Link href="/room-tags" className="text-sm underline">
+          Create room tags
+        </Link>
+      )}
+      {error && <p className="text-sm [color:hsl(var(--destructive))]">{error}</p>}
+      <div className="flex justify-end gap-2 border-t pt-3">
+        <Button variant="ghost" onClick={onCancel} disabled={saving}>
+          Cancel
+        </Button>
+        <Button onClick={save} disabled={saving || tags.length === 0}>
+          {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+          Save
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// BulkTagBar: with rooms selected, add a tag to them all or take it off.
+function BulkTagBar({
+  tags,
+  selected,
+  onClear,
+  onDone,
+  onApplied,
+}: {
+  tags: RoomTag[];
+  selected: string[];
+  onClear: () => void;
+  onDone: () => void;
+  onApplied: (message: string) => void;
+}) {
+  const [tagID, setTagID] = useState(tags[0]?.id ?? "");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const tag = tags.find((t) => t.id === tagID);
+  const apply = async (mode: "add" | "remove") => {
+    if (!tagID || selected.length === 0) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await api.bulkRoomTag(tagID, { [mode]: selected });
+      const n = mode === "add" ? r.added : r.removed;
+      onApplied(
+        mode === "add"
+          ? `Added ${tag?.name} to ${n} room${n === 1 ? "" : "s"}`
+          : `Removed ${tag?.name} from ${n} room${n === 1 ? "" : "s"}`
+      );
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="border-t bg-background/95 px-6 py-3 backdrop-blur">
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <span className="font-medium">
+          {selected.length} room{selected.length === 1 ? "" : "s"} selected
+        </span>
+        {selected.length > 0 && (
+          <button type="button" onClick={onClear} className="text-xs text-muted-foreground hover:text-foreground hover:underline">
+            Clear
+          </button>
+        )}
+        <span className="ml-auto" />
+        <select
+          aria-label="Tag"
+          value={tagID}
+          onChange={(e) => setTagID(e.target.value)}
+          className="rounded-md border bg-background px-3 py-1.5 text-sm"
+        >
+          {tags.map((t) => (
+            <option key={t.id} value={t.id}>
+              {t.name}
+            </option>
+          ))}
+        </select>
+        <Button size="sm" onClick={() => apply("add")} disabled={busy || selected.length === 0}>
+          {busy && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+          Add tag
+        </Button>
+        <Button size="sm" variant="outline" onClick={() => apply("remove")} disabled={busy || selected.length === 0}>
+          Remove tag
+        </Button>
+        <Button size="sm" variant="ghost" onClick={onDone}>
+          Done
+        </Button>
+      </div>
+      {error && <p className="mt-1 text-xs [color:hsl(var(--destructive))]">{error}</p>}
+      {selected.length === 0 && (
+        <p className="mt-1 text-xs text-muted-foreground">
+          Tick rooms, or tick a building to select all its rooms.
+        </p>
+      )}
+    </div>
+  );
+}
 
 function BusinessUnitForm({
   mode,

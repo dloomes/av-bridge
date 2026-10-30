@@ -30,6 +30,8 @@ import { RoomReadinessCard } from "@/components/room-readiness-card";
 import { useSession } from "@/hooks/useSession";
 import { usePolling } from "@/hooks/usePolling";
 import { api } from "@/lib/api";
+import type { RoomTag } from "@/lib/api";
+import { TagFilter } from "@/components/room-tags";
 import { hasPermission } from "@/lib/session";
 import type {
   CollectorSummary,
@@ -89,6 +91,8 @@ export default function DevicesPage() {
   const regionFilter = searchParams.get("region") ?? "";
   const buildingFilter = searchParams.get("building") ?? "";
   const roomFilter = searchParams.get("room") ?? "";
+  // ?tag=<room tag id>: devices in rooms with that tag.
+  const tagFilter = searchParams.get("tag") ?? "";
 
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
@@ -176,6 +180,22 @@ export default function DevicesPage() {
     return () => ctrl.abort();
   }, [collectorFilter]);
 
+  // Room tags and which rooms carry them, for the tag filter. Not needed
+  // for anything else here, so a failure just hides the filter.
+  const [roomTags, setRoomTags] = useState<RoomTag[]>([]);
+  const [tagsByRoom, setTagsByRoom] = useState<Map<string, string[]>>(new Map());
+  useEffect(() => {
+    const ctrl = new AbortController();
+    Promise.all([api.listRoomTags(ctrl.signal), api.listRooms(ctrl.signal)])
+      .then(([tg, rooms]) => {
+        if (ctrl.signal.aborted) return;
+        setRoomTags(tg);
+        setTagsByRoom(new Map(rooms.map((r) => [r.id, r.tag_ids ?? []])));
+      })
+      .catch(() => {});
+    return () => ctrl.abort();
+  }, []);
+
   const filtered = useMemo(() => {
     if (!data) return null;
     const needle = search.trim().toLowerCase();
@@ -185,6 +205,7 @@ export default function DevicesPage() {
     return data.filter((d) => {
       if (statusFilter !== "all" && d.status !== statusFilter) return false;
       if (typeFilter !== "all" && d.type !== typeFilter) return false;
+      if (tagFilter && !(d.room_id && tagsByRoom.get(d.room_id)?.includes(tagFilter))) return false;
       if (wantRegion && (d.region ?? "").toLowerCase() !== wantRegion) return false;
       if (wantBuilding && (d.building ?? "").toLowerCase() !== wantBuilding) return false;
       // Room is stored on the device only as room_id, but the sidebar's
@@ -209,7 +230,7 @@ export default function DevicesPage() {
       }
       return true;
     });
-  }, [data, search, statusFilter, typeFilter, regionFilter, buildingFilter, roomFilter]);
+  }, [data, search, statusFilter, typeFilter, regionFilter, buildingFilter, roomFilter, tagFilter, tagsByRoom]);
 
   const counts = useMemo(() => {
     if (!data) return { total: 0, online: 0, offline: 0, unknown: 0, switchedOff: 0 };
@@ -372,6 +393,12 @@ export default function DevicesPage() {
                 </option>
               ))}
             </select>
+            <TagFilter
+              tags={roomTags}
+              value={tagFilter}
+              onChange={(id) => updateFilters({ tag: id })}
+              className="py-2"
+            />
           </div>
 
           {error && (

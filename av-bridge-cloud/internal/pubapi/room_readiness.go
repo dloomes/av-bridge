@@ -104,6 +104,7 @@ var runStatuses = map[string]bool{
 // Filters (all optional):
 //
 //	room_id      one room
+//	tag          rooms with this room tag (name, ignoring case)
 //	status       comma-separated: pending, in_progress, succeeded, failed, skipped
 //	since/until  RFC 3339, on scheduled_at; since inclusive, until exclusive
 //	cursor+limit standard pagination
@@ -134,6 +135,9 @@ func (h *Handler) ListReadinessRuns(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		sql += " AND nr.room_id = " + arg(room) + "::uuid"
+	}
+	if tag := strings.TrimSpace(qv.Get("tag")); tag != "" {
+		sql += tagFilterSQL("nr.room_id", arg(tag))
 	}
 	if v := strings.TrimSpace(qv.Get("status")); v != "" {
 		var statuses []string

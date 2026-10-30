@@ -249,6 +249,8 @@ export interface NamedRow {
   id: string;
   name: string;
   parent_id?: string;
+  // Rooms only: the ids of the room's tags (see RoomTag).
+  tag_ids?: string[];
 }
 
 // AssetStatus + AssetCategory mirror the backend's allowlists in

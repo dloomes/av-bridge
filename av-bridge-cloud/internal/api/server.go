@@ -444,6 +444,15 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 		// mutations gate on business_unit.crud AND the tenant flag
 		// (portalapi.CreateBusinessUnit rejects with 400 when the flag
 		// is off).
+		// Room tags (migration 0070): anyone with the dashboard can list
+		// them, for the filters; changing them is part of the room structure.
+		mux.Handle("GET /api/v1/room-tags", wrapPerm(portalauth.PermViewDashboard, portal.Portal.ListRoomTags))
+		mux.Handle("POST /api/v1/room-tags", wrapPerm(portalauth.PermHierarchyCRUD, portal.Portal.CreateRoomTag))
+		mux.Handle("POST /api/v1/room-tags/import", wrapPerm(portalauth.PermHierarchyCRUD, portal.Portal.ImportRoomTags))
+		mux.Handle("PATCH /api/v1/room-tags/{id}", wrapPerm(portalauth.PermHierarchyCRUD, portal.Portal.UpdateRoomTag))
+		mux.Handle("DELETE /api/v1/room-tags/{id}", wrapPerm(portalauth.PermHierarchyCRUD, portal.Portal.DeleteRoomTag))
+		mux.Handle("POST /api/v1/room-tags/{id}/rooms", wrapPerm(portalauth.PermHierarchyCRUD, portal.Portal.BulkRoomTag))
+		mux.Handle("PUT /api/v1/rooms/{id}/tags", wrapPerm(portalauth.PermHierarchyCRUD, portal.Portal.SetRoomTags))
 		mux.Handle("GET /api/v1/business-units", wrapPerm(portalauth.PermViewDashboard, portal.Portal.ListBusinessUnits))
 		mux.Handle("POST /api/v1/business-units", wrapPerm(portalauth.PermBusinessUnitCRUD, portal.Portal.CreateBusinessUnit))
 		mux.Handle("PATCH /api/v1/business-units/{id}", wrapPerm(portalauth.PermBusinessUnitCRUD, portal.Portal.UpdateBusinessUnit))

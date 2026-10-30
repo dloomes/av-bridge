@@ -439,6 +439,31 @@ export interface Branding {
 // Business Unit — optional top-of-hierarchy tier. Only usable when the
 // tenant's Branding.business_units_enabled is true. See migration 0043
 // on the backend for the schema.
+// RoomTag — a customer's own label for rooms (Room tags page), any
+// number per room. colour is a key of TAG_COLOURS (components/room-tags).
+export interface RoomTag {
+  id: string;
+  name: string;
+  colour: string;
+  description?: string;
+  room_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RoomTagBody {
+  name?: string;
+  colour?: string;
+  description?: string;
+}
+
+export interface RoomTagImportResult {
+  processed: number;
+  rooms_tagged: number;
+  tags_created: string[];
+  errors: { row: number; message: string }[];
+}
+
 export interface BusinessUnit {
   id: string;
   name: string;
@@ -1629,6 +1654,69 @@ export const api = {
   // Business Unit CRUD — optional top-of-hierarchy tier. Gated backend-
   // side on business_unit.crud AND the tenant flag; the portal only
   // surfaces these controls when Branding.business_units_enabled is true.
+  listRoomTags: (signal?: AbortSignal) =>
+    request<RoomTag[]>("/api/v1/room-tags", { signal }),
+
+  createRoomTag: (body: RoomTagBody, signal?: AbortSignal) =>
+    request<{ id: string; name: string }>("/api/v1/room-tags", {
+      method: "POST",
+      body: JSON.stringify(body),
+      signal,
+    }),
+
+  updateRoomTag: (id: string, body: RoomTagBody, signal?: AbortSignal) =>
+    request<void>(`/api/v1/room-tags/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+      signal,
+    }),
+
+  deleteRoomTag: (id: string, signal?: AbortSignal) =>
+    request<{ id: string; rooms_untagged: number }>(
+      `/api/v1/room-tags/${encodeURIComponent(id)}`,
+      { method: "DELETE", signal }
+    ),
+
+  // Replaces a room's tags with exactly these.
+  setRoomTags: (roomID: string, tagIDs: string[], signal?: AbortSignal) =>
+    request<{ room_id: string; tags: string[] }>(
+      `/api/v1/rooms/${encodeURIComponent(roomID)}/tags`,
+      { method: "PUT", body: JSON.stringify({ tag_ids: tagIDs }), signal }
+    ),
+
+  // Puts one tag on, or takes it off, many rooms.
+  bulkRoomTag: (
+    tagID: string,
+    change: { add?: string[]; remove?: string[] },
+    signal?: AbortSignal
+  ) =>
+    request<{ added: number; removed: number }>(
+      `/api/v1/room-tags/${encodeURIComponent(tagID)}/rooms`,
+      { method: "POST", body: JSON.stringify(change), signal }
+    ),
+
+  // CSV of building, room, tags (and optionally region, location).
+  // 400 carries row errors in the same shape as 200, as importAssets.
+  importRoomTags: async (file: File): Promise<RoomTagImportResult> => {
+    const form = new FormData();
+    form.append("file", file);
+    const res = await fetch(`${API_BASE}/api/v1/room-tags/import`, {
+      method: "POST",
+      headers: authHeaders(), // NB: no Content-Type — fetch sets multipart boundary
+      body: form,
+      cache: "no-store",
+    });
+    if (res.status !== 200 && res.status !== 400) {
+      if (res.status === 401) handle401IfSessionDeath("/api/v1/room-tags/import");
+      const body = await res.text().catch(() => "");
+      throw new ApiError(
+        `${res.status} ${res.statusText}${body ? `: ${body}` : ""}`,
+        res.status
+      );
+    }
+    return res.json();
+  },
+
   listBusinessUnits: (signal?: AbortSignal) =>
     request<BusinessUnit[]>("/api/v1/business-units", { signal }),
 

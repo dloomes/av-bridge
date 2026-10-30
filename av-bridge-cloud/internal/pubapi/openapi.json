@@ -182,9 +182,10 @@
       "get": {
         "tags": ["Hierarchy"],
         "summary": "List rooms",
-        "description": "Every room in the tenant, optionally filtered by parent building. Each row carries the building id + name so a picker or sync task doesn't need to join.",
+        "description": "Every room in the tenant, optionally filtered by parent building or room tag. Each row carries the building id + name and the room's tags, so a picker or sync task doesn't need to join.",
         "parameters": [
-          { "$ref": "#/components/parameters/BuildingID" }
+          { "$ref": "#/components/parameters/BuildingID" },
+          { "name": "tag", "in": "query", "description": "Only rooms with this room tag (its name, ignoring case). Tags are set on the Room tags page.", "schema": { "type": "string" } }
         ],
         "responses": {
           "200": {
@@ -373,6 +374,7 @@
         "parameters": [
           { "$ref": "#/components/parameters/RoomID" },
           { "name": "kind", "in": "query", "description": "`power` or `readiness`. Both when omitted.", "schema": { "type": "string", "enum": ["power", "readiness"] } },
+          { "name": "tag", "in": "query", "description": "Only runs for rooms with this room tag (its name, ignoring case). Tags are set on the Room tags page.", "schema": { "type": "string" } },
           { "name": "status", "in": "query", "description": "One or more statuses, comma-separated, e.g. `failed` or `succeeded,failed`.", "schema": { "type": "string" } },
           { "name": "since", "in": "query", "description": "Runs scheduled at or after this time (RFC 3339).", "schema": { "type": "string", "format": "date-time" } },
           { "name": "until", "in": "query", "description": "Runs scheduled before this time (RFC 3339).", "schema": { "type": "string", "format": "date-time" } },
@@ -610,12 +612,13 @@
       },
       "Room": {
         "type": "object",
-        "required": ["id", "name", "building_id", "building"],
+        "required": ["id", "name", "building_id", "building", "tags"],
         "properties": {
           "id": { "type": "string", "format": "uuid" },
           "name": { "type": "string" },
           "building_id": { "type": "string", "format": "uuid" },
-          "building": { "type": "string" }
+          "building": { "type": "string" },
+          "tags": { "type": "array", "items": { "type": "string" }, "description": "The room's tags, by name, set on the Room tags page. Empty when it has none." }
         }
       },
       "Asset": {

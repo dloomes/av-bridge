@@ -25,6 +25,7 @@ import {
   Radio,
   Server,
   ShieldCheck,
+  Tags,
   Users,
   KeyRound,
   Key,
@@ -115,6 +116,7 @@ const SECTIONS: NavSection[] = [
     title: "Manage",
     items: [
       { href: "/locations", label: "Locations", icon: MapPin, requires: "hierarchy.crud" },
+      { href: "/room-tags", label: "Room tags", icon: Tags, requires: "hierarchy.crud" },
       { href: "/assets", label: "Assets", icon: Boxes, requires: "view.assets" },
       { href: "/nightly/schedule", label: "Room Readiness", icon: Moon, requires: "nightly.view" },
       { href: "/users", label: "Users", icon: Users, requires: "view.users" },

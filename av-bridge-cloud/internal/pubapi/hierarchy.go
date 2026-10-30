@@ -3,6 +3,7 @@ package pubapi
 import (
 	"context"
 	"net/http"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -31,10 +32,20 @@ type publicBuilding struct {
 }
 
 type publicRoom struct {
-	ID           string `json:"id"`
-	Name         string `json:"name"`
-	BuildingID   string `json:"building_id"`
-	BuildingName string `json:"building"`
+	ID           string   `json:"id"`
+	Name         string   `json:"name"`
+	BuildingID   string   `json:"building_id"`
+	BuildingName string   `json:"building"`
+	Tags         []string `json:"tags"`
+}
+
+// tagFilterSQL limits rows to rooms with the named tag (room_tags,
+// migration 0070), ignoring case. roomCol is the query's room id column;
+// placeholder the tag name's.
+func tagFilterSQL(roomCol, placeholder string) string {
+	return ` AND EXISTS (SELECT 1 FROM room_tag_assignments rta
+	                     JOIN room_tags rt ON rt.id = rta.tag_id
+	                    WHERE rta.room_id = ` + roomCol + ` AND lower(rt.name) = lower(` + placeholder + `))`
 }
 
 // ListBuildings — GET /pub/v1/buildings
@@ -89,6 +100,7 @@ func (h *Handler) ListBuildings(w http.ResponseWriter, r *http.Request) {
 // on the client side.
 func (h *Handler) ListRooms(w http.ResponseWriter, r *http.Request) {
 	buildingFilter := r.URL.Query().Get("building_id")
+	tagFilter := strings.TrimSpace(r.URL.Query().Get("tag"))
 
 	out := []publicRoom{}
 	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
@@ -96,13 +108,22 @@ func (h *Handler) ListRooms(w http.ResponseWriter, r *http.Request) {
 			SELECT r.id::text,
 			       r.name,
 			       r.building_id::text,
-			       COALESCE(b.name, '')
+			       COALESCE(b.name, ''),
+			       COALESCE((SELECT array_agg(rt.name ORDER BY lower(rt.name))
+			                   FROM room_tag_assignments rta
+			                   JOIN room_tags rt ON rt.id = rta.tag_id
+			                  WHERE rta.room_id = r.id), '{}')
 			  FROM rooms r
-			  LEFT JOIN buildings b ON b.id = r.building_id`
+			  LEFT JOIN buildings b ON b.id = r.building_id
+			 WHERE 1=1`
 		args := []any{}
 		if buildingFilter != "" {
 			args = append(args, buildingFilter)
-			sql += " WHERE r.building_id::text = $1"
+			sql += " AND r.building_id::text = $" + itoa(len(args))
+		}
+		if tagFilter != "" {
+			args = append(args, tagFilter)
+			sql += tagFilterSQL("r.id", "$"+itoa(len(args)))
 		}
 		sql += " ORDER BY b.name, r.name"
 
@@ -113,7 +134,7 @@ func (h *Handler) ListRooms(w http.ResponseWriter, r *http.Request) {
 		defer rows.Close()
 		for rows.Next() {
 			var rm publicRoom
-			if err := rows.Scan(&rm.ID, &rm.Name, &rm.BuildingID, &rm.BuildingName); err != nil {
+			if err := rows.Scan(&rm.ID, &rm.Name, &rm.BuildingID, &rm.BuildingName, &rm.Tags); err != nil {
 				return err
 			}
 			out = append(out, rm)

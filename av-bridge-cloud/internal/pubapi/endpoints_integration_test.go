@@ -125,6 +125,7 @@ func TestAllEndpoints(t *testing.T) {
 		"GET /pub/v1/alerts":                 h.ListAlerts,
 		"GET /pub/v1/events":                 h.ListEvents,
 		"GET /pub/v1/audit":                  h.ListAudit,
+		"GET /pub/v1/room-readiness/runs":    h.ListReadinessRuns,
 	} {
 		mux.HandleFunc(pattern, fn)
 	}
@@ -211,6 +212,18 @@ func TestAllEndpoints(t *testing.T) {
 	expectIDs("/pub/v1/devices?building_id="+b2, devs[2:3])
 	expectIDs("/pub/v1/buildings", []string{b1, b2})
 	expectIDs("/pub/v1/rooms?building_id="+b1, []string{r1})
+
+	// Room tags: listed on the room, and filtered by name ignoring case.
+	tag := q(`INSERT INTO room_tags (customer_id, name) VALUES ($1, 'Courtroom') RETURNING id::text`, cust)
+	q(`INSERT INTO room_tag_assignments (customer_id, room_id, tag_id) VALUES ($1, $2, $3) RETURNING room_id::text`, cust, r1, tag)
+	expectIDs("/pub/v1/rooms?tag=courtroom", []string{r1})
+	expectIDs("/pub/v1/rooms?tag=nothing", nil)
+	if _, body := get("/pub/v1/rooms?tag=Courtroom"); !strings.Contains(string(body), `"tags":["Courtroom"]`) {
+		t.Errorf("room tags missing: %s", body)
+	}
+	if code, _ := get("/pub/v1/room-readiness/runs?tag=courtroom"); code != http.StatusOK {
+		t.Errorf("runs by tag: %d", code)
+	}
 	count := func(path string) int {
 		t.Helper()
 		_, body := get(path)

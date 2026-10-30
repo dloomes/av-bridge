@@ -17,6 +17,9 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Modal } from "@/components/modal";
 import { useToast } from "@/components/toast";
 import { api } from "@/lib/api";
+import type { RoomTag } from "@/lib/api";
+import type { NamedRow } from "@/lib/types";
+import { RoomTagChips, TagFilter } from "@/components/room-tags";
 import type {
   NightlyRoutineRow,
   ReadinessRoomRow,
@@ -129,13 +132,19 @@ export function ReadinessPanel({ canManage }: { canManage: boolean }) {
 
   const [editing, setEditing] = useState<ReadinessRoomRow | null>(null);
   const [busyRoom, setBusyRoom] = useState<string | null>(null);
+  // Room tags, for the tag chips and filter on the rooms list.
+  const [tags, setTags] = useState<RoomTag[]>([]);
+  const [tagsByRoom, setTagsByRoom] = useState<Map<string, string[]>>(new Map());
+  const [tagFilter, setTagFilter] = useState("");
 
   const load = useCallback(async (signal?: AbortSignal) => {
     try {
-      const [s, rs, rt] = await Promise.all([
+      const [s, rs, rt, tg, roomList] = await Promise.all([
         api.getReadinessSchedule(signal),
         api.listReadinessRooms(signal),
         api.listNightlyRoutines(signal),
+        api.listRoomTags(signal).catch(() => [] as RoomTag[]),
+        api.listRooms(signal).catch(() => [] as NamedRow[]),
       ]);
       if (signal?.aborted) return;
       setLoaded(s);
@@ -145,6 +154,8 @@ export function ReadinessPanel({ canManage }: { canManage: boolean }) {
       setDays([...s.days_of_week].sort((a, b) => a - b));
       setRooms(rs);
       setRoutines(rt);
+      setTags(tg);
+      setTagsByRoom(new Map(roomList.map((r) => [r.id, r.tag_ids ?? []])));
       setError(null);
     } catch (e) {
       if (!signal?.aborted) setError((e as Error).message);
@@ -238,6 +249,7 @@ export function ReadinessPanel({ canManage }: { canManage: boolean }) {
   const groups = useMemo(() => {
     const map = new Map<string, { label: string; rows: ReadinessRoomRow[] }>();
     for (const r of rooms ?? []) {
+      if (tagFilter && !tagsByRoom.get(r.room_id)?.includes(tagFilter)) continue;
       const label = [r.region_name, r.location_name, r.building_name]
         .filter(Boolean)
         .join(" · ");
@@ -246,7 +258,7 @@ export function ReadinessPanel({ canManage }: { canManage: boolean }) {
       map.get(key)!.rows.push(r);
     }
     return Array.from(map.values());
-  }, [rooms]);
+  }, [rooms, tagFilter, tagsByRoom]);
 
   if (error) {
     return (
@@ -370,15 +382,20 @@ export function ReadinessPanel({ canManage }: { canManage: boolean }) {
                 rooms (set on the Power schedule tab) are skipped.
               </p>
             </div>
-            <Link
-              href="/nightly/runs"
-              className="shrink-0 text-xs text-primary hover:underline"
-            >
-              View runs →
-            </Link>
+            <div className="flex shrink-0 flex-wrap items-center gap-3">
+              <TagFilter tags={tags} value={tagFilter} onChange={setTagFilter} />
+              <Link
+                href="/nightly/runs"
+                className="text-xs text-primary hover:underline"
+              >
+                View runs →
+              </Link>
+            </div>
           </div>
           {groups.length === 0 && (
-            <div className="text-sm text-muted-foreground">No rooms yet.</div>
+            <div className="text-sm text-muted-foreground">
+              {tagFilter ? "No rooms have this tag." : "No rooms yet."}
+            </div>
           )}
           {groups.map((g) => (
             <div key={g.label} className="space-y-2">
@@ -409,7 +426,12 @@ export function ReadinessPanel({ canManage }: { canManage: boolean }) {
                           key={r.room_id}
                           className="border-b last:border-0 transition-colors hover:bg-primary/[0.04]"
                         >
-                          <td className="px-3 py-2.5 font-medium">{r.room_name}</td>
+                          <td className="px-3 py-2.5 font-medium">
+                            <div>{r.room_name}</div>
+                            <div className="mt-1">
+                              <RoomTagChips tagIDs={tagsByRoom.get(r.room_id)} tags={tags} />
+                            </div>
+                          </td>
                           <td className="px-3 py-2.5 text-xs text-muted-foreground">
                             {r.effective_test_routine_name ? (
                               <>
