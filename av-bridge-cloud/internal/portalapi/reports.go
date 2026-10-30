@@ -633,18 +633,19 @@ func (h *Handler) PowerReport(w http.ResponseWriter, r *http.Request) {
 			           COUNT(*)::int AS runs,
 			           AVG(EXTRACT(EPOCH FROM
 			               CASE
-			                 WHEN COALESCE(rnc.power_on_time, ns.power_on_time)
-			                      > COALESCE(rnc.power_off_time, ns.power_off_time)
-			                 THEN COALESCE(rnc.power_on_time, ns.power_on_time)
-			                      - COALESCE(rnc.power_off_time, ns.power_off_time)
+			                 WHEN COALESCE(rnc.power_on_time, rtp.power_on_time, ns.power_on_time)
+			                      > COALESCE(rnc.power_off_time, rtp.power_off_time, ns.power_off_time)
+			                 THEN COALESCE(rnc.power_on_time, rtp.power_on_time, ns.power_on_time)
+			                      - COALESCE(rnc.power_off_time, rtp.power_off_time, ns.power_off_time)
 			                 ELSE ('24:00:00'::interval
-			                      - (COALESCE(rnc.power_off_time, ns.power_off_time)
-			                      -  COALESCE(rnc.power_on_time, ns.power_on_time)))
+			                      - (COALESCE(rnc.power_off_time, rtp.power_off_time, ns.power_off_time)
+			                      -  COALESCE(rnc.power_on_time, rtp.power_on_time, ns.power_on_time)))
 			               END
 			           )) / 3600.0 AS avg_off_hours
 			      FROM nightly_run nr
 			      JOIN nightly_schedule ns ON ns.customer_id = nr.customer_id
 			      LEFT JOIN room_nightly_config rnc ON rnc.room_id = nr.room_id
+			      LEFT JOIN room_tag_power rtp ON rtp.room_id = nr.room_id
 			     WHERE nr.scheduled_at >= (SELECT since FROM win)
 			       AND nr.phase IN ('off', 'scheduled_on', 'waking', 'warming', 'testing', 'ready')
 			       AND nr.status <> 'failed'

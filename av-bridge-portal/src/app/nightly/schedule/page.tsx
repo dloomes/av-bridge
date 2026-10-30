@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
+  ArrowDown,
+  ArrowUp,
   CalendarOff,
   ChevronDown,
   ChevronRight,
@@ -12,6 +14,7 @@ import {
   Moon,
   RotateCcw,
   Settings2,
+  Tags,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -29,8 +32,8 @@ import type {
   UpdateRoomOverrideBody,
 } from "@/lib/api";
 import { EXCLUSION_REASON_LABELS } from "@/lib/api";
-import type { RoomTag } from "@/lib/api";
-import { TagFilter } from "@/components/room-tags";
+import type { PowerTagRow, RoomTag } from "@/lib/api";
+import { TagChip, TagFilter } from "@/components/room-tags";
 import { DatesPanel } from "./dates-panel";
 import { ReadinessPanel } from "./readiness-panel";
 import { DAY_BUTTONS, isFutureDate, summariseDays } from "./shared";
@@ -113,18 +116,22 @@ export default function NightlySchedulePage() {
   const [roomTags, setRoomTags] = useState<RoomTag[]>([]);
   const [tagsByRoom, setTagsByRoom] = useState<Map<string, string[]>>(new Map());
   const [roomTagFilter, setRoomTagFilter] = useState("");
+  const [powerTags, setPowerTags] = useState<PowerTagRow[]>([]);
+  const [editingTag, setEditingTag] = useState<PowerTagRow | null>(null);
 
   const loadRooms = useCallback(async (signal?: AbortSignal) => {
     try {
-      const [list, tg, roomList] = await Promise.all([
+      const [list, tg, roomList, ptags] = await Promise.all([
         api.listNightlyRooms(signal),
         api.listRoomTags(signal).catch(() => [] as RoomTag[]),
         api.listRooms(signal).catch(() => []),
+        api.listPowerTags(signal).catch(() => [] as PowerTagRow[]),
       ]);
       if (signal?.aborted) return;
       setRooms(list);
       setRoomTags(tg);
       setTagsByRoom(new Map(roomList.map((r) => [r.id, r.tag_ids ?? []])));
+      setPowerTags(ptags);
       setRoomsError(null);
     } catch (e) {
       if (!signal?.aborted) setRoomsError((e as Error).message);
@@ -561,7 +568,17 @@ export default function NightlySchedulePage() {
               </Card>
 
               {/* ── One-off dates ─────────────────────────────────────── */}
-              <DatesPanel canManage={canManage} rooms={rooms} />
+              <DatesPanel canManage={canManage} rooms={rooms} tags={roomTags} />
+
+              {/* ── By room tag ─────────────────────────────────────────── */}
+              {powerTags.length > 0 && (
+                <PowerTagsCard
+                  tags={powerTags}
+                  canManage={canManage}
+                  onEdit={setEditingTag}
+                  onChanged={() => void loadRooms()}
+                />
+              )}
 
               {/* ── Per-room overrides ─────────────────────────────────── */}
               <Card>
@@ -572,9 +589,10 @@ export default function NightlySchedulePage() {
                         Per-room overrides
                       </h2>
                       <p className="mt-1 text-xs text-muted-foreground">
-                        Rooms inherit the customer default above. Override
-                        times, days, or exclude a room until a specific date
-                        (for a fit-out, refurb, or bank holiday closure).
+                        Rooms inherit their tag&apos;s settings, or the customer
+                        default above. Override times, days, or exclude a room
+                        until a specific date (for a fit-out, refurb, or bank
+                        holiday closure).
                       </p>
                     </div>
                     <TagFilter
@@ -782,6 +800,10 @@ export default function NightlySchedulePage() {
                                           <Badge variant="secondary">
                                             Customised
                                           </Badge>
+                                        ) : r.tag_name ? (
+                                          <span className="text-xs text-muted-foreground">
+                                            From tag {r.tag_name}
+                                          </span>
                                         ) : (
                                           <span className="text-xs text-muted-foreground">
                                             Inherits default
@@ -1081,10 +1103,30 @@ export default function NightlySchedulePage() {
         </div>
       </div>
 
+      {editingTag && loaded && (
+        <PowerTagModal
+          tag={editingTag}
+          customerDefault={loaded}
+          onClose={() => setEditingTag(null)}
+          onSaved={() => {
+            setEditingTag(null);
+            void loadRooms();
+          }}
+        />
+      )}
+
       {editingRoom && loaded && (
         <RoomOverrideModal
           room={editingRoom}
-          customerDefault={loaded}
+          // What the room inherits: its tag's settings where the tag sets
+          // them, else the customer default.
+          customerDefault={{
+            ...loaded,
+            power_off_time: editingRoom.inherited_power_off_time ?? loaded.power_off_time,
+            power_on_time: editingRoom.inherited_power_on_time ?? loaded.power_on_time,
+            days_of_week: editingRoom.inherited_days_of_week ?? loaded.days_of_week,
+          }}
+          inheritsFrom={editingRoom.tag_name ? `the ${editingRoom.tag_name} tag` : "the customer default"}
           onClose={() => setEditingRoom(null)}
           onSaved={() => {
             setEditingRoom(null);
@@ -1116,11 +1158,13 @@ export default function NightlySchedulePage() {
 function RoomOverrideModal({
   room,
   customerDefault,
+  inheritsFrom,
   onClose,
   onSaved,
 }: {
   room: NightlyRoomRow;
-  customerDefault: NightlySchedule;
+  customerDefault: NightlySchedule; // what it inherits; see inheritsFrom
+  inheritsFrom: string;
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -1218,7 +1262,7 @@ function RoomOverrideModal({
     >
       <div className="space-y-5">
         <p className="text-xs text-muted-foreground">
-          Anything not customised inherits the customer default (
+          Anything not customised inherits {inheritsFrom} (
           <span className="font-mono">
             {customerDefault.power_off_time} → {customerDefault.power_on_time}
           </span>
@@ -1231,6 +1275,7 @@ function RoomOverrideModal({
           custom={customPowerOff}
           onToggle={() => setCustomPowerOff((v) => !v)}
           inheritValue={customerDefault.power_off_time}
+          inheritsFrom={inheritsFrom}
         >
           <input
             type="time"
@@ -1247,6 +1292,7 @@ function RoomOverrideModal({
           custom={customPowerOn}
           onToggle={() => setCustomPowerOn((v) => !v)}
           inheritValue={customerDefault.power_on_time}
+          inheritsFrom={inheritsFrom}
         >
           <input
             type="time"
@@ -1263,6 +1309,7 @@ function RoomOverrideModal({
           custom={customDays}
           onToggle={() => setCustomDays((v) => !v)}
           inheritValue={summariseDays(customerDefault.days_of_week)}
+          inheritsFrom={inheritsFrom}
         >
           <div className="flex flex-wrap gap-1">
             {DAY_BUTTONS.map((d) => {
@@ -1422,12 +1469,14 @@ function OverrideRow({
   custom,
   onToggle,
   inheritValue,
+  inheritsFrom = "the customer default",
   children,
 }: {
   label: string;
   custom: boolean;
   onToggle: () => void;
   inheritValue: string;
+  inheritsFrom?: string;
   children: React.ReactNode;
 }) {
   return (
@@ -1448,7 +1497,7 @@ function OverrideRow({
         children
       ) : (
         <div className="text-xs text-muted-foreground">
-          Inherits customer default:{" "}
+          Inherits {inheritsFrom}:{" "}
           <span className="font-mono text-foreground">{inheritValue}</span>
         </div>
       )}
@@ -1607,5 +1656,238 @@ function TagRoomsActions({
         </div>
       )}
     </div>
+  );
+}
+
+// PowerTagsCard: power settings per room tag, for every room with the tag
+// that doesn't set its own. A room with several tags uses the first one
+// here with settings; the order is shared with readiness checks.
+function PowerTagsCard({
+  tags,
+  canManage,
+  onEdit,
+  onChanged,
+}: {
+  tags: PowerTagRow[];
+  canManage: boolean;
+  onEdit: (tag: PowerTagRow) => void;
+  onChanged: () => void;
+}) {
+  const { toast } = useToast();
+  const [busy, setBusy] = useState(false);
+
+  const move = async (index: number, by: -1 | 1) => {
+    const ids = tags.map((t) => t.tag_id);
+    const [id] = ids.splice(index, 1);
+    ids.splice(index + by, 0, id);
+    setBusy(true);
+    try {
+      await api.setReadinessTagOrder(ids);
+      onChanged();
+    } catch (e) {
+      toast({ title: "Couldn't reorder the tags", description: (e as Error).message, variant: "destructive" });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const reset = async (t: PowerTagRow) => {
+    setBusy(true);
+    try {
+      await api.resetPowerTag(t.tag_id);
+      toast({ title: `Removed the power settings for ${t.name}`, variant: "success" });
+      onChanged();
+    } catch (e) {
+      toast({ title: "Couldn't remove them", description: (e as Error).message, variant: "destructive" });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card>
+      <CardContent className="p-6 space-y-4">
+        <div>
+          <h2 className="flex items-center gap-2 text-sm font-semibold">
+            <Tags aria-hidden="true" className="h-4 w-4 text-muted-foreground" />
+            By room tag
+          </h2>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Give a tag its own power-off and power-on times and days, and every room with that
+            tag uses them instead of the default, unless the room is customised. A room with
+            several tags uses the highest one in this list that has settings; the order is the
+            same as for readiness checks.
+          </p>
+        </div>
+        <ol className="divide-y rounded-md border" role="list">
+          {tags.map((t, i) => (
+            <li key={t.tag_id} className="flex flex-wrap items-center gap-3 px-3 py-2.5">
+              {canManage && (
+                <span className="flex flex-col">
+                  <button
+                    type="button"
+                    disabled={busy || i === 0}
+                    onClick={() => move(i, -1)}
+                    aria-label={`Move ${t.name} up`}
+                    className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-30"
+                  >
+                    <ArrowUp className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busy || i === tags.length - 1}
+                    onClick={() => move(i, 1)}
+                    aria-label={`Move ${t.name} down`}
+                    className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-30"
+                  >
+                    <ArrowDown className="h-3.5 w-3.5" />
+                  </button>
+                </span>
+              )}
+              <TagChip tag={{ name: t.name, colour: t.colour }} />
+              <span className="text-[11px] text-muted-foreground">
+                {t.room_count} room{t.room_count === 1 ? "" : "s"}
+              </span>
+              <span className="min-w-0 flex-1 text-xs text-muted-foreground">
+                {t.configured ? (
+                  <span className="text-foreground">
+                    <span className="font-mono">
+                      {t.power_off_time ?? "default"} → {t.power_on_time ?? "default"}
+                    </span>
+                    <span className="ml-2">{t.days_of_week ? summariseDays(t.days_of_week) : "default days"}</span>
+                  </span>
+                ) : (
+                  "Uses the default"
+                )}
+              </span>
+              {canManage && (
+                <span className="flex items-center gap-1">
+                  <Button variant="ghost" size="sm" className="h-8" disabled={busy} onClick={() => onEdit(t)}>
+                    <Settings2 aria-hidden="true" className="h-3.5 w-3.5" />
+                    {t.configured ? "Edit" : "Set times"}
+                  </Button>
+                  {t.configured && (
+                    <Button variant="ghost" size="sm" className="h-8" disabled={busy} onClick={() => reset(t)}>
+                      <RotateCcw aria-hidden="true" className="h-3.5 w-3.5" />
+                      Remove
+                    </Button>
+                  )}
+                </span>
+              )}
+            </li>
+          ))}
+        </ol>
+      </CardContent>
+    </Card>
+  );
+}
+
+// PowerTagModal: a tag's power-off and power-on times and days; tick
+// Customise on a field to set it, leave it to inherit the default.
+function PowerTagModal({
+  tag,
+  customerDefault,
+  onClose,
+  onSaved,
+}: {
+  tag: PowerTagRow;
+  customerDefault: NightlySchedule;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const { toast } = useToast();
+  const [customOff, setCustomOff] = useState(tag.power_off_time !== undefined);
+  const [customOn, setCustomOn] = useState(tag.power_on_time !== undefined);
+  const [customDays, setCustomDays] = useState(tag.days_of_week !== undefined);
+  const [off, setOff] = useState(tag.power_off_time ?? customerDefault.power_off_time);
+  const [on, setOn] = useState(tag.power_on_time ?? customerDefault.power_on_time);
+  const [days, setDays] = useState<number[]>(
+    [...(tag.days_of_week ?? customerDefault.days_of_week)].sort((a, b) => a - b)
+  );
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const save = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      await api.updatePowerTag(tag.tag_id, {
+        power_off_time: customOff ? off : null,
+        power_on_time: customOn ? on : null,
+        days_of_week: customDays ? days : null,
+      });
+      toast({ title: `Saved the power settings for ${tag.name}`, variant: "success" });
+      onSaved();
+    } catch (e) {
+      setError((e as Error).message);
+      setSaving(false);
+    }
+  };
+
+  const timeInput = (value: string, set: (v: string) => void, label: string) => (
+    <input
+      type="time"
+      aria-label={label}
+      value={value}
+      onChange={(e) => set(e.target.value)}
+      disabled={saving}
+      className="w-full rounded-md border bg-background px-3 py-2 text-sm disabled:opacity-50"
+    />
+  );
+
+  return (
+    <Modal open onClose={onClose} title={`Power schedule for rooms tagged ${tag.name}`} wide={false} dirty>
+      <div className="space-y-5">
+        <OverrideRow label="Power off at" custom={customOff} onToggle={() => setCustomOff((v) => !v)}
+          inheritValue={customerDefault.power_off_time}>
+          {timeInput(off, setOff, "Power off at")}
+        </OverrideRow>
+        <OverrideRow label="Power on at" custom={customOn} onToggle={() => setCustomOn((v) => !v)}
+          inheritValue={customerDefault.power_on_time}>
+          {timeInput(on, setOn, "Power on at")}
+        </OverrideRow>
+        <OverrideRow label="Days of week" custom={customDays} onToggle={() => setCustomDays((v) => !v)}
+          inheritValue={summariseDays(customerDefault.days_of_week)}>
+          <div className="flex flex-wrap gap-1">
+            {DAY_BUTTONS.map((d) => {
+              const active = days.includes(d.iso);
+              return (
+                <button
+                  key={d.iso}
+                  type="button"
+                  aria-pressed={active}
+                  aria-label={d.full}
+                  disabled={saving}
+                  onClick={() =>
+                    setDays((prev) =>
+                      prev.includes(d.iso) ? prev.filter((x) => x !== d.iso) : [...prev, d.iso].sort((a, b) => a - b)
+                    )
+                  }
+                  className={`w-10 rounded-md border px-2 py-1.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 ${
+                    active ? "bg-primary text-primary-foreground border-primary" : "bg-background hover:bg-accent"
+                  }`}
+                >
+                  {d.label}
+                </button>
+              );
+            })}
+          </div>
+        </OverrideRow>
+        {error && (
+          <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm [color:hsl(var(--destructive))]">
+            {error}
+          </div>
+        )}
+        <div className="flex items-center justify-end gap-2 border-t pt-2">
+          <Button variant="outline" size="sm" onClick={onClose} disabled={saving}>
+            Cancel
+          </Button>
+          <Button size="sm" onClick={save} disabled={saving}>
+            {saving && <Loader2 aria-hidden="true" className="h-3.5 w-3.5 animate-spin" />}
+            Save
+          </Button>
+        </div>
+      </div>
+    </Modal>
   );
 }

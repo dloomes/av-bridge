@@ -540,6 +540,8 @@ export interface ScheduleDate {
   date: string;               // YYYY-MM-DD, the organisation's timezone
   room_id?: string;
   room_name?: string;
+  tag_id?: string;            // a date for the rooms with this room tag
+  tag_name?: string;
   closed: boolean;
   power_on_time?: string;     // HH:MM, open dates only; else the usual
   power_off_time?: string;    // HH:MM, open dates only; else the usual
@@ -550,6 +552,7 @@ export interface ScheduleDate {
 export interface CreateScheduleDateBody {
   date: string;
   room_id?: string;
+  tag_id?: string; // the rooms with this room tag; not with room_id
   closed: boolean;
   power_on_time?: string;
   power_off_time?: string;
@@ -560,6 +563,27 @@ export interface CreateScheduleDateBody {
 // GET /api/v1/nightly/rooms. Effective values are already resolved against
 // the customer default; `has_override` badges rooms whose behaviour
 // diverges from inherit.
+// A room tag's power settings (GET /api/v1/nightly/tags), in the tags'
+// priority order. configured: the tag has settings; unset fields inherit
+// the default.
+export interface PowerTagRow {
+  tag_id: string;
+  name: string;
+  colour: string;
+  priority?: number;
+  room_count: number;
+  configured: boolean;
+  power_off_time?: string;
+  power_on_time?: string;
+  days_of_week?: number[];
+}
+
+export interface UpdatePowerTagBody {
+  power_off_time?: string | null;
+  power_on_time?: string | null;
+  days_of_week?: number[] | null;
+}
+
 export interface NightlyRoomRow {
   room_id: string;
   room_name: string;
@@ -570,6 +594,14 @@ export interface NightlyRoomRow {
   effective_power_off_time: string;   // HH:MM
   effective_power_on_time: string;    // HH:MM
   effective_days_of_week: number[];   // ISO 1-7
+  // The room tag the room's power settings come from, when one of its
+  // tags has some; and what the room inherits (from that tag, else the
+  // default) for the fields it doesn't set itself.
+  tag_id?: string;
+  tag_name?: string;
+  inherited_power_off_time: string;
+  inherited_power_on_time: string;
+  inherited_days_of_week: number[];
   has_override: boolean;
   override_power_off_time?: string;   // present only when override sets it
   override_power_on_time?: string;
@@ -1073,6 +1105,20 @@ export const api = {
 
   deleteRoomOverride: (roomID: string) =>
     request<void>(`/api/v1/nightly/rooms/${encodeURIComponent(roomID)}`, {
+      method: "DELETE",
+    }),
+
+  listPowerTags: (signal?: AbortSignal) =>
+    request<PowerTagRow[]>("/api/v1/nightly/tags", { signal }),
+
+  updatePowerTag: (tagID: string, body: UpdatePowerTagBody) =>
+    request<void>(`/api/v1/nightly/tags/${encodeURIComponent(tagID)}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+
+  resetPowerTag: (tagID: string) =>
+    request<void>(`/api/v1/nightly/tags/${encodeURIComponent(tagID)}`, {
       method: "DELETE",
     }),
 

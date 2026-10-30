@@ -70,3 +70,40 @@ func TestNextPowerOnWithDates(t *testing.T) {
 		t.Errorf("no dates: %s", got)
 	}
 }
+
+// Dates by tag (migration 0072): a room's own date wins, then its first
+// tag (in priority order) with a date that day, then the estate's.
+func TestDateLookupByTag(t *testing.T) {
+	nine := 9 * time.Hour
+	book := &dateBook{
+		estate: map[string]schedDate{"2030-02-01": {closed: true}},
+		rooms:  map[string]map[string]schedDate{"court-2": {"2030-02-01": {on: &nine}}},
+		tags: map[string]map[string]schedDate{
+			"courtroom": {"2030-02-01": {on: &nine}, "2030-02-02": {closed: true}},
+			"pilot":     {"2030-02-02": {on: &nine}},
+		},
+		roomTags: map[string][]string{
+			"court-1": {"courtroom"},
+			"court-2": {"courtroom"},
+			"court-3": {"pilot", "courtroom"}, // Pilot first
+		},
+	}
+	at := func(day string) time.Time { d, _ := time.Parse(time.DateOnly, day); return d }
+	for _, c := range []struct {
+		room, day string
+		closed    bool
+		found     bool
+	}{
+		{"court-1", "2030-02-01", false, true}, // the tag's opening beats the estate closure
+		{"office", "2030-02-01", true, true},   // no tag: the estate's
+		{"court-2", "2030-02-01", false, true}, // its own date
+		{"court-1", "2030-02-02", true, true},  // Courtroom closed
+		{"court-3", "2030-02-02", false, true}, // Pilot comes first, and is open
+		{"office", "2030-02-02", false, false}, // nothing that day
+	} {
+		d, ok := book.lookup(c.room, at(c.day))
+		if ok != c.found || d.closed != c.closed {
+			t.Errorf("%s on %s: found %v closed %v; want %v %v", c.room, c.day, ok, d.closed, c.found, c.closed)
+		}
+	}
+}

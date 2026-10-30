@@ -8,14 +8,14 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Modal } from "@/components/modal";
 import { useToast } from "@/components/toast";
 import { api } from "@/lib/api";
-import type { CreateScheduleDateBody, NightlyRoomRow, ScheduleDate } from "@/lib/api";
+import type { CreateScheduleDateBody, NightlyRoomRow, RoomTag, ScheduleDate } from "@/lib/api";
 import { isFutureDate } from "./shared";
 
 // One-off dates — days that differ from the weekly schedule. Closed: no
 // power-on and no readiness check (a bank holiday, a closure). Open: the
 // room is in use with its own times, even on a day the weekly schedule
-// skips (a weekend sitting, a late finish). For one room or every room; a
-// room's own date wins.
+// skips (a weekend sitting, a late finish). For one room, the rooms with a
+// tag, or every room; a room's own date wins, then its tag's.
 
 const inputClass =
   "w-full rounded-md border bg-background px-3 py-2 text-sm disabled:opacity-50";
@@ -30,6 +30,12 @@ function formatDay(iso: string): string {
   });
 }
 
+function whichRooms(d: ScheduleDate): string {
+  if (d.room_name) return d.room_name;
+  if (d.tag_name) return `Rooms tagged ${d.tag_name}`;
+  return "Every room";
+}
+
 function describe(d: ScheduleDate): string {
   if (d.closed) return "Closed";
   const on = d.power_on_time ?? "usual on";
@@ -41,9 +47,11 @@ function describe(d: ScheduleDate): string {
 export function DatesPanel({
   canManage,
   rooms,
+  tags = [],
 }: {
   canManage: boolean;
   rooms: NightlyRoomRow[] | null;
+  tags?: RoomTag[];
 }) {
   const { toast } = useToast();
   const [dates, setDates] = useState<ScheduleDate[] | null>(null);
@@ -74,7 +82,7 @@ export function DatesPanel({
   );
 
   const remove = async (d: ScheduleDate) => {
-    const what = `${formatDay(d.date)} (${d.room_name ?? "every room"})`;
+    const what = `${formatDay(d.date)} (${whichRooms(d).toLowerCase()})`;
     if (!window.confirm(`Remove ${what}? The weekly schedule applies again.`)) return;
     setRemoving(d.id);
     try {
@@ -139,7 +147,7 @@ export function DatesPanel({
                   <div className="flex flex-wrap items-center gap-2 text-sm">
                     <span className="font-medium tabular-nums">{formatDay(d.date)}</span>
                     <span className="text-muted-foreground">
-                      {d.room_name ?? "Every room"}
+                      {whichRooms(d)}
                     </span>
                   </div>
                   {d.note && (
@@ -170,6 +178,7 @@ export function DatesPanel({
 
       {adding && (
         <AddDateModal
+          tags={tags}
           rooms={rooms ?? []}
           onClose={() => setAdding(false)}
           onAdded={async () => {
@@ -185,14 +194,17 @@ export function DatesPanel({
 
 function AddDateModal({
   rooms,
+  tags,
   onClose,
   onAdded,
 }: {
   rooms: NightlyRoomRow[];
+  tags: RoomTag[];
   onClose: () => void;
   onAdded: () => Promise<void>;
 }) {
   const [date, setDate] = useState("");
+  // "" every room, "room:<id>" one room, "tag:<id>" the rooms with a tag.
   const [roomID, setRoomID] = useState("");
   const [closed, setClosed] = useState(true);
   const [on, setOn] = useState("");
@@ -224,7 +236,8 @@ function AddDateModal({
       return;
     }
     const body: CreateScheduleDateBody = { date, closed, note: note.trim() || undefined };
-    if (roomID) body.room_id = roomID;
+    if (roomID.startsWith("room:")) body.room_id = roomID.slice(5);
+    if (roomID.startsWith("tag:")) body.tag_id = roomID.slice(4);
     if (!closed) {
       if (on) body.power_on_time = on;
       if (off) body.power_off_time = off;
@@ -269,10 +282,19 @@ function AddDateModal({
               className={inputClass}
             >
               <option value="">Every room</option>
+              {tags.length > 0 && (
+                <optgroup label="Room tags">
+                  {tags.map((t) => (
+                    <option key={t.id} value={`tag:${t.id}`}>
+                      Rooms tagged {t.name}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
               {groups.map(([building, rs]) => (
                 <optgroup key={building} label={building}>
                   {rs.map((r) => (
-                    <option key={r.room_id} value={r.room_id}>
+                    <option key={r.room_id} value={`room:${r.room_id}`}>
                       {r.room_name}
                     </option>
                   ))}

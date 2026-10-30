@@ -266,8 +266,8 @@ func (h *Handler) ListReadinessRooms(w http.ResponseWriter, r *http.Request) {
 			       rrc.test_routine_id::text, rrc.run_time, rrc.days_of_week,
 			       rnc.excluded_until,
 			       COALESCE(ns.enabled, false),
-			       COALESCE(rnc.power_off_time, ns.power_off_time),
-			       COALESCE(rnc.power_on_time, ns.power_on_time)
+			       COALESCE(rnc.power_off_time, rtp.power_off_time, ns.power_off_time),
+			       COALESCE(rnc.power_on_time, rtp.power_on_time, ns.power_on_time)
 			  FROM rooms r
 			  LEFT JOIN buildings b               ON b.id = r.building_id
 			  LEFT JOIN locations loc             ON loc.id = b.location_id
@@ -276,6 +276,7 @@ func (h *Handler) ListReadinessRooms(w http.ResponseWriter, r *http.Request) {
 			  LEFT JOIN room_readiness_config rrc ON rrc.room_id = r.id
 			  LEFT JOIN room_tag_readiness rtr    ON rtr.room_id = r.id
 			  LEFT JOIN room_nightly_config rnc   ON rnc.room_id = r.id
+			  LEFT JOIN room_tag_power rtp        ON rtp.room_id = r.id
 			  LEFT JOIN nightly_schedule ns       ON ns.customer_id = r.customer_id
 			  LEFT JOIN nightly_test_routine tr   ON tr.id = COALESCE(rrc.test_routine_id, rtr.test_routine_id, rs.test_routine_id)
 			  LEFT JOIN nightly_test_routine itr  ON itr.id = COALESCE(rtr.test_routine_id, rs.test_routine_id)

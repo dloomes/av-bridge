@@ -45,6 +45,14 @@ type roomOverrideRow struct {
 	EffectivePowerOff   string  `json:"effective_power_off_time"` // HH:MM
 	EffectivePowerOn    string  `json:"effective_power_on_time"`  // HH:MM
 	EffectiveDaysOfWeek []int   `json:"effective_days_of_week"`
+	// The room tag the room's power settings come from (room_tag_power,
+	// migration 0072), and what the room inherits from that tag or the
+	// default for the fields it doesn't set itself.
+	TagID            *string `json:"tag_id,omitempty"`
+	TagName          *string `json:"tag_name,omitempty"`
+	InheritedPowerOff string `json:"inherited_power_off_time"`
+	InheritedPowerOn  string `json:"inherited_power_on_time"`
+	InheritedDays     []int  `json:"inherited_days_of_week"`
 	HasOverride         bool    `json:"has_override"`
 	OverridePowerOff    *string `json:"override_power_off_time,omitempty"`
 	OverridePowerOn     *string `json:"override_power_on_time,omitempty"`
@@ -98,9 +106,13 @@ func (h *Handler) ListNightlyRooms(w http.ResponseWriter, r *http.Request) {
 			  b.name                                              AS building_name,
 			  loc.name                                            AS location_name,
 			  reg.name                                            AS region_name,
-			  COALESCE(rnc.power_off_time, ns.power_off_time)     AS eff_power_off,
-			  COALESCE(rnc.power_on_time,  ns.power_on_time)      AS eff_power_on,
-			  COALESCE(rnc.days_of_week,   ns.days_of_week)       AS eff_days,
+			  COALESCE(rnc.power_off_time, rtp.power_off_time, ns.power_off_time) AS eff_power_off,
+			  COALESCE(rnc.power_on_time,  rtp.power_on_time,  ns.power_on_time)  AS eff_power_on,
+			  COALESCE(rnc.days_of_week,   rtp.days_of_week,   ns.days_of_week)   AS eff_days,
+			  rtp.tag_id::text, rtp.tag_name,
+			  COALESCE(rtp.power_off_time, ns.power_off_time),
+			  COALESCE(rtp.power_on_time,  ns.power_on_time),
+			  COALESCE(rtp.days_of_week,   ns.days_of_week),
 			  -- Customised = own power settings or an exclusion. (A row that
 			  -- only held a routine, from before readiness checks were
 			  -- separate, doesn't count.)
@@ -117,6 +129,7 @@ func (h *Handler) ListNightlyRooms(w http.ResponseWriter, r *http.Request) {
 			LEFT JOIN locations loc             ON loc.id = b.location_id
 			LEFT JOIN regions   reg             ON reg.id = loc.region_id
 			LEFT JOIN room_nightly_config rnc   ON rnc.room_id = r.id
+			LEFT JOIN room_tag_power rtp        ON rtp.room_id = r.id
 			LEFT JOIN nightly_schedule ns       ON ns.customer_id = r.customer_id
 			ORDER BY reg.name NULLS LAST,
 			         loc.name NULLS LAST,
@@ -133,6 +146,8 @@ func (h *Handler) ListNightlyRooms(w http.ResponseWriter, r *http.Request) {
 				loc, reg                *string
 				effOff, effOn           time.Time
 				effDays                 []int32
+				inOff, inOn             time.Time
+				inDays                  []int32
 				overOff, overOn         *time.Time
 				overDays                []int32
 				excludedUntil           *time.Time
@@ -143,6 +158,7 @@ func (h *Handler) ListNightlyRooms(w http.ResponseWriter, r *http.Request) {
 				&row.BuildingID, &row.BuildingName,
 				&loc, &reg,
 				&effOff, &effOn, &effDays,
+				&row.TagID, &row.TagName, &inOff, &inOn, &inDays,
 				&row.HasOverride,
 				&overOff, &overOn, &overDays,
 				&excludedUntil,
@@ -161,6 +177,9 @@ func (h *Handler) ListNightlyRooms(w http.ResponseWriter, r *http.Request) {
 			row.EffectivePowerOff = effOff.Format("15:04")
 			row.EffectivePowerOn = effOn.Format("15:04")
 			row.EffectiveDaysOfWeek = int32sToInts(effDays)
+			row.InheritedPowerOff = inOff.Format("15:04")
+			row.InheritedPowerOn = inOn.Format("15:04")
+			row.InheritedDays = int32sToInts(inDays)
 			if overOff != nil {
 				s := overOff.Format("15:04")
 				row.OverridePowerOff = &s

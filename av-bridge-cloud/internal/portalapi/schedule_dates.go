@@ -15,15 +15,18 @@ import (
 	"github.com/dloomes/av-bridge-cloud/internal/portalauth"
 )
 
-// One-off schedule dates (migration 0066): a date that closes a room, or
-// every room, for the day, or opens it with its own times, whatever the
-// weekly schedule says. The scheduler reads them (nightly.dayPlan).
+// One-off schedule dates (migration 0066): a date that closes a room, the
+// rooms with a tag (migration 0072), or every room, for the day, or opens
+// it with its own times, whatever the weekly schedule says. The scheduler
+// reads them (nightly.dayPlan).
 
 type scheduleDate struct {
 	ID           string `json:"id"`
 	Date         string `json:"date"` // YYYY-MM-DD, the organisation's timezone
 	RoomID       string `json:"room_id,omitempty"`
 	RoomName     string `json:"room_name,omitempty"`
+	TagID        string `json:"tag_id,omitempty"`
+	TagName      string `json:"tag_name,omitempty"`
 	Closed       bool   `json:"closed"`
 	PowerOnTime  string `json:"power_on_time,omitempty"`  // HH:MM, open dates only
 	PowerOffTime string `json:"power_off_time,omitempty"` // HH:MM, open dates only
@@ -46,20 +49,22 @@ func (h *Handler) ListScheduleDates(w http.ResponseWriter, r *http.Request) {
 	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `
 			SELECT sd.id::text, sd.on_date::text, COALESCE(sd.room_id::text, ''), COALESCE(r.name, ''),
+			       COALESCE(sd.tag_id::text, ''), COALESCE(t.name, ''),
 			       sd.closed,
 			       COALESCE(to_char(sd.power_on_time, 'HH24:MI'), ''),
 			       COALESCE(to_char(sd.power_off_time, 'HH24:MI'), ''),
 			       sd.note, sd.created_by
 			  FROM schedule_date sd
-			  LEFT JOIN rooms r ON r.id = sd.room_id
+			  LEFT JOIN rooms r     ON r.id = sd.room_id
+			  LEFT JOIN room_tags t ON t.id = sd.tag_id
 			 WHERE sd.on_date >= $1::date
-			 ORDER BY sd.on_date, sd.room_id NULLS FIRST, r.name`, from)
+			 ORDER BY sd.on_date, sd.room_id IS NOT NULL, sd.tag_id IS NOT NULL, t.name, r.name`, from)
 		if err != nil {
 			return err
 		}
 		out, err = pgx.CollectRows(rows, func(row pgx.CollectableRow) (scheduleDate, error) {
 			var d scheduleDate
-			err := row.Scan(&d.ID, &d.Date, &d.RoomID, &d.RoomName, &d.Closed,
+			err := row.Scan(&d.ID, &d.Date, &d.RoomID, &d.RoomName, &d.TagID, &d.TagName, &d.Closed,
 				&d.PowerOnTime, &d.PowerOffTime, &d.Note, &d.CreatedBy)
 			return d, err
 		})
@@ -73,7 +78,8 @@ func (h *Handler) ListScheduleDates(w http.ResponseWriter, r *http.Request) {
 
 type createScheduleDateReq struct {
 	Date         string `json:"date"`
-	RoomID       string `json:"room_id"` // empty: every room
+	RoomID       string `json:"room_id"` // empty: every room (or the tag's rooms)
+	TagID        string `json:"tag_id"`  // the rooms with this room tag; not with room_id
 	Closed       bool   `json:"closed"`
 	PowerOnTime  string `json:"power_on_time"`
 	PowerOffTime string `json:"power_off_time"`
@@ -118,9 +124,20 @@ func (h *Handler) CreateScheduleDate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "power-on must be before power-off")
 		return
 	}
-	var roomArg any
+	if req.RoomID != "" && req.TagID != "" {
+		writeErr(w, http.StatusBadRequest, "a date is for a room or a tag, not both")
+		return
+	}
+	var roomArg, tagArg any
 	if req.RoomID != "" {
 		roomArg = req.RoomID
+	}
+	if req.TagID != "" {
+		if !uuidRe.MatchString(req.TagID) {
+			writeErr(w, http.StatusNotFound, "tag not found")
+			return
+		}
+		tagArg = req.TagID
 	}
 	note := strings.TrimSpace(req.Note)
 	if len(note) > 200 {
@@ -129,8 +146,8 @@ func (h *Handler) CreateScheduleDate(w http.ResponseWriter, r *http.Request) {
 
 	p, _ := portalauth.From(r.Context())
 	var (
-		id                  string
-		roomMissing, exists bool
+		id                              string
+		roomMissing, tagMissing, exists bool
 	)
 	ok = h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
 		if roomArg != nil {
@@ -143,11 +160,31 @@ func (h *Handler) CreateScheduleDate(w http.ResponseWriter, r *http.Request) {
 				return nil
 			}
 		}
+		if tagArg != nil {
+			var n int
+			if err := tx.QueryRow(ctx, `SELECT count(*) FROM room_tags WHERE id::text = $1`, tagArg).Scan(&n); err != nil {
+				return err
+			}
+			if n == 0 {
+				tagMissing = true
+				return nil
+			}
+		}
+		// One date per day for each room, tag and the estate. Checked first:
+		// a failed INSERT would abort the transaction, and its commit fail.
+		if err := tx.QueryRow(ctx, `
+			SELECT EXISTS (SELECT 1 FROM schedule_date
+			                WHERE on_date = $1::date
+			                  AND room_id IS NOT DISTINCT FROM $2::uuid
+			                  AND tag_id  IS NOT DISTINCT FROM $3::uuid)`,
+			req.Date, roomArg, tagArg).Scan(&exists); err != nil || exists {
+			return err
+		}
 		err := tx.QueryRow(ctx, `
-			INSERT INTO schedule_date (customer_id, room_id, on_date, closed, power_on_time, power_off_time, note, created_by)
-			VALUES ($1, $2::uuid, $3::date, $4, $5::time, $6::time, $7, $8)
+			INSERT INTO schedule_date (customer_id, room_id, tag_id, on_date, closed, power_on_time, power_off_time, note, created_by)
+			VALUES ($1, $2::uuid, $3::uuid, $4::date, $5, $6::time, $7::time, $8, $9)
 			RETURNING id::text`,
-			p.CustomerID, roomArg, req.Date, req.Closed, on, off, note, p.Email).Scan(&id)
+			p.CustomerID, roomArg, tagArg, req.Date, req.Closed, on, off, note, p.Email).Scan(&id)
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 			exists = true
@@ -158,7 +195,7 @@ func (h *Handler) CreateScheduleDate(w http.ResponseWriter, r *http.Request) {
 		}
 		return audit.Record(ctx, tx, p.CustomerID, stampActor(p, audit.Entry{
 			Action: "nightly.date_added", TargetKind: "schedule_date", TargetID: id,
-			After: map[string]any{"date": req.Date, "room_id": req.RoomID, "closed": req.Closed,
+			After: map[string]any{"date": req.Date, "room_id": req.RoomID, "tag_id": req.TagID, "closed": req.Closed,
 				"power_on_time": req.PowerOnTime, "power_off_time": req.PowerOffTime, "note": note},
 		}))
 	})
@@ -166,6 +203,8 @@ func (h *Handler) CreateScheduleDate(w http.ResponseWriter, r *http.Request) {
 	case !ok:
 	case roomMissing:
 		writeErr(w, http.StatusNotFound, "room not found")
+	case tagMissing:
+		writeErr(w, http.StatusNotFound, "tag not found")
 	case exists:
 		writeErr(w, http.StatusConflict, "there's already a date for that day; remove it first")
 	default:
@@ -183,11 +222,11 @@ func (h *Handler) DeleteScheduleDate(w http.ResponseWriter, r *http.Request) {
 	p, _ := portalauth.From(r.Context())
 	found := false
 	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
-		var date, room string
+		var date, room, tag string
 		var closed bool
 		err := tx.QueryRow(ctx, `
 			DELETE FROM schedule_date WHERE id = $1
-			RETURNING on_date::text, COALESCE(room_id::text, ''), closed`, id).Scan(&date, &room, &closed)
+			RETURNING on_date::text, COALESCE(room_id::text, ''), COALESCE(tag_id::text, ''), closed`, id).Scan(&date, &room, &tag, &closed)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
@@ -197,7 +236,7 @@ func (h *Handler) DeleteScheduleDate(w http.ResponseWriter, r *http.Request) {
 		found = true
 		return audit.Record(ctx, tx, p.CustomerID, stampActor(p, audit.Entry{
 			Action: "nightly.date_removed", TargetKind: "schedule_date", TargetID: id,
-			Before: map[string]any{"date": date, "room_id": room, "closed": closed},
+			Before: map[string]any{"date": date, "room_id": room, "tag_id": tag, "closed": closed},
 		}))
 	})
 	if !ok {

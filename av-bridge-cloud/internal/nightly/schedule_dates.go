@@ -5,10 +5,12 @@ import (
 	"time"
 )
 
-// One-off schedule dates (migration 0066). A date closes a room, or every
-// room, for the day (no power-on, no readiness check), or opens it with
-// its own times, whatever the weekly schedule says. A room's own date
-// wins over an estate-wide one. Dates are in the organisation's timezone.
+// One-off schedule dates (migration 0066). A date closes a room, the rooms
+// with a tag, or every room, for the day (no power-on, no readiness check),
+// or opens it with its own times, whatever the weekly schedule says. A
+// room's own date wins, then its highest-priority tag with a date that day
+// (migration 0072), then an estate-wide one. Dates are in the
+// organisation's timezone.
 
 type schedDate struct {
 	closed  bool
@@ -19,10 +21,13 @@ type schedDate struct {
 type dateBook struct {
 	estate map[string]schedDate
 	rooms  map[string]map[string]schedDate // room id → date → entry
+	tags   map[string]map[string]schedDate // tag id → date → entry
+	// roomTags: each room's tags that have dates, highest priority first.
+	roomTags map[string][]string
 }
 
-// lookup finds the date that applies to room on day: the room's, else the
-// estate's.
+// lookup finds the date that applies to room on day: the room's, else its
+// first tag's that has one that day, else the estate's.
 func (b *dateBook) lookup(roomID string, day time.Time) (schedDate, bool) {
 	if b == nil {
 		return schedDate{}, false
@@ -30,6 +35,11 @@ func (b *dateBook) lookup(roomID string, day time.Time) (schedDate, bool) {
 	key := day.Format(time.DateOnly)
 	if d, ok := b.rooms[roomID][key]; ok {
 		return d, true
+	}
+	for _, tag := range b.roomTags[roomID] {
+		if d, ok := b.tags[tag][key]; ok {
+			return d, true
+		}
 	}
 	d, ok := b.estate[key]
 	return d, ok
@@ -67,8 +77,8 @@ func (b *dateBook) dayPlan(roomID string, day time.Time, days []int, on, off tim
 func (s *Scheduler) loadDateBooks(ctx context.Context) (map[string]*dateBook, error) {
 	today := s.wallNow().UTC().Format(time.DateOnly)
 	rows, err := s.pool.Query(ctx, `
-		SELECT customer_id::text, COALESCE(room_id::text, ''), on_date, closed,
-		       power_on_time, power_off_time
+		SELECT customer_id::text, COALESCE(room_id::text, ''), COALESCE(tag_id::text, ''),
+		       on_date, closed, power_on_time, power_off_time
 		  FROM schedule_date
 		 WHERE on_date BETWEEN $1::date - 2 AND $1::date + 16`, today)
 	if err != nil {
@@ -76,21 +86,26 @@ func (s *Scheduler) loadDateBooks(ctx context.Context) (map[string]*dateBook, er
 	}
 	defer rows.Close()
 	books := map[string]*dateBook{}
-	for rows.Next() {
-		var (
-			cust, room string
-			day        time.Time
-			closed     bool
-			on, off    *time.Time
-		)
-		if err := rows.Scan(&cust, &room, &day, &closed, &on, &off); err != nil {
-			return nil, err
-		}
+	book := func(cust string) *dateBook {
 		b := books[cust]
 		if b == nil {
-			b = &dateBook{estate: map[string]schedDate{}, rooms: map[string]map[string]schedDate{}}
+			b = &dateBook{estate: map[string]schedDate{}, rooms: map[string]map[string]schedDate{},
+				tags: map[string]map[string]schedDate{}, roomTags: map[string][]string{}}
 			books[cust] = b
 		}
+		return b
+	}
+	for rows.Next() {
+		var (
+			cust, room, tag string
+			day             time.Time
+			closed          bool
+			on, off         *time.Time
+		)
+		if err := rows.Scan(&cust, &room, &tag, &day, &closed, &on, &off); err != nil {
+			return nil, err
+		}
+		b := book(cust)
 		d := schedDate{closed: closed}
 		if on != nil {
 			v := timeOfDayToDuration(*on)
@@ -101,16 +116,48 @@ func (s *Scheduler) loadDateBooks(ctx context.Context) (map[string]*dateBook, er
 			d.off = &v
 		}
 		key := day.Format(time.DateOnly)
-		if room == "" {
-			b.estate[key] = d
-		} else {
+		switch {
+		case room != "":
 			if b.rooms[room] == nil {
 				b.rooms[room] = map[string]schedDate{}
 			}
 			b.rooms[room][key] = d
+		case tag != "":
+			if b.tags[tag] == nil {
+				b.tags[tag] = map[string]schedDate{}
+			}
+			b.tags[tag][key] = d
+		default:
+			b.estate[key] = d
 		}
 	}
-	return books, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+
+	// The rooms with those tags, each room's tags in priority order.
+	trows, err := s.pool.Query(ctx, `
+		SELECT a.customer_id::text, a.room_id::text, a.tag_id::text
+		  FROM room_tag_assignments a
+		  JOIN room_tags t ON t.id = a.tag_id
+		 WHERE a.tag_id IN (SELECT tag_id FROM schedule_date
+		                     WHERE tag_id IS NOT NULL
+		                       AND on_date BETWEEN $1::date - 2 AND $1::date + 16)
+		 ORDER BY a.room_id, t.priority NULLS LAST, lower(t.name), t.id`, today)
+	if err != nil {
+		return nil, err
+	}
+	defer trows.Close()
+	for trows.Next() {
+		var cust, room, tag string
+		if err := trows.Scan(&cust, &room, &tag); err != nil {
+			return nil, err
+		}
+		b := book(cust)
+		b.roomTags[room] = append(b.roomTags[room], tag)
+	}
+	return books, trows.Err()
 }
 
 // nextPowerOn is when a room switched off at scheduledOffLocal next powers

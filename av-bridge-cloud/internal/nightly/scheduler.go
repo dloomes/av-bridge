@@ -172,14 +172,15 @@ func (s *Scheduler) collectEnabledRooms(ctx context.Context) ([]roomView, error)
 		  ns.customer_id::text,
 		  r.id::text                                        AS room_id,
 		  r.name                                            AS room_name,
-		  COALESCE(rnc.power_off_time, ns.power_off_time)   AS eff_power_off,
-		  COALESCE(rnc.power_on_time,  ns.power_on_time)    AS eff_power_on,
-		  COALESCE(rnc.days_of_week,   ns.days_of_week)     AS eff_days,
+		  COALESCE(rnc.power_off_time, rtp.power_off_time, ns.power_off_time)   AS eff_power_off,
+		  COALESCE(rnc.power_on_time,  rtp.power_on_time,  ns.power_on_time)    AS eff_power_on,
+		  COALESCE(rnc.days_of_week,   rtp.days_of_week,   ns.days_of_week)     AS eff_days,
 		  ns.timezone,
 		  rnc.excluded_until
 		FROM nightly_schedule ns
 		JOIN rooms r                        ON r.customer_id = ns.customer_id
 		LEFT JOIN room_nightly_config rnc   ON rnc.room_id = r.id
+		LEFT JOIN room_tag_power rtp        ON rtp.room_id = r.id
 		WHERE ns.enabled = true
 	`)
 	if err != nil {
@@ -330,8 +331,8 @@ func (s *Scheduler) advanceRuns(ctx context.Context) error {
 	rows, err := s.pool.Query(ctx, `
 		SELECT nr.id::text, nr.customer_id::text, nr.room_id::text, r.name,
 		       nr.phase, nr.scheduled_at, nr.started_at,
-		       COALESCE(rnc.power_on_time, ns.power_on_time) AS eff_power_on,
-		       COALESCE(rnc.days_of_week,  ns.days_of_week)  AS eff_days,
+		       COALESCE(rnc.power_on_time, rtp.power_on_time, ns.power_on_time) AS eff_power_on,
+		       COALESCE(rnc.days_of_week,  rtp.days_of_week,  ns.days_of_week)  AS eff_days,
 		       ns.timezone,
 		       nr.routine_id::text,
 		       COALESCE(nr.phase_changed_at, nr.started_at, nr.created_at)
@@ -339,6 +340,7 @@ func (s *Scheduler) advanceRuns(ctx context.Context) error {
 		  JOIN rooms r                       ON r.id = nr.room_id
 		  JOIN nightly_schedule ns           ON ns.customer_id = nr.customer_id
 		  LEFT JOIN room_nightly_config rnc  ON rnc.room_id = nr.room_id
+		  LEFT JOIN room_tag_power rtp       ON rtp.room_id = nr.room_id
 		 WHERE nr.status = 'in_progress'
 		   AND nr.kind = 'power'
 	`)
