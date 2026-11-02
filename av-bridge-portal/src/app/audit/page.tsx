@@ -5,7 +5,6 @@ import { useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { ConnectionIndicator } from "@/components/connection-indicator";
 import { AuditFeed } from "@/components/audit-feed";
-import { UserMenu } from "@/components/user-menu";
 
 // Customer-wide audit page. Filters are query-string driven so the device
 // detail page can deep-link with ?target_kind=device&target_id=<uuid> — same
@@ -34,7 +33,6 @@ export default function AuditPage() {
             </Button>
           )}
           <ConnectionIndicator />
-          <UserMenu />
         </div>
       </header>
 

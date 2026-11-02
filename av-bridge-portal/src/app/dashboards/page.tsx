@@ -17,7 +17,6 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Modal } from "@/components/modal";
-import { UserMenu } from "@/components/user-menu";
 import { DashboardGrid } from "@/components/dashboard/grid";
 import { DisplayLinks } from "@/components/dashboard/display-links";
 import {
@@ -281,7 +280,6 @@ export default function DashboardsPage() {
               </Button>
             </>
           )}
-          <UserMenu />
         </div>
       </header>
 

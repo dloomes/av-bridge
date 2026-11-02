@@ -25,7 +25,6 @@ import {
 import { ConnectionIndicator } from "@/components/connection-indicator";
 import { SetAsDefaultToggle } from "@/components/set-as-default-toggle";
 import { StatCard } from "@/components/stat-card";
-import { UserMenu } from "@/components/user-menu";
 import { useBranding } from "@/components/branding-provider";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
@@ -229,7 +228,6 @@ export default function MapPage() {
             Refresh
           </Button>
           <ConnectionIndicator />
-          <UserMenu />
         </div>
       </header>
 

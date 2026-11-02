@@ -12,7 +12,6 @@ import { Badge } from "@/components/ui/badge";
 import { BackLink } from "@/components/back-link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { UserMenu } from "@/components/user-menu";
 import { useToast } from "@/components/toast";
 import { api, type CollectorLogFilter, type CollectorLogLine } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -146,7 +145,6 @@ export default function CollectorLogsPage() {
               {downloading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
               Download
             </Button>
-            <UserMenu />
           </div>
         </div>
       </header>

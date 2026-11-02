@@ -18,7 +18,6 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { UserMenu } from "@/components/user-menu";
 import { api } from "@/lib/api";
 import type { DownloadItem } from "@/lib/api";
 
@@ -103,7 +102,6 @@ export default function DownloadsPage() {
             <RefreshCcw className="h-3.5 w-3.5" />
             Refresh
           </Button>
-          <UserMenu />
         </div>
       </header>
 

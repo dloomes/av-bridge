@@ -14,7 +14,6 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { UserMenu } from "@/components/user-menu";
 import { usePolling } from "@/hooks/usePolling";
 import { useSession } from "@/hooks/useSession";
 import { api } from "@/lib/api";
@@ -131,7 +130,6 @@ export default function AlertsPage() {
             <span className="font-semibold">{counts.acknowledged}</span>{" "}
             <span className="text-muted-foreground">acknowledged</span>
           </span>
-          <UserMenu />
         </div>
       </header>
 

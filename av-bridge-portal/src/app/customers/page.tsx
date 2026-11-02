@@ -14,7 +14,6 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Modal } from "@/components/modal";
-import { UserMenu } from "@/components/user-menu";
 import { NewCustomerForm, EditCustomerForm } from "@/components/customer-forms";
 import { usePolling } from "@/hooks/usePolling";
 import { useSession } from "@/hooks/useSession";
@@ -94,7 +93,6 @@ export default function CustomersPage() {
             <Plus className="h-3.5 w-3.5" />
             New customer
           </Button>
-          <UserMenu />
         </div>
       </header>
 

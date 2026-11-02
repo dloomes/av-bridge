@@ -15,7 +15,6 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Modal } from "@/components/modal";
-import { UserMenu } from "@/components/user-menu";
 import { MagicLinkModal, MagicLinkTrigger } from "@/components/magic-link-modal";
 import {
   EMPTY_SCOPE,
@@ -138,7 +137,6 @@ export default function UsersPage() {
                 New user
               </Button>
             )}
-            <UserMenu />
           </div>
         </header>
 

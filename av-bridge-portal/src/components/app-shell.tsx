@@ -4,6 +4,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect } from "react";
 import { Loader2, LockKeyhole } from "lucide-react";
 import { Sidebar } from "@/components/sidebar";
+import { UserMenu } from "@/components/user-menu";
 import { BrandingProvider } from "@/components/branding-provider";
 import { ToastProvider } from "@/components/toast";
 import { useSession } from "@/hooks/useSession";
@@ -132,9 +133,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <ToastProvider>
       <BrandingProvider>
         <Sidebar />
-        {/* Phones have a 3.5rem top bar (in Sidebar); pages size
-            themselves to the screen less --topbar-h (h-app). */}
-        <main className="flex-1 min-w-0 pt-14 md:pt-0 [--topbar-h:3.5rem] md:[--topbar-h:0px]">
+        {/* Phones have a 3.5rem top bar (in Sidebar); wider screens a
+            3rem bar here. Both hold the profile menu, so it's in the same
+            place on every page, whatever the page's own header holds.
+            Pages size themselves to the screen less --topbar-h (h-app). */}
+        <main className="flex-1 min-w-0 pt-14 md:pt-0 [--topbar-h:3.5rem] md:[--topbar-h:3rem]">
+          <div className="sticky top-0 z-30 hidden h-12 items-center justify-end border-b bg-background/95 px-6 backdrop-blur md:flex">
+            <UserMenu />
+          </div>
           {children}
         </main>
       </BrandingProvider>

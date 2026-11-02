@@ -11,7 +11,7 @@ import { api, type HelpdeskCustomer } from "@/lib/api";
 // UserMenu — top-right dropdown showing the current user, their role, and
 // (for vendor users) a customer-scope picker. Sign-out clears the session
 // and pushes back to /sign-in.
-export function UserMenu() {
+export function UserMenu({ compact = false }: { compact?: boolean } = {}) {
   const session = useSession();
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -72,20 +72,35 @@ export function UserMenu() {
 
   return (
     <div className="relative" ref={ref}>
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-2 rounded-md border bg-card px-2 py-1.5 text-sm hover:bg-accent/40"
-      >
-        <div className="h-6 w-6 rounded-full bg-foreground text-background text-[10px] flex items-center justify-center font-semibold">
-          {initials}
-        </div>
-        <span className="hidden sm:inline">{session.user.name ?? session.user.email}</span>
-        <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
-      </button>
+      {compact ? (
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-label={`Account: ${session.user.name ?? session.user.email}`}
+          aria-expanded={open}
+          className="flex h-11 w-11 items-center justify-center rounded-md hover:bg-white/10"
+        >
+          <span className="flex h-7 w-7 items-center justify-center rounded-full bg-white/90 text-[11px] font-semibold text-slate-900">
+            {initials}
+          </span>
+        </button>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          className="flex items-center gap-2 rounded-md border bg-card px-2 py-1.5 text-sm hover:bg-accent/40"
+        >
+          <div className="h-6 w-6 rounded-full bg-foreground text-background text-[10px] flex items-center justify-center font-semibold">
+            {initials}
+          </div>
+          <span className="hidden sm:inline">{session.user.name ?? session.user.email}</span>
+          <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+        </button>
+      )}
 
       {open && (
-        <div className="absolute right-0 top-full mt-1 w-72 rounded-md border bg-card shadow-lg z-50">
+        <div className="absolute right-0 top-full mt-1 w-72 max-w-[calc(100vw-1rem)] rounded-md border bg-card text-card-foreground shadow-lg z-50">
           <div className="p-3 border-b">
             <div className="flex items-center gap-2 text-sm font-medium">
               {session.user.is_vendor ? (

@@ -7,7 +7,6 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Modal } from "@/components/modal";
-import { UserMenu } from "@/components/user-menu";
 import { useToast } from "@/components/toast";
 import { TAG_COLOURS, TagChip } from "@/components/room-tags";
 import { useSession } from "@/hooks/useSession";
@@ -76,7 +75,6 @@ export default function RoomTagsPage() {
                 </Button>
               </>
             )}
-            <UserMenu />
           </div>
         </header>
 

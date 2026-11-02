@@ -17,7 +17,6 @@ import { BackLink } from "@/components/back-link";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ConnectionIndicator } from "@/components/connection-indicator";
-import { UserMenu } from "@/components/user-menu";
 import { StatusBadge } from "@/components/status-badge";
 import { DeviceIcon } from "@/components/device-icon";
 import { CommandPanel } from "@/components/command-panel";
@@ -284,7 +283,6 @@ export default function DeviceDetailPage() {
             </Button>
           )}
           <ConnectionIndicator />
-          <UserMenu />
         </div>
       </header>
 

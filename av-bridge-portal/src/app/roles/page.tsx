@@ -14,7 +14,6 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Modal } from "@/components/modal";
-import { UserMenu } from "@/components/user-menu";
 import { useSession } from "@/hooks/useSession";
 import { api } from "@/lib/api";
 import {
@@ -81,7 +80,6 @@ export default function RolesPage() {
                 New role
               </Button>
             )}
-            <UserMenu />
           </div>
         </header>
 

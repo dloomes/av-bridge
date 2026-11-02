@@ -13,7 +13,6 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { UserMenu } from "@/components/user-menu";
 import { api } from "@/lib/api";
 import type { RoomTag } from "@/lib/api";
 import { TagFilter } from "@/components/room-tags";
@@ -78,7 +77,6 @@ export default function ReportsPage() {
             Uptime, room usage, device events, warranty and power over the selected window
           </p>
         </div>
-        <UserMenu />
       </header>
 
       <div className="flex-1 min-h-0 overflow-y-auto p-6 space-y-4">

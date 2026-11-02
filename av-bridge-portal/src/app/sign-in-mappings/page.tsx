@@ -14,7 +14,6 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Modal } from "@/components/modal";
-import { UserMenu } from "@/components/user-menu";
 import { useSession } from "@/hooks/useSession";
 import { api } from "@/lib/api";
 import { hasPermission } from "@/lib/session";
@@ -55,7 +54,6 @@ export default function SignInMappingsPage() {
               every time they sign in.
             </p>
           </div>
-          <UserMenu />
         </header>
 
         {!canManage && !isVendor ? (

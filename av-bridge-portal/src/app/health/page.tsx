@@ -6,7 +6,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ConnectionIndicator } from "@/components/connection-indicator";
-import { UserMenu } from "@/components/user-menu";
 import { usePolling } from "@/hooks/usePolling";
 import { api, API_BASE } from "@/lib/api";
 
@@ -55,7 +54,6 @@ export default function HealthPage() {
             Refresh
           </Button>
           <ConnectionIndicator />
-          <UserMenu />
         </div>
       </header>
 

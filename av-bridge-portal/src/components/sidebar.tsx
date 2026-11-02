@@ -38,6 +38,7 @@ import { useSession } from "@/hooks/useSession";
 import { api } from "@/lib/api";
 import { hasPermission } from "@/lib/session";
 import { cn } from "@/lib/utils";
+import { UserMenu } from "@/components/user-menu";
 import type { AlertsSummary } from "@/lib/types";
 import { PRODUCT_NAME } from "@/lib/brand";
 
@@ -358,11 +359,12 @@ export function Sidebar() {
           <Menu aria-hidden="true" className="h-5 w-5" />
         </button>
         {brand}
+        <span className="ml-auto" />
         {canSeeAlerts && (
           <Link
             href="/alerts"
             aria-label={`Alerts: ${badges.alerts_open} open`}
-            className={cn(iconButton, "relative ml-auto")}
+            className={cn(iconButton, "relative")}
           >
             <Bell aria-hidden="true" className="h-5 w-5" />
             {badges.alerts_open > 0 && (
@@ -378,6 +380,7 @@ export function Sidebar() {
             )}
           </Link>
         )}
+        <UserMenu compact />
       </div>
 
       {drawerOpen && (

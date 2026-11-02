@@ -22,7 +22,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { DeviceForm } from "@/components/device-form";
 import { Modal } from "@/components/modal";
 import { useToast } from "@/components/toast";
-import { UserMenu } from "@/components/user-menu";
 import { useSession } from "@/hooks/useSession";
 import { api } from "@/lib/api";
 import { hasPermission } from "@/lib/session";
@@ -392,7 +391,6 @@ export default function AssetsPage() {
                 </Button>
               </>
             )}
-            <UserMenu />
           </div>
         </header>
 

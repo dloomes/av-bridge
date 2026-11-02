@@ -23,7 +23,6 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Modal } from "@/components/modal";
-import { UserMenu } from "@/components/user-menu";
 import {
   HierarchyForm,
   type HierarchyEditInitial,
@@ -295,7 +294,6 @@ export default function LocationsPage() {
               New region
             </Button>
           )}
-          <UserMenu />
         </div>
       </header>
 

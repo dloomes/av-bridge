@@ -15,7 +15,6 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Modal } from "@/components/modal";
-import { UserMenu } from "@/components/user-menu";
 import { MagicLinkModal, MagicLinkTrigger } from "@/components/magic-link-modal";
 import { useSession } from "@/hooks/useSession";
 import { api } from "@/lib/api";
@@ -93,7 +92,6 @@ export default function HelpdeskUsersPage() {
               .
             </p>
           </div>
-          <UserMenu />
         </header>
 
         {loadError && (

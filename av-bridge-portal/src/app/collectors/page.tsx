@@ -27,7 +27,6 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Modal } from "@/components/modal";
-import { UserMenu } from "@/components/user-menu";
 import { usePolling } from "@/hooks/usePolling";
 import { useSession } from "@/hooks/useSession";
 import { api, MoveError } from "@/lib/api";
@@ -173,7 +172,6 @@ export default function CollectorsPage() {
                 New collector
               </Button>
             )}
-            <UserMenu />
           </div>
         </div>
       </header>

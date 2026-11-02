@@ -22,7 +22,6 @@ import { CallBadge } from "@/components/call-badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { UserMenu } from "@/components/user-menu";
 import { Modal } from "@/components/modal";
 import { DeviceForm } from "@/components/device-form";
 import { BulkCommandForm } from "@/components/bulk-command";
@@ -283,7 +282,6 @@ export default function DevicesPage() {
                 New device
               </Button>
             )}
-            <UserMenu />
           </div>
         </div>
       </header>

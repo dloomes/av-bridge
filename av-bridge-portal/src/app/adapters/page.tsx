@@ -19,7 +19,6 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Modal } from "@/components/modal";
-import { UserMenu } from "@/components/user-menu";
 import { usePolling } from "@/hooks/usePolling";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -151,7 +150,6 @@ export default function AdaptersPage() {
               </p>
             </div>
           </div>
-          <UserMenu />
         </div>
       </header>
 
