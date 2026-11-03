@@ -656,7 +656,7 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 		mux.Handle("PUT /bridge/config", bridgeConfig.PutConfig)
 	}
 
-	var handler http.Handler = logging(log, mux)
+	var handler http.Handler = securityHeaders(logging(log, mux))
 	if remoteAccess != nil {
 		if remoteAccess.Tunnel != nil {
 			mux.Handle("GET /bridge/tunnel", remoteAccess.Tunnel)
@@ -687,6 +687,22 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 		WriteTimeout: 45 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}
+}
+
+// securityHeaders sets the browser hardening headers on every API response.
+// The portal proxies /api, /public and /pub through Next.js rewrites, which
+// don't add the portal's own headers, so the cloud sets the same ones. Not
+// applied to remote access sessions: those serve the device's own web UI.
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("Content-Security-Policy", "frame-ancestors 'none'; base-uri 'self'; object-src 'none'")
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		next.ServeHTTP(w, r)
+	})
 }
 
 func logging(log *slog.Logger, next http.Handler) http.Handler {

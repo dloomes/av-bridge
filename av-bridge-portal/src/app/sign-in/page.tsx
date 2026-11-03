@@ -73,7 +73,7 @@ export default async function SignInPage() {
   // hostname in x-forwarded-host. Prefer that header so per-customer
   // subdomains route correctly; fall back to `host` for local dev + any
   // deploy where the proxy chain doesn't rewrite Host.
-  const h = headers();
+  const h = await headers();
   const hostHeader = h.get("x-forwarded-host") ?? h.get("host");
   const slug = extractSlugFromHost(hostHeader);
   const branding = await fetchBranding(slug);
