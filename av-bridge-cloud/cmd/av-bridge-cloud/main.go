@@ -233,12 +233,15 @@ func main() {
 	if cfg.PoCPortalToken != "" {
 		// Three-tier auth. Local is checked first: session tokens have a
 		// distinctive `av_` prefix so mismatches short-circuit without a DB
-		// query. Mock-JWT is next for the dev sign-in presets. Static token
+		// query. Mock-JWT is next for the dev sign-in presets (off unless ALLOW_MOCK_JWT=true). Static token
 		// catches the long-form Bearer used by smoke scripts. All three
 		// hand back the same Principal shape.
 		lookup := portalauth.NewDBTenantLookup(store.AdminPool())
 		local := portalauth.NewLocalResolver(store.AdminPool())
-		mock := portalauth.NewMockJWTResolver(lookup, true)
+		if cfg.AllowMockJWT {
+			log.Warn("mock JWT sign-in enabled — dev only, never in production (ALLOW_MOCK_JWT=true)")
+		}
+		mock := portalauth.NewMockJWTResolver(lookup, cfg.AllowMockJWT)
 		static := portalauth.NewStaticResolver(cfg.PoCPortalToken, cfg.PoCPortalCustomerID, cfg.PoCPortalRole)
 		// Display links (dashboard wall screens) have their own dsp_ tokens.
 		display := portalauth.NewDisplayResolver(store.AdminPool())

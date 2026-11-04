@@ -8,8 +8,9 @@
 //
 // Mock tokens are intentionally trivial to construct so dev/test can simulate
 // multi-user, multi-customer scenarios without standing up Entra. They are
-// not cryptographically secure — this resolver is gated to non-production
-// deployments by the operator (enable via env, exactly as static token).
+// not cryptographically secure, so the resolver is OFF unless the operator
+// sets ALLOW_MOCK_JWT=true (config.AllowMockJWT, default false). Never set it
+// in a deployed environment.
 package portalauth
 
 import (
@@ -79,8 +80,9 @@ type cachedPrincipal struct {
 }
 
 // NewMockJWTResolver. allowMock=false makes Resolve always return ("", false)
-// — useful for production deployments that want the type wired but the
-// feature off.
+// so the type stays wired but unsigned tokens are refused. main.go passes
+// cfg.AllowMockJWT (env ALLOW_MOCK_JWT=true); it must be false in any
+// deployed environment.
 func NewMockJWTResolver(lookup TenantLookup, allowMock bool) *MockJWTResolver {
 	return &MockJWTResolver{
 		lookup:    lookup,

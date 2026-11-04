@@ -42,6 +42,9 @@ services:
       # is given "admin" role for convenience so placement + hierarchy CRUD work.
       POC_PORTAL_TOKEN: "dev-portal-token-change-me"
       POC_PORTAL_ROLE: "admin"
+      # Local dev only: accept unsigned mock.<json> sign-in tokens (portal dev
+      # presets). Never set in a deployed environment.
+      ALLOW_MOCK_JWT: "true"
       # Seed one tenant + collector so the existing bridge can push immediately.
       BOOTSTRAP_POC: "true"
       POC_BRIDGE_COLLECTOR_ID: "poc-collector-01"

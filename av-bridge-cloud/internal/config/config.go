@@ -37,6 +37,11 @@ type Config struct {
 	PoCPortalCustomerID string
 	PoCPortalRole       string
 
+	// AllowMockJWT enables the unsigned `mock.<base64 json>` sign-in tokens
+	// (ALLOW_MOCK_JWT=true; any other value, or unset, is off). Dev only:
+	// anyone who knows a tenant id and a mapped group id can mint a principal.
+	AllowMockJWT bool
+
 	// Optional PoC bootstrap: seed a single tenant + collector on startup so the
 	// existing on-prem bridge can push without a registration UI yet.
 	BootstrapPoC    bool
@@ -266,6 +271,7 @@ func FromEnv() (Config, error) {
 		PoCPortalToken:       os.Getenv("POC_PORTAL_TOKEN"),
 		PoCPortalCustomerID:  getenv("POC_PORTAL_CUSTOMER_ID", "11111111-1111-1111-1111-111111111111"),
 		PoCPortalRole:        getenv("POC_PORTAL_ROLE", "admin"),
+		AllowMockJWT:         os.Getenv("ALLOW_MOCK_JWT") == "true",
 		BootstrapPoC:         os.Getenv("BOOTSTRAP_POC") == "true",
 		PoCBridgeID:          getenv("POC_BRIDGE_COLLECTOR_ID", "poc-collector-01"),
 		PoCCustomerName:      getenv("POC_CUSTOMER_NAME", "PoC Customer"),
