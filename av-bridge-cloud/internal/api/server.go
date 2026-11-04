@@ -226,6 +226,27 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 			portalauth.Middleware(portal.Resolver,
 				portalauth.RequireVendorAdmin(http.HandlerFunc(portal.Portal.HelpdeskPrivacyErase))))
 
+		// Customer offboarding (GDPR): start the 30-day countdown to
+		// deletion, cancel it, download the customer's whole dataset, and
+		// the deletion certificates. Vendor admins only — the export holds
+		// everything. The certificate route captures the last segment
+		// ("{id}.csv"); a wildcard can't share a segment with ".csv".
+		mux.Handle("POST /api/v1/helpdesk/customers/{id}/offboard",
+			portalauth.Middleware(portal.Resolver,
+				portalauth.RequireVendorAdmin(http.HandlerFunc(portal.Portal.OffboardCustomer))))
+		mux.Handle("POST /api/v1/helpdesk/customers/{id}/cancel-offboarding",
+			portalauth.Middleware(portal.Resolver,
+				portalauth.RequireVendorAdmin(http.HandlerFunc(portal.Portal.CancelOffboarding))))
+		mux.Handle("GET /api/v1/helpdesk/customers/{id}/export.zip",
+			portalauth.Middleware(portal.Resolver,
+				portalauth.RequireVendorAdmin(http.HandlerFunc(portal.Portal.ExportCustomer))))
+		mux.Handle("GET /api/v1/helpdesk/deletions",
+			portalauth.Middleware(portal.Resolver,
+				portalauth.RequireVendorAdmin(http.HandlerFunc(portal.Portal.ListDeletions))))
+		mux.Handle("GET /api/v1/helpdesk/deletions/{file}",
+			portalauth.Middleware(portal.Resolver,
+				portalauth.RequireVendorAdmin(http.HandlerFunc(portal.Portal.DeletionCertificate))))
+
 		// Vendor-side toggle for the Business Unit feature flag on a
 		// customer. See portalapi.SetCustomerBusinessUnitsEnabled for
 		// the semantics — disable is safe (data preserved).

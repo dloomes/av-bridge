@@ -276,7 +276,7 @@ func main() {
 
 		portalRoutes = &api.PortalRoutes{
 			Resolver:      resolver,
-			Portal:        portalapi.New(store, cipher, dispatcher, nightlyDigest, nightlyExecutor, log).SetCustomerSSO(entraCustomer != nil).SetCollectorUpdates(collectorUpdates).SetRemoteAccess(remoteSvc),
+			Portal:        portalapi.New(store, cipher, dispatcher, nightlyDigest, nightlyExecutor, log).SetCustomerSSO(entraCustomer != nil).SetCollectorUpdates(collectorUpdates).SetRemoteAccess(remoteSvc).SetLiveEvents(hub),
 			WSHub:         hub,
 			EntraVendor:   entraVendor,
 			EntraCustomer: entraCustomer,

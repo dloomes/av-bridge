@@ -209,6 +209,14 @@ func collectTable(ctx context.Context, tx pgx.Tx, s Subject, ids []string, name 
 		where += ` AND t.` + pgx.Identifier{sc}.Sanitize() + ` = ` + param("scope", s.CustomerID) + `::uuid`
 	}
 
+	return selectRows(ctx, tx, name, where, args)
+}
+
+// selectRows reads a table's exported columns (exportColumns) from the rows
+// matching where (SQL over alias t, using args), ordered by the first
+// column. Values are decoded from to_jsonb, so every column type comes back
+// as a JSON value.
+func selectRows(ctx context.Context, tx pgx.Tx, name, where string, args []any) (Table, error) {
 	cols, err := exportColumns(ctx, tx, name)
 	if err != nil {
 		return Table{}, err

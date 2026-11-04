@@ -99,6 +99,26 @@ func (t *Tunnels) Handle(w http.ResponseWriter, r *http.Request) {
 	t.log.Info("remote access tunnel closed", "collector", col.ID)
 }
 
+// Drop closes the tunnels of the given collectors (machine ids), e.g. when
+// their customer is offboarded; every stream through them ends. A Collector
+// that reconnects is authenticated again, so one whose customer is
+// offboarding is refused. Returns the number of tunnels closed.
+func (t *Tunnels) Drop(collectorIDs ...string) int {
+	t.mu.Lock()
+	var closing []*yamux.Session
+	for _, id := range collectorIDs {
+		if s := t.sessions[id]; s != nil {
+			closing = append(closing, s)
+			delete(t.sessions, id)
+		}
+	}
+	t.mu.Unlock()
+	for _, s := range closing {
+		s.Close()
+	}
+	return len(closing)
+}
+
 // Connected reports whether the collector has a tunnel open.
 func (t *Tunnels) Connected(collectorID string) bool {
 	t.mu.Lock()

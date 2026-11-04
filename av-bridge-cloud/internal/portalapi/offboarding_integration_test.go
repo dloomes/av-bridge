@@ -9,6 +9,7 @@ package portalapi_test
 //	  go test ./internal/portalapi/ -run TestOffboardingBlocksEveryPath -v
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"crypto/hmac"
@@ -30,6 +31,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gorilla/websocket"
+	"github.com/hashicorp/yamux"
 	"github.com/jackc/pgx/v5"
 	"golang.org/x/crypto/bcrypt"
 
@@ -46,6 +49,7 @@ import (
 	"github.com/dloomes/av-bridge-cloud/internal/publicapi"
 	"github.com/dloomes/av-bridge-cloud/internal/remote"
 	"github.com/dloomes/av-bridge-cloud/internal/secrets"
+	"github.com/dloomes/av-bridge-cloud/internal/wsfanout"
 )
 
 func randHex(t *testing.T, n int) string {
@@ -364,5 +368,370 @@ func TestOffboardingBlocksEveryPath(t *testing.T) {
 	}
 	if _, ok := display.Resolve(displayRaw); !ok {
 		t.Error("after cancel: display link did not resolve")
+	}
+}
+
+// TestHelpdeskOffboardCancelExport drives the helpdesk offboarding
+// endpoints end to end: offboard (with the live connections it must end),
+// export, deletion certificates, and cancel.
+func TestHelpdeskOffboardCancelExport(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set — skipping helpdesk offboarding integration test")
+	}
+	ctx := context.Background()
+	quiet := slog.New(slog.NewTextHandler(io.Discard, nil))
+	if err := db.Migrate(ctx, dsn, quiet); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	su, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer su.Close(ctx)
+	as := func(user, pass string) string {
+		u, _ := url.Parse(dsn)
+		u.User = url.UserPassword(user, pass)
+		return u.String()
+	}
+	st, err := db.New(ctx, as("app_admin", "app_admin_dev"), as("app_tenant", "app_tenant_dev"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	cipher, err := secrets.NewAESGCMFromHexKey(strings.Repeat("cd", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := func(sql string, args ...any) string {
+		t.Helper()
+		var s string
+		if err := su.QueryRow(ctx, sql, args...).Scan(&s); err != nil {
+			t.Fatalf("%s: %v", sql, err)
+		}
+		return s
+	}
+	exec := func(sql string, args ...any) {
+		t.Helper()
+		if _, err := su.Exec(ctx, sql, args...); err != nil {
+			t.Fatalf("%s: %v", sql, err)
+		}
+	}
+
+	// --- Seed a customer with a user, an API token, a Collector, a device,
+	// raw and daily telemetry and an open remote-access session.
+	tag := randHex(t, 4)
+	name := "Offboard Co " + tag
+	cust := q(`INSERT INTO customers (name) VALUES ($1) RETURNING id::text`, name)
+	adminRole := q(`INSERT INTO roles (customer_id, name) VALUES ($1, 'admin') RETURNING id::text`, cust)
+	for p := range portalauth.KnownPermissions {
+		exec(`INSERT INTO role_permissions (role_id, permission) VALUES ($1, $2)`, adminRole, p)
+	}
+	admin := q(`INSERT INTO users (customer_id, email, password_hash, role) VALUES ($1, $2, 'x', 'admin') RETURNING id::text`,
+		cust, "admin-"+tag+"@offx.test")
+	exec(`INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)`, admin, adminRole)
+	session := func(userID string) string {
+		tok := portalauth.LocalTokenPrefix + randHex(t, 32)
+		exec(`INSERT INTO user_sessions (user_id, token_hash, expires_at) VALUES ($1, $2, now() + interval '1 hour')`,
+			userID, portalauth.HashToken(tok))
+		return tok
+	}
+	adminSession := session(admin)
+	session(admin) // a second browser
+
+	apiRaw, apiPrefix, apiHash, err := pubapi.GenerateToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	exec(`INSERT INTO api_tokens (customer_id, name, token_prefix, token_hash, scopes)
+	      VALUES ($1, 'siem', $2, $3, ARRAY['view.dashboard'])`, cust, apiPrefix, apiHash)
+
+	hmacSecret := "secret-" + tag
+	enc, err := cipher.Encrypt([]byte(hmacSecret))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bridgeID := "offx-col-" + tag
+	col := q(`INSERT INTO collectors (customer_id, bridge_collector_id, name, hmac_secret_enc)
+	          VALUES ($1, $2, 'c', $3) RETURNING id::text`, cust, bridgeID, enc)
+	dev := q(`INSERT INTO devices (customer_id, collector_id, reported_id, name, protocol, address)
+	          VALUES ($1, $2, 'd-1', $3, 'ping', '10.0.0.9') RETURNING id::text`, cust, col, "Lectern "+tag)
+	exec(`INSERT INTO telemetry (customer_id, device_id, ts, status) VALUES ($1, $2, now(), 'online')`, cust, dev)
+	exec(`INSERT INTO telemetry_daily (customer_id, device_id, day, samples) VALUES ($1, $2, current_date - 1, 96)`, cust, dev)
+	rs := q(`INSERT INTO remote_session (customer_id, device_id, user_id, actor, host_label, scheme, port,
+	                                     launch_code_hash, cookie_hash, launched_at, expires_at)
+	         VALUES ($1, $2, $3, 'admin', $4, 'http', 80, '\x00', '\x01', now(), now() + interval '8 hours')
+	         RETURNING id::text`, cust, dev, admin, "s-"+tag)
+
+	vt := q(`INSERT INTO vendor_tenants (name, entra_tenant_id) VALUES ('Involve', $1) RETURNING id::text`, "vt-offx-"+tag)
+	vendorEmail := "helpdesk-" + tag + "@involve.test"
+	vendor := q(`INSERT INTO users (vendor_tenant_id, email, password_hash, role) VALUES ($1, $2, 'x', 'admin') RETURNING id::text`,
+		vt, vendorEmail)
+	vendorSession := session(vendor)
+	operator := q(`INSERT INTO users (vendor_tenant_id, email, password_hash, role) VALUES ($1, $2, 'x', 'operator') RETURNING id::text`,
+		vt, "operator-"+tag+"@involve.test")
+	operatorSession := session(operator)
+
+	// --- The real route wiring, served over a socket for the websockets.
+	hub := wsfanout.NewHub(quiet)
+	tunnels := remote.NewTunnels(bridgeauth.New(st, cipher, quiet), quiet)
+	remoteSvc := remote.NewService(st.AdminPool(), tunnels, "", quiet)
+	bridgeCmds := commands.NewBridgeHandler(st, cipher, 500*time.Millisecond, quiet)
+	bridgeCfg := bridgecfg.NewHandler(st, cipher, quiet)
+	public := publicapi.NewHandler(st, quiet, notify.SMTPConfig{}, "", false, cipher, "")
+	srv := api.NewServer(":0",
+		ingest.NewHandler(st, cipher, nil, nil, quiet),
+		nil,
+		&api.PortalRoutes{
+			Resolver: portalauth.NewChainResolver(portalauth.NewLocalResolver(st.AdminPool())),
+			Portal:   portalapi.New(st, cipher, nil, nil, nil, quiet).SetRemoteAccess(remoteSvc).SetLiveEvents(hub),
+			WSHub:    hub,
+		},
+		&api.PubAPIRoutes{Resolver: pubapi.NewResolver(st.AdminPool(), quiet), Handler: pubapi.New(st, quiet)},
+		api.BridgeCommandRoutes{Poll: bridgeCmds.Poll, Result: bridgeCmds.PostResult, UpdateStatus: bridgeCmds.PostUpdateStatus},
+		api.BridgeConfigRoutes{GetConfig: bridgeCfg.Get, PutConfig: bridgeCfg.Put},
+		api.PublicRoutes{Branding: public.GetBranding, MagicLinkConsume: public.ConsumeMagicLink, CollectorEnroll: public.EnrollCollector},
+		&api.RemoteAccessRoutes{Tunnel: tunnels.Handle},
+		quiet)
+	ts := httptest.NewServer(srv.Handler)
+	defer ts.Close()
+	wsBase := "ws://" + strings.TrimPrefix(ts.URL, "http://")
+
+	type resp struct {
+		code int
+		body []byte
+		hdr  http.Header
+	}
+	call := func(method, path, bearer string, body any) resp {
+		t.Helper()
+		var rdr io.Reader = http.NoBody
+		if body != nil {
+			b, _ := json.Marshal(body)
+			rdr = bytes.NewReader(b)
+		}
+		req := httptest.NewRequest(method, path, rdr)
+		if bearer != "" {
+			req.Header.Set("Authorization", "Bearer "+bearer)
+		}
+		rec := httptest.NewRecorder()
+		srv.Handler.ServeHTTP(rec, req)
+		return resp{rec.Code, rec.Body.Bytes(), rec.Header()}
+	}
+	base := "/api/v1/helpdesk/customers/" + cust
+
+	// A non-admin vendor is refused everywhere.
+	for _, c := range []struct{ method, path string }{
+		{http.MethodPost, base + "/offboard"},
+		{http.MethodPost, base + "/cancel-offboarding"},
+		{http.MethodGet, base + "/export.zip"},
+		{http.MethodGet, "/api/v1/helpdesk/deletions"},
+	} {
+		if r := call(c.method, c.path, operatorSession, map[string]string{"confirm": name}); r.code != http.StatusForbidden {
+			t.Errorf("operator %s %s: got %d %s, want 403", c.method, c.path, r.code, r.body)
+		}
+	}
+
+	// Live connections that offboarding must end: a /ws/events subscriber
+	// and the Collector's remote-access tunnel.
+	wsHdr := http.Header{}
+	wsHdr.Set("Authorization", "Bearer "+adminSession)
+	events, _, err := websocket.DefaultDialer.Dial(wsBase+"/ws/events", wsHdr)
+	if err != nil {
+		t.Fatalf("ws/events dial: %v", err)
+	}
+	defer events.Close()
+	tsStr := strconv.FormatInt(time.Now().Unix(), 10)
+	mac := hmac.New(sha256.New, []byte(hmacSecret))
+	fmt.Fprintf(mac, "tunnel:%s:%s", bridgeID, tsStr)
+	tunHdr := http.Header{}
+	tunHdr.Set("X-Collector-ID", bridgeID)
+	tunHdr.Set("X-Timestamp", tsStr)
+	tunHdr.Set("X-Signature", "sha256="+hex.EncodeToString(mac.Sum(nil)))
+	tunWS, _, err := websocket.DefaultDialer.Dial(wsBase+"/bridge/tunnel", tunHdr)
+	if err != nil {
+		t.Fatalf("tunnel dial: %v", err)
+	}
+	ycfg := yamux.DefaultConfig()
+	ycfg.LogOutput = io.Discard
+	ysess, err := yamux.Server(remote.NewWSConn(tunWS), ycfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ysess.Close()
+	deadline := time.Now().Add(5 * time.Second)
+	for !tunnels.Connected(col) {
+		if time.Now().After(deadline) {
+			t.Fatal("tunnel never registered")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	// --- Offboard: wrong name, then right name, then again.
+	if r := call(http.MethodPost, base+"/offboard", vendorSession, map[string]string{"confirm": "not the name"}); r.code != http.StatusBadRequest ||
+		!strings.Contains(string(r.body), "confirm must match the customer name") {
+		t.Fatalf("offboard with wrong name: got %d %s, want 400", r.code, r.body)
+	}
+	if n := q(`SELECT count(*)::text FROM customers WHERE id = $1 AND offboarding_started_at IS NOT NULL`, cust); n != "0" {
+		t.Fatal("wrong-name offboard changed the customer")
+	}
+	r := call(http.MethodPost, base+"/offboard", vendorSession, map[string]string{"confirm": name})
+	if r.code != http.StatusOK {
+		t.Fatalf("offboard: got %d %s, want 200", r.code, r.body)
+	}
+	var off struct {
+		OffboardingStartedAt time.Time `json:"offboarding_started_at"`
+		DeleteAfter          time.Time `json:"delete_after"`
+	}
+	if err := json.Unmarshal(r.body, &off); err != nil {
+		t.Fatalf("offboard body %s: %v", r.body, err)
+	}
+	if d := time.Until(off.DeleteAfter) - 30*24*time.Hour; d < -time.Minute || d > time.Minute {
+		t.Errorf("delete_after = %v, want about now + 30 days", off.DeleteAfter)
+	}
+	if v := q(`SELECT (abs(extract(epoch FROM delete_after - (now() + interval '30 days'))) < 60)::text
+	             FROM customers WHERE id = $1`, cust); v != "true" {
+		t.Errorf("stored delete_after not now + 30 days")
+	}
+	if n := q(`SELECT count(*)::text FROM user_sessions WHERE user_id = $1 AND revoked_at IS NULL`, admin); n != "0" {
+		t.Errorf("%s of the customer's sessions still live, want 0", n)
+	}
+	if n := q(`SELECT count(*)::text FROM user_sessions WHERE user_id = $1 AND revoked_at IS NULL`, vendor); n == "0" {
+		t.Error("offboarding revoked the vendor's own session")
+	}
+	if got := q(`SELECT customer_name || '|' || started_by || '|' || (cancelled_at IS NULL)::text || '|' || jsonb_array_length(downloads)::text
+	               FROM customer_deletions WHERE customer_id = $1`, cust); got != name+"|"+vendorEmail+"|true|0" {
+		t.Errorf("deletion row = %q", got)
+	}
+	if got := q(`SELECT actor FROM audit_log WHERE customer_id = $1 AND action = 'customer.offboard'`, cust); got != "user:"+vendor {
+		t.Errorf("customer.offboard audit actor = %q, want user:%s", got, vendor)
+	}
+
+	// The live connections end.
+	if got := q(`SELECT COALESCE(end_reason, '') FROM remote_session WHERE id = $1 AND ended_at IS NOT NULL
+	             UNION ALL SELECT '' LIMIT 1`, rs); got == "" {
+		t.Error("remote-access session not ended")
+	}
+	_ = events.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if _, _, err := events.ReadMessage(); err == nil {
+		t.Error("ws/events still delivering after offboarding")
+	} else if ne, ok := err.(interface{ Timeout() bool }); ok && ne.Timeout() {
+		t.Error("ws/events not closed by offboarding (read timed out)")
+	}
+	select {
+	case <-ysess.CloseChan():
+	case <-time.After(5 * time.Second):
+		t.Error("Collector tunnel not dropped by offboarding")
+	}
+
+	if r := call(http.MethodPost, base+"/offboard", vendorSession, map[string]string{"confirm": name}); r.code != http.StatusConflict {
+		t.Errorf("second offboard: got %d %s, want 409", r.code, r.body)
+	}
+
+	// The helpdesk list shows the countdown.
+	{
+		r := call(http.MethodGet, "/api/v1/helpdesk/customers", vendorSession, nil)
+		var list []struct {
+			ID                   string     `json:"id"`
+			OffboardingStartedAt *time.Time `json:"offboarding_started_at"`
+			DeleteAfter          *time.Time `json:"delete_after"`
+		}
+		if err := json.Unmarshal(r.body, &list); err != nil {
+			t.Fatalf("customer list %d %s: %v", r.code, r.body, err)
+		}
+		found := false
+		for _, c := range list {
+			if c.ID == cust {
+				found = true
+				if c.OffboardingStartedAt == nil || c.DeleteAfter == nil {
+					t.Errorf("customer list item missing offboarding fields: %+v", c)
+				}
+			}
+		}
+		if !found {
+			t.Error("customer missing from helpdesk list")
+		}
+	}
+
+	// --- Export.
+	{
+		r := call(http.MethodGet, base+"/export.zip", vendorSession, nil)
+		if r.code != http.StatusOK || r.hdr.Get("Content-Type") != "application/zip" {
+			t.Fatalf("export: got %d %s %s", r.code, r.hdr.Get("Content-Type"), r.body)
+		}
+		zr, err := zip.NewReader(bytes.NewReader(r.body), int64(len(r.body)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		files := map[string]string{}
+		for _, f := range zr.File {
+			rc, _ := f.Open()
+			b, _ := io.ReadAll(rc)
+			rc.Close()
+			files[f.Name] = string(b)
+		}
+		for _, want := range []string{"devices.csv", "devices.json", "telemetry_daily.csv", "customers.csv", "README.txt"} {
+			if _, ok := files[want]; !ok {
+				t.Errorf("export missing %s", want)
+			}
+		}
+		for _, bad := range []string{"telemetry.csv", "telemetry.json", "customer_deletions.csv"} {
+			if _, ok := files[bad]; ok {
+				t.Errorf("export holds %s", bad)
+			}
+		}
+		if !strings.Contains(files["devices.csv"], "Lectern "+tag) {
+			t.Errorf("devices.csv lacks the seeded device:\n%s", files["devices.csv"])
+		}
+		if strings.Contains(files["collectors.csv"], "hmac_secret_enc") {
+			t.Error("export holds the Collector secret column")
+		}
+		if !strings.Contains(files["README.txt"], name) {
+			t.Error("README does not name the customer")
+		}
+		if got := q(`SELECT jsonb_array_length(downloads)::text || '|' || (downloads->0->>'by')
+		               FROM customer_deletions WHERE customer_id = $1`, cust); got != "1|user:"+vendor {
+			t.Errorf("downloads = %q, want one entry by user:%s", got, vendor)
+		}
+	}
+
+	// --- Deletion certificates.
+	delID := q(`SELECT id::text FROM customer_deletions WHERE customer_id = $1`, cust)
+	{
+		r := call(http.MethodGet, "/api/v1/helpdesk/deletions", vendorSession, nil)
+		if r.code != http.StatusOK || !strings.Contains(string(r.body), delID) {
+			t.Errorf("deletions list: got %d, want 200 including %s", r.code, delID)
+		}
+		r = call(http.MethodGet, "/api/v1/helpdesk/deletions/"+delID+".csv", vendorSession, nil)
+		if r.code != http.StatusOK || !strings.HasPrefix(r.hdr.Get("Content-Type"), "text/csv") ||
+			!strings.Contains(string(r.body), "table,rows") || !strings.Contains(string(r.body), name) {
+			t.Errorf("deletion certificate: got %d %s\n%s", r.code, r.hdr.Get("Content-Type"), r.body)
+		}
+		if r := call(http.MethodGet, "/api/v1/helpdesk/deletions/00000000-0000-0000-0000-000000000000.csv", vendorSession, nil); r.code != http.StatusNotFound {
+			t.Errorf("unknown certificate: got %d, want 404", r.code)
+		}
+	}
+
+	// --- Cancel.
+	if r := call(http.MethodGet, "/pub/v1/ping", apiRaw, nil); r.code != http.StatusUnauthorized {
+		t.Errorf("api token while offboarding: got %d, want 401", r.code)
+	}
+	if r := call(http.MethodPost, base+"/cancel-offboarding", vendorSession, nil); r.code != http.StatusOK {
+		t.Fatalf("cancel: got %d %s, want 200", r.code, r.body)
+	}
+	if r := call(http.MethodPost, base+"/cancel-offboarding", vendorSession, nil); r.code != http.StatusConflict {
+		t.Errorf("second cancel: got %d %s, want 409", r.code, r.body)
+	}
+	if r := call(http.MethodGet, "/pub/v1/ping", apiRaw, nil); r.code != http.StatusOK {
+		t.Errorf("api token after cancel: got %d %s, want 200", r.code, r.body)
+	}
+	if got := q(`SELECT (offboarding_started_at IS NULL AND offboarding_started_by IS NULL AND delete_after IS NULL)::text
+	               FROM customers WHERE id = $1`, cust); got != "true" {
+		t.Error("cancel left the offboarding columns set")
+	}
+	if got := q(`SELECT cancelled_by FROM customer_deletions WHERE customer_id = $1`, cust); got != vendorEmail {
+		t.Errorf("cancelled_by = %q, want %s", got, vendorEmail)
+	}
+	if got := q(`SELECT actor FROM audit_log WHERE customer_id = $1 AND action = 'customer.offboard_cancel'`, cust); got != "user:"+vendor {
+		t.Errorf("customer.offboard_cancel audit actor = %q", got)
 	}
 }

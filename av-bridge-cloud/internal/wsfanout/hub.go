@@ -75,10 +75,29 @@ func (h *Hub) Publish(customerID string, ev Event) {
 
 type subscriber struct {
 	ch chan Event
+	// kick is closed (once) to end the stream from the server side, e.g.
+	// when the customer is offboarded.
+	kick     chan struct{}
+	kickOnce sync.Once
+}
+
+// CloseCustomer ends every open stream subscribed to customerID (its users'
+// and any vendor acting as it). Clients that reconnect go through the auth
+// middleware again, so a customer that is offboarding is refused. Returns
+// the number of streams closed.
+func (h *Hub) CloseCustomer(customerID string) int {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	n := 0
+	for s := range h.subscribers[customerID] {
+		s.kickOnce.Do(func() { close(s.kick) })
+		n++
+	}
+	return n
 }
 
 func (h *Hub) subscribe(customerID string) *subscriber {
-	s := &subscriber{ch: make(chan Event, subBufferSize)}
+	s := &subscriber{ch: make(chan Event, subBufferSize), kick: make(chan struct{})}
 	h.mu.Lock()
 	if _, ok := h.subscribers[customerID]; !ok {
 		h.subscribers[customerID] = make(map[*subscriber]struct{})
@@ -169,6 +188,12 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		case <-done:
 			h.log.Info("ws subscriber disconnected", "customer", p.CustomerID)
+			return
+		case <-sub.kick:
+			h.log.Info("ws subscriber closed by server", "customer", p.CustomerID)
+			_ = conn.WriteControl(websocket.CloseMessage,
+				websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "access ended"),
+				time.Now().Add(time.Second))
 			return
 		case <-r.Context().Done():
 			return

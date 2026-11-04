@@ -24,6 +24,7 @@ import (
 	"github.com/dloomes/av-bridge-cloud/internal/portalauth"
 	"github.com/dloomes/av-bridge-cloud/internal/remote"
 	"github.com/dloomes/av-bridge-cloud/internal/secrets"
+	"github.com/dloomes/av-bridge-cloud/internal/wsfanout"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -42,6 +43,9 @@ type Handler struct {
 	collectorUpdates *collectorupdate.Service
 	// remote is remote access to devices' web interfaces; nil = off.
 	remote *remote.Service
+	// events is the /ws/events hub; offboarding closes a customer's
+	// streams through it. nil = nothing to close.
+	events *wsfanout.Hub
 }
 
 // SetCustomerSSO records whether customer Microsoft sign-in is configured.
@@ -1400,10 +1404,14 @@ func (h *Handler) HelpdeskListCustomers(w http.ResponseWriter, r *http.Request) 
 		ID            string `json:"id"`
 		Name          string `json:"name"`
 		EntraTenantID string `json:"entra_tenant_id,omitempty"`
+		// Set while the customer is offboarding (null otherwise).
+		OffboardingStartedAt *time.Time `json:"offboarding_started_at"`
+		DeleteAfter          *time.Time `json:"delete_after"`
 	}
 	out := []item{}
 	rows, err := h.store.AdminPool().Query(r.Context(),
-		`SELECT id::text, name, COALESCE(entra_tenant_id,'') FROM customers ORDER BY name`)
+		`SELECT id::text, name, COALESCE(entra_tenant_id,''), offboarding_started_at, delete_after
+		   FROM customers ORDER BY name`)
 	if err != nil {
 		h.log.Error("helpdesk customers list", "error", err)
 		writeErr(w, http.StatusInternalServerError, "internal error")
@@ -1412,7 +1420,7 @@ func (h *Handler) HelpdeskListCustomers(w http.ResponseWriter, r *http.Request) 
 	defer rows.Close()
 	for rows.Next() {
 		var it item
-		if err := rows.Scan(&it.ID, &it.Name, &it.EntraTenantID); err != nil {
+		if err := rows.Scan(&it.ID, &it.Name, &it.EntraTenantID, &it.OffboardingStartedAt, &it.DeleteAfter); err != nil {
 			h.log.Error("helpdesk customers scan", "error", err)
 			writeErr(w, http.StatusInternalServerError, "internal error")
 			return

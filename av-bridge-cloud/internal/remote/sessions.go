@@ -172,32 +172,76 @@ func (s *Service) End(ctx context.Context, id, reason string) {
 
 func (s *Service) auditEnd(ctx context.Context, id string) {
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
-		var (
-			customerID, deviceID, reason, actor string
-			created                             time.Time
-			ended                               time.Time
-			in, out                             int64
-		)
-		if err := tx.QueryRow(ctx, `
-			SELECT customer_id::text, device_id::text, COALESCE(end_reason, ''), actor,
-			       created_at, ended_at, bytes_in, bytes_out
-			  FROM remote_session WHERE id = $1`, id).Scan(
-			&customerID, &deviceID, &reason, &actor, &created, &ended, &in, &out); err != nil {
-			return err
-		}
-		return audit.Record(ctx, tx, customerID, audit.Entry{
-			Actor:      "system:remote-access",
-			Action:     "remote.session.end",
-			TargetKind: "device", TargetID: deviceID,
-			Metadata: map[string]any{
-				"session_id": id, "opened_by": actor, "reason": reason,
-				"duration_seconds": int(ended.Sub(created).Seconds()),
-				"bytes_to_browser": in, "bytes_to_device": out,
-			},
-		})
+		return recordEnd(ctx, tx, id)
 	})
 	if err != nil {
 		s.log.Warn("remote access: audit of session end failed", "session", id, "error", err)
+	}
+}
+
+// recordEnd writes the remote.session.end audit entry for an ended session.
+func recordEnd(ctx context.Context, tx pgx.Tx, id string) error {
+	var (
+		customerID, deviceID, reason, actor string
+		created                             time.Time
+		ended                               time.Time
+		in, out                             int64
+	)
+	if err := tx.QueryRow(ctx, `
+		SELECT customer_id::text, device_id::text, COALESCE(end_reason, ''), actor,
+		       created_at, ended_at, bytes_in, bytes_out
+		  FROM remote_session WHERE id = $1`, id).Scan(
+		&customerID, &deviceID, &reason, &actor, &created, &ended, &in, &out); err != nil {
+		return err
+	}
+	return audit.Record(ctx, tx, customerID, audit.Entry{
+		Actor:      "system:remote-access",
+		Action:     "remote.session.end",
+		TargetKind: "device", TargetID: deviceID,
+		Metadata: map[string]any{
+			"session_id": id, "opened_by": actor, "reason": reason,
+			"duration_seconds": int(ended.Sub(created).Seconds()),
+			"bytes_to_browser": in, "bytes_to_device": out,
+		},
+	})
+}
+
+// EndCustomerSessions ends every open session of a customer inside the
+// caller's transaction (an admin-pool tx), auditing each end there too.
+// Once it commits, the sessions' cookies are refused (ServeHTTP checks
+// ended_at on every request). Returns the ended ids: pass them to Release
+// after the commit.
+func EndCustomerSessions(ctx context.Context, tx pgx.Tx, customerID, reason string) ([]string, error) {
+	rows, err := tx.Query(ctx, `
+		UPDATE remote_session SET ended_at = now(), end_reason = $2
+		 WHERE customer_id = $1 AND ended_at IS NULL
+		RETURNING id::text`, customerID, reason)
+	if err != nil {
+		return nil, err
+	}
+	ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return nil, err
+	}
+	for _, id := range ids {
+		if err := recordEnd(ctx, tx, id); err != nil {
+			return nil, err
+		}
+	}
+	return ids, nil
+}
+
+// Release drops this task's state for sessions ended elsewhere (see
+// EndCustomerSessions): unwritten traffic is written back and pooled device
+// connections are closed. Requests already being proxied run on until the
+// Collector's tunnel goes (Tunnels.Drop) or their own deadline.
+func (s *Service) Release(ctx context.Context, ids []string) {
+	if s == nil {
+		return
+	}
+	for _, id := range ids {
+		s.flush(ctx, id, true)
+		s.forget(id)
 	}
 }
 
