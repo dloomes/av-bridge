@@ -81,19 +81,36 @@ func TestDeleteDueCustomers(t *testing.T) {
 		room := q(`INSERT INTO rooms (customer_id, building_id, name) VALUES ($1, $2, 'Rm') RETURNING id::text`, cust, bld)
 		primary := q(`INSERT INTO collectors (customer_id, bridge_collector_id, name, hmac_secret_enc, building_id)
 		              VALUES ($1::uuid, 'del-p-' || $1::text, 'p', '\x00', $2) RETURNING id::text`, cust, bld)
-		q(`INSERT INTO collectors (customer_id, bridge_collector_id, name, hmac_secret_enc, standby_for)
+		standby := q(`INSERT INTO collectors (customer_id, bridge_collector_id, name, hmac_secret_enc, standby_for)
 		   VALUES ($1::uuid, 'del-s-' || $1::text, 's', '\x00', $2) RETURNING id::text`, cust, primary)
 		dev := q(`INSERT INTO devices (customer_id, collector_id, room_id, reported_id, name, protocol)
 		          VALUES ($1, $2, $3, 'd', 'D', 'ping') RETURNING id::text`, cust, primary, room)
-		// Readings and their daily summary on one UTC day (yesterday, well
+		dev2 := q(`INSERT INTO devices (customer_id, collector_id, room_id, reported_id, name, protocol)
+		           VALUES ($1, $2, $3, 'd2', 'D2', 'ping') RETURNING id::text`, cust, primary, room)
+		// Readings and their daily summaries on one UTC day (yesterday, well
 		// inside raw retention), so a telemetry rollup run by a parallel
-		// test merges into the existing summary row instead of adding one.
-		for i := 0; i < 3; i++ {
+		// test merges into the existing summary rows instead of adding one.
+		// Raw telemetry, events and Collector logs are deleted through their
+		// device or Collector, so spread them over both.
+		reading := func(d string, i int) {
 			exec(`INSERT INTO telemetry (customer_id, device_id, ts, status)
-			      VALUES ($1, $2, (((now() AT TIME ZONE 'UTC')::date - 1) + time '12:00') AT TIME ZONE 'UTC' + make_interval(mins => $3), 'online')`, cust, dev, i)
+			      VALUES ($1, $2, (((now() AT TIME ZONE 'UTC')::date - 1) + time '12:00') AT TIME ZONE 'UTC' + make_interval(mins => $3), 'online')`, cust, d, i)
 		}
-		exec(`INSERT INTO telemetry_daily (customer_id, device_id, day, samples)
-		      VALUES ($1, $2, (now() AT TIME ZONE 'UTC')::date - 1, 96)`, cust, dev)
+		for i := 0; i < 3; i++ {
+			reading(dev, i)
+		}
+		reading(dev2, 0)
+		reading(dev2, 1)
+		for _, d := range []string{dev, dev2} {
+			exec(`INSERT INTO telemetry_daily (customer_id, device_id, day, samples)
+			      VALUES ($1, $2, (now() AT TIME ZONE 'UTC')::date - 1, 96)`, cust, d)
+		}
+		for _, d := range []string{dev, dev, dev2} {
+			exec(`INSERT INTO events (customer_id, device_id, event_type, ts) VALUES ($1, $2, 'telnet_message', now())`, cust, d)
+		}
+		for _, c := range []string{primary, standby} {
+			exec(`INSERT INTO collector_logs (customer_id, collector_id, ts, level, msg) VALUES ($1, $2, now(), 'INFO', 'x')`, cust, c)
+		}
 		alert := q(`INSERT INTO alerts (customer_id, device_id, alert_key, severity, status, opened_at)
 		            VALUES ($1, $2, 'offline', 'warning', 'open', now()) RETURNING id::text`, cust, dev)
 		ch := q(`INSERT INTO notification_channels (customer_id, name, type, target) VALUES ($1, 'm', 'email', 'ops@example.test') RETURNING id::text`, cust)
@@ -113,7 +130,8 @@ func TestDeleteDueCustomers(t *testing.T) {
 	// What seed puts in each customer_id table (plus the customers row).
 	seeded := map[string]int64{
 		"customers": 1, "regions": 1, "locations": 1, "buildings": 1, "rooms": 1,
-		"collectors": 2, "devices": 1, "telemetry": 3, "telemetry_daily": 1,
+		"collectors": 2, "devices": 2, "telemetry": 5, "telemetry_daily": 2,
+		"events": 3, "collector_logs": 2,
 		"alerts": 1, "notification_channels": 1, "alert_tickets": 1, "firmware_targets": 1,
 		"audit_log": 2, "roles": 1, "users": 2,
 	}
@@ -132,14 +150,17 @@ func TestDeleteDueCustomers(t *testing.T) {
 	// its Collectors, so the RESTRICT link can't be cleared from its side.
 	// Its deletion must fail on its own and not stop X's.
 	blocked := offboard("deletion-blocked", "-2 hours")
-	for _, c := range []string{x, y, z} {
+	// Not offboarding, yet delete_after has passed (set by hand, or left
+	// behind): never deleted without offboarding_started_at.
+	w := q(`INSERT INTO customers (name, delete_after) VALUES ('deletion-w', now() - interval '1 hour') RETURNING id::text`)
+	for _, c := range []string{x, y, z, w} {
 		seed(c)
 	}
 	bPrimary := seed(blocked)
 	q(`INSERT INTO collectors (customer_id, bridge_collector_id, name, hmac_secret_enc, standby_for)
 	               VALUES ($1::uuid, 'del-x-' || $1::text, 'xs', '\x00', $2) RETURNING id::text`, z, bPrimary)
 	t.Cleanup(func() {
-		left := []string{blocked, y, z}
+		left := []string{blocked, y, z, w}
 		conn.Exec(ctx, `UPDATE collectors SET standby_for = NULL WHERE customer_id = ANY($1::uuid[])`, left)
 		conn.Exec(ctx, `DELETE FROM customers WHERE id = ANY($1::uuid[])`, left)
 		conn.Exec(ctx, `DELETE FROM customer_deletions WHERE customer_id = ANY($1::uuid[])`, left)
@@ -171,7 +192,7 @@ func TestDeleteDueCustomers(t *testing.T) {
 			t.Fatalf("seed: %s has %d rows for X, want %d", tb, xBefore[tb], n)
 		}
 	}
-	yBefore, zBefore, bBefore := countAll(y), countAll(z), countAll(blocked)
+	yBefore, zBefore, bBefore, wBefore := countAll(y), countAll(z), countAll(blocked), countAll(w)
 
 	// Run the pass as app_admin.
 	u, _ := url.Parse(dsn)
@@ -224,11 +245,12 @@ func TestDeleteDueCustomers(t *testing.T) {
 		t.Error("row_counts includes customer_deletions, which is kept")
 	}
 
-	// Y (not due), Z (active) and the blocked customer: untouched.
+	// Y (not due), Z (active), the blocked customer and W (not
+	// offboarding): untouched.
 	for name, c := range map[string]struct {
 		id     string
 		before map[string]int64
-	}{"Y": {y, yBefore}, "Z": {z, zBefore}, "blocked": {blocked, bBefore}} {
+	}{"Y": {y, yBefore}, "Z": {z, zBefore}, "blocked": {blocked, bBefore}, "W": {w, wBefore}} {
 		after := countAll(c.id)
 		for tb, n := range c.before {
 			if after[tb] != n {

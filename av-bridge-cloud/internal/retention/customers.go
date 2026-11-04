@@ -28,17 +28,54 @@ import (
 // record itself, which has no foreign key to customers.
 var keptTables = []string{"customer_deletions"}
 
+// parentRoute reaches a table through a parent table: table.col references
+// parent.id.
+type parentRoute struct{ table, col, parent string }
+
+// customerDeleteTimeout bounds each statement of a customer's deletion.
+const customerDeleteTimeout = "10min"
+
+// viaParent are large customer_id tables with no customer_id index but an
+// index led by a parent key (raw telemetry and events by device, Collector
+// logs by Collector; see migrations 0001, 0060, 0063). They're deleted
+// through that index before the customer, and counted by the delete.
+var viaParent = []parentRoute{
+	{"telemetry", "device_id", "devices"},
+	{"events", "device_id", "devices"},
+	{"collector_logs", "collector_id", "collectors"},
+}
+
+// deleteViaParent deletes the customer's rows of p.table through its
+// parent-keyed index and returns how many went. Rows are matched on the
+// customer too, so a row naming another customer is never touched.
+func deleteViaParent(ctx context.Context, tx pgx.Tx, p parentRoute, id string) (int64, error) {
+	var parents []string
+	if err := tx.QueryRow(ctx, `SELECT COALESCE(array_agg(id::text), '{}') FROM `+pgx.Identifier{p.parent}.Sanitize()+
+		` WHERE customer_id = $1::uuid`, id).Scan(&parents); err != nil {
+		return 0, fmt.Errorf("list %s: %w", p.parent, err)
+	}
+	if len(parents) == 0 {
+		return 0, nil
+	}
+	tag, err := tx.Exec(ctx, `DELETE FROM `+pgx.Identifier{p.table}.Sanitize()+
+		` WHERE `+pgx.Identifier{p.col}.Sanitize()+` = ANY ($1::uuid[]) AND customer_id = $2::uuid`, parents, id)
+	if err != nil {
+		return 0, fmt.Errorf("delete %s: %w", p.table, err)
+	}
+	return tag.RowsAffected(), nil
+}
+
 // errNotDue means the customer was no longer due by the time its
 // transaction locked it (offboarding cancelled in between, or already gone).
 var errNotDue = errors.New("customer no longer due for deletion")
 
-// deleteDueCustomers permanently deletes every customer whose delete_after
-// has passed, each in its own transaction. A customer that fails is rolled
-// back, logged and retried next pass; the rest still run.
+// deleteDueCustomers permanently deletes every offboarding customer whose
+// delete_after has passed, each in its own transaction. A customer that
+// fails is rolled back, logged and retried next pass; the rest still run.
 func deleteDueCustomers(ctx context.Context, conn *pgx.Conn, log *slog.Logger) error {
 	rows, err := conn.Query(ctx, `
 		SELECT id::text FROM customers
-		 WHERE delete_after < now()
+		 WHERE offboarding_started_at IS NOT NULL AND delete_after < now()
 		 ORDER BY delete_after`)
 	if err != nil {
 		return err
@@ -73,6 +110,12 @@ func deleteDueCustomers(ctx context.Context, conn *pgx.Conn, log *slog.Logger) e
 func deleteCustomer(ctx context.Context, conn *pgx.Conn, id string) (map[string]int64, error) {
 	var counts map[string]int64
 	err := pgx.BeginFunc(ctx, conn, func(tx pgx.Tx) error {
+		// A runaway delete fails and rolls back rather than holding the
+		// retention lock indefinitely; the customer is retried next pass.
+		if _, err := tx.Exec(ctx, `SET LOCAL statement_timeout = '`+customerDeleteTimeout+`'`); err != nil {
+			return err
+		}
+
 		// Lock the customer and check it's still due: a cancel committed
 		// since the list was read clears delete_after.
 		var name, startedBy string
@@ -80,7 +123,7 @@ func deleteCustomer(ctx context.Context, conn *pgx.Conn, id string) (map[string]
 		err := tx.QueryRow(ctx, `
 			SELECT name, offboarding_started_at::text, COALESCE(offboarding_started_by, '')
 			  FROM customers
-			 WHERE id = $1::uuid AND delete_after < now()
+			 WHERE id = $1::uuid AND offboarding_started_at IS NOT NULL AND delete_after < now()
 			   FOR UPDATE`, id).Scan(&name, &startedAt, &startedBy)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return errNotDue
@@ -95,13 +138,25 @@ func deleteCustomer(ctx context.Context, conn *pgx.Conn, id string) (map[string]
 			return err
 		}
 
-		// 2. Count what is about to go.
+		// 2. Count what is about to go. The big tables with no customer_id
+		// index are deleted first through their parent's index, counting
+		// as they go, so they're never scanned to count.
+		counts = map[string]int64{"customers": 1}
+		for _, p := range viaParent {
+			n, err := deleteViaParent(ctx, tx, p, id)
+			if err != nil {
+				return err
+			}
+			counts[p.table] = n
+		}
 		tables, err := db.CustomerIDTables(ctx, tx, keptTables...)
 		if err != nil {
 			return fmt.Errorf("list customer tables: %w", err)
 		}
-		counts = map[string]int64{"customers": 1}
 		for _, t := range tables {
+			if _, done := counts[t]; done {
+				continue
+			}
 			var n int64
 			if err := tx.QueryRow(ctx, `SELECT count(*) FROM `+pgx.Identifier{t}.Sanitize()+` WHERE customer_id = $1::uuid`, id).Scan(&n); err != nil {
 				return fmt.Errorf("count %s: %w", t, err)
