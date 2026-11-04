@@ -89,8 +89,9 @@ func (s *Service) Run(ctx context.Context) {
 	}
 }
 
-// Pass applies every rule, within passBudget; anything left is picked up
-// on the next pass. A rule that fails is logged and the rest still run.
+// Pass deletes offboarded customers that are due (deleteDueCustomers), then
+// applies every rule, within passBudget; anything left is picked up on the
+// next pass. A rule or customer that fails is logged and the rest still run.
 func (s *Service) Pass(ctx context.Context) error {
 	conn, err := s.pool.Acquire(ctx)
 	if err != nil {
@@ -102,6 +103,15 @@ func (s *Service) Pass(ctx context.Context) error {
 		return err
 	}
 	defer conn.Exec(context.WithoutCancel(ctx), `SELECT pg_advisory_unlock($1)`, lockKey)
+
+	// Offboarded customers past day 30 first, under the same lock, so only
+	// one cloud task deletes.
+	if err := deleteDueCustomers(ctx, conn.Conn(), s.log); err != nil {
+		if ctx.Err() != nil {
+			return err
+		}
+		s.log.Warn("retention: customer deletion failed", "error", err)
+	}
 
 	deadline := time.Now().Add(passBudget)
 	for _, r := range Rules {

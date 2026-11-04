@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/dloomes/av-bridge-cloud/internal/db"
 )
 
 // customerExportSkipped are customer_id tables left out of a customer
@@ -43,19 +45,7 @@ type TableCount struct {
 // so a table the role cannot read fails the export loudly instead of being
 // skipped.
 func customerTables(ctx context.Context, tx pgx.Tx) ([][2]string, error) {
-	rows, err := tx.Query(ctx, `
-		SELECT c.relname::text
-		  FROM pg_class c
-		  JOIN pg_namespace n ON n.oid = c.relnamespace
-		  JOIN pg_attribute a ON a.attrelid = c.oid
-		 WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') AND NOT c.relispartition
-		   AND a.attname = 'customer_id' AND NOT a.attisdropped
-		   AND c.relname <> ALL($1::text[])
-		 ORDER BY 1`, customerExportSkipped)
-	if err != nil {
-		return nil, err
-	}
-	names, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	names, err := db.CustomerIDTables(ctx, tx, customerExportSkipped...)
 	if err != nil {
 		return nil, err
 	}
