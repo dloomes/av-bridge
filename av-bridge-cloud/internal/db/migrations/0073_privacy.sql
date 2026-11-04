@@ -55,7 +55,8 @@ GRANT SELECT, INSERT, UPDATE ON customer_deletions TO app_admin;
 --
 -- Matches entries where the person is the actor, the target, or is named
 -- anywhere in before/after/metadata. The email is matched as a whole address
--- (case-insensitive, not preceded or followed by an address character), so
+-- (case-insensitive, not preceded or followed by an address character; a trailing full stop
+-- ending a sentence is fine), so
 -- erasing al@x.io leaves cal@x.io and al@x.io.uk alone. Actor is replaced by
 -- the stand-in; identifying keys are dropped and any remaining mention of the
 -- email is replaced by the stand-in. Returns the number of entries changed.
@@ -78,7 +79,7 @@ BEGIN
     -- Regex-escape the email (class: ] ^ $ | ? * + ( ) { } . backslash [).
     esc := regexp_replace(p_email, '([]^$|?*+(){}.' || chr(92) || chr(92) || '[])',
                           chr(92) || chr(92) || chr(92) || '1', 'g');
-    pattern := '(?<![A-Za-z0-9._%+-])' || esc || '(?![A-Za-z0-9._%+-])';
+    pattern := '(?<![A-Za-z0-9._%+-])' || esc || '(?![A-Za-z0-9_%+-]|[.][A-Za-z0-9])';
     -- audit_log has FORCE ROW LEVEL SECURITY; scope to the one organisation.
     PERFORM set_config('app.current_customer', p_customer::text, true);
     UPDATE audit_log a

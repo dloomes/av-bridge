@@ -231,12 +231,18 @@ func TestPrivacyAnonymiseMatching(t *testing.T) {
 	ins("op@x.io", `{"note":"about ca.b+c@x.io"}`, `{"email":"ca.b+c@x.io","role":"viewer"}`) // superstring decoy
 	ins("op@x.io", `{"note":"about a.b+c@x.io.uk"}`, `{"email":"a.b+c@x.io.uk","role":"viewer"}`)
 
+	ins("op@x.io", `{"note":"contact A.B+c@X.io."}`, `{"role":"viewer"}`) // changed, full stop kept
+
 	var n int64
 	if err := st.AdminPool().QueryRow(ctx, `SELECT privacy_anonymise_audit($1::uuid, 'a.b+c@x.io', '', 'erased-user-00000001')`, c).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
-	if n != 1 {
-		t.Fatalf("changed = %d, want 1", n)
+	if n != 2 {
+		t.Fatalf("changed = %d, want 2", n)
+	}
+	var stop string
+	if err := su.QueryRow(ctx, `SELECT metadata->>'note' FROM audit_log WHERE customer_id=$1 AND metadata->>'note' LIKE 'contact%'`, c).Scan(&stop); err != nil || stop != "contact erased-user-00000001." {
+		t.Errorf("trailing full stop case: %q err=%v", stop, err)
 	}
 	var meta string
 	if err := su.QueryRow(ctx, `SELECT metadata::text FROM audit_log WHERE customer_id=$1 AND metadata->>'note' LIKE 'note about%'`, c).Scan(&meta); err != nil {
