@@ -3,8 +3,10 @@ package privacy
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"encoding/csv"
 	"encoding/json"
+	"fmt"
 	"io"
 	"reflect"
 	"sort"
@@ -99,6 +101,75 @@ func TestWriteZIP(t *testing.T) {
 	}
 }
 
+// Spreadsheet formulas are neutralised in the CSV only; the JSON stays exact.
+func TestWriteZIPEscapesFormulas(t *testing.T) {
+	vals := []string{`=HYPERLINK("http://x","y")`, "+1", "-2", "@SUM(A1)", "\tx", "\rx", "plain", "a=b"}
+	row := make([]any, len(vals))
+	cols := make([]string, len(vals))
+	for i, v := range vals {
+		row[i] = v
+		cols[i] = fmt.Sprint("c", i)
+	}
+	var buf bytes.Buffer
+	if err := WriteZIP(&buf, []Table{{Name: "t", Columns: cols, Rows: [][]any{row}}}, ""); err != nil {
+		t.Fatal(err)
+	}
+	zr, err := zip.NewReader(bytes.NewReader(buf.Bytes()), int64(buf.Len()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	read := func(name string) []byte {
+		f, err := zr.Open(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		b, err := io.ReadAll(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	recs, err := csv.NewReader(bytes.NewReader(read("t.csv"))).ReadAll()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, v := range vals {
+		want := v
+		if i < 6 {
+			want = "'" + v
+		}
+		// encoding/csv turns a lone \r inside a quoted field into \n on read.
+		got := strings.ReplaceAll(recs[1][i], "\n", "\r")
+		if got != want {
+			t.Errorf("csv cell %d = %q, want %q", i, recs[1][i], want)
+		}
+	}
+	var objs []map[string]any
+	if err := json.Unmarshal(read("t.json"), &objs); err != nil {
+		t.Fatal(err)
+	}
+	for i, v := range vals {
+		if objs[0][cols[i]] != v {
+			t.Errorf("json %s = %q, want exact %q", cols[i], objs[0][cols[i]], v)
+		}
+	}
+}
+
+// collectTable takes the scope from the first entry, so it refuses a table
+// whose entries disagree, before touching the database (tx is nil here).
+func TestCollectTableScopeDisagreement(t *testing.T) {
+	s := Subject{CustomerID: "c", Email: "a@x.io"}
+	for _, entries := range [][]Entry{
+		{{Table: "x", Column: "a", Key: KeyEmail, Scoped: true}, {Table: "x", Column: "b", Key: KeyEmail}},
+		{{Table: "x", Column: "a", Key: KeyEmail, Scoped: true}, {Table: "x", Column: "b", Key: KeyEmail, Scoped: true, ScopeColumn: "id"}},
+	} {
+		if _, err := collectTable(context.Background(), nil, s, nil, "x", entries); err == nil || !strings.Contains(err.Error(), "disagree on scope") {
+			t.Errorf("entries %v: err = %v, want scope disagreement", entries, err)
+		}
+	}
+}
+
 func TestAccessREADME(t *testing.T) {
 	r := AccessREADME(Subject{CustomerID: "c", Email: "alice@example.com"}, []Table{
 		{Name: "audit_log"}, {Name: "user_sessions"},
@@ -107,6 +178,7 @@ func TestAccessREADME(t *testing.T) {
 		"audit_log", "activity", "audit log (24 months)", "actor, target_id, before, after, metadata",
 		"user_sessions", "network",
 		"application logs (30 days)", "backups (35 days)",
+		"prefixed with '", "exact values",
 	} {
 		if !strings.Contains(r, want) {
 			t.Errorf("README lacks %q:\n%s", want, r)

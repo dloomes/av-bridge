@@ -133,6 +133,13 @@ func accountIDs(ctx context.Context, tx pgx.Tx, s Subject) ([]string, error) {
 }
 
 func collectTable(ctx context.Context, tx pgx.Tx, s Subject, ids []string, name string, entries []Entry) (Table, error) {
+	// The scope filter is per table, taken from entries[0], so every entry
+	// on the table must agree with it. Checked before any query.
+	for _, e := range entries[1:] {
+		if e.Scoped != entries[0].Scoped || e.ScopeColumn != entries[0].ScopeColumn {
+			return Table{}, fmt.Errorf("register entries for %s disagree on scope (%s.%s)", name, e.Table, e.Column)
+		}
+	}
 	// Placeholders are numbered as first used, so the query references
 	// exactly the arguments it is given.
 	var args []any
@@ -182,7 +189,7 @@ func collectTable(ctx context.Context, tx pgx.Tx, s Subject, ids []string, name 
 		// Same conditions as privacy_anonymise_audit (migration 0073), with
 		// target_id widened to earlier accounts (see accountIDs).
 		if len(ids) > 0 {
-			add(`t.target_id = ANY(` + uids() + `)`)
+			add(`lower(t.target_id) = ANY(` + uids() + `)`) // ids are lower-case
 		}
 		add(`(coalesce(t.before::text, '') || ' ' || coalesce(t."after"::text, '') || ' ' || coalesce(t.metadata::text, '')) ~* ` + pattern())
 	}
@@ -211,7 +218,7 @@ func collectTable(ctx context.Context, tx pgx.Tx, s Subject, ids []string, name 
 		sel[i] = "t." + pgx.Identifier{c}.Sanitize()
 	}
 	q := `SELECT to_jsonb(x)::text FROM (SELECT ` + strings.Join(sel, ", ") + ` FROM ` + pgx.Identifier{name}.Sanitize() +
-		` t WHERE ` + where + ` ORDER BY ` + sel[0] + `) x`
+		` t WHERE ` + where + `) x ORDER BY x.` + pgx.Identifier{cols[0]}.Sanitize()
 	rows, err := tx.Query(ctx, q, args...)
 	if err != nil {
 		return Table{}, err

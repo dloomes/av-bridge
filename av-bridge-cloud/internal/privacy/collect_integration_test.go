@@ -109,7 +109,7 @@ func TestCollect(t *testing.T) {
 	audit(a, "Alice@Example.com", "")
 	audit(a, "alice@example.com", "")
 	audit(a, "ALICE@example.com", "")
-	audit(a, "bob@example.com", alice) // targets her; no email in the payload
+	audit(a, "bob@example.com", strings.ToUpper(alice)) // targets her (id in upper case); no email in the payload
 	audit(a, "bob@example.com", bob)   // unrelated
 	audit(b, "alice@example.com", "")  // the other organisation
 	audit(b, "bob@example.com", alice) // her id, but in the other organisation
@@ -296,32 +296,60 @@ func TestCollectVendorStaff(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// A customer account with the same email is a different account: the
+	// vendor subject must not resolve to it, export its users row, or reach
+	// its id-keyed rows (sessions). By design, email-keyed rows in customer
+	// tables (here the audit entry above) are searched across customers.
+	var custUID string
+	if err := su.QueryRow(ctx, `INSERT INTO users (customer_id, email, password_hash) VALUES ($1, $2, 'h') RETURNING id`,
+		c, email).Scan(&custUID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := su.Exec(ctx, `INSERT INTO user_sessions (user_id, token_hash, expires_at) VALUES ($1, $2, now() + interval '1 day')`, custUID, "cs-"+custUID); err != nil {
+		t.Fatal(err)
+	}
+
 	s, got := collectFor(t, ctx, st.AdminPool(), "", vt, email)
 	if s.UserID != uid || s.VendorTenantID != vt || s.CustomerID != "" {
-		t.Fatalf("subject = %+v", s)
+		t.Fatalf("subject = %+v (customer account is %s)", s, custUID)
 	}
 	for name, want := range map[string]int{"users": 1, "user_sessions": 1, "audit_log": 1} {
 		if n := len(got[name].Rows); n != want {
 			t.Errorf("%s: %d rows, want %d", name, n, want)
 		}
 	}
+	if ids := col(t, got["users"], "id"); len(ids) != 1 || ids[0] != uid {
+		t.Errorf("users ids = %v, want only the staff account %s", ids, uid)
+	}
+	if ids := col(t, got["user_sessions"], "user_id"); len(ids) != 1 || ids[0] != uid {
+		t.Errorf("user_sessions user_ids = %v, want only %s", ids, uid)
+	}
 }
 
-// Collect runs as app_admin, so it must be able to read every register table.
+// Collect runs as app_admin, so it must be able to read every register
+// table; erasure, also as app_admin, must be able to UPDATE every table with
+// an ActReplace entry (0074 granted it on firmware_targets).
 func TestAdminCanReadRegister(t *testing.T) {
 	ctx, su, _, _ := setup(t)
-	seen := map[string]bool{}
-	for _, e := range Personal {
-		if seen[e.Table] {
-			continue
-		}
-		seen[e.Table] = true
+	check := func(table, priv string) {
+		t.Helper()
 		var ok bool
-		if err := su.QueryRow(ctx, `SELECT has_table_privilege('app_admin', $1, 'SELECT')`, e.Table).Scan(&ok); err != nil {
+		if err := su.QueryRow(ctx, `SELECT has_table_privilege('app_admin', $1, $2)`, table, priv).Scan(&ok); err != nil {
 			t.Fatal(err)
 		}
 		if !ok {
-			t.Errorf("app_admin cannot SELECT from %s", e.Table)
+			t.Errorf("app_admin lacks %s on %s", priv, table)
+		}
+	}
+	seen := map[string]bool{}
+	for _, e := range Personal {
+		if e.Action == ActReplace && !seen[e.Table+"/u"] {
+			seen[e.Table+"/u"] = true
+			check(e.Table, "UPDATE")
+		}
+		if !seen[e.Table] {
+			seen[e.Table] = true
+			check(e.Table, "SELECT")
 		}
 	}
 }

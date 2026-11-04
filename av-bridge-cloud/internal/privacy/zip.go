@@ -68,13 +68,14 @@ func writeCSV(w io.Writer, tb Table) error {
 }
 
 // cell renders one value for CSV: text as is, NULL as empty, numbers and
-// booleans as written, objects and lists as JSON.
+// booleans as written, objects and lists as JSON. Text a spreadsheet would
+// treat as a formula gets a leading ' (see csvSafe).
 func cell(v any) (string, error) {
 	switch x := v.(type) {
 	case nil:
 		return "", nil
 	case string:
-		return x, nil
+		return csvSafe(x), nil
 	case json.Number:
 		return x.String(), nil
 	case bool:
@@ -86,6 +87,18 @@ func cell(v any) (string, error) {
 		b, err := marshal(x)
 		return string(b), err
 	}
+}
+
+// csvSafe neutralises spreadsheet formula injection: text starting with
+// = + - @ tab or CR is prefixed with '. Stored text can be attacker-chosen
+// (for example the User-Agent on an unauthenticated password reset request).
+// Only text is changed: numbers come from numeric columns, and objects and
+// lists start with { or [. The JSON files keep the exact values.
+func csvSafe(s string) string {
+	if s != "" && strings.ContainsRune("=+-@\t\r", rune(s[0])) {
+		return "'" + s
+	}
+	return s
 }
 
 // writeJSON writes an array of objects, one per row, keys in column order.
@@ -157,7 +170,9 @@ func AccessREADME(s Subject, tables []Table) string {
 	b.WriteString(".\n\n")
 	b.WriteString("Each table has two files with the same rows: <table>.csv and <table>.json.\n")
 	b.WriteString("Whole rows are included so each value keeps its context; passwords, token hashes and\n")
-	b.WriteString("other secrets are left out. In the CSV files, lists and objects are written as JSON.\n\n")
+	b.WriteString("other secrets are left out. In the CSV files, lists and objects are written as JSON.\n")
+	b.WriteString("In the CSV files, text that a spreadsheet could run as a formula (starting with =, +, -, @,\n")
+	b.WriteString("a tab or a carriage return) is prefixed with ' ; the JSON files hold the exact values.\n\n")
 	if len(tables) == 0 {
 		b.WriteString("No personal data was found.\n\n")
 	} else {
