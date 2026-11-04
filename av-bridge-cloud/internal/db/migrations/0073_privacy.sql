@@ -3,6 +3,15 @@
 -- deleted customer, and the audit anonymiser.
 
 -- Handled by administrators by default; any custom role can be given it.
+--
+-- roles and role_permissions have FORCE ROW LEVEL SECURITY, and the migration
+-- role (the RDS master) doesn't bypass it, so a plain INSERT ... SELECT would
+-- see no roles. As in 0068, FORCE is lifted for the seed and restored before
+-- the transaction commits.
+-- seed:begin
+ALTER TABLE roles NO FORCE ROW LEVEL SECURITY;
+ALTER TABLE role_permissions NO FORCE ROW LEVEL SECURITY;
+
 INSERT INTO role_permissions (role_id, permission)
 SELECT r.id, 'privacy.manage'
   FROM roles r
@@ -11,6 +20,10 @@ SELECT r.id, 'privacy.manage'
        SELECT 1 FROM role_permissions rp
         WHERE rp.role_id = r.id AND rp.permission = 'privacy.manage'
    );
+
+ALTER TABLE roles FORCE ROW LEVEL SECURITY;
+ALTER TABLE role_permissions FORCE ROW LEVEL SECURITY;
+-- seed:end
 
 ALTER TABLE customers
     ADD COLUMN offboarding_started_at timestamptz,
@@ -41,9 +54,11 @@ GRANT SELECT, INSERT, UPDATE ON customer_deletions TO app_admin;
 -- app_admin still can't UPDATE audit_log directly.
 --
 -- Matches entries where the person is the actor, the target, or is named
--- anywhere in before/after/metadata. Actor is replaced by the stand-in;
--- identifying keys are dropped and any remaining mention of the email is
--- replaced by the stand-in. Returns the number of entries changed.
+-- anywhere in before/after/metadata. The email is matched as a whole address
+-- (case-insensitive, not preceded or followed by an address character), so
+-- erasing al@x.io leaves cal@x.io and al@x.io.uk alone. Actor is replaced by
+-- the stand-in; identifying keys are dropped and any remaining mention of the
+-- email is replaced by the stand-in. Returns the number of entries changed.
 CREATE OR REPLACE FUNCTION privacy_anonymise_audit(
     p_customer uuid, p_email text, p_user_id text, p_standin text)
 RETURNS bigint
@@ -53,8 +68,17 @@ SET search_path = public, pg_temp
 AS $$
 DECLARE
     n       bigint;
-    pattern text := regexp_replace(p_email, '([]^$|?*+(){}.' || chr(92) || chr(92) || '[])', chr(92) || chr(92) || chr(92) || '1', 'g');
+    uid     text := nullif(p_user_id, '');
+    esc     text;
+    pattern text;
 BEGIN
+    IF coalesce(p_email, '') = '' THEN
+        RAISE EXCEPTION 'privacy_anonymise_audit: email required';
+    END IF;
+    -- Regex-escape the email (class: ] ^ $ | ? * + ( ) { } . backslash [).
+    esc := regexp_replace(p_email, '([]^$|?*+(){}.' || chr(92) || chr(92) || '[])',
+                          chr(92) || chr(92) || chr(92) || '1', 'g');
+    pattern := '(?<![A-Za-z0-9._%+-])' || esc || '(?![A-Za-z0-9._%+-])';
     -- audit_log has FORCE ROW LEVEL SECURITY; scope to the one organisation.
     PERFORM set_config('app.current_customer', p_customer::text, true);
     UPDATE audit_log a
@@ -70,9 +94,9 @@ BEGIN
                               pattern, p_standin, 'gi')::jsonb END
      WHERE a.customer_id = p_customer
        AND (lower(a.actor) = lower(p_email)
-            OR a.target_id = p_user_id
-            OR lower(coalesce(a.before::text, '') || coalesce(a."after"::text, '') || coalesce(a.metadata::text, ''))
-               LIKE '%' || lower(p_email) || '%');
+            OR a.target_id = uid
+            OR (coalesce(a.before::text, '') || ' ' || coalesce(a."after"::text, '') || ' '
+                || coalesce(a.metadata::text, '')) ~* pattern);
     GET DIAGNOSTICS n = ROW_COUNT;
     RETURN n;
 END
