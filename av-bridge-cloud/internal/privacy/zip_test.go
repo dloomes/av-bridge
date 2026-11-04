@@ -164,7 +164,7 @@ func TestCollectTableScopeDisagreement(t *testing.T) {
 		{{Table: "x", Column: "a", Key: KeyEmail, Scoped: true}, {Table: "x", Column: "b", Key: KeyEmail}},
 		{{Table: "x", Column: "a", Key: KeyEmail, Scoped: true}, {Table: "x", Column: "b", Key: KeyEmail, Scoped: true, ScopeColumn: "id"}},
 	} {
-		if _, err := collectTable(context.Background(), nil, s, nil, "x", entries); err == nil || !strings.Contains(err.Error(), "disagree on scope") {
+		if _, err := collectTable(context.Background(), nil, s, nil, nil, "x", entries); err == nil || !strings.Contains(err.Error(), "disagree on scope") {
 			t.Errorf("entries %v: err = %v, want scope disagreement", entries, err)
 		}
 	}

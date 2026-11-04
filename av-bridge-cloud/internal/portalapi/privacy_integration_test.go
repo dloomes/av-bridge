@@ -386,6 +386,92 @@ func TestPrivacyEraseHTTP(t *testing.T) {
 	}
 }
 
+// The audit entries an administrator's own privacy actions leave carry the
+// actor 'user:<uuid>', not an email. When that administrator is later the
+// subject, the access export must include those entries and erasure must
+// anonymise them.
+func TestPrivacyActorIDEntriesExportedAndErased(t *testing.T) {
+	e := newPrivacyEnv(t)
+	cust := e.customer("erase-actor-ids")
+	adminRole := e.q(`SELECT id::text FROM roles WHERE customer_id = $1 AND name = 'admin' AND is_system_default`, cust)
+	user := func(email string) string {
+		id := e.q(`INSERT INTO users (customer_id, email, full_name, password_hash) VALUES ($1, $2, 'Some One', 'x') RETURNING id::text`, cust, email)
+		e.q(`INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2) RETURNING role_id::text`, id, adminRole)
+		return id
+	}
+	all := map[string]struct{}{}
+	for p := range portalauth.KnownPermissions {
+		all[p] = struct{}{}
+	}
+	tag := cust[:8]
+	firstEmail, secondEmail, leaverEmail := "first-"+tag+"@example.test", "second-"+tag+"@example.test", "leaver-"+tag+"@example.test"
+	first := portalauth.Principal{UserID: user(firstEmail), CustomerID: cust, Role: "admin", Permissions: all}
+	second := portalauth.Principal{UserID: user(secondEmail), CustomerID: cust, Role: "admin", Permissions: all}
+	user(leaverEmail)
+
+	mux := http.NewServeMux()
+	mux.Handle("POST /export", portalauth.RequirePermission(portalauth.PermPrivacyManage)(http.HandlerFunc(e.h.AccessExport)))
+	mux.Handle("POST /erase", portalauth.RequirePermission(portalauth.PermPrivacyManage)(http.HandlerFunc(e.h.PrivacyErase)))
+	call := func(path string, p portalauth.Principal, body map[string]any) *httptest.ResponseRecorder {
+		t.Helper()
+		b, _ := json.Marshal(body)
+		req := httptest.NewRequest("POST", path, bytes.NewReader(b))
+		req = req.WithContext(portalauth.ContextWithPrincipal(req.Context(), p))
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != 200 {
+			t.Fatalf("%s as %s: %d %s", path, p.UserID, rec.Code, rec.Body.String())
+		}
+		return rec
+	}
+
+	// The first administrator exports and erases the leaver.
+	call("/export", first, map[string]any{"email": leaverEmail})
+	call("/erase", first, map[string]any{"email": leaverEmail, "confirm": leaverEmail})
+	actor := "user:" + first.UserID
+	if n := e.count(`SELECT count(*) FROM audit_log WHERE customer_id = $1 AND actor = $2
+		AND action IN ('privacy.access_export', 'privacy.erase')`, cust, actor); n != 2 {
+		t.Fatalf("first admin's privacy entries = %d, want 2", n)
+	}
+
+	// The second exports the first: those entries are in the archive.
+	rec := call("/export", second, map[string]any{"email": firstEmail})
+	zr, err := zip.NewReader(bytes.NewReader(rec.Body.Bytes()), int64(rec.Body.Len()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var auditCSV string
+	for _, f := range zr.File {
+		if f.Name == "audit_log.csv" {
+			rc, _ := f.Open()
+			b, _ := io.ReadAll(rc)
+			rc.Close()
+			auditCSV = string(b)
+		}
+	}
+	for _, action := range []string{"privacy.access_export", "privacy.erase"} {
+		if !strings.Contains(auditCSV, action) {
+			t.Errorf("access export audit_log.csv lacks the %s entry:\n%s", action, auditCSV)
+		}
+	}
+
+	// Then erases the first: no entry names the account id any more.
+	rec = call("/erase", second, map[string]any{"email": firstEmail, "confirm": firstEmail})
+	var res struct {
+		StandIn string `json:"stand_in"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil {
+		t.Fatal(err)
+	}
+	if n := e.count(`SELECT count(*) FROM audit_log a WHERE customer_id = $1 AND a::text ILIKE '%' || $2 || '%'`, cust, actor); n != 0 {
+		t.Errorf("%d audit entries still hold %s", n, actor)
+	}
+	if n := e.count(`SELECT count(*) FROM audit_log WHERE customer_id = $1 AND actor = $2
+		AND action IN ('privacy.access_export', 'privacy.erase')`, cust, res.StandIn); n != 2 {
+		t.Errorf("privacy entries with the stand-in %s as actor = %d, want 2", res.StandIn, n)
+	}
+}
+
 // The spec's "helpdesk user deletion writes a user.delete audit entry".
 // Helpdesk users belong to the vendor tenant, not a customer, and
 // audit_log.customer_id is NOT NULL, so the entry goes to the structured log

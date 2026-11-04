@@ -110,9 +110,14 @@ func TestCollect(t *testing.T) {
 	audit(a, "alice@example.com", "")
 	audit(a, "ALICE@example.com", "")
 	audit(a, "bob@example.com", strings.ToUpper(alice)) // targets her (id in upper case); no email in the payload
-	audit(a, "bob@example.com", bob)   // unrelated
-	audit(b, "alice@example.com", "")  // the other organisation
-	audit(b, "bob@example.com", alice) // her id, but in the other organisation
+	audit(a, "bob@example.com", bob)                    // unrelated
+	audit(a, "user:"+alice, "")                         // her own privacy action, recorded by account id
+	audit(b, "alice@example.com", "")                   // the other organisation
+	audit(b, "bob@example.com", alice)                  // her id, but in the other organisation
+	audit(b, "user:"+alice, "")                         // her id as actor, but in the other organisation
+	for _, ur := range [][2]string{{alice, a}, {aliceB, b}, {bob, a}} {
+		exec(`INSERT INTO user_roles (user_id, role_id) SELECT $1, r.id FROM roles r WHERE r.customer_id = $2 AND r.name = 'admin' AND r.is_system_default`, ur[0], ur[1])
+	}
 
 	exec(`INSERT INTO dashboards (customer_id, owner_user_id, name, created_by) VALUES ($1, $2, 'Mine', 'bob@example.com')`, a, alice)
 	exec(`INSERT INTO dashboards (customer_id, name, created_by) VALUES ($1, 'Shared', 'bob@example.com')`, a)
@@ -142,7 +147,7 @@ func TestCollect(t *testing.T) {
 		t.Fatalf("subject = %+v", s)
 	}
 	for name, want := range map[string]int{
-		"users": 1, "user_sessions": 2, "audit_log": 4, "dashboards": 1, "remote_session": 1, "api_tokens": 1,
+		"users": 1, "user_sessions": 2, "audit_log": 5, "dashboards": 1, "remote_session": 1, "api_tokens": 1, "user_roles": 1,
 	} {
 		if n := len(got[name].Rows); n != want {
 			t.Errorf("%s: %d rows, want %d", name, n, want)
@@ -165,6 +170,9 @@ func TestCollect(t *testing.T) {
 				}
 			}
 		}
+	}
+	if ids := col(t, got["user_roles"], "user_id"); len(ids) != 1 || ids[0] != alice {
+		t.Errorf("user_roles user_ids = %v, want only %s", ids, alice)
 	}
 	for _, ip := range col(t, got["user_sessions"], "ip_address") {
 		if ip != "10.0.0.1" && ip != "10.0.0.2" {
@@ -194,8 +202,8 @@ func TestCollect(t *testing.T) {
 			t.Errorf("audit row %v lost after delete", id)
 		}
 	}
-	if n := len(got["audit_log"].Rows); n != 5 {
-		t.Errorf("audit_log after delete: %d rows, want the 4 plus the user.delete entry", n)
+	if n := len(got["audit_log"].Rows); n != 6 {
+		t.Errorf("audit_log after delete: %d rows, want the 5 plus the user.delete entry", n)
 	}
 	if n := len(got["dashboards"].Rows); n != 1 {
 		t.Errorf("dashboards after delete: %d rows, want 1 (owner_user_id has no FK)", n)
@@ -236,6 +244,8 @@ func TestCollectEmailInText(t *testing.T) {
 		($1, 'op@x.io', 't', 'user', '{"note":"about A.B+c@x.io, thanks"}'),
 		($1, 'op@x.io', 't', 'user', '{"note":"about axb+c@x.io"}')`, c)
 	exec(`INSERT INTO notification_channels (customer_id, name, type, target) VALUES ($1, 'mail', 'email', 'A.B+c@x.io')`, c)
+	// customers.support_contact is free text.
+	exec(`UPDATE customers SET support_contact = 'Support: A.B+c@x.io, weekdays' WHERE id = $1`, c)
 
 	var region, loc, bld, room string
 	if err := su.QueryRow(ctx, `INSERT INTO regions (customer_id, name) VALUES ($1, 'r') RETURNING id`, c).Scan(&region); err != nil {
@@ -273,6 +283,9 @@ func TestCollectEmailInText(t *testing.T) {
 	if n := len(got["room_nightly_config"].Rows); n != 1 {
 		t.Errorf("room_nightly_config: %d rows, want 1", n)
 	}
+	if n := len(got["customers"].Rows); n != 1 {
+		t.Errorf("customers (support_contact in text): %d rows, want 1", n)
+	}
 }
 
 // Vendor staff: found through vendor_tenant_id, not a customer.
@@ -298,8 +311,10 @@ func TestCollectVendorStaff(t *testing.T) {
 
 	// A customer account with the same email is a different account: the
 	// vendor subject must not resolve to it, export its users row, or reach
-	// its id-keyed rows (sessions). By design, email-keyed rows in customer
-	// tables (here the audit entry above) are searched across customers.
+	// its id-keyed rows (sessions). Its customer (c) is left out entirely, the
+	// audit entry above included: those rows can't be told apart from its own
+	// user's. Email-keyed rows in other customers (d) are searched, and so are
+	// entries recorded by account id ('user:<uuid>').
 	var custUID string
 	if err := su.QueryRow(ctx, `INSERT INTO users (customer_id, email, password_hash) VALUES ($1, $2, 'h') RETURNING id`,
 		c, email).Scan(&custUID); err != nil {
@@ -308,14 +323,28 @@ func TestCollectVendorStaff(t *testing.T) {
 	if _, err := su.Exec(ctx, `INSERT INTO user_sessions (user_id, token_hash, expires_at) VALUES ($1, $2, now() + interval '1 day')`, custUID, "cs-"+custUID); err != nil {
 		t.Fatal(err)
 	}
+	d := mk("privacy-collect-vendor-d")
+	if _, err := su.Exec(ctx, `INSERT INTO audit_log (customer_id, actor, action, target_kind, actor_is_vendor) VALUES
+		($1, $2, 't', 'device', true), ($1, $3, 'privacy.access_export', 'user', true)`, d, email, "user:"+uid); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := su.Exec(ctx, `INSERT INTO audit_log (customer_id, actor, action, target_kind, actor_is_vendor) VALUES ($1, $2, 'customer.export', 'customer', true)`,
+		c, "user:"+uid); err != nil {
+		t.Fatal(err)
+	}
 
 	s, got := collectFor(t, ctx, st.AdminPool(), "", vt, email)
 	if s.UserID != uid || s.VendorTenantID != vt || s.CustomerID != "" {
 		t.Fatalf("subject = %+v (customer account is %s)", s, custUID)
 	}
-	for name, want := range map[string]int{"users": 1, "user_sessions": 1, "audit_log": 1} {
+	for name, want := range map[string]int{"users": 1, "user_sessions": 1, "audit_log": 2} {
 		if n := len(got[name].Rows); n != want {
 			t.Errorf("%s: %d rows, want %d", name, n, want)
+		}
+	}
+	for _, cust := range col(t, got["audit_log"], "customer_id") {
+		if cust != d {
+			t.Errorf("audit_log row from customer %v, want only %s", cust, d)
 		}
 	}
 	if ids := col(t, got["users"], "id"); len(ids) != 1 || ids[0] != uid {
@@ -374,10 +403,10 @@ func TestFindSubjectArgs(t *testing.T) {
 
 // The Go pattern must equal the one privacy_anonymise_audit builds. The test
 // lifts the two assignments out of each migration that defines the function
-// (0073, and 0075's array overload, which Erase calls) into a temporary
+// (0073, 0075, and 0077's array overload, which Erase calls) into a temporary
 // function and compares outputs, so the two cannot drift apart silently.
 func TestEmailPatternMatchesMigration(t *testing.T) {
-	for _, f := range []string{"0073_privacy.sql", "0075_privacy_audit_ids.sql"} {
+	for _, f := range []string{"0073_privacy.sql", "0075_privacy_audit_ids.sql", "0077_privacy_audit_actor_ids.sql"} {
 		t.Run(f, func(t *testing.T) { emailPatternMatchesMigration(t, "../db/migrations/"+f) })
 	}
 }

@@ -50,11 +50,13 @@ func exportExcluded(name, dataType string) bool {
 // every Scoped table is filtered on its scope column here.
 //
 // Several entries on one table are OR-ed into one query, so a row is
-// returned once. audit_log matches as privacy_anonymise_audit does: actor,
-// target_id = the user's id, or the email in before/after/metadata.
+// returned once. audit_log matches as privacy_anonymise_audit does: actor
+// (the email, or 'user:' plus one of the person's ids), target_id = one of
+// those ids, or the email in before/after/metadata.
 //
 // Vendor staff (no CustomerID) act inside many customers, so Scoped tables
-// other than users are searched across customers; users is filtered on
+// other than users are searched across customers, except customers that have
+// a users row with the same email (vendorOverlaps); users is filtered on
 // vendor_tenant_id.
 func Collect(ctx context.Context, tx pgx.Tx, s Subject) ([]Table, error) {
 	if strings.TrimSpace(s.Email) == "" {
@@ -77,10 +79,15 @@ func Collect(ctx context.Context, tx pgx.Tx, s Subject) ([]Table, error) {
 	if err != nil {
 		return nil, fmt.Errorf("privacy: account ids: %w", err)
 	}
+	overlaps, err := vendorOverlaps(ctx, tx, s)
+	if err != nil {
+		return nil, fmt.Errorf("privacy: customer accounts with the email: %w", err)
+	}
+	excluded := overlapIDs(overlaps)
 
 	var out []Table
 	for _, name := range order {
-		tb, err := collectTable(ctx, tx, s, ids, name, byTable[name])
+		tb, err := collectTable(ctx, tx, s, ids, excluded, name, byTable[name])
 		if err != nil {
 			return nil, fmt.Errorf("privacy: collect %s: %w", name, err)
 		}
@@ -132,7 +139,55 @@ func accountIDs(ctx context.Context, tx pgx.Tx, s Subject) ([]string, error) {
 	return ids, rows.Err()
 }
 
-func collectTable(ctx context.Context, tx pgx.Tx, s Subject, ids []string, name string, entries []Entry) (Table, error) {
+// Overlap is a customer in which a vendor subject's email is also a live
+// customer account.
+type Overlap struct{ CustomerID, Name string }
+
+// vendorOverlaps lists, for vendor staff, the customers that have a users row
+// with the same email, by name. Rows in those customers can't be told apart
+// from that customer's own user, so vendor-mode Collect and Erase leave them
+// out entirely (Erase names them as action items). Empty for a customer's
+// subject.
+func vendorOverlaps(ctx context.Context, tx pgx.Tx, s Subject) ([]Overlap, error) {
+	if s.CustomerID != "" {
+		return nil, nil
+	}
+	rows, err := tx.Query(ctx, `SELECT c.id::text, c.name FROM customers c
+		WHERE EXISTS (SELECT 1 FROM users u WHERE u.customer_id = c.id AND lower(u.email) = lower($1::text))
+		ORDER BY c.name, c.id`, s.Email)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (Overlap, error) {
+		var o Overlap
+		err := r.Scan(&o.CustomerID, &o.Name)
+		return o, err
+	})
+}
+
+func overlapIDs(os []Overlap) []string {
+	ids := make([]string, 0, len(os))
+	for _, o := range os {
+		ids = append(ids, o.CustomerID)
+	}
+	return ids
+}
+
+// excludeScope is the condition leaving the excluded customers out of a
+// Scoped table (sc, a sanitized column over alias t). Rows with no scope
+// value are kept, as before.
+func excludeScope(sc, param string) string {
+	return ` AND (t.` + sc + ` IS NULL OR t.` + sc + ` <> ALL(` + param + `::uuid[]))`
+}
+
+// actorIDsSQL matches an audit actor recorded by account id ('user:<uuid>',
+// the privacy and offboarding entries) against uids, a text[] of lower-case
+// ids.
+func actorIDsSQL(uids string) string {
+	return `lower(t.actor) = ANY(SELECT 'user:' || u FROM unnest(` + uids + `) AS u)`
+}
+
+func collectTable(ctx context.Context, tx pgx.Tx, s Subject, ids, excluded []string, name string, entries []Entry) (Table, error) {
 	// The scope filter is per table, taken from entries[0], so every entry
 	// on the table must agree with it. Checked before any query.
 	for _, e := range entries[1:] {
@@ -187,9 +242,10 @@ func collectTable(ctx context.Context, tx pgx.Tx, s Subject, ids []string, name 
 	}
 	if name == "audit_log" {
 		// Same conditions as privacy_anonymise_audit's array overload
-		// (migration 0075), which Erase calls with the same ids.
+		// (migration 0077), which Erase calls with the same ids.
 		if len(ids) > 0 {
 			add(`lower(t.target_id) = ANY(` + uids() + `)`) // ids are lower-case
+			add(actorIDsSQL(uids()))
 		}
 		add(`(coalesce(t.before::text, '') || ' ' || coalesce(t."after"::text, '') || ' ' || coalesce(t.metadata::text, '')) ~* ` + pattern())
 	}
@@ -207,6 +263,13 @@ func collectTable(ctx context.Context, tx pgx.Tx, s Subject, ids []string, name 
 			sc = "customer_id"
 		}
 		where += ` AND t.` + pgx.Identifier{sc}.Sanitize() + ` = ` + param("scope", s.CustomerID) + `::uuid`
+	case entries[0].Scoped && len(excluded) > 0:
+		// Vendor staff: not in customers where the email is also a live account.
+		sc := entries[0].ScopeColumn
+		if sc == "" {
+			sc = "customer_id"
+		}
+		where += excludeScope(pgx.Identifier{sc}.Sanitize(), param("excluded", excluded))
 	}
 
 	return selectRows(ctx, tx, name, where, args)

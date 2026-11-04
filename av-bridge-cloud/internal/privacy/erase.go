@@ -15,6 +15,12 @@ import (
 // through Microsoft Entra ID: Entra sign-in creates the account again.
 const EntraNote = "Remove this person from Microsoft Entra ID too, or they will be created again as a new account when they next sign in."
 
+// OverlapNote is the action item for a vendor staff erasure, per customer
+// (%s, its name) where the same email is also a live account. That
+// customer's records are left alone: they can't be told apart from its own
+// user's.
+const OverlapNote = "This email address also has an account at %s. Erase it from that organisation as well."
+
 // StandIn is the text that replaces the person wherever a record has to keep
 // a value: "erased-user-" plus the first 8 hex characters of the user id
 // (dashes removed), or, with no account left, of sha256(lower(email)).
@@ -52,6 +58,10 @@ type Result struct {
 //     organisation, with every account id the person has had (accountIDs).
 //   - ActReport: nothing changes; a named action item is added.
 //
+// Vendor staff: customers that have a users row with the same email are left
+// out of every step (vendorOverlaps), and each is named in Actions
+// (OverlapNote), the dry run included.
+//
 // users is last in the register, so the account row goes after everything
 // that refers to it. Erase does not write the privacy.erase audit entry: the
 // caller, who knows the actor, does that in the same transaction.
@@ -88,7 +98,15 @@ func erase(ctx context.Context, tx pgx.Tx, s Subject) (Result, error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("privacy: account ids: %w", err)
 	}
+	overlaps, err := vendorOverlaps(ctx, tx, s)
+	if err != nil {
+		return Result{}, fmt.Errorf("privacy: customer accounts with the email: %w", err)
+	}
+	sc := target{Subject: s, ids: ids, excluded: overlapIDs(overlaps)}
 	res := Result{StandIn: StandIn(s), Counts: map[string]int64{}}
+	for _, o := range overlaps {
+		res.Actions = append(res.Actions, fmt.Sprintf(OverlapNote, o.Name))
+	}
 	add := func(key string, n int64) {
 		if n > 0 {
 			res.Counts[key] += n
@@ -112,7 +130,7 @@ func erase(ctx context.Context, tx pgx.Tx, s Subject) (Result, error) {
 		)
 		switch e.Action {
 		case ActReplace:
-			n, err = eraseReplace(ctx, tx, s, ids, res.StandIn, e)
+			n, err = eraseReplace(ctx, tx, sc, res.StandIn, e)
 			add(e.Table+"."+e.Column, n)
 		case ActDeleteRow:
 			k := e.Table + "." + keyColumn(e)
@@ -120,17 +138,17 @@ func erase(ctx context.Context, tx pgx.Tx, s Subject) (Result, error) {
 				continue
 			}
 			deleted[k] = true
-			n, err = eraseDelete(ctx, tx, s, ids, e)
+			n, err = eraseDelete(ctx, tx, sc, e)
 			add(e.Table, n)
 		case ActStripJSON:
 			if e.Table != "audit_log" {
 				return Result{}, fmt.Errorf("privacy: ActStripJSON on %s.%s is not supported", e.Table, e.Column)
 			}
-			n, err = anonymiseAudit(ctx, tx, s, ids, res.StandIn)
+			n, err = anonymiseAudit(ctx, tx, sc, res.StandIn)
 			add(e.Table, n)
 		case ActReport:
 			var msgs []string
-			msgs, err = eraseReport(ctx, tx, s, ids, e)
+			msgs, err = eraseReport(ctx, tx, sc, e)
 			res.Actions = append(res.Actions, msgs...)
 		default:
 			return Result{}, fmt.Errorf("privacy: unknown action %d on %s.%s", e.Action, e.Table, e.Column)
@@ -171,17 +189,26 @@ func (b *stmt) param(key string, v any) string {
 	return b.slot[key]
 }
 
-// where returns the condition finding the entry's rows for s: its key
-// condition plus the scope filter. ok is false when nothing can match (a
+// target is what every erase statement is about: the Subject, every account
+// id they have had (accountIDs) and, for vendor staff, the customers left
+// out because the email is also a live account there (vendorOverlaps).
+type target struct {
+	Subject
+	ids      []string
+	excluded []string
+}
+
+// where returns the condition finding the entry's rows for the target: its
+// key condition plus the scope filter. ok is false when nothing can match (a
 // user-id key and no account id).
-func (b *stmt) where(s Subject, ids []string, e Entry) (cond string, ok bool, err error) {
+func (b *stmt) where(s target, e Entry) (cond string, ok bool, err error) {
 	k := "t." + pgx.Identifier{keyColumn(e)}.Sanitize()
 	switch e.Key {
 	case KeyUserID:
-		if len(ids) == 0 {
+		if len(s.ids) == 0 {
 			return "", false, nil
 		}
-		cond = k + ` = ANY(` + b.param("ids", ids) + `::uuid[])`
+		cond = k + ` = ANY(` + b.param("ids", s.ids) + `::uuid[])`
 	case KeyEmail:
 		cond = `lower(` + k + `) = lower(` + b.param("email", s.Email) + `::text)`
 	case KeyEmailInText:
@@ -194,16 +221,19 @@ func (b *stmt) where(s Subject, ids []string, e Entry) (cond string, ok bool, er
 	}
 	// Scope, as in Collect: a customer's subject is confined to that customer
 	// on every Scoped table; vendor staff act across customers, so only their
-	// own users row is confined (to the vendor tenant).
+	// own users row is confined (to the vendor tenant), and customers where
+	// the email is also a live account are left out.
+	sc := e.ScopeColumn
+	if sc == "" {
+		sc = "customer_id"
+	}
 	switch {
 	case e.Table == "users" && s.VendorTenantID != "":
 		cond += ` AND t.vendor_tenant_id = ` + b.param("vendor", s.VendorTenantID) + `::uuid`
 	case e.Scoped && s.CustomerID != "":
-		sc := e.ScopeColumn
-		if sc == "" {
-			sc = "customer_id"
-		}
 		cond += ` AND t.` + pgx.Identifier{sc}.Sanitize() + ` = ` + b.param("customer", s.CustomerID) + `::uuid`
+	case e.Scoped && len(s.excluded) > 0:
+		cond += excludeScope(pgx.Identifier{sc}.Sanitize(), b.param("excluded", s.excluded))
 	case e.Table == "users":
 		return "", false, errors.New("users statement without a scope")
 	}
@@ -213,9 +243,9 @@ func (b *stmt) where(s Subject, ids []string, e Entry) (cond string, ok bool, er
 // eraseReplace clears or replaces one column. NULL for IP address and
 // browser columns (Category "network") and for a column that is itself the
 // user-id key; the stand-in for email and name text.
-func eraseReplace(ctx context.Context, tx pgx.Tx, s Subject, ids []string, standIn string, e Entry) (int64, error) {
+func eraseReplace(ctx context.Context, tx pgx.Tx, s target, standIn string, e Entry) (int64, error) {
 	var b stmt
-	cond, ok, err := b.where(s, ids, e)
+	cond, ok, err := b.where(s, e)
 	if err != nil || !ok {
 		return 0, err
 	}
@@ -240,9 +270,9 @@ func eraseReplace(ctx context.Context, tx pgx.Tx, s Subject, ids []string, stand
 	return tag.RowsAffected(), nil
 }
 
-func eraseDelete(ctx context.Context, tx pgx.Tx, s Subject, ids []string, e Entry) (int64, error) {
+func eraseDelete(ctx context.Context, tx pgx.Tx, s target, e Entry) (int64, error) {
 	var b stmt
-	cond, ok, err := b.where(s, ids, e)
+	cond, ok, err := b.where(s, e)
 	if err != nil || !ok {
 		return 0, err
 	}
@@ -253,21 +283,29 @@ func eraseDelete(ctx context.Context, tx pgx.Tx, s Subject, ids []string, e Entr
 	return tag.RowsAffected(), nil
 }
 
-// anonymiseAudit runs privacy_anonymise_audit (0075's array overload: every
-// account id at once, target_id matched case-insensitively, so each entry is
-// counted once). A customer's subject is anonymised in that customer only;
-// vendor staff in every customer whose log names them, as Collect finds them.
-func anonymiseAudit(ctx context.Context, tx pgx.Tx, s Subject, ids []string, standIn string) (int64, error) {
+// anonymiseAudit runs privacy_anonymise_audit (the array overload, 0077:
+// every account id at once, target_id and 'user:<id>' actors matched
+// case-insensitively, so each entry is counted once). A customer's subject is
+// anonymised in that customer only; vendor staff in every customer whose log
+// names them, as Collect finds them, except the excluded customers.
+func anonymiseAudit(ctx context.Context, tx pgx.Tx, s target, standIn string) (int64, error) {
+	ids := s.ids
 	if ids == nil {
 		ids = []string{}
+	}
+	excluded := s.excluded
+	if excluded == nil {
+		excluded = []string{}
 	}
 	customers := []string{s.CustomerID}
 	if s.CustomerID == "" {
 		rows, err := tx.Query(ctx, `SELECT DISTINCT t.customer_id::text FROM audit_log t
-			WHERE lower(t.actor) = lower($1::text)
-			   OR lower(t.target_id) = ANY($2::text[])
-			   OR (coalesce(t.before::text, '') || ' ' || coalesce(t."after"::text, '') || ' ' || coalesce(t.metadata::text, '')) ~* $3::text
-			ORDER BY 1`, s.Email, ids, EmailPattern(s.Email))
+			WHERE (lower(t.actor) = lower($1::text)
+			       OR `+actorIDsSQL(`$2::text[]`)+`
+			       OR lower(t.target_id) = ANY($2::text[])
+			       OR (coalesce(t.before::text, '') || ' ' || coalesce(t."after"::text, '') || ' ' || coalesce(t.metadata::text, '')) ~* $3::text)
+			  AND t.customer_id <> ALL($4::uuid[])
+			ORDER BY 1`, s.Email, ids, EmailPattern(s.Email), excluded)
 		if err != nil {
 			return 0, err
 		}
@@ -307,9 +345,9 @@ var reportLabels = map[string]struct{ expr, msg string }{
 		`t.customer_name`, `This email cancelled the offboarding of organisation "%s".`},
 }
 
-func eraseReport(ctx context.Context, tx pgx.Tx, s Subject, ids []string, e Entry) ([]string, error) {
+func eraseReport(ctx context.Context, tx pgx.Tx, s target, e Entry) ([]string, error) {
 	var b stmt
-	cond, ok, err := b.where(s, ids, e)
+	cond, ok, err := b.where(s, e)
 	if err != nil || !ok {
 		return nil, err
 	}

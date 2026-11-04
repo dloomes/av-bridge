@@ -126,7 +126,8 @@ var Personal = []Entry{
 		Reason: "The organisation's helpdesk address for nightly reports; an administrator edits it."},
 	{Table: "room_nightly_config", Column: "notification_recipients", Key: KeyEmailJSON, Category: "contact", Action: ActReport, Scoped: true,
 		Reason: "Per-room report recipients set by the organisation; an administrator edits them."},
-	{Table: "customers", Column: "support_contact", Key: KeyEmail, Category: "contact", Action: ActReport, Scoped: true, ScopeColumn: "id",
+	// Free text ("Helpdesk: help@acme.example, 9-5"), so the email is matched inside it.
+	{Table: "customers", Column: "support_contact", Key: KeyEmailInText, Category: "contact", Action: ActReport, Scoped: true, ScopeColumn: "id",
 		Reason: "The organisation's published support contact; an administrator edits it."},
 	{Table: "customers", Column: "offboarding_started_by", Key: KeyEmail, Category: "activity", Action: ActReport, Scoped: true, ScopeColumn: "id",
 		Reason: "Operator who started the offboarding; kept as deletion evidence."},
@@ -134,6 +135,10 @@ var Personal = []Entry{
 		Reason: "Operator who started the offboarding; kept as deletion evidence."},
 	{Table: "customer_deletions", Column: "cancelled_by", Key: KeyEmail, Category: "activity", Action: ActReport, Scoped: true,
 		Reason: "Operator who cancelled the offboarding; kept as deletion evidence."},
+
+	// The account's role memberships, exported with it. Erasure deletes them
+	// here; deleting the users row would cascade to them anyway.
+	{Table: "user_roles", Column: "user_id", Key: KeyUserID, Category: "account", Action: ActDeleteRow},
 
 	// Accounts last (see the ordering rules above).
 	{Table: "users", Column: "full_name", Key: KeyEmail, KeyColumn: "email", Category: "account", Action: ActDeleteRow, Scoped: true},

@@ -225,9 +225,16 @@ func TestErase(t *testing.T) {
 	audit(a, "bob@example.com", strings.ToUpper(former), `{"role":"viewer"}`) // her earlier account, id upper-cased
 	audit(a, "bob@example.com", "", `{"note":"asked by Alice@Example.com."}`)
 	audit(a, "bob@example.com", bob, `{"role":"viewer"}`) // unrelated
+	audit(a, "user:"+alice, "", `{"tables":3}`)           // her own privacy action, recorded by account id
 	audit(b, "alice@example.com", aliceB, `{"email":"alice@example.com","full_name":"Alice A"}`)
+	audit(b, "user:"+aliceB, "", `{"tables":3}`)
 
 	exec(`INSERT INTO notification_channels (customer_id, name, type, target) VALUES ($1, 'Facilities', 'email', 'alice@example.com')`, a)
+	// Free text holding her address: reported, never edited.
+	exec(`UPDATE customers SET support_contact = 'Helpdesk: ALICE@example.com, 9-5' WHERE id = $1`, a)
+	for _, ur := range [][2]string{{alice, a}, {aliceB, b}, {bob, a}} {
+		exec(`INSERT INTO user_roles (user_id, role_id) SELECT $1, r.id FROM roles r WHERE r.customer_id = $2 AND r.name = 'admin' AND r.is_system_default`, ur[0], ur[1])
+	}
 
 	ids := []string{alice, former}
 	idsB := []string{aliceB}
@@ -281,7 +288,7 @@ func TestErase(t *testing.T) {
 		"collector_enrollment_tokens": 1, "api_tokens.last_used_ip": 1, "api_tokens.created_by": 1, "api_tokens.revoked_by": 1,
 		"remote_session.actor": 2, "remote_session.end_reason": 1, "remote_session.user_id": 2,
 		"dashboards.created_by": 3, "dashboards": 2, "dashboard_display_links.created_by": 1,
-		"firmware_targets.updated_by": 1, "schedule_date.created_by": 1, "audit_log": 5, "users": 1,
+		"firmware_targets.updated_by": 1, "schedule_date.created_by": 1, "audit_log": 6, "user_roles": 1, "users": 1,
 	}
 	for k, n := range want {
 		if res.Counts[k] != n {
@@ -319,6 +326,18 @@ func TestErase(t *testing.T) {
 	if err := su.QueryRow(ctx, `SELECT count(*) FROM user_sessions WHERE user_id = $1`, bob).Scan(&bobSess); err != nil || bobSess != 1 {
 		t.Errorf("bob's session touched (n=%d err=%v)", bobSess, err)
 	}
+	if err := su.QueryRow(ctx, `SELECT count(*) FROM user_roles WHERE user_id = $1`, bob).Scan(&bobSess); err != nil || bobSess != 1 {
+		t.Errorf("bob's role touched (n=%d err=%v)", bobSess, err)
+	}
+	var idLeft int
+	if err := su.QueryRow(ctx, `SELECT count(*) FROM audit_log t WHERE customer_id = $1 AND to_jsonb(t)::text ILIKE '%' || $2 || '%'`,
+		a, "user:"+alice).Scan(&idLeft); err != nil || idLeft != 0 {
+		t.Errorf("audit rows still hold user:%s: %d (err %v)", alice, idLeft, err)
+	}
+	var support string
+	if err := su.QueryRow(ctx, `SELECT support_contact FROM customers WHERE id = $1`, a).Scan(&support); err != nil || support != "Helpdesk: ALICE@example.com, 9-5" {
+		t.Errorf("support_contact = %q (err %v), want it unchanged", support, err)
+	}
 	if got := registerSnapshot(t, ctx, su, b, idsB); got != snapB {
 		t.Errorf("customer B changed:\nbefore:\n%s\nafter:\n%s", snapB, got)
 	}
@@ -326,6 +345,9 @@ func TestErase(t *testing.T) {
 	joined := strings.Join(res.Actions, "\n")
 	if !strings.Contains(joined, "Facilities") {
 		t.Errorf("actions don't name the notification channel: %v", res.Actions)
+	}
+	if !strings.Contains(joined, "publishes this email as its support contact") {
+		t.Errorf("actions don't report the free-text support contact: %v", res.Actions)
 	}
 	if !strings.Contains(joined, "Microsoft Entra ID") {
 		t.Errorf("actions lack the Entra note: %v", res.Actions)
@@ -390,47 +412,90 @@ func TestEraseNoAccount(t *testing.T) {
 }
 
 // Vendor staff: their account is found in the vendor tenant; email-keyed rows
-// and audit entries in customers are erased, a customer account with the
-// same email is a different account and is left alone.
+// and audit entries in customers are erased. Customer C, where the same email
+// is also a live account, is left alone entirely (its rows can't be told
+// apart from its own user's) and named in Actions; customer D, with only the
+// staff member's traces, is anonymised.
 func TestEraseVendorStaff(t *testing.T) {
 	ctx, su, st, mk := setup(t)
-	c := mk("privacy-erase-vendor")
-	var vt, uid, custUID string
-	if err := su.QueryRow(ctx, `INSERT INTO vendor_tenants (name, entra_tenant_id) VALUES ('Involve', $1) RETURNING id`, "vte-"+c).Scan(&vt); err != nil {
-		t.Fatal(err)
-	}
-	email := "staff-" + c[:8] + "@involve.example"
-	if err := su.QueryRow(ctx, `INSERT INTO users (vendor_tenant_id, email, password_hash) VALUES ($1, $2, 'h') RETURNING id`, vt, strings.ToUpper(email[:1])+email[1:]).Scan(&uid); err != nil {
-		t.Fatal(err)
-	}
-	if err := su.QueryRow(ctx, `INSERT INTO users (customer_id, email, password_hash) VALUES ($1, $2, 'h') RETURNING id`, c, email).Scan(&custUID); err != nil {
-		t.Fatal(err)
-	}
-	for _, u := range []string{uid, custUID} {
-		if _, err := su.Exec(ctx, `INSERT INTO user_sessions (user_id, token_hash, expires_at) VALUES ($1, $2, now() + interval '1 day')`, u, "evs-"+u); err != nil {
-			t.Fatal(err)
+	c := mk("privacy-erase-vendor-c")
+	d := mk("privacy-erase-vendor-d")
+	exec := func(sql string, args ...any) {
+		t.Helper()
+		if _, err := su.Exec(ctx, sql, args...); err != nil {
+			t.Fatalf("%s: %v", sql, err)
 		}
 	}
-	if _, err := su.Exec(ctx, `INSERT INTO audit_log (customer_id, actor, action, target_kind, actor_is_vendor) VALUES ($1, $2, 't', 'device', true)`, c, email); err != nil {
-		t.Fatal(err)
+	q := func(sql string, args ...any) string {
+		t.Helper()
+		var s string
+		if err := su.QueryRow(ctx, sql, args...).Scan(&s); err != nil {
+			t.Fatalf("%s: %v", sql, err)
+		}
+		return s
+	}
+	cName := q(`SELECT name FROM customers WHERE id = $1`, c)
+	vt := q(`INSERT INTO vendor_tenants (name, entra_tenant_id) VALUES ('Involve', $1) RETURNING id::text`, "vte-"+c)
+	email := "staff-" + c[:8] + "@involve.example"
+	uid := q(`INSERT INTO users (vendor_tenant_id, email, password_hash) VALUES ($1, $2, 'h') RETURNING id::text`, vt, strings.ToUpper(email[:1])+email[1:])
+	custUID := q(`INSERT INTO users (customer_id, email, full_name, password_hash) VALUES ($1, $2, 'Cust Staff', 'h') RETURNING id::text`, c, email)
+	for _, u := range []string{uid, custUID} {
+		exec(`INSERT INTO user_sessions (user_id, token_hash, expires_at) VALUES ($1, $2, now() + interval '1 day')`, u, "evs-"+u)
+	}
+	exec(`INSERT INTO user_roles (user_id, role_id) SELECT $1, r.id FROM roles r WHERE r.customer_id = $2 AND r.name = 'admin' AND r.is_system_default`, custUID, c)
+
+	// The same rows in both customers: the email as actor and in text, the
+	// staff account id as actor and as remote_session.user_id.
+	for i, cust := range []string{c, d} {
+		exec(`INSERT INTO audit_log (customer_id, actor, action, target_kind, actor_is_vendor) VALUES
+			($1, $2, 't', 'device', true), ($1, $3, 'customer.export', 'customer', true)`, cust, email, "user:"+uid)
+		exec(`INSERT INTO schedule_date (customer_id, on_date, closed, created_by) VALUES ($1, '2026-12-25', true, $2)`, cust, email)
+		exec(`INSERT INTO dashboards (customer_id, name, created_by) VALUES ($1, 'Estate', $2)`, cust, email)
+		exec(`INSERT INTO notification_channels (customer_id, name, type, target) VALUES ($1, $2, 'email', $3)`, cust, fmt.Sprintf("Channel%d-%s", i, c[:8]), email)
+		coll := q(`INSERT INTO collectors (customer_id, name, hmac_secret_enc) VALUES ($1, 'c', '\x00') RETURNING id::text`, cust)
+		dev := q(`INSERT INTO devices (customer_id, collector_id) VALUES ($1, $2) RETURNING id::text`, cust, coll)
+		exec(`INSERT INTO remote_session (customer_id, device_id, user_id, actor, host_label, scheme, port, launch_code_hash, expires_at, end_reason)
+			VALUES ($1, $2, $3, $4, $5, 'https', 443, '\x01', now() + interval '1 hour', $6)`,
+			cust, dev, uid, email, "evr-"+dev, "ended by "+email)
 	}
 
+	snapC := registerSnapshot(t, ctx, su, c, []string{custUID})
+	_, dry := eraseIn(t, ctx, st.AdminPool(), "", vt, email, true)
 	s, res := eraseIn(t, ctx, st.AdminPool(), "", vt, email, false)
 	if s.UserID != uid {
 		t.Fatalf("subject = %+v", s)
 	}
-	if res.Counts["users"] != 1 || res.Counts["user_sessions"] != 1 || res.Counts["audit_log"] != 1 {
-		t.Errorf("counts = %v", res.Counts)
+	if fmt.Sprint(res.Counts) != fmt.Sprint(dry.Counts) || strings.Join(res.Actions, "\n") != strings.Join(dry.Actions, "\n") {
+		t.Errorf("result %+v differs from dry run %+v", res, dry)
 	}
-	var n int
-	if err := su.QueryRow(ctx, `SELECT count(*) FROM users WHERE id = $1`, custUID).Scan(&n); err != nil || n != 1 {
-		t.Errorf("customer account with the same email removed (n=%d err=%v)", n, err)
+	want := map[string]int64{
+		"users": 1, "user_sessions": 1, "audit_log": 2, "schedule_date.created_by": 1, "dashboards.created_by": 1,
+		"remote_session.actor": 1, "remote_session.end_reason": 1, "remote_session.user_id": 1,
 	}
-	if err := su.QueryRow(ctx, `SELECT count(*) FROM user_sessions WHERE user_id = $1`, custUID).Scan(&n); err != nil || n != 1 {
-		t.Errorf("customer account's session removed (n=%d err=%v)", n, err)
+	if fmt.Sprint(res.Counts) != fmt.Sprint(want) {
+		t.Errorf("counts = %v, want %v", res.Counts, want)
 	}
-	if err := su.QueryRow(ctx, `SELECT count(*) FROM audit_log WHERE customer_id = $1 AND actor = $2`, c, res.StandIn).Scan(&n); err != nil || n != 1 {
-		t.Errorf("vendor audit entry not anonymised (n=%d err=%v)", n, err)
+
+	// C: untouched, the customer account included.
+	if got := registerSnapshot(t, ctx, su, c, []string{custUID}); got != snapC {
+		t.Errorf("customer C changed:\nbefore:\n%s\nafter:\n%s", snapC, got)
+	}
+	// D: nothing names the staff member, by email or by account id.
+	for _, tbl := range []string{"audit_log", "schedule_date", "dashboards", "remote_session"} {
+		var n int
+		if err := su.QueryRow(ctx, `SELECT count(*) FROM `+tbl+` t WHERE customer_id = $1
+			AND (to_jsonb(t)::text ILIKE '%' || $2 || '%' OR to_jsonb(t)::text ILIKE '%' || $3 || '%')`, d, email, uid).Scan(&n); err != nil || n != 0 {
+			t.Errorf("customer D %s: %d rows still name the staff member (err %v)", tbl, n, err)
+		}
+	}
+
+	wantNote := fmt.Sprintf(OverlapNote, cName)
+	joined := strings.Join(res.Actions, "\n")
+	if !strings.Contains(joined, wantNote) {
+		t.Errorf("actions don't name customer C (%q): %v", wantNote, res.Actions)
+	}
+	if !strings.Contains(joined, "Channel1-"+c[:8]) || strings.Contains(joined, "Channel0-"+c[:8]) {
+		t.Errorf("actions should report D's channel and not C's: %v", res.Actions)
 	}
 }
 
