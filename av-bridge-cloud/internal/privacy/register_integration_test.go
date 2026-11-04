@@ -66,11 +66,35 @@ func TestRegisterCoversSchema(t *testing.T) {
 		t.Errorf("%d columns match the guard pattern but are not registered:\n  %s", len(missing), strings.Join(missing, "\n  "))
 	}
 
-	// Scoped must equal "table has a customer_id column".
+	// Scoped must equal "table has its scope column"; KeyColumn and ScopeColumn must exist.
 	for _, e := range Personal {
-		has := cols[e.Table+".customer_id"]
-		if e.Scoped != has {
-			t.Errorf("%s.%s: Scoped=%v but table has customer_id=%v", e.Table, e.Column, e.Scoped, has)
+		sc := e.ScopeColumn
+		if sc == "" {
+			sc = "customer_id"
+		}
+		if has := cols[e.Table+"."+sc]; e.Scoped != has {
+			t.Errorf("%s.%s: Scoped=%v but table has %s=%v", e.Table, e.Column, e.Scoped, sc, has)
+		}
+		if e.ScopeColumn != "" && !e.Scoped {
+			t.Errorf("%s.%s: ScopeColumn set but Scoped is false", e.Table, e.Column)
+		}
+		if e.KeyColumn != "" && !cols[e.Table+"."+e.KeyColumn] {
+			t.Errorf("%s.%s: KeyColumn %q does not exist", e.Table, e.Column, e.KeyColumn)
+		}
+	}
+
+	// Processing order: an entry found through key column K precedes any entry
+	// in the same table that changes K; users entries come last.
+	for i, e := range Personal {
+		if e.KeyColumn != "" {
+			for _, later := range Personal[:i] {
+				if later.Table == e.Table && later.Column == e.KeyColumn {
+					t.Errorf("%s.%s is found through %s, which is changed earlier in the register", e.Table, e.Column, e.KeyColumn)
+				}
+			}
+		}
+		if i > 0 && e.Table != "users" && Personal[i-1].Table == "users" {
+			t.Errorf("%s.%s comes after a users entry; users must be last", e.Table, e.Column)
 		}
 	}
 }
