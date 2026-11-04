@@ -80,7 +80,8 @@ func (e *errStatus) Error() string { return e.msg }
 //
 // confirm must be the customer's name. In one transaction: sets the
 // offboarding columns (delete_after = now + 30 days), revokes every session
-// of the customer's users, ends its remote-access sessions, inserts the
+// of the customer's users, marks its nightly runs' room alerts checked, ends
+// its remote-access sessions, inserts the
 // customer_deletions row and audits customer.offboard. After the commit it
 // closes what is still connected: /ws/events streams and Collector tunnels.
 func (h *Handler) OffboardCustomer(w http.ResponseWriter, r *http.Request) {
@@ -141,6 +142,12 @@ func (h *Handler) OffboardCustomer(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 		out.SessionsRevoked = tag.RowsAffected()
+		// Room alerts skip an offboarding customer's runs (run_alerts.go), so
+		// mark them reflected now: a cancel must not raise stale alerts.
+		if _, err := tx.Exec(ctx, `UPDATE nightly_run SET alert_checked_at = now()
+			 WHERE customer_id = $1::uuid AND alert_checked_at IS NULL`, out.CustomerID); err != nil {
+			return err
+		}
 		if remoteIDs, err = remote.EndCustomerSessions(ctx, tx, out.CustomerID, "customer offboarded"); err != nil {
 			return err
 		}
@@ -195,8 +202,10 @@ func (h *Handler) OffboardCustomer(w http.ResponseWriter, r *http.Request) {
 
 // CancelOffboarding — POST /api/v1/helpdesk/customers/{id}/cancel-offboarding
 //
-// Clears the offboarding columns, records cancelled_at/by on the open
-// customer_deletions row and audits customer.offboard_cancel. Nothing was
+// Clears the offboarding columns, marks runs that finished during the
+// offboarding as alert-checked (so they raise no stale room alerts), records
+// cancelled_at/by on the open customer_deletions row and audits
+// customer.offboard_cancel. Nothing was
 // deleted, so everything works again; users sign in again (their sessions
 // were revoked at offboarding).
 func (h *Handler) CancelOffboarding(w http.ResponseWriter, r *http.Request) {
@@ -229,6 +238,13 @@ func (h *Handler) CancelOffboarding(w http.ResponseWriter, r *http.Request) {
 			UPDATE customers
 			   SET offboarding_started_at = NULL, offboarding_started_by = NULL, delete_after = NULL
 			 WHERE id = $1::uuid`, customerID); err != nil {
+			return err
+		}
+		// Runs that finished while offboarding were never reflected as room
+		// alerts; they are stale now, so they don't alert or notify.
+		if _, err := tx.Exec(ctx, `UPDATE nightly_run SET alert_checked_at = now()
+			 WHERE customer_id = $1::uuid AND alert_checked_at IS NULL AND completed_at >= $2`,
+			customerID, *started); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, `
@@ -325,8 +341,9 @@ func (h *Handler) ExportCustomer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	err = pgx.BeginFunc(ctx, h.store.AdminPool(), func(tx pgx.Tx) error {
+		// Recorded like started_by / cancelled_by on the same vendor-only row.
 		entry, _ := json.Marshal([]map[string]string{{
-			"by": auditActorID(p),
+			"by": operatorIdentity(p),
 			"at": time.Now().UTC().Format(time.RFC3339),
 		}})
 		if _, err := tx.Exec(ctx, `
@@ -407,6 +424,11 @@ func (it deletionItem) deletion() privacy.Deletion {
 	}
 	if it.CancelledBy != nil {
 		d.CancelledBy = *it.CancelledBy
+	}
+	for _, dl := range it.Downloads {
+		by, _ := dl["by"].(string)
+		at, _ := dl["at"].(string)
+		d.Downloads = append(d.Downloads, privacy.Download{By: by, At: at})
 	}
 	return d
 }

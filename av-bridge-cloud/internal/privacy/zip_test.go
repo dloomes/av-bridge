@@ -156,6 +156,22 @@ func TestWriteZIPEscapesFormulas(t *testing.T) {
 	}
 }
 
+// The certificate lists each customer export: who and when, CSV-safe.
+func TestDeletionCertificateDownloads(t *testing.T) {
+	var buf strings.Builder
+	if err := WriteDeletionCertificate(&buf, Deletion{
+		ID: "d", CustomerID: "c", CustomerName: "Acme", StartedBy: "op@involve.test",
+		Downloads: []Download{{By: "op@involve.test", At: "2026-11-04T10:00:00Z"}, {By: "=cmd", At: "2026-11-05T10:00:00Z"}},
+		RowCounts: map[string]int64{"devices": 3},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	want := "downloaded_by,downloaded_at\nop@involve.test,2026-11-04T10:00:00Z\n'=cmd,2026-11-05T10:00:00Z\n\ntable,rows\ndevices,3\n"
+	if !strings.HasSuffix(buf.String(), want) {
+		t.Errorf("certificate:\n%s\nwant it to end with:\n%s", buf.String(), want)
+	}
+}
+
 // collectTable takes the scope from the first entry, so it refuses a table
 // whose entries disagree, before touching the database (tx is nil here).
 func TestCollectTableScopeDisagreement(t *testing.T) {

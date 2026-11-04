@@ -224,7 +224,13 @@ type Deletion struct {
 	CancelledBy                  string
 	DeletedAt                    *time.Time
 	RowCounts                    map[string]int64
+	// Downloads are the customer exports taken during the offboarding, in
+	// order: who (operator identity) and when (RFC 3339).
+	Downloads []Download
 }
+
+// Download is one customer export recorded on a deletion.
+type Download struct{ By, At string }
 
 // Status is "deleted", "cancelled" or "offboarding".
 func (d Deletion) Status() string {
@@ -239,7 +245,8 @@ func (d Deletion) Status() string {
 }
 
 // WriteDeletionCertificate writes a deletion certificate as CSV: a header
-// block of field,value lines, a blank line, then table,rows lines (the rows
+// block of field,value lines, a blank line, downloaded_by,downloaded_at lines
+// (each customer export taken), a blank line, then table,rows lines (the rows
 // deleted per table, empty until the deletion has run).
 func WriteDeletionCertificate(w io.Writer, d Deletion) error {
 	cw := csv.NewWriter(w)
@@ -261,8 +268,12 @@ func WriteDeletionCertificate(w io.Writer, d Deletion) error {
 		{"cancelled_by", csvSafe(d.CancelledBy)},
 		{"deleted_at", ts(d.DeletedAt)},
 		{""},
-		{"table", "rows"},
+		{"downloaded_by", "downloaded_at"},
 	}
+	for _, dl := range d.Downloads {
+		recs = append(recs, []string{csvSafe(dl.By), csvSafe(dl.At)})
+	}
+	recs = append(recs, []string{""}, []string{"table", "rows"})
 	tables := make([]string, 0, len(d.RowCounts))
 	for t := range d.RowCounts {
 		tables = append(tables, t)

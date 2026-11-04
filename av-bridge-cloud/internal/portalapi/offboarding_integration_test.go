@@ -463,6 +463,17 @@ func TestHelpdeskOffboardCancelExport(t *testing.T) {
 	         VALUES ($1, $2, $3, 'admin', $4, 'http', 80, '\x00', '\x01', now(), now() + interval '8 hours')
 	         RETURNING id::text`, cust, dev, admin, "s-"+tag)
 
+	// A nightly run that finished and hasn't been reflected as a room alert yet.
+	region := q(`INSERT INTO regions (customer_id, name) VALUES ($1, 'r') RETURNING id::text`, cust)
+	loc := q(`INSERT INTO locations (customer_id, region_id, name) VALUES ($1, $2, 'l') RETURNING id::text`, cust, region)
+	bld := q(`INSERT INTO buildings (customer_id, location_id, name) VALUES ($1, $2, 'b') RETURNING id::text`, cust, loc)
+	room := q(`INSERT INTO rooms (customer_id, building_id, name) VALUES ($1, $2, 'Court 1') RETURNING id::text`, cust, bld)
+	failedRun := func() string {
+		return q(`INSERT INTO nightly_run (customer_id, room_id, kind, phase, status, scheduled_at, completed_at)
+		          VALUES ($1, $2, 'readiness', 'failed', 'failed', now(), now()) RETURNING id::text`, cust, room)
+	}
+	runBefore := failedRun()
+
 	vt := q(`INSERT INTO vendor_tenants (name, entra_tenant_id) VALUES ('Involve', $1) RETURNING id::text`, "vt-offx-"+tag)
 	vendorEmail := "helpdesk-" + tag + "@involve.test"
 	vendor := q(`INSERT INTO users (vendor_tenant_id, email, password_hash, role) VALUES ($1, $2, 'x', 'admin') RETURNING id::text`,
@@ -654,6 +665,11 @@ func TestHelpdeskOffboardCancelExport(t *testing.T) {
 	if got := q(`SELECT actor FROM audit_log WHERE customer_id = $1 AND action = 'customer.offboard'`, cust); got != "user:"+vendor {
 		t.Errorf("customer.offboard audit actor = %q, want user:%s", got, vendor)
 	}
+	if got := q(`SELECT (alert_checked_at IS NOT NULL)::text FROM nightly_run WHERE id = $1`, runBefore); got != "true" {
+		t.Error("offboarding left an unreflected run's alert_checked_at NULL")
+	}
+	// A run that finishes while offboarding (room alerts skip the customer).
+	runDuring := failedRun()
 
 	// The live connections end.
 	if got := q(`SELECT COALESCE(end_reason, '') FROM remote_session WHERE id = $1 AND ended_at IS NOT NULL
@@ -823,8 +839,8 @@ func TestHelpdeskOffboardCancelExport(t *testing.T) {
 			t.Error("README does not name the customer")
 		}
 		if got := q(`SELECT jsonb_array_length(downloads)::text || '|' || (downloads->0->>'by')
-		               FROM customer_deletions WHERE customer_id = $1`, cust); got != "1|user:"+vendor {
-			t.Errorf("downloads = %q, want one entry by user:%s", got, vendor)
+		               FROM customer_deletions WHERE customer_id = $1`, cust); got != "1|"+vendorEmail {
+			t.Errorf("downloads = %q, want one entry by %s (as started_by)", got, vendorEmail)
 		}
 	}
 
@@ -867,6 +883,10 @@ func TestHelpdeskOffboardCancelExport(t *testing.T) {
 			!strings.Contains(string(r.body), "table,rows") || !strings.Contains(string(r.body), name) {
 			t.Errorf("deletion certificate: got %d %s\n%s", r.code, r.hdr.Get("Content-Type"), r.body)
 		}
+		// The four downloads, each with who and when.
+		if n := strings.Count(string(r.body), "\n"+vendorEmail+","); !strings.Contains(string(r.body), "downloaded_by,downloaded_at") || n != 4 {
+			t.Errorf("deletion certificate lists %d downloads by %s, want 4:\n%s", n, vendorEmail, r.body)
+		}
 		if r := call(http.MethodGet, "/api/v1/helpdesk/deletions/00000000-0000-0000-0000-000000000000.csv", vendorSession, nil); r.code != http.StatusNotFound {
 			t.Errorf("unknown certificate: got %d, want 404", r.code)
 		}
@@ -888,6 +908,9 @@ func TestHelpdeskOffboardCancelExport(t *testing.T) {
 	if got := q(`SELECT (offboarding_started_at IS NULL AND offboarding_started_by IS NULL AND delete_after IS NULL)::text
 	               FROM customers WHERE id = $1`, cust); got != "true" {
 		t.Error("cancel left the offboarding columns set")
+	}
+	if got := q(`SELECT (alert_checked_at IS NOT NULL)::text FROM nightly_run WHERE id = $1`, runDuring); got != "true" {
+		t.Error("cancel left a run that finished while offboarding unreflected: it would raise a stale alert")
 	}
 	if got := q(`SELECT cancelled_by FROM customer_deletions WHERE customer_id = $1`, cust); got != vendorEmail {
 		t.Errorf("cancelled_by = %q, want %s", got, vendorEmail)
