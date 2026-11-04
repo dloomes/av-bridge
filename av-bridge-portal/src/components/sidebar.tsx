@@ -124,6 +124,7 @@ const SECTIONS: NavSection[] = [
       { href: "/roles", label: "Roles", icon: KeyRound, requires: "role.crud" },
       { href: "/sign-in-mappings", label: "Sign-in mappings", icon: ShieldCheck, requires: "role_mapping.manage" },
       { href: "/notifications", label: "Notifications", icon: Bell, requires: "view.notifications" },
+      { href: "/data-requests", label: "Data requests", icon: ShieldCheck, requires: "privacy.manage" },
       { href: "/settings/api-tokens", label: "API tokens", icon: Key, requires: "api_token.view" },
       { href: "/settings/branding", label: "Branding", icon: Palette, adminOnly: true },
     ],

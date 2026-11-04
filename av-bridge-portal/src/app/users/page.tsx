@@ -1,7 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import {
+  Download,
+  Eraser,
   KeyRound,
   Loader2,
   MapPin,
@@ -167,6 +170,7 @@ export default function UsersPage() {
                     key={u.id}
                     user={u}
                     admin={admin}
+                    canPrivacy={!!session.user?.is_vendor || hasPermission(session.user, "privacy.manage")}
                     isVendor={!!session.user?.is_vendor}
                     isSelf={u.id === session.user?.user_id}
                     onEdit={() => setEditing({ mode: "edit", existing: u })}
@@ -265,6 +269,7 @@ export default function UsersPage() {
 function UserRowView({
   user,
   admin,
+  canPrivacy,
   isVendor,
   isSelf,
   onEdit,
@@ -275,6 +280,7 @@ function UserRowView({
 }: {
   user: UserRow;
   admin: boolean;
+  canPrivacy: boolean;
   isVendor: boolean;
   isSelf: boolean;
   onEdit: () => void;
@@ -339,6 +345,34 @@ function UserRowView({
       <div className="hidden md:block w-40 text-right text-xs text-muted-foreground">
         {user.last_login_at ? `Last login ${formatRelative(user.last_login_at)}` : "Never signed in"}
       </div>
+      {canPrivacy && (
+        <div className="flex items-center gap-1">
+          <Button asChild variant="ghost" size="icon" title="Export data">
+            <Link
+              href={`/data-requests?action=export&email=${encodeURIComponent(user.email)}`}
+              aria-label="Export data"
+            >
+              <Download className="h-3.5 w-3.5" />
+            </Link>
+          </Button>
+          <Button
+            asChild={!isSelf}
+            variant="ghost"
+            size="icon"
+            disabled={isSelf}
+            title={isSelf ? "You cannot erase yourself" : "Erase"}
+            aria-label="Erase"
+          >
+            {isSelf ? (
+              <Eraser className="h-3.5 w-3.5" />
+            ) : (
+              <Link href={`/data-requests?action=erase&email=${encodeURIComponent(user.email)}`}>
+                <Eraser className="h-3.5 w-3.5" />
+              </Link>
+            )}
+          </Button>
+        </div>
+      )}
       {admin && (
         <div className="flex items-center gap-1">
           <Button variant="ghost" size="icon" aria-label="Edit user" onClick={onEdit}>

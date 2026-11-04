@@ -291,6 +291,46 @@ async function request<T>(
   return JSON.parse(text) as T;
 }
 
+export interface EraseRequest {
+  email: string;
+  confirm: string;
+  dry_run: boolean;
+}
+
+export interface EraseResult {
+  stand_in: string;
+  counts: Record<string, number>;
+  actions: string[];
+}
+
+export interface PrivacyDownload {
+  blob: Blob;
+  filename: string;
+}
+
+// privacyDownload POSTs JSON and returns the ZIP body as a Blob, following
+// the exportAssetsCSV fetch pattern.
+async function privacyDownload(path: string, body: unknown): Promise<PrivacyDownload> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(body),
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    if (res.status === 401) handle401IfSessionDeath(path);
+    const text = await res.text().catch(() => "");
+    throw new ApiError(
+      `${res.status} ${res.statusText}${text ? `: ${text}` : ""}`,
+      res.status
+    );
+  }
+  const cd = res.headers.get("Content-Disposition") ?? "";
+  const m = /filename="?([^";]+)"?/.exec(cd);
+  const filename = m?.[1] ?? `access-request-${new Date().toISOString().slice(0, 10)}.zip`;
+  return { blob: await res.blob(), filename };
+}
+
 // MoveError carries the reported-ID clashes from a refused device move so
 // the UI can name the devices.
 export class MoveError extends Error {
@@ -1632,6 +1672,41 @@ export const api = {
     }
     return res.text();
   },
+
+  // GDPR data requests. The export returns a ZIP; filename comes from
+  // Content-Disposition (access-request-<date>.zip).
+  privacyAccessExport: (email: string): Promise<PrivacyDownload> =>
+    privacyDownload("/api/v1/privacy/access-export", { email }),
+
+  helpdeskPrivacyAccessExport: (
+    email: string,
+    target: { customerId?: string; vendor?: boolean }
+  ): Promise<PrivacyDownload> =>
+    privacyDownload("/api/v1/helpdesk/privacy/access-export", {
+      ...(target.vendor ? { vendor: true } : { customer_id: target.customerId }),
+      email,
+    }),
+
+  privacyErase: (req: EraseRequest, signal?: AbortSignal) =>
+    request<EraseResult>("/api/v1/privacy/erase", {
+      method: "POST",
+      body: JSON.stringify(req),
+      signal,
+    }),
+
+  helpdeskPrivacyErase: (
+    req: EraseRequest,
+    target: { customerId?: string; vendor?: boolean },
+    signal?: AbortSignal
+  ) =>
+    request<EraseResult>("/api/v1/helpdesk/privacy/erase", {
+      method: "POST",
+      body: JSON.stringify({
+        ...(target.vendor ? { vendor: true } : { customer_id: target.customerId }),
+        ...req,
+      }),
+      signal,
+    }),
 
   importAssets: async (
     file: File
