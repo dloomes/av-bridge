@@ -177,6 +177,10 @@ func AccessREADME(s Subject, tables []Table) string {
 				cols = append(cols, e.Column)
 			}
 		}
+		if tb.Name == "audit_log" {
+			// Matched on more than the register entry: see Collect.
+			cols = append(cols, "target_id", "before", "after", "metadata")
+		}
 		catList := make([]string, 0, len(cats))
 		for c := range cats {
 			catList = append(catList, c)

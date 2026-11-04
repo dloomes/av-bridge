@@ -104,7 +104,7 @@ func TestAccessREADME(t *testing.T) {
 		{Name: "audit_log"}, {Name: "user_sessions"},
 	})
 	for _, want := range []string{
-		"audit_log", "activity", "audit log (24 months)",
+		"audit_log", "activity", "audit log (24 months)", "actor, target_id, before, after, metadata",
 		"user_sessions", "network",
 		"application logs (30 days)", "backups (35 days)",
 	} {
