@@ -69,7 +69,7 @@ function DataRequests() {
   const pathname = usePathname();
   // Read ?email= once, then take it out of the URL so the address isn't
   // left in history or the address bar.
-  const [initialEmail] = useState(() => params.get("email") ?? "");
+  const [initialEmail, setInitialEmail] = useState(() => params.get("email") ?? "");
   const action = params.get("action");
   useEffect(() => {
     if (!params.has("email")) return;
@@ -97,8 +97,10 @@ function DataRequests() {
 
   const eraseRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (action === "erase") eraseRef.current?.scrollIntoView({ block: "start" });
-  }, [action]);
+    if (session.hydrated && action === "erase") {
+      eraseRef.current?.scrollIntoView({ block: "start" });
+    }
+  }, [action, session.hydrated]);
 
   if (!session.hydrated) return null;
 
@@ -145,7 +147,11 @@ function DataRequests() {
               <select
                 id="dr-target"
                 value={target}
-                onChange={(e) => setTarget(e.target.value)}
+                onChange={(e) => {
+                  setTarget(e.target.value);
+                  // The prefill belongs to the first view only.
+                  setInitialEmail("");
+                }}
                 className={inputCls}
               >
                 <option value="">Choose a customer…</option>
