@@ -222,6 +222,9 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 		mux.Handle("POST /api/v1/helpdesk/privacy/access-export",
 			portalauth.Middleware(portal.Resolver,
 				portalauth.RequireVendorAdmin(http.HandlerFunc(portal.Portal.HelpdeskAccessExport))))
+		mux.Handle("POST /api/v1/helpdesk/privacy/erase",
+			portalauth.Middleware(portal.Resolver,
+				portalauth.RequireVendorAdmin(http.HandlerFunc(portal.Portal.HelpdeskPrivacyErase))))
 
 		// Vendor-side toggle for the Business Unit feature flag on a
 		// customer. See portalapi.SetCustomerBusinessUnitsEnabled for
@@ -420,6 +423,8 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 		mux.Handle("DELETE /api/v1/users/{id}", wrapPerm(portalauth.PermUserDelete, portal.Portal.DeleteUser))
 		// GDPR data requests: access export (ZIP of a person's data).
 		mux.Handle("POST /api/v1/privacy/access-export", wrapPerm(portalauth.PermPrivacyManage, portal.Portal.AccessExport))
+		// GDPR data requests: erasure (anonymise a person; dry_run previews).
+		mux.Handle("POST /api/v1/privacy/erase", wrapPerm(portalauth.PermPrivacyManage, portal.Portal.PrivacyErase))
 
 		// Role catalogue writes — single role.crud permission covers all
 		// three. System-default protection is enforced by the handlers.

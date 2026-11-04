@@ -197,6 +197,18 @@ func (h *Handler) HelpdeskDeleteUser(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "user not found")
 		return
 	}
+	// The user.delete audit entry. Helpdesk users belong to the vendor
+	// tenant, and audit_log rows belong to a customer (customer_id NOT NULL),
+	// so it goes to the structured log, by id only, as vendor-staff privacy
+	// actions do. (A customer's user.delete entry also lets erasure find an
+	// earlier account by email; vendor staff are found by their current
+	// account only, so nothing relies on the email here.)
+	actor := p.Role
+	if p.UserID != "" {
+		actor = "user:" + p.UserID
+	}
+	h.log.Info("helpdesk user deleted", "action", "user.delete", "actor", actor,
+		"target_kind", "user", "target_id", id, "vendor_tenant_id", vendorID)
 	w.WriteHeader(http.StatusNoContent)
 }
 

@@ -186,8 +186,8 @@ func collectTable(ctx context.Context, tx pgx.Tx, s Subject, ids []string, name 
 		}
 	}
 	if name == "audit_log" {
-		// Same conditions as privacy_anonymise_audit (migration 0073), with
-		// target_id widened to earlier accounts (see accountIDs).
+		// Same conditions as privacy_anonymise_audit's array overload
+		// (migration 0075), which Erase calls with the same ids.
 		if len(ids) > 0 {
 			add(`lower(t.target_id) = ANY(` + uids() + `)`) // ids are lower-case
 		}

@@ -373,11 +373,18 @@ func TestFindSubjectArgs(t *testing.T) {
 }
 
 // The Go pattern must equal the one privacy_anonymise_audit builds. The test
-// lifts the two assignments out of migration 0073 into a temporary function
-// and compares outputs, so the two cannot drift apart silently.
+// lifts the two assignments out of each migration that defines the function
+// (0073, and 0075's array overload, which Erase calls) into a temporary
+// function and compares outputs, so the two cannot drift apart silently.
 func TestEmailPatternMatchesMigration(t *testing.T) {
+	for _, f := range []string{"0073_privacy.sql", "0075_privacy_audit_ids.sql"} {
+		t.Run(f, func(t *testing.T) { emailPatternMatchesMigration(t, "../db/migrations/"+f) })
+	}
+}
+
+func emailPatternMatchesMigration(t *testing.T, path string) {
 	ctx, su, _, _ := setup(t)
-	raw, err := os.ReadFile("../db/migrations/0073_privacy.sql")
+	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -385,7 +392,7 @@ func TestEmailPatternMatchesMigration(t *testing.T) {
 	i := strings.Index(text, "    esc := ")
 	j := strings.Index(text, "    pattern := ")
 	if i < 0 || j < i {
-		t.Fatal("esc/pattern assignments not found in 0073")
+		t.Fatalf("esc/pattern assignments not found in %s", path)
 	}
 	k := strings.Index(text[j:], ";\n")
 	if k < 0 {
@@ -410,7 +417,7 @@ func TestEmailPatternMatchesMigration(t *testing.T) {
 			t.Fatal(err)
 		}
 		if got := EmailPattern(email); got != want {
-			t.Errorf("EmailPattern(%q) = %q, migration builds %q", email, got, want)
+			t.Errorf("EmailPattern(%q) = %q, %s builds %q", email, got, path, want)
 		}
 	}
 }

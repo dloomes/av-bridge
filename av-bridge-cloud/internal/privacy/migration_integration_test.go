@@ -216,6 +216,48 @@ func TestPrivacySeedUnderForceRLS(t *testing.T) {
 	}
 }
 
+// 0075: target_id matches case-insensitively, as Collect does, and the array
+// overload takes every account id at once, counting each entry once.
+func TestPrivacyAnonymiseIDs(t *testing.T) {
+	ctx, su, st, mk := setup(t)
+	c := mk("privacy-ids")
+	const cur, old = "aaaaaaaa-0000-4000-8000-000000000001", "bbbbbbbb-0000-4000-8000-000000000002"
+	ins := func(actor, target string) {
+		t.Helper()
+		if _, err := su.Exec(ctx, `INSERT INTO audit_log (customer_id, actor, action, target_kind, target_id) VALUES ($1,$2,'t','user',nullif($3,''))`,
+			c, actor, target); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ins("op@x.io", strings.ToUpper(cur))
+	ins("dee@x.io", strings.ToUpper(old)) // actor and earlier id: one entry, counted once
+	ins("op@x.io", "")                    // unrelated
+	var n int64
+	if err := st.AdminPool().QueryRow(ctx, `SELECT privacy_anonymise_audit($1::uuid, 'dee@x.io', $2::text[], 'erased-user-aaaaaaaa')`,
+		c, []string{cur, old, ""}).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Errorf("array overload changed %d, want 2", n)
+	}
+	// The 0073 signature is case-insensitive on target_id too.
+	ins("op@x.io", strings.ToUpper(old))
+	if err := st.AdminPool().QueryRow(ctx, `SELECT privacy_anonymise_audit($1::uuid, 'nobody@x.io', $2, 'erased-user-bbbbbbbb')`,
+		c, old).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Errorf("text signature changed %d, want 2 (both entries with the earlier id)", n)
+	}
+	if err := st.AdminPool().QueryRow(ctx, `SELECT privacy_anonymise_audit($1::uuid, 'dee@x.io', '{}'::text[], '')`, c).Scan(&n); err == nil {
+		t.Error("empty stand-in should raise")
+	}
+	var tenantExec bool
+	if err := su.QueryRow(ctx, `SELECT has_function_privilege('app_tenant', 'privacy_anonymise_audit(uuid, text, text[], text)', 'EXECUTE')`).Scan(&tenantExec); err != nil || tenantExec {
+		t.Errorf("app_tenant can execute the overload (err %v)", err)
+	}
+}
+
 func TestPrivacyAnonymiseMatching(t *testing.T) {
 	ctx, su, st, mk := setup(t)
 	c := mk("privacy-match")
