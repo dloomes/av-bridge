@@ -36,6 +36,29 @@ func TestRedactRow(t *testing.T) {
 			t.Errorf("nested redaction wrong: %v", cfg)
 		}
 	}
+	// Channel audit entries: http(s) targets masked, email kept, other
+	// target kinds untouched.
+	acols := []string{"target_kind", "before", "after", "metadata"}
+	arow := []any{"notification_channel",
+		map[string]any{"target": "https://hooks.example.com/secret-path"},
+		map[string]any{"target": "HTTP://hooks.example.com/other"},
+		map[string]any{"target": "ops@example.com"}}
+	redactRow("audit_log", acols, arow)
+	if got := arow[1].(map[string]any)["target"]; got != "https://hooks.example.com/[redacted]" {
+		t.Errorf("audit before.target = %v", got)
+	}
+	if got := arow[2].(map[string]any)["target"]; got != "http://hooks.example.com/[redacted]" {
+		t.Errorf("audit after.target = %v", got)
+	}
+	if got := arow[3].(map[string]any)["target"]; got != "ops@example.com" {
+		t.Errorf("audit metadata.target = %v", got)
+	}
+	orow := []any{"device", nil, map[string]any{"target": "https://keep.example.com/x"}, nil}
+	redactRow("audit_log", acols, orow)
+	if got := orow[2].(map[string]any)["target"]; got != "https://keep.example.com/x" {
+		t.Errorf("non-channel audit entry changed: %v", got)
+	}
+
 	// Other tables keep their target-like text columns.
 	row := []any{"webhook", "https://keep.example.com/x", nil}
 	redactRow("something_else", cols, row)

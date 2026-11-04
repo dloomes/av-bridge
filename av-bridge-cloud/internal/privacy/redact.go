@@ -27,7 +27,10 @@ const RedactionNote = `Secrets are redacted (replaced with "[redacted]"):
     or ends in _enc, including the whole of webhook headers;
   - notification_channels.target for Teams and webhook channels, whose URL is itself a
     credential, is cut to scheme://host/[redacted]. Email addresses and ServiceNow instance
-    URLs are kept.
+    URLs are kept;
+  - in audit_log entries about notification channels, any web address recorded as the
+    channel's target (in before, after or metadata) is cut the same way, ServiceNow
+    included, since an update entry does not record the channel type. Email targets are kept.
 `
 
 // redactRow applies the export redaction rules to one decoded row in place.
@@ -35,9 +38,47 @@ func redactRow(table string, cols []string, row []any) {
 	for i, v := range row {
 		row[i] = redactValue(v)
 	}
-	if table != "notification_channels" {
+	switch table {
+	case "notification_channels":
+		redactChannelTarget(cols, row)
+	case "audit_log":
+		redactAuditChannelTarget(cols, row)
+	}
+}
+
+// redactAuditChannelTarget masks channel URLs in notification_channel audit
+// entries: create and update record the target in before/after (the update
+// entry does not say the channel type), so any http(s) "target" there is
+// masked; email targets are kept.
+func redactAuditChannelTarget(cols []string, row []any) {
+	kind := -1
+	for i, c := range cols {
+		if c == "target_kind" {
+			kind = i
+		}
+	}
+	if kind < 0 || row[kind] != "notification_channel" {
 		return
 	}
+	for i, c := range cols {
+		if c != "before" && c != "after" && c != "metadata" {
+			continue
+		}
+		m, ok := row[i].(map[string]any)
+		if !ok {
+			continue
+		}
+		if s, ok := m["target"].(string); ok {
+			l := strings.ToLower(strings.TrimSpace(s))
+			if strings.HasPrefix(l, "http://") || strings.HasPrefix(l, "https://") {
+				m["target"] = maskURL(s)
+			}
+		}
+	}
+}
+
+// redactChannelTarget masks the target of Teams and webhook channels.
+func redactChannelTarget(cols []string, row []any) {
 	typ, target := -1, -1
 	for i, c := range cols {
 		switch c {

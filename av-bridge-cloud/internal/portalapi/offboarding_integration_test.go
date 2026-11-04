@@ -566,6 +566,55 @@ func TestHelpdeskOffboardCancelExport(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 
+	// A webhook channel created and edited through the real handlers, so its
+	// URLs are recorded in audit_log before/after.
+	auditURLs := []string{"AUDITCREATE" + tag, "AUDITUPDATE" + tag}
+	{
+		r := call(http.MethodPost, "/api/v1/notifications/channels", adminSession, map[string]any{
+			"name": "audited hook", "type": "webhook", "target": "https://hooks.example.com/services/" + auditURLs[0],
+		})
+		if r.code != http.StatusCreated {
+			t.Fatalf("create channel: got %d %s", r.code, r.body)
+		}
+		var created struct {
+			ID string `json:"id"`
+		}
+		_ = json.Unmarshal(r.body, &created)
+		r = call(http.MethodPatch, "/api/v1/notifications/channels/"+created.ID, adminSession, map[string]any{
+			"name": "audited hook", "target": "https://hooks.example.com/services/" + auditURLs[1],
+		})
+		if r.code/100 != 2 {
+			t.Fatalf("update channel: got %d %s", r.code, r.body)
+		}
+		if n := q(`SELECT count(*)::text FROM audit_log WHERE customer_id = $1 AND target_kind = 'notification_channel'
+		             AND ("after"::text LIKE '%' || $2 || '%' OR "after"::text LIKE '%' || $3 || '%')`,
+			cust, auditURLs[0], auditURLs[1]); n != "2" {
+			t.Fatalf("channel audit entries holding the URLs = %s, want 2", n)
+		}
+	}
+	secretInZip := func(what string, body []byte, secrets []string) {
+		t.Helper()
+		zr, err := zip.NewReader(bytes.NewReader(body), int64(len(body)))
+		if err != nil {
+			t.Fatalf("%s: %v", what, err)
+		}
+		var all bytes.Buffer
+		for _, f := range zr.File {
+			rc, _ := f.Open()
+			b, _ := io.ReadAll(rc)
+			rc.Close()
+			all.Write(b)
+		}
+		if !bytes.Contains(all.Bytes(), []byte("hooks.example.com/[redacted]")) {
+			t.Errorf("%s: no masked channel URL found", what)
+		}
+		for _, s := range secrets {
+			if bytes.Contains(body, []byte(s)) || bytes.Contains(all.Bytes(), []byte(s)) {
+				t.Errorf("%s contains %q", what, s)
+			}
+		}
+	}
+
 	// --- Offboard: wrong name, then right name, then again.
 	if r := call(http.MethodPost, base+"/offboard", vendorSession, map[string]string{"confirm": "not the name"}); r.code != http.StatusBadRequest ||
 		!strings.Contains(string(r.body), "confirm must match the customer name") {
@@ -726,6 +775,20 @@ func TestHelpdeskOffboardCancelExport(t *testing.T) {
 				t.Errorf("export contains the secret %q", s)
 			}
 		}
+		secretInZip("customer export", r.body, auditURLs)
+		if !strings.Contains(files["audit_log.csv"], "notification_channel.update") {
+			t.Error("audit_log.csv lacks the channel audit entries")
+		}
+
+		// The admin's access export holds those audit entries too (they
+		// are the actor).
+		ar := call(http.MethodPost, "/api/v1/helpdesk/privacy/access-export", vendorSession, map[string]any{
+			"customer_id": cust, "email": "admin-" + tag + "@offx.test",
+		})
+		if ar.code != http.StatusOK {
+			t.Fatalf("access export: got %d %s", ar.code, ar.body)
+		}
+		secretInZip("access export", ar.body, auditURLs)
 		for _, want := range []string{"https://hooks.example.com/[redacted]", "https://acme.webhook.office.com/[redacted]",
 			"https://acme.service-now.com", "ops@offx.test", "marcus"} {
 			if !strings.Contains(files["notification_channels.csv"], want) {
