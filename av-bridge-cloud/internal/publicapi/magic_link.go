@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dloomes/av-bridge-cloud/internal/db"
 	"github.com/dloomes/av-bridge-cloud/internal/portalauth"
 	"github.com/jackc/pgx/v5"
 )
@@ -88,6 +89,16 @@ func (h *Handler) ConsumeMagicLink(w http.ResponseWriter, r *http.Request) {
 	}
 	if disabled {
 		h.redirectMagicError(w, r, "user_disabled")
+		return
+	}
+	// A customer that is offboarding refuses every sign-in, break-glass
+	// included. Vendor users are never refused.
+	if off, err := h.store.UserOffboarding(ctx, userID); err != nil {
+		h.log.Error("magic link redeem: offboarding check", "error", err)
+		h.redirectMagicError(w, r, "user_lookup_failed")
+		return
+	} else if off {
+		http.Error(w, db.OffboardingMessage, http.StatusForbidden)
 		return
 	}
 

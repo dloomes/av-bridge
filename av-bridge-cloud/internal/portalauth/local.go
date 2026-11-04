@@ -23,6 +23,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/dloomes/av-bridge-cloud/internal/db"
 )
 
 // LocalTokenPrefix distinguishes local session tokens from mock JWTs so
@@ -74,6 +76,8 @@ func (l *LocalResolver) Resolve(token string) (Principal, bool) {
 	// assigned yet gets an empty array too, which is safer than granting
 	// anything by accident. building_scope_ids comes along for the ride so
 	// Store.WithTenantScoped can honour physical scope in one round-trip.
+	// A customer user's session stops resolving while their customer is
+	// offboarding; vendor users (no customer) are never blocked.
 	var buScopeIDs, regionScopeIDs, locationScopeIDs, roomScopeIDs []string
 	err := l.pool.QueryRow(ctx, `
 		SELECT u.id::text, u.email, u.full_name, COALESCE(u.role, ''),
@@ -91,6 +95,7 @@ func (l *LocalResolver) Resolve(token string) (Principal, bool) {
 		 WHERE s.token_hash = $1
 		   AND s.revoked_at IS NULL
 		   AND s.expires_at > now()
+		   AND `+db.UserActiveSQL("u.customer_id")+`
 		 GROUP BY u.id`,
 		HashToken(token)).
 		Scan(&userID, &email, &fullName, &role, &customerID, &vendorTenant, &disabledAt, &perms, &scopeIDs, &buScopeIDs,

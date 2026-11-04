@@ -28,6 +28,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/dloomes/av-bridge-cloud/internal/db"
 	"github.com/dloomes/av-bridge-cloud/internal/notify"
 )
 
@@ -173,7 +174,8 @@ func scanDigestCustomer(row pgx.Row) (customerInfo, error) {
 // today and who haven't been sent a digest yet for the local calendar day.
 func (s *DigestSender) findDueCustomers(ctx context.Context) ([]customerInfo, error) {
 	rows, err := s.pool.Query(ctx, digestCustomerColumns+digestCustomerFrom+`
-		 WHERE ns.enabled = true OR rs.enabled = true`)
+		 WHERE (ns.enabled = true OR rs.enabled = true)
+		   AND `+db.CustomerActiveSQL("ns.customer_id"))
 	if err != nil {
 		return nil, err
 	}

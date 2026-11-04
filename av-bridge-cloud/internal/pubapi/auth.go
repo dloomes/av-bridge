@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/dloomes/av-bridge-cloud/internal/db"
 )
 
 // Principal is the identity established by the public-API middleware.
@@ -73,7 +75,8 @@ func NewResolver(pool *pgxpool.Pool, log *slog.Logger) *Resolver {
 // resolve returns the Principal or (zero, false). It never distinguishes
 // "token not present" from "token revoked" — the middleware collapses
 // both into a 401 with the same message. That's deliberate: a public
-// API leaks less by refusing to describe why.
+// API leaks less by refusing to describe why. A token whose customer is
+// offboarding resolves to nothing, so it gets the same 401.
 func (r *Resolver) resolve(ctx context.Context, raw string) (Principal, bool) {
 	if _, err := ParseToken(raw); err != nil {
 		return Principal{}, false
@@ -99,7 +102,8 @@ func (r *Resolver) resolve(ctx context.Context, raw string) (Principal, bool) {
 		       COALESCE(scopes, '{}'::text[]),
 		       expires_at, revoked_at
 		  FROM api_tokens
-		 WHERE token_hash = $1`, hash,
+		 WHERE token_hash = $1
+		   AND `+db.CustomerActiveSQL("api_tokens.customer_id"), hash,
 	).Scan(&id, &customerID, &name, &scopes, &expiresAt, &revokedAt)
 	if err != nil {
 		return Principal{}, false

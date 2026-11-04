@@ -24,6 +24,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/dloomes/av-bridge-cloud/internal/db"
 	"github.com/dloomes/av-bridge-cloud/internal/notify"
 )
 
@@ -128,6 +129,9 @@ func (w *Watcher) openStale(ctx context.Context) ([]notify.AlertEvent, error) {
 		      FROM collectors c
 		     WHERE c.last_seen_at IS NOT NULL
 		       AND c.last_seen_at <= now() - make_interval(secs => $1)
+		       -- An offboarding customer's Collectors are refused, so
+		       -- they go quiet by design: no alert.
+		       AND `+db.CustomerActiveSQL("c.customer_id")+`
 		       AND NOT EXISTS (
 		           SELECT 1 FROM alerts a
 		            WHERE a.collector_id = c.id

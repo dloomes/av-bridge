@@ -203,6 +203,10 @@ func (h *EntraVendorHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sessionToken, err := h.mintSession(r.Context(), userID, r)
+	if errors.Is(err, db.ErrCustomerOffboarding) {
+		writeAccountClosed(w)
+		return
+	}
 	if err != nil {
 		h.log.Error("entra callback: session mint failed", "error", err)
 		h.redirectSignInError(w, r, "session_mint_failed")
@@ -430,7 +434,14 @@ func resolveVendorRoleFromGroups(ctx context.Context, pool interface {
 
 // mintSession inserts a user_sessions row and returns the raw av_ token.
 // Mirrors the password-login path — same TTL, same shape.
+//
+// Returns db.ErrCustomerOffboarding, before any INSERT, when the user's
+// customer is offboarding. The vendor path only signs in vendor users, who
+// are never blocked; the check is here so every session mint has it.
 func (h *EntraVendorHandler) mintSession(ctx context.Context, userID string, r *http.Request) (string, error) {
+	if err := checkSessionAllowed(ctx, h.store, userID); err != nil {
+		return "", err
+	}
 	token, err := mintToken()
 	if err != nil {
 		return "", err

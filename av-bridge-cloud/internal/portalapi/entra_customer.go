@@ -137,6 +137,15 @@ func (h *EntraCustomerHandler) Authorize(w http.ResponseWriter, r *http.Request)
 		h.redirectSignInError(w, r, slug, "unknown_customer")
 		return
 	}
+	// An offboarding customer is refused before the trip to Microsoft.
+	if off, err := h.store.CustomerOffboarding(r.Context(), customerID); err != nil {
+		h.log.Error("entra customer authorize: offboarding check", "error", err)
+		h.redirectSignInError(w, r, slug, "unknown_customer")
+		return
+	} else if off {
+		writeAccountClosed(w)
+		return
+	}
 	if tenantID == "" {
 		h.redirectSignInError(w, r, slug, "sso_not_configured")
 		return
@@ -273,6 +282,17 @@ func (h *EntraCustomerHandler) Callback(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Offboarding: refuse before linking or JIT-creating a user row, so a
+	// closed customer gains no new users either.
+	if off, err := h.store.CustomerOffboarding(r.Context(), customerID); err != nil {
+		h.log.Error("entra customer callback: offboarding check",
+			"customer_id", customerID, "error", err)
+		h.redirectSignInError(w, r, slug, "user_provision_failed")
+		return
+	} else if off {
+		writeAccountClosed(w)
+		return
+	}
 	userID, err := h.linkOrCreateUser(r.Context(), customerID, claims)
 	if err != nil {
 		h.log.Error("entra customer callback: user link/create failed",
@@ -281,6 +301,10 @@ func (h *EntraCustomerHandler) Callback(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	sessionToken, err := h.mintSession(r.Context(), userID, r)
+	if errors.Is(err, db.ErrCustomerOffboarding) {
+		writeAccountClosed(w)
+		return
+	}
 	if err != nil {
 		h.log.Error("entra customer callback: session mint failed",
 			"customer_id", customerID, "error", err)
@@ -502,8 +526,12 @@ func (h *EntraCustomerHandler) syncEntraRoleGrants(ctx context.Context, customer
 
 // mintSession creates a user_sessions row and returns the raw av_ token.
 // Copy of the vendor helper — kept as its own method so the two paths
-// don't share hidden state.
+// don't share hidden state. Returns db.ErrCustomerOffboarding, before any
+// INSERT, when the user's customer is offboarding.
 func (h *EntraCustomerHandler) mintSession(ctx context.Context, userID string, r *http.Request) (string, error) {
+	if err := checkSessionAllowed(ctx, h.store, userID); err != nil {
+		return "", err
+	}
 	token, err := mintToken()
 	if err != nil {
 		return "", err

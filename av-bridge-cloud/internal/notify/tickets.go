@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/dloomes/av-bridge-cloud/internal/db"
 )
 
 // Ticketing channels (ServiceNow) differ from the fire-and-forget ones: an
@@ -166,9 +168,11 @@ func (d *Dispatcher) activeTickets(ctx context.Context) ([]ticketRow, error) {
 		  LEFT JOIN devices dv          ON dv.id = a.device_id
 		  LEFT JOIN collectors col      ON col.id = a.collector_id
 		  LEFT JOIN rooms rm            ON rm.id = a.room_id
-		 WHERE (t.state = 'open' AND a.status = 'resolved')
+		 WHERE ((t.state = 'open' AND a.status = 'resolved')
 		    OR (t.state = 'pending' AND (a.status = 'resolved'
-		        OR (c.enabled AND t.attempts < $1)))
+		        OR (c.enabled AND t.attempts < $1))))
+		   -- No ServiceNow calls for an offboarding customer.
+		   AND `+db.CustomerActiveSQL("a.customer_id")+`
 		 ORDER BY t.created_at
 		 LIMIT 200`, maxTicketAttempts)
 	if err != nil {

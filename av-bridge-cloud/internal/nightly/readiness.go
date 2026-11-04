@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/dloomes/av-bridge-cloud/internal/db"
 )
 
 // Readiness checks — the routine half of Room Readiness, separate from the
@@ -49,6 +51,7 @@ func (s *Scheduler) collectReadinessRooms(ctx context.Context) ([]readinessRoom,
 		  LEFT JOIN room_nightly_config rnc   ON rnc.room_id = r.id
 		  LEFT JOIN nightly_schedule ns       ON ns.customer_id = rs.customer_id
 		 WHERE rs.enabled = true
+		   AND `+db.CustomerActiveSQL("rs.customer_id")+`
 		   AND COALESCE(rrc.test_routine_id, rtr.test_routine_id, rs.test_routine_id) IS NOT NULL`)
 	if err != nil {
 		return nil, err
@@ -146,7 +149,8 @@ func (s *Scheduler) startReadinessRuns(ctx context.Context) error {
 		                  AND p.status = 'in_progress')
 		  FROM nightly_run nr
 		  JOIN rooms r ON r.id = nr.room_id
-		 WHERE nr.kind = 'readiness' AND nr.status = 'in_progress' AND nr.phase = 'pending'`)
+		 WHERE nr.kind = 'readiness' AND nr.status = 'in_progress' AND nr.phase = 'pending'
+		   AND `+db.CustomerActiveSQL("nr.customer_id"))
 	if err != nil {
 		return err
 	}

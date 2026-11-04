@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/dloomes/av-bridge-cloud/internal/db"
 )
 
 // DisplayTokenPrefix marks a display link's token (dashboard wall screens).
@@ -46,7 +48,7 @@ func ScopeOf(p Principal) DisplayScope {
 }
 
 // DisplayResolver signs in display links (see migration 0059): a revoked
-// link stops resolving at once.
+// link, or one whose customer is offboarding, stops resolving at once.
 type DisplayResolver struct {
 	pool *pgxpool.Pool
 }
@@ -71,6 +73,7 @@ func (d *DisplayResolver) Resolve(token string) (Principal, bool) {
 		   SET last_used_at = CASE WHEN last_used_at IS NULL OR last_used_at < now() - interval '5 minutes'
 		                           THEN now() ELSE last_used_at END
 		 WHERE token_hash = $1 AND revoked_at IS NULL
+		   AND `+db.CustomerActiveSQL("dashboard_display_links.customer_id")+`
 		RETURNING id::text, customer_id::text, name, dashboard_ids::text[], scope`,
 		HashToken(token)).Scan(&id, &customerID, &name, &dashboards, &scopeRaw)
 	if err != nil {

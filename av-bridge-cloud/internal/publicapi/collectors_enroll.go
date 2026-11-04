@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dloomes/av-bridge-cloud/internal/db"
 	"github.com/dloomes/av-bridge-cloud/internal/portalauth"
 	"github.com/jackc/pgx/v5"
 )
@@ -96,6 +97,10 @@ func (h *Handler) EnrollCollector(w http.ResponseWriter, r *http.Request) {
 		     WHERE token_hash = $1
 		       AND used_at IS NULL
 		       AND expires_at > now()
+		       -- Not for an offboarding customer: the token stays unused.
+		       AND EXISTS (SELECT 1 FROM collectors ec
+		                    WHERE ec.id = collector_enrollment_tokens.collector_id
+		                      AND `+db.CustomerActiveSQL("ec.customer_id")+`)
 		    RETURNING collector_id
 		)
 		UPDATE collectors c

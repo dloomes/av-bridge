@@ -144,7 +144,9 @@ type brandingResp struct {
 // GetBranding — GET /public/branding?slug=<slug>
 //
 // Always returns 200 with a possibly-empty object. Missing slug, malformed
-// slug, unknown slug, and customer-with-no-branding all yield the same
+// slug, unknown slug, an offboarding customer (the default look, so a
+// closed customer's sign-in page carries no branding), and
+// customer-with-no-branding all yield the same
 // empty response so the client (typically the Next.js sign-in server
 // component) has one code path: "hydrate whatever came back, fall back to
 // defaults for missing fields."
@@ -190,7 +192,8 @@ func (h *Handler) GetBranding(w http.ResponseWriter, r *http.Request) {
 		       COALESCE(entra_tenant_id,''),
 		       COALESCE(sso_required, false)
 		  FROM customers
-		 WHERE slug = $1`, slug,
+		 WHERE slug = $1
+		   AND `+db.CustomerActiveSQL("customers.id"), slug,
 	).Scan(&displayName, &accentColor, &logoType, &logo,
 		&signInMessage, &supportContact, &ssoButtonLabel, &heroType, &hero,
 		&entraTenantID, &ssoRequired)

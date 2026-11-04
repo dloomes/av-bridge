@@ -22,6 +22,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/dloomes/av-bridge-cloud/internal/db"
 )
 
 const mockPrefix = "mock."
@@ -234,7 +236,7 @@ func NewDBTenantLookup(pool *pgxpool.Pool) *DBTenantLookup {
 func (d *DBTenantLookup) LookupCustomerByEntraTenant(ctx context.Context, tid string) (string, error) {
 	var id string
 	err := d.pool.QueryRow(ctx,
-		`SELECT id::text FROM customers WHERE entra_tenant_id = $1`, tid).Scan(&id)
+		`SELECT c.id::text FROM customers c WHERE c.entra_tenant_id = $1 AND `+db.CustomerActiveSQL("c.id"), tid).Scan(&id)
 	return id, err
 }
 

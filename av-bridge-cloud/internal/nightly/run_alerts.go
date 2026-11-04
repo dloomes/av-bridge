@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/dloomes/av-bridge-cloud/internal/db"
 	"github.com/dloomes/av-bridge-cloud/internal/notify"
 )
 
@@ -47,6 +48,7 @@ func (s *Scheduler) syncRunAlerts(ctx context.Context) error {
 		  FROM nightly_run nr
 		  JOIN rooms r ON r.id = nr.room_id
 		 WHERE nr.completed_at IS NOT NULL AND nr.alert_checked_at IS NULL
+		   AND `+db.CustomerActiveSQL("nr.customer_id")+`
 		 ORDER BY nr.completed_at
 		 LIMIT $1`, runAlertBatch)
 	if err != nil {

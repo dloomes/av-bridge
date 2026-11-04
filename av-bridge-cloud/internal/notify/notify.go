@@ -22,6 +22,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/dloomes/av-bridge-cloud/internal/db"
 )
 
 // AlertEvent is the minimal shape the dispatcher needs to format and send a
@@ -159,12 +161,16 @@ func (d *Dispatcher) run(evt AlertEvent) {
 // Severity gate is inline CASE — info=1, warning=2, critical=3. A channel
 // with min_severity='warning' receives warning + critical; 'info' channels
 // receive everything; 'critical' channels only get critical.
+//
+// An offboarding customer has no channels here, so nothing is sent for it
+// from any source (ingest, Collector health, Room Readiness alerts).
 func (d *Dispatcher) listChannels(ctx context.Context, customerID, severity string) ([]Channel, error) {
 	rows, err := d.pool.Query(ctx, `
 		SELECT id::text, type, name, target, config, min_severity
 		  FROM notification_channels
 		 WHERE customer_id = $1
 		   AND enabled = true
+		   AND `+db.CustomerActiveSQL("notification_channels.customer_id")+`
 		   AND CASE $2 WHEN 'critical' THEN 3 WHEN 'warning' THEN 2 ELSE 1 END
 		    >= CASE min_severity WHEN 'critical' THEN 3 WHEN 'warning' THEN 2 ELSE 1 END`,
 		customerID, severity)

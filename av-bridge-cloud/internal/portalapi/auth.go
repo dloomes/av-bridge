@@ -6,10 +6,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/dloomes/av-bridge-cloud/internal/db"
 	"github.com/dloomes/av-bridge-cloud/internal/portalauth"
 	"github.com/jackc/pgx/v5"
 	"golang.org/x/crypto/bcrypt"
@@ -33,6 +35,42 @@ func mintToken() (string, error) {
 		return "", err
 	}
 	return portalauth.LocalTokenPrefix + hex.EncodeToString(b[:]), nil
+}
+
+// refuseOffboarding writes the 403 account-closed refusal and returns true
+// when the user's customer is offboarding (db/offboarding.go). Vendor users
+// are never refused. Every sign-in path calls it before inserting a session.
+func refuseOffboarding(ctx context.Context, w http.ResponseWriter, store *db.Store, userID string, log *slog.Logger) bool {
+	off, err := store.UserOffboarding(ctx, userID)
+	if err != nil {
+		log.Error("sign-in: offboarding check", "error", err)
+		writeErr(w, http.StatusInternalServerError, "internal error")
+		return true
+	}
+	if off {
+		writeErr(w, http.StatusForbidden, db.OffboardingMessage)
+		return true
+	}
+	return false
+}
+
+// writeAccountClosed is the 403 account-closed refusal for browser sign-in
+// flows (Entra redirects), as plain text a browser shows as it is.
+func writeAccountClosed(w http.ResponseWriter) {
+	http.Error(w, db.OffboardingMessage, http.StatusForbidden)
+}
+
+// checkSessionAllowed is the guard the Entra session mints run before their
+// INSERT: db.ErrCustomerOffboarding when the user's customer is offboarding.
+func checkSessionAllowed(ctx context.Context, store *db.Store, userID string) error {
+	off, err := store.UserOffboarding(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if off {
+		return db.ErrCustomerOffboarding
+	}
+	return nil
 }
 
 type loginRequest struct {
@@ -96,6 +134,12 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(req.Password)); err != nil {
 		writeErr(w, http.StatusUnauthorized, "invalid credentials")
+		return
+	}
+	// A customer that is offboarding refuses every sign-in. Checked after
+	// bcrypt, like the SSO-only refusal, so only someone holding the right
+	// password learns the account is closed.
+	if refuseOffboarding(ctx, w, h.store, userID, h.log) {
 		return
 	}
 	// SSO-only tenant refuses local password login even with correct

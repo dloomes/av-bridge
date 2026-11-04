@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dloomes/av-bridge-cloud/internal/db"
 	"github.com/dloomes/av-bridge-cloud/internal/notify"
 	"github.com/dloomes/av-bridge-cloud/internal/portalauth"
 	"github.com/jackc/pgx/v5"
@@ -136,6 +137,7 @@ func (h *Handler) processResetRequest(ctx context.Context, email, ip, ua string)
 		   AND u.disabled_at IS NULL
 		   AND u.password_hash IS NOT NULL
 		   AND COALESCE(c.sso_required, false) = false
+		   AND `+db.UserActiveSQL("u.customer_id")+`
 		 LIMIT 1`, email).
 		Scan(&userID, &fullName, &customerSlug, &customerName, &accentColor)
 	if err != nil {

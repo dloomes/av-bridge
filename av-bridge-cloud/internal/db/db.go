@@ -294,11 +294,15 @@ func (s *Store) CollectorNeedsResync(ctx context.Context, id string) (bool, erro
 
 // LookupCollectorByBridgeID resolves the id the bridge reports to a collector
 // row. Runs as app_admin (cross-tenant) — we don't know the customer yet.
+//
+// A Collector whose customer is offboarding is not found (pgx.ErrNoRows),
+// so every bridge route (/ingest, /bridge/*, the tunnel) answers 401.
 func (s *Store) LookupCollectorByBridgeID(ctx context.Context, bridgeID string) (Collector, error) {
 	var c Collector
 	err := s.admin.QueryRow(ctx,
 		`SELECT id::text, customer_id::text, hmac_secret_enc, COALESCE(standby_for::text, '')
-		   FROM collectors WHERE bridge_collector_id = $1`,
+		   FROM collectors WHERE bridge_collector_id = $1
+		    AND `+CustomerActiveSQL("collectors.customer_id"),
 		bridgeID).Scan(&c.ID, &c.CustomerID, &c.SecretEnc, &c.StandbyFor)
 	return c, err
 }

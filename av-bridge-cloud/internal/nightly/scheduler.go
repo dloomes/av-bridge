@@ -11,7 +11,9 @@
 // Design reference: docs/nightly-lifecycle-spec.md
 //
 // Runs as app_admin (BYPASSRLS) because it operates across every tenant
-// on a schedule of its own, not on behalf of a request.
+// on a schedule of its own, not on behalf of a request. A customer whose
+// offboarding has started is skipped throughout (db.CustomerActiveSQL):
+// no new runs, no advancing, no commands, no room alerts, no digest.
 package nightly
 
 import (
@@ -25,6 +27,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/dloomes/av-bridge-cloud/internal/db"
 	"github.com/dloomes/av-bridge-cloud/internal/notify"
 )
 
@@ -182,6 +185,7 @@ func (s *Scheduler) collectEnabledRooms(ctx context.Context) ([]roomView, error)
 		LEFT JOIN room_nightly_config rnc   ON rnc.room_id = r.id
 		LEFT JOIN room_tag_power rtp        ON rtp.room_id = r.id
 		WHERE ns.enabled = true
+		  AND `+db.CustomerActiveSQL("ns.customer_id")+`
 	`)
 	if err != nil {
 		return nil, err
@@ -343,6 +347,7 @@ func (s *Scheduler) advanceRuns(ctx context.Context) error {
 		  LEFT JOIN room_tag_power rtp       ON rtp.room_id = nr.room_id
 		 WHERE nr.status = 'in_progress'
 		   AND nr.kind = 'power'
+		   AND `+db.CustomerActiveSQL("nr.customer_id")+`
 	`)
 	if err != nil {
 		return err
