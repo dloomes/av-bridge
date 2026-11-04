@@ -120,6 +120,27 @@ func TestRetentionRules(t *testing.T) {
 	add("collector_logs", true, clog, cust, col, "31 days")
 	add("collector_logs", false, clog, cust, col, "29 days")
 
+	// Sign-in and enrolment tokens: 30 days after expiry or use.
+	usr := q(`INSERT INTO users (customer_id, email, password_hash) VALUES ($1::uuid, 'rt-' || $1::text || '@example.test', 'x') RETURNING id::text`, cust)
+	for _, tbl := range []string{"password_reset_tokens", "magic_link_tokens"} {
+		tok := `INSERT INTO ` + tbl + ` (user_id, token_hash, expires_at, used_at)
+		        VALUES ($1, $2, now() - $3::interval, NULL) RETURNING id::text`
+		add(tbl, true, tok, usr, tbl+"-old-"+cust, "31 days")
+		add(tbl, false, tok, usr, tbl+"-new-"+cust, "1 day")
+	}
+	enr := `INSERT INTO collector_enrollment_tokens (collector_id, token_hash, expires_at)
+	        VALUES ($1, $2, now() - $3::interval) RETURNING id::text`
+	add("collector_enrollment_tokens", true, enr, col, "enr-old-"+cust, "31 days")
+	add("collector_enrollment_tokens", false, enr, col, "enr-new-"+cust, "1 day")
+
+	// API tokens: 90 days after revocation or expiry; active ones never.
+	apitok := `INSERT INTO api_tokens (customer_id, name, token_prefix, token_hash, expires_at, revoked_at)
+	           VALUES ($1, 't', 'p', $2, $3::timestamptz, $4::timestamptz) RETURNING id::text`
+	add("api_tokens", true, apitok, cust, "api-rev-old-"+cust, nil, time.Now().AddDate(0, 0, -91))
+	add("api_tokens", false, apitok, cust, "api-rev-new-"+cust, nil, time.Now().AddDate(0, 0, -10))
+	add("api_tokens", true, apitok, cust, "api-exp-old-"+cust, time.Now().AddDate(0, 0, -91), nil)
+	add("api_tokens", false, apitok, cust, "api-active-"+cust, nil, nil)
+
 	deadline := time.Now().Add(time.Minute)
 	for _, r := range Rules {
 		if _, err := Apply(ctx, admin, r, deadline); err != nil {

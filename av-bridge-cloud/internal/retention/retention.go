@@ -50,6 +50,16 @@ var Rules = []Rule{
 		Where: `t.ended_at < now() - interval '90 days'`},
 	{Name: "Collector logs (30 days)", Table: "collector_logs",
 		Where: `t.inserted_at < now() - interval '30 days'`},
+	{Name: "password reset tokens (30 days after expiry or use)", Table: "password_reset_tokens",
+		Where: `GREATEST(t.expires_at, COALESCE(t.used_at, t.expires_at)) < now() - interval '30 days'`},
+	{Name: "sign-in link tokens (30 days after expiry or use)", Table: "magic_link_tokens",
+		Where: `GREATEST(t.expires_at, COALESCE(t.used_at, t.expires_at)) < now() - interval '30 days'`},
+	{Name: "Collector enrolment tokens (30 days after expiry or use)", Table: "collector_enrollment_tokens",
+		Where: `GREATEST(t.expires_at, COALESCE(t.used_at, t.expires_at)) < now() - interval '30 days'`},
+	// An API token with neither revoked_at nor expires_at is active: the
+	// COALESCE is NULL, so it never matches.
+	{Name: "API tokens (90 days after revocation or expiry)", Table: "api_tokens",
+		Where: `COALESCE(t.revoked_at, t.expires_at) < now() - interval '90 days'`},
 }
 
 // Service runs retention passes.
