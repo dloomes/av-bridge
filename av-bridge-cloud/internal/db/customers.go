@@ -265,6 +265,7 @@ func seedSystemRoles(ctx context.Context, tx pgx.Tx, customerID string) error {
 				"business_unit.crud",
 				"collector.crud", "view.collector_logs",
 				"api_token.view", "api_token.manage",
+				"privacy.manage",
 			},
 		},
 		{

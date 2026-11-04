@@ -128,6 +128,10 @@ const (
 	PermAPITokenManage = "api_token.manage"
 )
 
+// PermPrivacyManage handles GDPR data requests: access exports, erasure
+// and organisation offboarding. Admin-only by seed.
+const PermPrivacyManage = "privacy.manage"
+
 // KnownPermissions is the closed set of valid permission keys — used by the
 // roles CRUD handler to reject unknown strings, and by the permission
 // engine to fail-closed if a role somehow references a permission that has
@@ -168,6 +172,7 @@ var KnownPermissions = map[string]struct{}{
 	PermBusinessUnitCRUD:   {},
 	PermAPITokenView:       {},
 	PermAPITokenManage:     {},
+	PermPrivacyManage:      {},
 }
 
 // IsKnownPermission returns true if the string is a member of the
