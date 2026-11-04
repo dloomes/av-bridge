@@ -34,9 +34,27 @@ export function OffboardDialog({
   onClose: () => void;
   onDone: () => void;
 }) {
+  // While a request is running, closing is a no-op (X, Esc and click-outside
+  // included), so a late result can't land on a different customer's dialog.
+  const [busy, setBusy] = useState(false);
   return (
-    <Modal open={customer !== null} onClose={onClose} title="Offboard customer" wide={false}>
-      {customer && <OffboardForm customer={customer} onClose={onClose} onDone={onDone} />}
+    <Modal
+      open={customer !== null}
+      onClose={() => {
+        if (!busy) onClose();
+      }}
+      title="Offboard customer"
+      wide={false}
+    >
+      {customer && (
+        <OffboardForm
+          key={customer.id}
+          customer={customer}
+          onClose={onClose}
+          onDone={onDone}
+          onBusy={setBusy}
+        />
+      )}
     </Modal>
   );
 }
@@ -45,14 +63,20 @@ function OffboardForm({
   customer,
   onClose,
   onDone,
+  onBusy,
 }: {
   customer: HelpdeskCustomer;
   onClose: () => void;
   onDone: () => void;
+  onBusy: (b: boolean) => void;
 }) {
   const { toast } = useToast();
   const [typed, setTyped] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusyState] = useState(false);
+  const setBusy = (b: boolean) => {
+    setBusyState(b);
+    onBusy(b);
+  };
   const [error, setError] = useState<string | null>(null);
 
   const submit = async (e: React.FormEvent) => {
@@ -66,6 +90,7 @@ function OffboardForm({
         title: `${customer.name} will be deleted on ${formatDay(r.delete_after)}`,
         variant: "success",
       });
+      setBusy(false);
       onDone();
     } catch (err) {
       setError(plainError(err));

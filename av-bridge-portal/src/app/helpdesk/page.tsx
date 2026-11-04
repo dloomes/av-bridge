@@ -190,6 +190,9 @@ export default function HelpdeskPage() {
                 onActAs={() => actAs(c.id)}
                 onEdit={() => setEditing(c)}
                 offboardInfo={byId.get(c.id)}
+                offboardLoaded={customersPoll.data !== undefined && customersPoll.data !== null}
+                offboardError={customersPoll.error ? customersPoll.error.message : null}
+                onRetryOffboard={customersPoll.refresh}
                 onOffboard={() => setOffboarding(byId.get(c.id) ?? { id: c.id, name: c.name })}
                 onChanged={refreshAll}
               />
@@ -212,6 +215,9 @@ function CustomerCard({
   onActAs,
   onEdit,
   offboardInfo,
+  offboardLoaded,
+  offboardError,
+  onRetryOffboard,
   onOffboard,
   onChanged,
 }: {
@@ -219,6 +225,9 @@ function CustomerCard({
   onActAs: () => void;
   onEdit: () => void;
   offboardInfo?: HelpdeskCustomer;
+  offboardLoaded: boolean;
+  offboardError: string | null;
+  onRetryOffboard: () => void;
   onOffboard: () => void;
   onChanged: () => void;
 }) {
@@ -332,6 +341,17 @@ function CustomerCard({
 
         {isOffboarding && offboardInfo ? (
           <OffboardingBanner customer={offboardInfo} onChanged={onChanged} />
+        ) : !offboardLoaded ? (
+          offboardError ? (
+            <p className="text-xs text-muted-foreground">
+              Couldn&apos;t check whether this customer is being offboarded.{" "}
+              <Button size="sm" variant="ghost" onClick={onRetryOffboard}>
+                Try again
+              </Button>
+            </p>
+          ) : (
+            <Skeleton className="h-8 w-32" />
+          )
         ) : (
           <Button
             size="sm"
