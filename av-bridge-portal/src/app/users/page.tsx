@@ -170,7 +170,12 @@ export default function UsersPage() {
                     key={u.id}
                     user={u}
                     admin={admin}
-                    canPrivacy={!!session.user?.is_vendor || hasPermission(session.user, "privacy.manage")}
+                    canPrivacy={
+                      // Vendor staff need the vendor admin role, as the server requires.
+                      session.user?.is_vendor
+                        ? session.user.role === "admin"
+                        : hasPermission(session.user, "privacy.manage")
+                    }
                     isVendor={!!session.user?.is_vendor}
                     isSelf={u.id === session.user?.user_id}
                     onEdit={() => setEditing({ mode: "edit", existing: u })}
@@ -350,6 +355,9 @@ function UserRowView({
           <Button asChild variant="ghost" size="icon" title="Export data">
             <Link
               href={`/data-requests?action=export&email=${encodeURIComponent(user.email)}`}
+              // No prefetch: the email is in the query string, and a
+              // prefetch request would put it in the hosting access logs.
+              prefetch={false}
               aria-label="Export data"
             >
               <Download className="h-3.5 w-3.5" />
@@ -366,7 +374,10 @@ function UserRowView({
             {isSelf ? (
               <Eraser className="h-3.5 w-3.5" />
             ) : (
-              <Link href={`/data-requests?action=erase&email=${encodeURIComponent(user.email)}`}>
+              <Link
+                href={`/data-requests?action=erase&email=${encodeURIComponent(user.email)}`}
+                prefetch={false}
+              >
                 <Eraser className="h-3.5 w-3.5" />
               </Link>
             )}

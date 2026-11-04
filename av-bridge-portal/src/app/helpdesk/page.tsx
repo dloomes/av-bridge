@@ -102,12 +102,14 @@ export default function HelpdeskPage() {
             <span className="font-semibold">{totalDevices}</span>{" "}
             <span className="text-muted-foreground">devices</span>
           </span>
-          <Button asChild size="sm" variant="outline">
-            <Link href="/data-requests?helpdesk=1">
-              <ShieldCheck className="h-3.5 w-3.5" />
-              Data requests
-            </Link>
-          </Button>
+          {session.user?.role === "admin" && (
+            <Button asChild size="sm" variant="outline">
+              <Link href="/data-requests?helpdesk=1">
+                <ShieldCheck className="h-3.5 w-3.5" />
+                Data requests
+              </Link>
+            </Button>
+          )}
           <Button asChild size="sm" variant="outline">
             <Link href="/helpdesk/deletions">
               <FileText className="h-3.5 w-3.5" />

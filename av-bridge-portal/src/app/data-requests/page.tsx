@@ -48,9 +48,13 @@ function DataRequests() {
   const params = useSearchParams();
   const helpdesk = params.get("helpdesk") === "1";
   const isVendor = !!session.user?.is_vendor;
+  // Vendor staff need the vendor admin role, as the server requires.
+  const vendorAdmin = isVendor && session.user?.role === "admin";
   const allowed = helpdesk
-    ? isVendor
-    : isVendor || hasPermission(session.user, "privacy.manage");
+    ? vendorAdmin
+    : isVendor
+      ? vendorAdmin
+      : hasPermission(session.user, "privacy.manage");
 
   const router = useRouter();
   const pathname = usePathname();
@@ -70,14 +74,14 @@ function DataRequests() {
   const [customers, setCustomers] = useState<HelpdeskCustomer[]>([]);
   const [target, setTarget] = useState("");
   useEffect(() => {
-    if (!helpdesk || !isVendor) return;
+    if (!helpdesk || !vendorAdmin) return;
     const ctrl = new AbortController();
     api
       .helpdeskCustomers(ctrl.signal)
       .then((c) => setCustomers(c))
       .catch(() => {});
     return () => ctrl.abort();
-  }, [helpdesk, isVendor]);
+  }, [helpdesk, vendorAdmin]);
 
   const targetReady = !helpdesk || target !== "";
   const targetArg: Target = target === "vendor" ? { vendor: true } : { customerId: target };
