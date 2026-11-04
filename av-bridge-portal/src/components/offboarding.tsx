@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AlertTriangle, Download, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Modal } from "@/components/modal";
@@ -77,6 +77,8 @@ function OffboardForm({
     setBusyState(b);
     onBusy(b);
   };
+  // If the form goes away mid-request, don't leave the dialog locked.
+  useEffect(() => () => onBusy(false), []); // eslint-disable-line react-hooks/exhaustive-deps
   const [error, setError] = useState<string | null>(null);
 
   const submit = async (e: React.FormEvent) => {

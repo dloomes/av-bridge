@@ -49,6 +49,11 @@ export function Modal({
     if (dirty && !window.confirm(dirtyPrompt)) return;
     onClose();
   };
+  // The key handler below is registered once per open, so it reads the
+  // latest attemptClose through this ref (updated every render) rather than
+  // the one from the render where the modal opened.
+  const attemptCloseRef = useRef(attemptClose);
+  attemptCloseRef.current = attemptClose;
 
   useEffect(() => {
     if (!open) return;
@@ -79,7 +84,7 @@ export function Modal({
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.preventDefault();
-        attemptClose();
+        attemptCloseRef.current();
       }
     };
     document.addEventListener("keydown", onKey);
@@ -99,9 +104,9 @@ export function Modal({
         target.focus();
       }
     };
-    // dirty is intentionally not in the deps — Esc semantics only need to
-    // change when open flips. attemptClose closes over the latest value
-    // via ref-less closure below since we recreate on every render.
+    // Only open is in the deps: the listener is added once per open. It
+    // calls attemptCloseRef.current, so it always sees the latest onClose
+    // and dirty values.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
