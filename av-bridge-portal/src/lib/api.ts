@@ -311,10 +311,24 @@ export interface PrivacyDownload {
 // privacyDownload POSTs JSON and returns the ZIP body as a Blob, following
 // the exportAssetsCSV fetch pattern.
 async function privacyDownload(path: string, body: unknown): Promise<PrivacyDownload> {
-  const res = await fetch(`${API_BASE}${path}`, {
+  return blobDownload(path, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(body),
+  }, `access-request-${new Date().toISOString().slice(0, 10)}.zip`);
+}
+
+// blobDownload fetches a file with the bearer token and returns it as a Blob,
+// taking the file name from Content-Disposition. A refused request throws an
+// ApiError carrying the server's message, so the caller can show it.
+async function blobDownload(
+  path: string,
+  init: RequestInit,
+  fallbackName: string
+): Promise<PrivacyDownload> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    ...init,
+    headers: { ...authHeaders(), ...(init.headers ?? {}) },
     cache: "no-store",
   });
   if (!res.ok) {
@@ -327,7 +341,7 @@ async function privacyDownload(path: string, body: unknown): Promise<PrivacyDown
   }
   const cd = res.headers.get("Content-Disposition") ?? "";
   const m = /filename="?([^";]+)"?/.exec(cd);
-  const filename = m?.[1] ?? `access-request-${new Date().toISOString().slice(0, 10)}.zip`;
+  const filename = m?.[1] ?? fallbackName;
   return { blob: await res.blob(), filename };
 }
 
@@ -415,6 +429,32 @@ export interface HelpdeskCustomer {
   id: string;
   name: string;
   entra_tenant_id?: string;
+  // Set while the customer is offboarding; null otherwise.
+  offboarding_started_at?: string | null;
+  delete_after?: string | null;
+}
+
+export interface OffboardResult {
+  customer_id: string;
+  offboarding_started_at: string;
+  delete_after: string;
+}
+
+// One offboarding in the Deletions list. status: "offboarding", "cancelled"
+// or "deleted".
+export interface DeletionItem {
+  id: string;
+  customer_id: string;
+  customer_name: string;
+  status: "offboarding" | "cancelled" | "deleted";
+  started_at: string;
+  started_by: string;
+  cancelled_at: string | null;
+  cancelled_by: string | null;
+  deleted_at: string | null;
+  delete_after: string | null;
+  row_counts: Record<string, number> | null;
+  downloads: { by?: string; at?: string }[];
 }
 
 export interface HelpdeskOverviewItem {
@@ -1686,6 +1726,37 @@ export const api = {
       ...(target.vendor ? { vendor: true } : { customer_id: target.customerId }),
       email,
     }),
+
+  // Customer offboarding (Involve staff only).
+  offboardCustomer: (id: string, confirm: string) =>
+    request<OffboardResult>(
+      `/api/v1/helpdesk/customers/${encodeURIComponent(id)}/offboard`,
+      { method: "POST", body: JSON.stringify({ confirm }) }
+    ),
+
+  cancelOffboarding: (id: string) =>
+    request<{ customer_id: string; status: string }>(
+      `/api/v1/helpdesk/customers/${encodeURIComponent(id)}/cancel-offboarding`,
+      { method: "POST" }
+    ),
+
+  // Every download is recorded against the offboarding by the cloud.
+  downloadCustomerExport: (id: string): Promise<PrivacyDownload> =>
+    blobDownload(
+      `/api/v1/helpdesk/customers/${encodeURIComponent(id)}/export.zip`,
+      { method: "GET" },
+      `customer-export-${new Date().toISOString().slice(0, 10)}.zip`
+    ),
+
+  listDeletions: (signal?: AbortSignal) =>
+    request<DeletionItem[]>("/api/v1/helpdesk/deletions", { signal }),
+
+  downloadDeletionCSV: (id: string): Promise<PrivacyDownload> =>
+    blobDownload(
+      `/api/v1/helpdesk/deletions/${encodeURIComponent(id)}.csv`,
+      { method: "GET" },
+      `deletion-certificate-${id}.csv`
+    ),
 
   privacyErase: (req: EraseRequest, signal?: AbortSignal) =>
     request<EraseResult>("/api/v1/privacy/erase", {

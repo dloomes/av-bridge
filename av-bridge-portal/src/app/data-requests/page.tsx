@@ -11,6 +11,7 @@ import { useSession } from "@/hooks/useSession";
 import { api } from "@/lib/api";
 import type { EraseResult, HelpdeskCustomer } from "@/lib/api";
 import { hasPermission } from "@/lib/session";
+import { plainError, saveDownload } from "@/lib/download";
 
 // Data requests: export everything held about one person as a ZIP, or erase
 // them (their name, email and sign-in details are replaced; the activity
@@ -26,20 +27,6 @@ const inputCls =
 // Matches the cloud's own check: confirm equals the email, ignoring case.
 const sameEmail = (a: string, b: string) =>
   a.trim().length > 0 && a.trim().toLowerCase() === b.trim().toLowerCase();
-
-// ApiError messages look like `404 Not Found: {"error":"..."}`. Show just the
-// sentence when there is one.
-function plainError(e: unknown): string {
-  const msg = (e as Error)?.message ?? "Something went wrong";
-  const i = msg.indexOf("{");
-  if (i >= 0) {
-    try {
-      const j = JSON.parse(msg.slice(i));
-      if (typeof j?.error === "string") return j.error;
-    } catch {}
-  }
-  return msg;
-}
 
 const humanise = (key: string) => {
   const s = key.replace(/[_.]+/g, " ").trim();
@@ -212,15 +199,8 @@ function ExportCard({
     setBusy(true);
     setError(null);
     try {
-      const { blob, filename } = await run(email.trim());
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
+      const { filename, blob } = await run(email.trim());
+      saveDownload({ blob, filename });
       toast({ title: `Downloaded ${filename}`, variant: "success" });
     } catch (err) {
       setError(plainError(err));

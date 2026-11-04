@@ -12,6 +12,7 @@ import {
   CircleHelp,
   CircleSlash,
   Link as LinkIcon,
+  FileText,
   Pencil,
   Plus,
   ServerCrash,
@@ -26,7 +27,8 @@ import { NewCustomerForm, EditCustomerForm } from "@/components/customer-forms";
 import { usePolling } from "@/hooks/usePolling";
 import { useSession } from "@/hooks/useSession";
 import { setScope } from "@/lib/session";
-import { api, type HelpdeskOverviewItem } from "@/lib/api";
+import { api, type HelpdeskCustomer, type HelpdeskOverviewItem } from "@/lib/api";
+import { OffboardDialog, OffboardingBanner } from "@/components/offboarding";
 import { formatRelative } from "@/lib/utils";
 
 // HelpdeskPage — vendor-only landing view summarising every customer the
@@ -43,6 +45,17 @@ export default function HelpdeskPage() {
     (signal) => api.helpdeskOverview(signal),
     30_000
   );
+  const [offboarding, setOffboarding] = useState<HelpdeskCustomer | null>(null);
+  // The overview doesn't carry offboarding dates; the customer list does.
+  const customersPoll = usePolling<HelpdeskCustomer[]>(
+    (signal) => api.helpdeskCustomers(signal),
+    30_000
+  );
+  const byId = new Map((customersPoll.data ?? []).map((c) => [c.id, c]));
+  const refreshAll = () => {
+    refresh();
+    customersPoll.refresh();
+  };
 
   // Non-vendor sessions don't belong here — bounce them home. We wait for
   // hydration so we don't redirect on the first paint before session loads.
@@ -95,6 +108,12 @@ export default function HelpdeskPage() {
               Data requests
             </Link>
           </Button>
+          <Button asChild size="sm" variant="outline">
+            <Link href="/helpdesk/deletions">
+              <FileText className="h-3.5 w-3.5" />
+              Deletions
+            </Link>
+          </Button>
           <Button size="sm" onClick={() => setCreating(true)}>
             <Plus className="h-3.5 w-3.5" />
             New customer
@@ -135,6 +154,15 @@ export default function HelpdeskPage() {
         )}
       </Modal>
 
+      <OffboardDialog
+        customer={offboarding}
+        onClose={() => setOffboarding(null)}
+        onDone={() => {
+          setOffboarding(null);
+          refreshAll();
+        }}
+      />
+
       <div className="flex-1 min-h-0 overflow-y-auto p-6 space-y-4">
         {error && (
           <Card className="border-destructive/30 bg-destructive/5">
@@ -161,6 +189,9 @@ export default function HelpdeskPage() {
                 c={c}
                 onActAs={() => actAs(c.id)}
                 onEdit={() => setEditing(c)}
+                offboardInfo={byId.get(c.id)}
+                onOffboard={() => setOffboarding(byId.get(c.id) ?? { id: c.id, name: c.name })}
+                onChanged={refreshAll}
               />
             ))}
           </div>
@@ -180,11 +211,18 @@ function CustomerCard({
   c,
   onActAs,
   onEdit,
+  offboardInfo,
+  onOffboard,
+  onChanged,
 }: {
   c: HelpdeskOverviewItem;
   onActAs: () => void;
   onEdit: () => void;
+  offboardInfo?: HelpdeskCustomer;
+  onOffboard: () => void;
+  onChanged: () => void;
 }) {
+  const isOffboarding = !!offboardInfo?.offboarding_started_at;
   const hasCritical = c.alerts_critical > 0;
   const hasOffline = c.devices_offline > 0;
   const hasUnknown = c.devices_unknown > 0;
@@ -291,6 +329,19 @@ function CustomerCard({
             small
           />
         </div>
+
+        {isOffboarding && offboardInfo ? (
+          <OffboardingBanner customer={offboardInfo} onChanged={onChanged} />
+        ) : (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="text-destructive"
+            onClick={onOffboard}
+          >
+            Offboard customer
+          </Button>
+        )}
       </CardContent>
     </Card>
   );
