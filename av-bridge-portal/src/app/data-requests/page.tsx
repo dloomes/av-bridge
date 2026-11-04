@@ -1,7 +1,7 @@
 "use client";
 
 import { Suspense, useEffect, useRef, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { AlertTriangle, Download, Loader2, ShieldCheck, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -65,8 +65,19 @@ function DataRequests() {
     ? isVendor
     : isVendor || hasPermission(session.user, "privacy.manage");
 
-  const initialEmail = params.get("email") ?? "";
+  const router = useRouter();
+  const pathname = usePathname();
+  // Read ?email= once, then take it out of the URL so the address isn't
+  // left in history or the address bar.
+  const [initialEmail] = useState(() => params.get("email") ?? "");
   const action = params.get("action");
+  useEffect(() => {
+    if (!params.has("email")) return;
+    const next = new URLSearchParams(params.toString());
+    next.delete("email");
+    const qs = next.toString();
+    router.replace(qs ? `${pathname}?${qs}` : pathname);
+  }, [params, pathname, router]);
 
   // Helpdesk target: a customer id, or "vendor" for Involve staff.
   const [customers, setCustomers] = useState<HelpdeskCustomer[]>([]);
@@ -89,7 +100,9 @@ function DataRequests() {
     if (action === "erase") eraseRef.current?.scrollIntoView({ block: "start" });
   }, [action]);
 
-  if (session.hydrated && !allowed) {
+  if (!session.hydrated) return null;
+
+  if (!allowed) {
     return (
       <div className="min-h-app">
         <div className="max-w-3xl mx-auto p-6">
@@ -148,6 +161,7 @@ function DataRequests() {
         )}
 
         <ExportCard
+          key={`export-${target}`}
           initialEmail={action === "export" ? initialEmail : ""}
           disabled={!targetReady}
           run={(email) =>
@@ -159,6 +173,7 @@ function DataRequests() {
 
         <div ref={eraseRef} className="scroll-mt-4">
           <EraseCard
+            key={`erase-${target}`}
             initialEmail={action === "erase" ? initialEmail : ""}
             disabled={!targetReady}
             run={(req) =>
@@ -226,6 +241,7 @@ function ExportCard({
               id="export-email"
               type="email"
               autoComplete="off"
+              disabled={busy}
               value={email}
               onChange={(e) => {
                 setEmail(e.target.value);
@@ -259,12 +275,24 @@ function EraseCard({
   const [email, setEmail] = useState(initialEmail);
   const [confirm, setConfirm] = useState("");
   const [preview, setPreview] = useState<EraseResult | null>(null);
+  // The address the preview was run for; Erase is only offered for it.
+  const [previewedEmail, setPreviewedEmail] = useState("");
+  // Bumped whenever the flow is reset, so a request that was still running
+  // can't put its result back.
+  const reqId = useRef(0);
+  const confirmRef = useRef<HTMLInputElement>(null);
   const [done, setDone] = useState<EraseResult | null>(null);
   const [busy, setBusy] = useState<"preview" | "erase" | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (preview) confirmRef.current?.focus();
+  }, [preview]);
+
   const reset = () => {
+    reqId.current++;
     setPreview(null);
+    setPreviewedEmail("");
     setDone(null);
     setConfirm("");
     setError(null);
@@ -278,30 +306,43 @@ function EraseCard({
     if (!em) return;
     setBusy("preview");
     reset();
+    const id = reqId.current;
     try {
-      setPreview(await run({ email: em, confirm: em, dry_run: true }));
+      const r = await run({ email: em, confirm: em, dry_run: true });
+      if (id !== reqId.current) return;
+      setPreview(r);
+      setPreviewedEmail(em);
     } catch (err) {
-      setError(plainError(err));
+      if (id === reqId.current) setError(plainError(err));
     } finally {
-      setBusy(null);
+      if (id === reqId.current) setBusy(null);
     }
   };
 
+  const canErase =
+    preview !== null &&
+    sameEmail(previewedEmail, email) &&
+    sameEmail(confirm, previewedEmail);
+
   const doErase = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!sameEmail(confirm, email)) return;
+    if (!canErase) return;
     setBusy("erase");
     setError(null);
+    const id = reqId.current;
     try {
-      const r = await run({ email: email.trim(), confirm: confirm.trim(), dry_run: false });
+      const r = await run({ email: previewedEmail, confirm: confirm.trim(), dry_run: false });
+      if (id !== reqId.current) return;
+      // Clear the form but keep the result showing.
+      reset();
+      setBusy(null);
+      setEmail("");
       setDone(r);
-      setPreview(null);
-      setConfirm("");
       toast({ title: "Person erased", variant: "success" });
     } catch (err) {
-      setError(plainError(err));
+      if (id === reqId.current) setError(plainError(err));
     } finally {
-      setBusy(null);
+      if (id === reqId.current) setBusy(null);
     }
   };
 
@@ -325,6 +366,7 @@ function EraseCard({
               id="erase-email"
               type="email"
               autoComplete="off"
+              disabled={busy !== null}
               value={email}
               onChange={(e) => {
                 setEmail(e.target.value);
@@ -356,10 +398,15 @@ function EraseCard({
               </label>
               <input
                 id="erase-confirm"
+                ref={confirmRef}
                 type="email"
                 autoComplete="off"
+                disabled={busy !== null}
                 value={confirm}
-                onChange={(e) => setConfirm(e.target.value)}
+                onChange={(e) => {
+                  setConfirm(e.target.value);
+                  setError(null);
+                }}
                 placeholder={email.trim()}
                 className={inputCls}
               />
@@ -367,7 +414,7 @@ function EraseCard({
             <Button
               type="submit"
               variant="destructive"
-              disabled={busy !== null || !sameEmail(confirm, email)}
+              disabled={busy !== null || !canErase}
             >
               {busy === "erase" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
               Erase
