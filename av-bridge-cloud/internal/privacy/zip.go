@@ -50,14 +50,10 @@ func writeCSV(w io.Writer, tb Table) error {
 	if err := cw.Write(tb.Columns); err != nil {
 		return err
 	}
-	rec := make([]string, len(tb.Columns))
 	for _, r := range tb.Rows {
-		for i := range rec {
-			s, err := cell(r[i])
-			if err != nil {
-				return err
-			}
-			rec[i] = s
+		rec, err := csvRecord(r)
+		if err != nil {
+			return err
 		}
 		if err := cw.Write(rec); err != nil {
 			return err
@@ -65,6 +61,19 @@ func writeCSV(w io.Writer, tb Table) error {
 	}
 	cw.Flush()
 	return cw.Error()
+}
+
+// csvRecord renders one row's cells for CSV (see cell).
+func csvRecord(r []any) ([]string, error) {
+	rec := make([]string, len(r))
+	for i, v := range r {
+		s, err := cell(v)
+		if err != nil {
+			return nil, err
+		}
+		rec[i] = s
+	}
+	return rec, nil
 }
 
 // cell renders one value for CSV: text as is, NULL as empty, numbers and
@@ -109,28 +118,40 @@ func writeJSON(w io.Writer, tb Table) error {
 		if ri > 0 {
 			buf.WriteString(",")
 		}
-		buf.WriteString("\n  {")
-		for i, c := range tb.Columns {
-			if i > 0 {
-				buf.WriteString(", ")
-			}
-			k, err := marshal(c)
-			if err != nil {
-				return err
-			}
-			v, err := marshal(r[i])
-			if err != nil {
-				return err
-			}
-			buf.Write(k)
-			buf.WriteString(": ")
-			buf.Write(v)
+		obj, err := jsonRow(tb.Columns, r)
+		if err != nil {
+			return err
 		}
-		buf.WriteString("}")
+		buf.WriteString("\n  ")
+		buf.Write(obj)
 	}
 	buf.WriteString("\n]\n")
 	_, err := w.Write(buf.Bytes())
 	return err
+}
+
+// jsonRow renders one row as a JSON object, keys in column order.
+func jsonRow(cols []string, r []any) ([]byte, error) {
+	var buf bytes.Buffer
+	buf.WriteString("{")
+	for i, c := range cols {
+		if i > 0 {
+			buf.WriteString(", ")
+		}
+		k, err := marshal(c)
+		if err != nil {
+			return nil, err
+		}
+		v, err := marshal(r[i])
+		if err != nil {
+			return nil, err
+		}
+		buf.Write(k)
+		buf.WriteString(": ")
+		buf.Write(v)
+	}
+	buf.WriteString("}")
+	return buf.Bytes(), nil
 }
 
 // marshal is json.Marshal without HTML escaping, so "<" and "&" stay readable.
@@ -169,8 +190,9 @@ func AccessREADME(s Subject, tables []Table) string {
 	}
 	b.WriteString(".\n\n")
 	b.WriteString("Each table has two files with the same rows: <table>.csv and <table>.json.\n")
-	b.WriteString("Whole rows are included so each value keeps its context; passwords, token hashes and\n")
-	b.WriteString("other secrets are left out. In the CSV files, lists and objects are written as JSON.\n")
+	b.WriteString("Whole rows are included so each value keeps its context. In the CSV files, lists and\n")
+	b.WriteString("objects are written as JSON.\n")
+	b.WriteString(RedactionNote)
 	b.WriteString("In the CSV files, text that a spreadsheet could run as a formula (starting with =, +, -, @,\n")
 	b.WriteString("a tab or a carriage return) is prefixed with ' ; the JSON files hold the exact values.\n\n")
 	if len(tables) == 0 {

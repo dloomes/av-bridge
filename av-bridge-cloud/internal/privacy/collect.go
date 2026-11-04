@@ -214,13 +214,32 @@ func collectTable(ctx context.Context, tx pgx.Tx, s Subject, ids []string, name 
 
 // selectRows reads a table's exported columns (exportColumns) from the rows
 // matching where (SQL over alias t, using args), ordered by the first
-// column. Values are decoded from to_jsonb, so every column type comes back
-// as a JSON value.
+// column, with secrets redacted (redactRow).
 func selectRows(ctx context.Context, tx pgx.Tx, name, where string, args []any) (Table, error) {
+	tb := Table{Name: name}
+	cols, err := eachRow(ctx, tx, name, where, args, func(row []any) error {
+		tb.Rows = append(tb.Rows, row)
+		return nil
+	})
+	tb.Columns = cols
+	return tb, err
+}
+
+// eachRow streams a table's exported columns from the rows matching where
+// (SQL over alias t, using args), ordered by the first column, to fn one row
+// at a time. Values are decoded from to_jsonb, so every column type comes
+// back as a JSON value; secrets are redacted (redactRow) before fn sees them.
+// Returns the column names.
+func eachRow(ctx context.Context, tx pgx.Tx, name, where string, args []any, fn func(row []any) error) ([]string, error) {
 	cols, err := exportColumns(ctx, tx, name)
 	if err != nil {
-		return Table{}, err
+		return nil, err
 	}
+	return cols, streamRows(ctx, tx, name, cols, where, args, fn)
+}
+
+// streamRows is eachRow with the columns already known.
+func streamRows(ctx context.Context, tx pgx.Tx, name string, cols []string, where string, args []any, fn func(row []any) error) error {
 	sel := make([]string, len(cols))
 	for i, c := range cols {
 		sel[i] = "t." + pgx.Identifier{c}.Sanitize()
@@ -229,28 +248,30 @@ func selectRows(ctx context.Context, tx pgx.Tx, name, where string, args []any) 
 		` t WHERE ` + where + `) x ORDER BY x.` + pgx.Identifier{cols[0]}.Sanitize()
 	rows, err := tx.Query(ctx, q, args...)
 	if err != nil {
-		return Table{}, err
+		return err
 	}
 	defer rows.Close()
-	tb := Table{Name: name, Columns: cols}
 	for rows.Next() {
 		var raw string
 		if err := rows.Scan(&raw); err != nil {
-			return Table{}, err
+			return err
 		}
 		dec := json.NewDecoder(strings.NewReader(raw))
 		dec.UseNumber()
 		var m map[string]any
 		if err := dec.Decode(&m); err != nil {
-			return Table{}, err
+			return err
 		}
 		row := make([]any, len(cols))
 		for i, c := range cols {
 			row[i] = m[c]
 		}
-		tb.Rows = append(tb.Rows, row)
+		redactRow(name, cols, row)
+		if err := fn(row); err != nil {
+			return err
+		}
 	}
-	return tb, rows.Err()
+	return rows.Err()
 }
 
 // exportColumns lists a table's exported columns in table order.

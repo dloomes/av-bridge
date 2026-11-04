@@ -421,3 +421,35 @@ func emailPatternMatchesMigration(t *testing.T, path string) {
 		}
 	}
 }
+
+// The access export redacts secrets in the rows it returns: a person's
+// email channel can carry config with credentials in it.
+func TestCollectRedactsSecrets(t *testing.T) {
+	ctx, su, st, mk := setup(t)
+	c := mk("privacy-collect-redact")
+	const email = "redact@x.io"
+	if _, err := su.Exec(ctx, `INSERT INTO notification_channels (customer_id, name, type, target, config)
+		VALUES ($1, 'mail', 'email', $2, $3::jsonb)`, c, email,
+		`{"headers":{"Authorization":"Bearer HDRSECRET"},"password_enc":"PWSECRET","list":[{"api_token":"TOKSECRET"}],"keep":"visible"}`); err != nil {
+		t.Fatal(err)
+	}
+	_, got := collectFor(t, ctx, st.AdminPool(), c, "", email)
+	tb, ok := got["notification_channels"]
+	if !ok {
+		t.Fatal("notification_channels not collected")
+	}
+	var buf strings.Builder
+	if err := writeJSON(&buf, tb); err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range []string{"HDRSECRET", "PWSECRET", "TOKSECRET"} {
+		if strings.Contains(buf.String(), s) {
+			t.Errorf("access export holds %s:\n%s", s, buf.String())
+		}
+	}
+	for _, s := range []string{"visible", email, Redacted} {
+		if !strings.Contains(buf.String(), s) {
+			t.Errorf("access export lacks %q:\n%s", s, buf.String())
+		}
+	}
+}

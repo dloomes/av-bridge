@@ -5,7 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
+	"os"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -90,7 +94,11 @@ func (h *Handler) OffboardCustomer(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	id := strings.ToLower(strings.TrimSpace(r.PathValue("id")))
+	id, ok := pathUUID(r, "id")
+	if !ok {
+		writeErr(w, http.StatusNotFound, "customer not found")
+		return
+	}
 	ctx := r.Context()
 
 	var (
@@ -102,7 +110,7 @@ func (h *Handler) OffboardCustomer(w http.ResponseWriter, r *http.Request) {
 		var name string
 		var started *time.Time
 		err := tx.QueryRow(ctx, `SELECT name, offboarding_started_at FROM customers
-			WHERE id::text = $1 FOR UPDATE`, id).Scan(&name, &started)
+			WHERE id = $1::uuid FOR UPDATE`, id).Scan(&name, &started)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return &errStatus{http.StatusNotFound, "customer not found"}
 		}
@@ -119,7 +127,7 @@ func (h *Handler) OffboardCustomer(w http.ResponseWriter, r *http.Request) {
 			UPDATE customers
 			   SET offboarding_started_at = now(), offboarding_started_by = $2,
 			       delete_after = now() + $3::interval
-			 WHERE id::text = $1
+			 WHERE id = $1::uuid
 			RETURNING id::text, offboarding_started_at, delete_after`,
 			id, operatorIdentity(p), offboardingPeriod).Scan(
 			&out.CustomerID, &out.OffboardingStartedAt, &out.DeleteAfter); err != nil {
@@ -197,13 +205,17 @@ func (h *Handler) CancelOffboarding(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnauthorized, "no principal")
 		return
 	}
-	id := strings.ToLower(strings.TrimSpace(r.PathValue("id")))
+	id, ok := pathUUID(r, "id")
+	if !ok {
+		writeErr(w, http.StatusNotFound, "customer not found")
+		return
+	}
 	ctx := r.Context()
 	var customerID string
 	err := pgx.BeginFunc(ctx, h.store.AdminPool(), func(tx pgx.Tx) error {
 		var started *time.Time
 		err := tx.QueryRow(ctx, `SELECT id::text, offboarding_started_at FROM customers
-			WHERE id::text = $1 FOR UPDATE`, id).Scan(&customerID, &started)
+			WHERE id = $1::uuid FOR UPDATE`, id).Scan(&customerID, &started)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return &errStatus{http.StatusNotFound, "customer not found"}
 		}
@@ -241,38 +253,78 @@ func (h *Handler) CancelOffboarding(w http.ResponseWriter, r *http.Request) {
 
 // ExportCustomer — GET /api/v1/helpdesk/customers/{id}/export.zip
 //
-// The customer's whole dataset (privacy.CollectCustomer) as CSV + JSON,
-// built in memory and never stored. The download is appended to the open
-// customer_deletions row, if any, and audited as customer.export, in the
-// same transaction as the read: if anything fails, no archive is sent.
+// The customer's whole dataset (privacy.WriteCustomerExport) as CSV + JSON,
+// with secrets redacted. Generated on request and never kept: it is built in
+// a temporary file, removed on every path, and sent only when complete.
+//
+// Two transactions:
+//  1. a READ ONLY, REPEATABLE READ snapshot that builds the archive, so
+//     every table is read from one point in time;
+//  2. once the archive is complete, a short READ COMMITTED transaction that
+//     appends the download to the open customer_deletions row, if any, and
+//     audits customer.export.
+//
+// The archive is sent only after (2) commits, so every archive that leaves
+// is recorded, and a failure anywhere sends no archive. Keeping the write out
+// of the snapshot lets overlapping exports both succeed: two REPEATABLE READ
+// transactions updating the same deletion row would fail one with a
+// serialization error, while READ COMMITTED updates simply queue on the row
+// lock and each append lands.
 func (h *Handler) ExportCustomer(w http.ResponseWriter, r *http.Request) {
 	p, ok := portalauth.From(r.Context())
 	if !ok {
 		writeErr(w, http.StatusUnauthorized, "no principal")
 		return
 	}
-	id := strings.ToLower(strings.TrimSpace(r.PathValue("id")))
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
+	id, ok := pathUUID(r, "id")
+	if !ok {
+		writeErr(w, http.StatusNotFound, "customer not found")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
 	defer cancel()
 
-	var buf bytes.Buffer
-	var customerID, name string
-	// Repeatable read: every table is read from one snapshot.
-	err := pgx.BeginTxFunc(ctx, h.store.AdminPool(), pgx.TxOptions{IsoLevel: pgx.RepeatableRead}, func(tx pgx.Tx) error {
-		err := tx.QueryRow(ctx, `SELECT id::text, name FROM customers WHERE id::text = $1`, id).Scan(&customerID, &name)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return &errStatus{http.StatusNotFound, "customer not found"}
-		}
-		if err != nil {
+	f, err := os.CreateTemp("", "customer-export-*.zip")
+	if err != nil {
+		h.log.Error("customer export: temp file", "error", err)
+		writeErr(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	defer func() {
+		f.Close()
+		os.Remove(f.Name())
+	}()
+
+	var name string
+	var counts []privacy.TableCount
+	err = pgx.BeginTxFunc(ctx, h.store.AdminPool(),
+		pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly},
+		func(tx pgx.Tx) error {
+			err := tx.QueryRow(ctx, `SELECT name FROM customers WHERE id = $1::uuid`, id).Scan(&name)
+			if errors.Is(err, pgx.ErrNoRows) {
+				return &errStatus{http.StatusNotFound, "customer not found"}
+			}
+			if err != nil {
+				return err
+			}
+			counts, err = privacy.WriteCustomerExport(ctx, tx, id, name, f)
 			return err
-		}
-		tables, err := privacy.CollectCustomer(ctx, tx, customerID)
-		if err != nil {
-			return err
-		}
-		if err := privacy.WriteZIP(&buf, tables, privacy.CustomerREADME(name, tables)); err != nil {
-			return err
-		}
+		})
+	if err != nil {
+		h.writeTxErr(w, "customer export", err)
+		return
+	}
+	size, err := f.Seek(0, io.SeekCurrent)
+	if err == nil {
+		_, err = f.Seek(0, io.SeekStart)
+	}
+	if err != nil {
+		h.log.Error("customer export: rewind", "error", err)
+		writeErr(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	err = pgx.BeginFunc(ctx, h.store.AdminPool(), func(tx pgx.Tx) error {
 		entry, _ := json.Marshal([]map[string]string{{
 			"by": auditActorID(p),
 			"at": time.Now().UTC().Format(time.RFC3339),
@@ -280,26 +332,38 @@ func (h *Handler) ExportCustomer(w http.ResponseWriter, r *http.Request) {
 		if _, err := tx.Exec(ctx, `
 			UPDATE customer_deletions SET downloads = downloads || $2::jsonb
 			 WHERE customer_id = $1::uuid AND cancelled_at IS NULL AND deleted_at IS NULL`,
-			customerID, string(entry)); err != nil {
+			id, string(entry)); err != nil {
 			return err
 		}
-		return audit.Record(ctx, tx, customerID, stampActor(p, audit.Entry{
+		return audit.Record(ctx, tx, id, stampActor(p, audit.Entry{
 			Actor:      auditActorID(p),
 			Action:     "customer.export",
-			TargetKind: "customer", TargetID: customerID,
-			Metadata: map[string]any{"tables": len(tables), "bytes": buf.Len()},
+			TargetKind: "customer", TargetID: id,
+			Metadata: map[string]any{"tables": len(counts), "bytes": size},
 		}))
 	})
 	if err != nil {
-		h.writeTxErr(w, "customer export", err)
+		h.writeTxErr(w, "customer export: record download", err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/zip")
-	w.Header().Set("Content-Disposition", `attachment; filename="customer-export-`+customerID+`-`+time.Now().UTC().Format("2006-01-02")+`.zip"`)
+	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+	w.Header().Set("Content-Disposition", `attachment; filename="customer-export-`+id+`-`+time.Now().UTC().Format("2006-01-02")+`.zip"`)
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(buf.Bytes())
+	if _, err := io.Copy(w, f); err != nil {
+		h.log.Warn("customer export: sending failed", "customer", id, "error", err)
+	}
 }
+
+// pathUUID reads a path value that must be a UUID, lower-cased. Malformed
+// ids are refused up front so lookups can compare as uuid and use the index.
+func pathUUID(r *http.Request, key string) (string, bool) {
+	v := strings.ToLower(strings.TrimSpace(r.PathValue(key)))
+	return v, uuidRE.MatchString(v)
+}
+
+var uuidRE = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
 type deletionItem struct {
 	ID           string           `json:"id"`
@@ -382,11 +446,11 @@ func (h *Handler) ListDeletions(w http.ResponseWriter, r *http.Request) {
 // route captures the whole last segment; it must end in .csv.
 func (h *Handler) DeletionCertificate(w http.ResponseWriter, r *http.Request) {
 	id, ok := strings.CutSuffix(strings.ToLower(r.PathValue("file")), ".csv")
-	if !ok {
-		writeErr(w, http.StatusNotFound, "not found")
+	if !ok || !uuidRE.MatchString(id) {
+		writeErr(w, http.StatusNotFound, "deletion not found")
 		return
 	}
-	it, err := scanDeletion(h.store.AdminPool().QueryRow(r.Context(), deletionSelect+` WHERE d.id::text = $1`, id))
+	it, err := scanDeletion(h.store.AdminPool().QueryRow(r.Context(), deletionSelect+` WHERE d.id = $1::uuid`, id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeErr(w, http.StatusNotFound, "deletion not found")
 		return

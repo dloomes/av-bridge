@@ -1,10 +1,13 @@
 package privacy
 
 import (
+	"archive/zip"
+	"bufio"
 	"context"
 	"encoding/csv"
 	"fmt"
 	"io"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -26,21 +29,20 @@ var customerChildren = []struct{ name, where string }{
 	{"role_permissions", `t.role_id IN (SELECT r.id FROM roles r WHERE r.customer_id = $1::uuid)`},
 }
 
-// CollectCustomer gathers a customer's whole dataset for its offboarding
-// export: the customers row, every table with a customer_id column (found in
-// the catalogue, so new tables are included without a code change) except
-// customerExportSkipped, and customerChildren. Every table is returned, even
-// when empty, so the archive shows what was looked at. Credential columns
-// are left out as in Collect (exportExcluded).
-//
-// Run it in an AdminPool transaction (RLS is bypassed; every query filters
-// on the customer). Any error fails the whole collection: an export is never
-// partial. The table list is read from pg_catalog, not information_schema,
-// so a table the role cannot read fails loudly instead of being skipped.
-func CollectCustomer(ctx context.Context, tx pgx.Tx, customerID string) ([]Table, error) {
-	if strings.TrimSpace(customerID) == "" {
-		return nil, fmt.Errorf("privacy: customer export needs a customer")
-	}
+// TableCount is one table of a customer export and its row count.
+type TableCount struct {
+	Name string
+	Rows int
+}
+
+// customerTables lists what a customer export reads, as (table, where)
+// pairs over alias t with $1 = the customer id: the customers row, every
+// table with a customer_id column (found in the catalogue, so new tables are
+// included without a code change) except customerExportSkipped, then
+// customerChildren. The list comes from pg_catalog, not information_schema,
+// so a table the role cannot read fails the export loudly instead of being
+// skipped.
+func customerTables(ctx context.Context, tx pgx.Tx) ([][2]string, error) {
 	rows, err := tx.Query(ctx, `
 		SELECT c.relname::text
 		  FROM pg_class c
@@ -51,42 +53,146 @@ func CollectCustomer(ctx context.Context, tx pgx.Tx, customerID string) ([]Table
 		   AND c.relname <> ALL($1::text[])
 		 ORDER BY 1`, customerExportSkipped)
 	if err != nil {
-		return nil, fmt.Errorf("privacy: list customer tables: %w", err)
+		return nil, err
 	}
 	names, err := pgx.CollectRows(rows, pgx.RowTo[string])
 	if err != nil {
-		return nil, fmt.Errorf("privacy: list customer tables: %w", err)
-	}
-
-	args := []any{customerID}
-	out := make([]Table, 0, len(names)+1+len(customerChildren))
-	add := func(name, where string) error {
-		tb, err := selectRows(ctx, tx, name, where, args)
-		if err != nil {
-			return fmt.Errorf("privacy: export %s: %w", name, err)
-		}
-		out = append(out, tb)
-		return nil
-	}
-	if err := add("customers", `t.id = $1::uuid`); err != nil {
 		return nil, err
 	}
-	for _, name := range names {
-		if err := add(name, `t.customer_id = $1::uuid`); err != nil {
-			return nil, err
-		}
+	out := [][2]string{{"customers", `t.id = $1::uuid`}}
+	for _, n := range names {
+		out = append(out, [2]string{n, `t.customer_id = $1::uuid`})
 	}
 	for _, c := range customerChildren {
-		if err := add(c.name, c.where); err != nil {
-			return nil, err
-		}
+		out = append(out, [2]string{c.name, c.where})
 	}
 	return out, nil
 }
 
-// CustomerREADME explains a customer export: what it holds and, per table,
-// its row count and the columns the register marks as personal data.
-func CustomerREADME(name string, tables []Table) string {
+// WriteCustomerExport writes a customer's whole dataset to w as a ZIP:
+// <table>.csv and <table>.json for every table of customerTables (empty
+// ones too, so the archive shows what was looked at), then README.txt
+// (CustomerREADME). Credential columns are left out and secrets redacted as
+// in Collect (exportExcluded, redactRow).
+//
+// Rows are streamed from the database into the archive, one row in memory
+// at a time; each table's JSON is spooled to a temporary file while its CSV
+// is written, since ZIP entries are written one after the other. Write to a
+// file, not a response: on any error the caller must discard w, so an export
+// is never partial. Run it in one AdminPool transaction (RLS is bypassed;
+// every query filters on the customer), REPEATABLE READ for one snapshot.
+func WriteCustomerExport(ctx context.Context, tx pgx.Tx, customerID, name string, w io.Writer) ([]TableCount, error) {
+	if strings.TrimSpace(customerID) == "" {
+		return nil, fmt.Errorf("privacy: customer export needs a customer")
+	}
+	tables, err := customerTables(ctx, tx)
+	if err != nil {
+		return nil, fmt.Errorf("privacy: list customer tables: %w", err)
+	}
+	spool, err := os.CreateTemp("", "customer-export-json-*")
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		spool.Close()
+		os.Remove(spool.Name())
+	}()
+
+	zw := zip.NewWriter(w)
+	args := []any{customerID}
+	counts := make([]TableCount, 0, len(tables))
+	for _, tw := range tables {
+		n, err := writeTable(ctx, tx, zw, spool, tw[0], tw[1], args)
+		if err != nil {
+			return nil, fmt.Errorf("privacy: export %s: %w", tw[0], err)
+		}
+		counts = append(counts, TableCount{Name: tw[0], Rows: n})
+	}
+	f, err := zw.Create("README.txt")
+	if err != nil {
+		return nil, err
+	}
+	if _, err := io.WriteString(f, CustomerREADME(name, counts)); err != nil {
+		return nil, err
+	}
+	if err := zw.Close(); err != nil {
+		return nil, err
+	}
+	return counts, nil
+}
+
+// writeTable streams one table into <name>.csv and, through spool,
+// <name>.json. Returns the row count.
+func writeTable(ctx context.Context, tx pgx.Tx, zw *zip.Writer, spool *os.File, name, where string, args []any) (int, error) {
+	cols, err := exportColumns(ctx, tx, name)
+	if err != nil {
+		return 0, err
+	}
+	if err := spool.Truncate(0); err != nil {
+		return 0, err
+	}
+	if _, err := spool.Seek(0, io.SeekStart); err != nil {
+		return 0, err
+	}
+	js := bufio.NewWriter(spool)
+	f, err := zw.Create(name + ".csv")
+	if err != nil {
+		return 0, err
+	}
+	cw := csv.NewWriter(f)
+	if err := cw.Write(cols); err != nil {
+		return 0, err
+	}
+	js.WriteString("[")
+	n := 0
+	err = streamRows(ctx, tx, name, cols, where, args, func(row []any) error {
+		rec, err := csvRecord(row)
+		if err != nil {
+			return err
+		}
+		if err := cw.Write(rec); err != nil {
+			return err
+		}
+		obj, err := jsonRow(cols, row)
+		if err != nil {
+			return err
+		}
+		if n > 0 {
+			js.WriteString(",")
+		}
+		js.WriteString("\n  ")
+		js.Write(obj)
+		n++
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	cw.Flush()
+	if err := cw.Error(); err != nil {
+		return 0, err
+	}
+	js.WriteString("\n]\n")
+	if err := js.Flush(); err != nil {
+		return 0, err
+	}
+	if _, err := spool.Seek(0, io.SeekStart); err != nil {
+		return 0, err
+	}
+	f, err = zw.Create(name + ".json")
+	if err != nil {
+		return 0, err
+	}
+	if _, err := io.Copy(f, spool); err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
+// CustomerREADME explains a customer export: what it holds, what is
+// redacted and, per table, its row count and the columns the register marks
+// as personal data.
+func CustomerREADME(name string, tables []TableCount) string {
 	personal := map[string][]string{}
 	seen := map[string]bool{}
 	for _, e := range Personal {
@@ -104,14 +210,14 @@ func CustomerREADME(name string, tables []Table) string {
 	b.WriteString("This archive holds everything M.A.R.C.U.S. stores for this organisation: one table per\n")
 	b.WriteString("pair of files, <table>.csv and <table>.json, with the same rows. Empty tables are included.\n")
 	b.WriteString("Device telemetry is given as daily summaries (telemetry_daily), not raw readings.\n")
-	b.WriteString("Passwords, token hashes, encrypted secrets and binary data (such as logos) are left out,\n")
-	b.WriteString("and so are sign-in sessions and one-time sign-in tokens.\n")
+	b.WriteString("Sign-in sessions and one-time sign-in tokens are not included.\n")
+	b.WriteString(RedactionNote)
 	b.WriteString("In the CSV files, lists and objects are written as JSON, and text that a spreadsheet could\n")
 	b.WriteString("run as a formula (starting with =, +, -, @, a tab or a carriage return) is prefixed with ' ;\n")
 	b.WriteString("the JSON files hold the exact values.\n\n")
 	b.WriteString("Tables\n------\n")
 	for _, tb := range tables {
-		fmt.Fprintf(&b, "\n%s (%d rows)\n", tb.Name, len(tb.Rows))
+		fmt.Fprintf(&b, "\n%s (%d rows)\n", tb.Name, tb.Rows)
 		if cols := personal[tb.Name]; len(cols) > 0 {
 			fmt.Fprintf(&b, "  Personal data columns: %s\n", strings.Join(cols, ", "))
 		}

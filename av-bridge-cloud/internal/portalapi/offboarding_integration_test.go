@@ -652,22 +652,93 @@ func TestHelpdeskOffboardCancelExport(t *testing.T) {
 		}
 	}
 
+	// Only one open deletion row per customer (migration 0076).
+	if _, err := su.Exec(ctx, `INSERT INTO customer_deletions (customer_id, customer_name, started_at, started_by)
+	                           VALUES ($1, 'dup', now(), 'x')`, cust); err == nil {
+		t.Error("a second open customer_deletions row was accepted")
+	}
+	// Malformed ids are 404 before any lookup.
+	for _, path := range []string{
+		"/api/v1/helpdesk/customers/not-a-uuid/offboard",
+		"/api/v1/helpdesk/customers/not-a-uuid/cancel-offboarding",
+		"/api/v1/helpdesk/customers/not-a-uuid/export.zip",
+		"/api/v1/helpdesk/deletions/not-a-uuid.csv",
+	} {
+		method := http.MethodPost
+		if strings.HasSuffix(path, ".zip") || strings.HasSuffix(path, ".csv") {
+			method = http.MethodGet
+		}
+		if r := call(method, path, vendorSession, map[string]string{"confirm": name}); r.code != http.StatusNotFound {
+			t.Errorf("%s %s: got %d %s, want 404", method, path, r.code, r.body)
+		}
+	}
+
+	// Secrets the export must not carry: a ServiceNow password, webhook
+	// headers and URL, a Teams URL.
+	secretStrs := []string{"SNPW" + tag, "WHTOKEN" + tag, "WHURL" + tag, "TEAMS" + tag, "NESTED" + tag}
+	exec(`INSERT INTO notification_channels (customer_id, name, type, target, config) VALUES
+		($1, 'sn', 'servicenow', 'https://acme.service-now.com', $2::jsonb),
+		($1, 'hook', 'webhook', $3, $4::jsonb),
+		($1, 'teams', 'teams', $5, NULL),
+		($1, 'mail', 'email', 'ops@offx.test', NULL)`, cust,
+		`{"username":"marcus","password_enc":"`+secretStrs[0]+`","extra":[{"Api_Key":"`+secretStrs[4]+`"}]}`,
+		"https://hooks.example.com/services/"+secretStrs[2],
+		`{"headers":{"Authorization":"Bearer `+secretStrs[1]+`"}}`,
+		"https://acme.webhook.office.com/webhookb2/"+secretStrs[3])
+
+	// A second customer whose rows must not appear in this export.
+	other := q(`INSERT INTO customers (name) VALUES ($1) RETURNING id::text`, "Other Co "+tag)
+	otherUser := q(`INSERT INTO users (customer_id, email, password_hash, role) VALUES ($1, $2, 'x', 'admin') RETURNING id::text`,
+		other, "other-"+tag+"@other.test")
+	otherCol := q(`INSERT INTO collectors (customer_id, bridge_collector_id, name, hmac_secret_enc)
+	               VALUES ($1, $2, 'oc', '\x00') RETURNING id::text`, other, "other-col-"+tag)
+	otherDev := q(`INSERT INTO devices (customer_id, collector_id, reported_id, name, protocol)
+	               VALUES ($1, $2, 'od', 'Other device', 'ping') RETURNING id::text`, other, otherCol)
+	exec(`INSERT INTO telemetry_daily (customer_id, device_id, day, samples) VALUES ($1, $2, current_date - 1, 5)`, other, otherDev)
+	otherChan := q(`INSERT INTO notification_channels (customer_id, name, type, target) VALUES ($1, 'm', 'email', 'x@other.test') RETURNING id::text`, other)
+	otherAudit := q(`INSERT INTO audit_log (customer_id, actor, action, target_kind) VALUES ($1, 'test', 'other.thing', 'customer') RETURNING id::text`, other)
+	otherIDs := []string{other, otherUser, otherCol, otherDev, otherChan, otherAudit}
+
 	// --- Export.
 	{
 		r := call(http.MethodGet, base+"/export.zip", vendorSession, nil)
 		if r.code != http.StatusOK || r.hdr.Get("Content-Type") != "application/zip" {
 			t.Fatalf("export: got %d %s %s", r.code, r.hdr.Get("Content-Type"), r.body)
 		}
+		if cl := r.hdr.Get("Content-Length"); cl != strconv.Itoa(len(r.body)) {
+			t.Errorf("Content-Length %s, body %d bytes", cl, len(r.body))
+		}
 		zr, err := zip.NewReader(bytes.NewReader(r.body), int64(len(r.body)))
 		if err != nil {
 			t.Fatal(err)
 		}
 		files := map[string]string{}
+		var all strings.Builder
 		for _, f := range zr.File {
 			rc, _ := f.Open()
 			b, _ := io.ReadAll(rc)
 			rc.Close()
 			files[f.Name] = string(b)
+			all.Write(b)
+		}
+		for _, s := range secretStrs {
+			if bytes.Contains(r.body, []byte(s)) || strings.Contains(all.String(), s) {
+				t.Errorf("export contains the secret %q", s)
+			}
+		}
+		for _, want := range []string{"https://hooks.example.com/[redacted]", "https://acme.webhook.office.com/[redacted]",
+			"https://acme.service-now.com", "ops@offx.test", "marcus"} {
+			if !strings.Contains(files["notification_channels.csv"], want) {
+				t.Errorf("notification_channels.csv lacks %q:\n%s", want, files["notification_channels.csv"])
+			}
+		}
+		if !strings.Contains(files["README.txt"], "notification_channels.target for Teams and webhook channels") {
+			t.Error("README does not describe the redaction")
+		}
+		for _, id := range otherIDs {
+			if strings.Contains(all.String(), id) {
+				t.Errorf("export contains the other customer's id %s", id)
+			}
 		}
 		for _, want := range []string{"devices.csv", "devices.json", "telemetry_daily.csv", "customers.csv", "README.txt"} {
 			if _, ok := files[want]; !ok {
@@ -691,6 +762,33 @@ func TestHelpdeskOffboardCancelExport(t *testing.T) {
 		if got := q(`SELECT jsonb_array_length(downloads)::text || '|' || (downloads->0->>'by')
 		               FROM customer_deletions WHERE customer_id = $1`, cust); got != "1|user:"+vendor {
 			t.Errorf("downloads = %q, want one entry by user:%s", got, vendor)
+		}
+	}
+
+	// Overlapping exports both succeed and are both recorded.
+	{
+		codes := make(chan int, 3)
+		for i := 0; i < 3; i++ {
+			go func() {
+				req, _ := http.NewRequest(http.MethodGet, ts.URL+base+"/export.zip", nil)
+				req.Header.Set("Authorization", "Bearer "+vendorSession)
+				res, err := http.DefaultClient.Do(req)
+				if err != nil {
+					codes <- 0
+					return
+				}
+				io.Copy(io.Discard, res.Body)
+				res.Body.Close()
+				codes <- res.StatusCode
+			}()
+		}
+		for i := 0; i < 3; i++ {
+			if c := <-codes; c != http.StatusOK {
+				t.Errorf("concurrent export: got %d, want 200", c)
+			}
+		}
+		if n := q(`SELECT jsonb_array_length(downloads)::text FROM customer_deletions WHERE customer_id = $1`, cust); n != "4" {
+			t.Errorf("downloads after 3 concurrent exports = %s, want 4", n)
 		}
 	}
 
