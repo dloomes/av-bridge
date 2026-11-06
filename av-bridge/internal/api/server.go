@@ -16,7 +16,7 @@ import (
 )
 
 var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true },
+	CheckOrigin: checkSameOrigin,
 }
 
 // Server is the local HTTP API. It exposes:
@@ -45,6 +45,14 @@ func New(listenAddr string, h *hub.Hub, c *cloud.Client, auth AuthConfig) *Serve
 		subscribers: make(map[chan *device.Event]struct{}),
 	}
 
+	if effective, forced := safeListenAddr(listenAddr, auth); forced {
+		slog.Error("local API refused to listen on the network without authentication; "+
+			"set api.auth.enabled: true with at least one api.auth.api_keys entry to use hub.listen_addr, "+
+			"listening on loopback only",
+			"hub.listen_addr", listenAddr, "listening", effective)
+		listenAddr = effective
+	}
+
 	r := mux.NewRouter()
 
 	// Apply middleware stack: recovery → logging → auth
@@ -60,7 +68,6 @@ func New(listenAddr string, h *hub.Hub, c *cloud.Client, auth AuthConfig) *Serve
 	r.HandleFunc("/api/v1/devices/{id}/command", s.sendCommand).Methods(http.MethodPost)
 	r.HandleFunc("/api/v1/devices/{id}/telemetry", s.getTelemetry).Methods(http.MethodGet)
 	r.HandleFunc("/api/v1/devices/{id}/reconnect", s.reconnectDevice).Methods(http.MethodPost)
-	r.PathPrefix("/api/v1/devices/{id}/touch-panel").HandlerFunc(s.touchPanelProxy)
 	r.HandleFunc("/ws/events", s.wsEvents)
 
 	s.srv = &http.Server{

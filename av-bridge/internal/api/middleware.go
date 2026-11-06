@@ -26,7 +26,9 @@ func authMiddleware(cfg AuthConfig) func(http.Handler) http.Handler {
 	// Build a fast lookup set
 	validKeys := make(map[string]struct{}, len(cfg.APIKeys))
 	for _, k := range cfg.APIKeys {
-		validKeys[strings.TrimSpace(k)] = struct{}{}
+		if k = strings.TrimSpace(k); k != "" {
+			validKeys[k] = struct{}{}
+		}
 	}
 
 	return func(next http.Handler) http.Handler {

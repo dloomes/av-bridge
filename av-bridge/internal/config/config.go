@@ -163,7 +163,7 @@ func Load(path string) (*Config, error) {
 
 func applyDefaults(cfg *Config) {
 	if cfg.Hub.ListenAddr == "" {
-		cfg.Hub.ListenAddr = "0.0.0.0:8080"
+		cfg.Hub.ListenAddr = "127.0.0.1:8080"
 	}
 	if cfg.Hub.HeartbeatPeriod == 0 {
 		cfg.Hub.HeartbeatPeriod = 30 * time.Second

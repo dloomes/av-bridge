@@ -56,7 +56,7 @@ devices:
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.Hub.ListenAddr != "0.0.0.0:8080" {
+	if cfg.Hub.ListenAddr != "127.0.0.1:8080" {
 		t.Errorf("expected default listen addr, got %q", cfg.Hub.ListenAddr)
 	}
 	if cfg.Cloud.PushInterval != 30*time.Second {
