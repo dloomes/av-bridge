@@ -1579,9 +1579,8 @@ export const api = {
       { method: "POST", signal }
     ),
 
-  // Edit collector fields — currently local_url + name. Wire-compatible
-  // pointer semantics: absent field means "no change"; empty string on
-  // local_url clears the stored value. Returns 204.
+  // Edit collector fields — name and update_window. Absent field means
+  // "no change". Returns 204.
   updateCollector: async (
     id: string,
     body: UpdateCollectorBody,

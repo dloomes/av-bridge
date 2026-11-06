@@ -14,7 +14,7 @@ const inputClass =
 
 // The cloud answers errors as `{"error": "..."}`; ApiError carries
 // "<status> <text>: <body>".
-function errorText(e: unknown): string {
+export function errorText(e: unknown): string {
   const msg = e instanceof Error ? e.message : String(e);
   const i = msg.indexOf("{");
   if (i >= 0) {

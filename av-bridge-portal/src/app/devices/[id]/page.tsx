@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import {
-  ExternalLink,
   History,
   MapPin,
   Pencil,
@@ -29,9 +28,10 @@ import { Modal } from "@/components/modal";
 import { DeviceForm } from "@/components/device-form";
 import { AuditFeed } from "@/components/audit-feed";
 import { RemoteAccessButton } from "@/components/remote-access";
+import { TouchPanelButton } from "@/components/touch-panel-button";
 import { usePolling } from "@/hooks/usePolling";
 import { useSession } from "@/hooks/useSession";
-import { api, API_BASE, currentToken } from "@/lib/api";
+import { api, API_BASE } from "@/lib/api";
 import { hasPermission } from "@/lib/session";
 import type { DeviceDetail, Telemetry } from "@/lib/types";
 import { formatRelative, formatTimestamp } from "@/lib/utils";
@@ -203,39 +203,7 @@ export default function DeviceDetailPage() {
                 : null
             )}
           </span>
-          {device.protocol === "aurora_rxt" && (() => {
-            // Two paths for reaching the panel:
-            //
-            //   1. Collector has a local_url set → route through the bridge's
-            //      on-prem proxy (`{local_url}/api/v1/devices/{id}/touch-panel/user`)
-            //      so panels on subnets the browser can't reach directly
-            //      still open. Bearer token rides as a query param — enough
-            //      for the initial GET; asset GETs are anonymous within the
-            //      panel's own session.
-            //
-            //   2. No local_url → fall back to the direct-to-panel link
-            //      (existing behaviour). Works when browser + panel are on
-            //      the same LAN.
-            const panelHost =
-              device.tags?.ip_address ?? device.address?.split(":")[0];
-            const localBase = device.collector_local_url?.replace(/\/+$/, "");
-            const href = localBase
-              ? `${localBase}/api/v1/devices/${encodeURIComponent(device.id)}/touch-panel/user${
-                  currentToken() ? `?token=${encodeURIComponent(currentToken())}` : ""
-                }`
-              : panelHost
-              ? `https://${panelHost}/user`
-              : null;
-            if (!href) return null;
-            return (
-              <Button asChild variant="outline" size="sm">
-                <a href={href} target="_blank" rel="noopener noreferrer">
-                  Touch Panel
-                  <ExternalLink className="h-3.5 w-3.5" />
-                </a>
-              </Button>
-            );
-          })()}
+          <TouchPanelButton device={device} />
           {canRemoteAccess && (
             <RemoteAccessButton
               deviceId={device.id}

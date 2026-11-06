@@ -34,12 +34,6 @@ export interface DeviceSummary {
   // see the device (versus "device never polled" or "device reported
   // unknown").
   collector_status?: "online" | "offline" | "unknown";
-  // LAN base URL of the device's collector (collectors.local_url).
-  // Present when the operator has set it on the Collectors page. The
-  // touch-panel button uses it to route through the bridge's proxy
-  // instead of hitting the panel directly, so panels on subnets the
-  // browser can't reach still open.
-  collector_local_url?: string;
   address?: string;
   status: DeviceStatus;
   // The device's own power state as its adapter reports it (e.g. Sony
@@ -158,14 +152,6 @@ export interface CollectorSummary {
   bridge_os?: string;
   last_config_pull_at?: string;
   config_sync_status: "current" | "stale" | "unknown";
-  // LAN-reachable base URL of the collector's bridge (e.g.
-  // "http://10.0.5.10:8080"). Set by the operator on the Collectors
-  // page. When present, the touch-panel button routes through the
-  // bridge's proxy (`{local_url}/api/v1/devices/{id}/touch-panel/...`)
-  // — enables reaching panels on a LAN the browser can see the bridge
-  // on but not the panel directly. Empty falls back to a
-  // direct-to-panel link.
-  local_url?: string;
 
   // Self-update. latest_version is the collector release bundled with
   // the cloud; update_available is true when this collector can take it
@@ -199,10 +185,8 @@ export type CollectorUpdateState =
   | "rolled_back";
 
 // UpdateCollectorBody — PATCH shape. Every field optional; only fields
-// present in the payload are written. Empty string on local_url clears
-// the stored value.
+// present in the payload are written.
 export interface UpdateCollectorBody {
-  local_url?: string;
   name?: string;
   // "HH:MM" opens a daily 2-hour automatic update window; "" turns
   // automatic updates off.
