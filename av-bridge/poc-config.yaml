@@ -1,7 +1,8 @@
 hub:
-  # Use 0.0.0.0:8080 to expose the API to other hosts on the LAN (e.g. when
-  # running av-bridge on a Raspberry Pi and the portal on a laptop). Use
-  # 127.0.0.1:8080 to keep the API local to this machine only.
+  # 0.0.0.0:8080 exposes the API to other hosts on the LAN (e.g. when running
+  # av-bridge on a Raspberry Pi and testing from a laptop). That needs api.auth
+  # enabled with a key (export AV_BRIDGE_API_KEY); without one the Collector
+  # refuses and listens on 127.0.0.1:8080 only.
   listen_addr: "0.0.0.0:8080"
   heartbeat_period: 30s
   log_level: debug                      # verbose so you see everything during PoC
@@ -29,10 +30,9 @@ lens:
 
 api:
   auth:
-    # Bearer-token auth for /api/v1/* and /ws/events. /healthz and /metrics
-    # remain unauthenticated so monitoring and the portal's connection
-    # indicator keep working without the key.
-    enabled: false
+    # Bearer-token auth for /api/v1/*, /metrics and /ws/events. /healthz
+    # remains unauthenticated so health checks work without the key.
+    enabled: true
     api_keys:
       - "${AV_BRIDGE_API_KEY}"          # generate with: openssl rand -hex 32
 

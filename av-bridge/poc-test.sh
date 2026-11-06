@@ -5,10 +5,17 @@
 # Usage:
 #   chmod +x poc-test.sh
 #   ./poc-test.sh [av-bridge address, default 127.0.0.1:8080]
+#
+# poc-config.yaml enables api.auth, so export the same key the Collector uses:
+#   export AV_BRIDGE_API_KEY=<key>
 
 set -euo pipefail
 
 BASE="${1:-http://127.0.0.1:8080}"
+AUTH=()
+if [[ -n "${AV_BRIDGE_API_KEY:-}" ]]; then
+    AUTH=(-H "Authorization: Bearer ${AV_BRIDGE_API_KEY}")
+fi
 GREEN="\033[0;32m"
 AMBER="\033[0;33m"
 RED="\033[0;31m"
@@ -23,7 +30,7 @@ section() { echo -e "\n${BLUE}── $* ─────────────�
 
 # ── 1. Health check ───────────────────────────────────────────────────────────
 section "Health check"
-HEALTH=$(curl -sf "$BASE/healthz" || echo "FAIL")
+HEALTH=$(curl -sf ${AUTH[@]+"${AUTH[@]}"} "$BASE/healthz" || echo "FAIL")
 if echo "$HEALTH" | grep -q "ok"; then
     pass "av-bridge is running"
 else
@@ -34,7 +41,7 @@ fi
 
 # ── 2. Fleet status ───────────────────────────────────────────────────────────
 section "Fleet status"
-STATUS=$(curl -sf "$BASE/api/v1/status")
+STATUS=$(curl -sf ${AUTH[@]+"${AUTH[@]}"} "$BASE/api/v1/status")
 echo "$STATUS" | python3 -m json.tool 2>/dev/null || echo "$STATUS"
 
 TOTAL=$(echo "$STATUS" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('total',0))" 2>/dev/null || echo 0)
@@ -51,12 +58,12 @@ fi
 
 # ── 3. Device list ────────────────────────────────────────────────────────────
 section "Device inventory"
-DEVICES=$(curl -sf "$BASE/api/v1/devices")
+DEVICES=$(curl -sf ${AUTH[@]+"${AUTH[@]}"} "$BASE/api/v1/devices")
 echo "$DEVICES" | python3 -m json.tool 2>/dev/null || echo "$DEVICES"
 
 # ── 4. Per-device telemetry ───────────────────────────────────────────────────
 section "Live telemetry — Biamp Tesira"
-TEL=$(curl -sf "$BASE/api/v1/devices/tesira-boardroom-01/telemetry" || echo '{"error":"device not found"}')
+TEL=$(curl -sf ${AUTH[@]+"${AUTH[@]}"} "$BASE/api/v1/devices/tesira-boardroom-01/telemetry" || echo '{"error":"device not found"}')
 echo "$TEL" | python3 -m json.tool 2>/dev/null || echo "$TEL"
 if echo "$TEL" | grep -q '"status":"online"'; then
     pass "Tesira online and returning telemetry"
@@ -65,7 +72,7 @@ else
 fi
 
 section "Live telemetry — Sony Bravia"
-TEL=$(curl -sf "$BASE/api/v1/devices/display-sony-01/telemetry" || echo '{"error":"device not found"}')
+TEL=$(curl -sf ${AUTH[@]+"${AUTH[@]}"} "$BASE/api/v1/devices/display-sony-01/telemetry" || echo '{"error":"device not found"}')
 echo "$TEL" | python3 -m json.tool 2>/dev/null || echo "$TEL"
 if echo "$TEL" | grep -q '"status":"online"'; then
     pass "Sony Bravia online and returning telemetry"
@@ -74,7 +81,7 @@ else
 fi
 
 section "Live telemetry — Poly G7500"
-TEL=$(curl -sf "$BASE/api/v1/devices/vc-poly-01/telemetry" || echo '{"error":"device not found"}')
+TEL=$(curl -sf ${AUTH[@]+"${AUTH[@]}"} "$BASE/api/v1/devices/vc-poly-01/telemetry" || echo '{"error":"device not found"}')
 echo "$TEL" | python3 -m json.tool 2>/dev/null || echo "$TEL"
 if echo "$TEL" | grep -q '"status":"online"'; then
     pass "Poly G7500 online and returning telemetry"
@@ -85,7 +92,7 @@ fi
 # ── 5. Command tests ──────────────────────────────────────────────────────────
 section "Command test — Tesira mute"
 info "Sending mute command to Tesira..."
-RESP=$(curl -sf -X POST "$BASE/api/v1/devices/tesira-boardroom-01/command" \
+RESP=$(curl -sf ${AUTH[@]+"${AUTH[@]}"} -X POST "$BASE/api/v1/devices/tesira-boardroom-01/command" \
     -H "Content-Type: application/json" \
     -d '{"name":"mute"}' || echo '{"error":"failed"}')
 echo "$RESP" | python3 -m json.tool 2>/dev/null || echo "$RESP"
@@ -98,7 +105,7 @@ fi
 sleep 2
 
 info "Sending unmute command to Tesira..."
-RESP=$(curl -sf -X POST "$BASE/api/v1/devices/tesira-boardroom-01/command" \
+RESP=$(curl -sf ${AUTH[@]+"${AUTH[@]}"} -X POST "$BASE/api/v1/devices/tesira-boardroom-01/command" \
     -H "Content-Type: application/json" \
     -d '{"name":"unmute"}' || echo '{"error":"failed"}')
 if echo "$RESP" | grep -q '"success":true\|+OK'; then
@@ -109,7 +116,7 @@ fi
 
 section "Command test — Sony Bravia power query"
 info "Querying Sony power status directly via system/getPowerStatus..."
-RESP=$(curl -sf -X POST "$BASE/api/v1/devices/display-sony-01/command" \
+RESP=$(curl -sf ${AUTH[@]+"${AUTH[@]}"} -X POST "$BASE/api/v1/devices/display-sony-01/command" \
     -H "Content-Type: application/json" \
     -d '{"name":"system/getPowerStatus"}' || echo '{"error":"failed"}')
 echo "$RESP" | python3 -m json.tool 2>/dev/null || echo "$RESP"
@@ -117,7 +124,7 @@ pass "Sony command path working (check response above for power status)"
 
 section "Command test — Poly G7500 mute"
 info "Sending mute command to Poly G7500..."
-RESP=$(curl -sf -X POST "$BASE/api/v1/devices/vc-poly-01/command" \
+RESP=$(curl -sf ${AUTH[@]+"${AUTH[@]}"} -X POST "$BASE/api/v1/devices/vc-poly-01/command" \
     -H "Content-Type: application/json" \
     -d '{"name":"mute"}' || echo '{"error":"failed"}')
 echo "$RESP" | python3 -m json.tool 2>/dev/null || echo "$RESP"
@@ -126,13 +133,13 @@ pass "Poly mute command sent (check response above)"
 sleep 2
 
 info "Unmuting Poly G7500..."
-curl -sf -X POST "$BASE/api/v1/devices/vc-poly-01/command" \
+curl -sf ${AUTH[@]+"${AUTH[@]}"} -X POST "$BASE/api/v1/devices/vc-poly-01/command" \
     -H "Content-Type: application/json" \
     -d '{"name":"unmute"}' > /dev/null 2>&1 || true
 
 # ── 6. Prometheus metrics ─────────────────────────────────────────────────────
 section "Prometheus metrics"
-METRICS=$(curl -sf "$BASE/metrics")
+METRICS=$(curl -sf ${AUTH[@]+"${AUTH[@]}"} "$BASE/metrics")
 echo "$METRICS"
 ONLINE_GAUGE=$(echo "$METRICS" | grep "^av_bridge_devices_online " | awk '{print $2}')
 if [ -n "$ONLINE_GAUGE" ] && [ "$ONLINE_GAUGE" != "0" ]; then
@@ -144,7 +151,7 @@ fi
 # ── 7. WebSocket events ───────────────────────────────────────────────────────
 section "WebSocket event stream"
 info "WebSocket events stream at: ws://127.0.0.1:8080/ws/events"
-info "Test with: websocat ws://127.0.0.1:8080/ws/events"
+info "Test with: websocat \"ws://127.0.0.1:8080/ws/events?token=\$AV_BRIDGE_API_KEY\""
 info "Or curl (keeps connection open, events appear as they arrive):"
 info "  curl -N --http1.1 -H 'Connection: Upgrade' -H 'Upgrade: websocket' \\"
 info "       -H 'Sec-WebSocket-Key: test' -H 'Sec-WebSocket-Version: 13' \\"

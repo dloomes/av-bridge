@@ -31,7 +31,7 @@ Customer Network                             Cloud
 
 **Cloud Publisher** — Buffers telemetry + events and pushes them to your cloud webhook on a configurable interval with retries.
 
-**Local API** — REST + WebSocket API on `:8080`. Lets the cloud portal push commands inbound, and stream live events.
+**Local API** — REST + WebSocket API on `127.0.0.1:8080`, reachable only from the Collector host by default. Used for local diagnostics and live events; the cloud reaches the Collector over its own outbound connection. To open it to the network, set `hub.listen_addr` and enable `api.auth` with at least one key — without keys the Collector logs an error and stays on loopback.
 
 ---
 
@@ -74,7 +74,7 @@ Edit `/etc/av-bridge/config.yaml`:
 
 ```yaml
 hub:
-  listen_addr: "0.0.0.0:8080"
+  listen_addr: "127.0.0.1:8080"   # default; loopback only
   heartbeat_period: 30s
 
 cloud:
@@ -146,7 +146,10 @@ Then configure:
 openssl rand -hex 32
 
 sudo nano /etc/av-bridge/config.yaml   # set listen_addr 0.0.0.0:8080,
-                                        # auth.enabled: true, devices, etc.
+                                        # auth.enabled: true + api_keys
+                                        # (required: without a key the
+                                        # Collector stays on 127.0.0.1),
+                                        # devices, etc.
 sudo nano /etc/av-bridge/env           # set AV_BRIDGE_API_KEY=<that key>,
                                         # device passwords, webhook secrets
 
@@ -183,6 +186,10 @@ npm run dev
 
 Open http://localhost:3000 — the dashboard should populate from the Pi.
 
+The Pi's `/ws/events` refuses browser connections from another origin, so the
+portal's live event feed won't connect directly to the Pi; use a non-browser
+client such as `websocat` to watch events.
+
 ### Tradeoffs and next steps
 
 - **Cleartext on the LAN.** The API key travels in plain HTTP unless you turn
@@ -203,7 +210,8 @@ Open http://localhost:3000 — the dashboard should populate from the Pi.
 
 ## Local API Reference
 
-All endpoints are on `http://localhost:8080`.
+All endpoints are on `http://localhost:8080` (loopback only unless
+`hub.listen_addr` is changed and `api.auth` is enabled with keys).
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -214,10 +222,12 @@ All endpoints are on `http://localhost:8080`.
 | POST | `/api/v1/devices/{id}/command` | Send a command to a device |
 | GET | `/ws/events` | WebSocket stream of all device events |
 
-When `api.auth.enabled` is true, every endpoint except `/healthz` and `/metrics`
+When `api.auth.enabled` is true, every endpoint except `/healthz`
 requires `Authorization: Bearer <api-key>`. The WebSocket accepts the key as
 either a `Authorization` header (for non-browser clients) or a `?token=` query
-parameter (for browsers).
+parameter (for browsers). `/ws/events` accepts browser connections only from
+the same origin (the `Origin` host must equal the request `Host`); clients that
+send no `Origin` are allowed.
 
 ### Send a command
 

@@ -27,9 +27,12 @@ Creates the `av-bridge` system user, installs the binary to
 
 Edit `/etc/av-bridge/config.yaml` — at minimum, set:
 
-- `hub.listen_addr: "0.0.0.0:8080"` so the portal on another host can reach it
+- `hub.listen_addr` — defaults to `127.0.0.1:8080` (this host only). Set
+  `"0.0.0.0:8080"` only if another host needs the local API, and then also:
 - `api.auth.enabled: true` and an `api_keys` entry that references
-  `${AV_BRIDGE_API_KEY}` from the env file
+  `${AV_BRIDGE_API_KEY}` from the env file. Without a usable key the
+  Collector logs an error and listens on `127.0.0.1` regardless of
+  `hub.listen_addr`.
 - `devices:` — one entry per AV device on the LAN
 
 Edit `/etc/av-bridge/env` — at minimum:
@@ -49,7 +52,8 @@ sudo systemctl enable --now av-bridge
 sudo journalctl -u av-bridge -f
 ```
 
-Smoke test from another host:
+Smoke test (from another host only if you opened `listen_addr` with auth;
+otherwise use `127.0.0.1` on this host):
 
 ```bash
 curl http://<this-host>:8080/healthz

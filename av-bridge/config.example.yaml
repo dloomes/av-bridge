@@ -1,5 +1,8 @@
 hub:
-  listen_addr: "0.0.0.0:8080"
+  # The local API is reachable only from this host by default. To open it to
+  # the network (e.g. "0.0.0.0:8080"), also enable api.auth below with at
+  # least one key; without keys the Collector refuses and stays on loopback.
+  listen_addr: "127.0.0.1:8080"
   heartbeat_period: 30s
   log_level: info
 
@@ -10,6 +13,14 @@ cloud:
   retry_attempts: 3
   retry_delay: 5s
   tls_skip_verify: false
+
+api:
+  auth:
+    # Bearer-token auth for /api/v1/*, /metrics and /ws/events (/healthz open).
+    # Required before hub.listen_addr can be a non-loopback address.
+    enabled: false
+    api_keys:
+      - "${AV_BRIDGE_API_KEY}"          # generate with: openssl rand -hex 32
 
 devices:
   # -----------------------------------------------------------------
