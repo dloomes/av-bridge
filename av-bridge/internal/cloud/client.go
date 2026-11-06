@@ -67,6 +67,9 @@ type Client struct {
 // without a separate control-plane call.
 func NewClient(cfg config.CloudConfig, collectorID, siteID, version, buildTime string) *Client {
 	transport := &http.Transport{
+		// Honour HTTPS_PROXY / HTTP_PROXY / NO_PROXY (from the OS or the
+		// Collector's env file) so sites with an explicit proxy still report.
+		Proxy:           http.ProxyFromEnvironment,
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: cfg.TLSSkipVerify},
 	}
 	c := &Client{

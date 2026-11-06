@@ -176,6 +176,7 @@ func (p *Poller) SetServingGate(fn func() bool) {
 func NewPoller(cloudCfg config.CloudConfig, interval time.Duration, collectorID, version, buildTime, cachePath string, h *hub.Hub) *Poller {
 	base := strings.TrimRight(cloudCfg.PortalAPI, "/")
 	transport := &http.Transport{
+		Proxy:           http.ProxyFromEnvironment, // HTTPS_PROXY / NO_PROXY
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: cloudCfg.TLSSkipVerify},
 	}
 	return &Poller{

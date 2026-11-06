@@ -79,6 +79,7 @@ func NewPoller(cfg config.CloudConfig, collectorID string, h *hub.Hub) *Poller {
 		concurrency = 64
 	}
 	transport := &http.Transport{
+		Proxy:           http.ProxyFromEnvironment, // HTTPS_PROXY / NO_PROXY
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: cfg.TLSSkipVerify},
 		// Results are posted by up to `concurrency` commands at once:
 		// keep that many connections open rather than a TLS handshake
