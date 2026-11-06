@@ -39,6 +39,9 @@ func TestSafeListenAddr(t *testing.T) {
 		{"all interfaces with auth", "0.0.0.0:8080", on, "0.0.0.0:8080", false},
 		{"empty host with auth", ":8080", on, ":8080", false},
 		{"lan ip with auth", "10.0.0.5:8443", on, "10.0.0.5:8443", false},
+		{"fully qualified localhost", "localhost.:8080", off, "localhost.:8080", false},
+		{"loopback v6 with zone", "[::1%lo]:8080", off, "[::1%lo]:8080", false},
+		{"lookalike hostname", "127.0.0.1.nip.io:8080", off, "127.0.0.1:8080", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -113,4 +116,51 @@ func TestWSEventsRejectsCrossOrigin(t *testing.T) {
 		t.Fatalf("no-origin websocket upgrade failed: %v", err)
 	}
 	conn.Close()
+}
+
+// browserGuard stops pages in a browser on the Collector host from driving
+// the local API: cross-site requests are refused, and without API keys only
+// loopback Host headers are answered (defeats DNS rebinding).
+func TestBrowserGuard(t *testing.T) {
+	ok := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	noKeys := browserGuard(AuthConfig{})(ok)
+	keyed := browserGuard(AuthConfig{Enabled: true, APIKeys: []string{"k"}})(ok)
+
+	cases := []struct {
+		name   string
+		h      http.Handler
+		path   string
+		host   string
+		origin string
+		fetch  string
+		want   int
+	}{
+		{"local tool, no origin", noKeys, "/api/v1/devices", "127.0.0.1:8080", "", "", http.StatusOK},
+		{"localhost name", noKeys, "/api/v1/devices", "localhost:8080", "", "", http.StatusOK},
+		{"rebound domain", noKeys, "/api/v1/devices", "evil.example:8080", "http://evil.example:8080", "", http.StatusForbidden},
+		{"rebound domain, no origin", noKeys, "/api/v1/devices", "evil.example:8080", "", "", http.StatusForbidden},
+		{"cross-site post to loopback", noKeys, "/api/v1/devices/x/command", "127.0.0.1:8080", "https://evil.example", "", http.StatusForbidden},
+		{"sec-fetch cross-site", noKeys, "/api/v1/devices", "127.0.0.1:8080", "", "cross-site", http.StatusForbidden},
+		{"same origin page", noKeys, "/api/v1/devices", "127.0.0.1:8080", "http://127.0.0.1:8080", "same-origin", http.StatusOK},
+		{"healthz always open", noKeys, "/healthz", "evil.example:8080", "https://evil.example", "cross-site", http.StatusOK},
+		{"keyed: network host allowed", keyed, "/api/v1/devices", "10.0.0.5:8080", "", "", http.StatusOK},
+		{"keyed: cross-site still refused", keyed, "/api/v1/devices", "10.0.0.5:8080", "https://evil.example", "", http.StatusForbidden},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			r.Host = tc.host
+			if tc.origin != "" {
+				r.Header.Set("Origin", tc.origin)
+			}
+			if tc.fetch != "" {
+				r.Header.Set("Sec-Fetch-Site", tc.fetch)
+			}
+			w := httptest.NewRecorder()
+			tc.h.ServeHTTP(w, r)
+			if w.Code != tc.want {
+				t.Fatalf("status = %d, want %d", w.Code, tc.want)
+			}
+		})
+	}
 }

@@ -28,11 +28,56 @@ func safeListenAddr(addr string, auth AuthConfig) (effective string, forced bool
 }
 
 func isLoopbackHost(host string) bool {
+	host = strings.TrimSuffix(host, ".") // "localhost." is fully qualified localhost
+	if i := strings.IndexByte(host, '%'); i >= 0 {
+		host = host[:i] // IPv6 zone, e.g. "::1%lo"
+	}
 	if strings.EqualFold(host, "localhost") {
 		return true
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
+}
+
+// requestHostname returns the hostname from a request's Host header, without
+// the port.
+func requestHostname(hostHeader string) string {
+	if h, _, err := net.SplitHostPort(hostHeader); err == nil {
+		return h
+	}
+	return strings.Trim(hostHeader, "[]")
+}
+
+// browserGuard protects the local API from web pages open in a browser on
+// the Collector host:
+//
+//   - Cross-site requests are refused: a request carrying an Origin that
+//     isn't this API's own origin, or marked Sec-Fetch-Site: cross-site.
+//     This stops a page from POSTing commands to 127.0.0.1:8080.
+//   - Without usable API keys, the Host header must be a loopback name.
+//     This stops DNS rebinding, where a hostile domain is re-pointed at
+//     127.0.0.1 so its pages look same-origin.
+//
+// /healthz is exempt so local monitoring keeps working.
+func browserGuard(auth AuthConfig) func(http.Handler) http.Handler {
+	keyed := authUsable(auth)
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/healthz" {
+				next.ServeHTTP(w, r)
+				return
+			}
+			if !keyed && !isLoopbackHost(requestHostname(r.Host)) {
+				writeJSONError(w, http.StatusForbidden, "local API answers only to localhost")
+				return
+			}
+			if strings.EqualFold(r.Header.Get("Sec-Fetch-Site"), "cross-site") || !checkSameOrigin(r) {
+				writeJSONError(w, http.StatusForbidden, "cross-site requests are not allowed")
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 // authUsable reports whether auth is enabled with at least one non-blank key.

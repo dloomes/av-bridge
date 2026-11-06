@@ -1,6 +1,7 @@
 package api
 
 import (
+	"strings"
 	"context"
 	"encoding/json"
 	"log/slog"
@@ -58,6 +59,7 @@ func New(listenAddr string, h *hub.Hub, c *cloud.Client, auth AuthConfig) *Serve
 	// Apply middleware stack: recovery → logging → auth
 	r.Use(recoveryMiddleware)
 	r.Use(loggingMiddleware)
+	r.Use(browserGuard(auth))
 	r.Use(authMiddleware(auth))
 
 	r.HandleFunc("/healthz", s.healthz).Methods(http.MethodGet)
@@ -79,6 +81,10 @@ func New(listenAddr string, h *hub.Hub, c *cloud.Client, auth AuthConfig) *Serve
 	}
 	return s
 }
+
+// Addr is the address the API actually listens on, after the fail-closed
+// check in New may have moved it to loopback.
+func (s *Server) Addr() string { return s.srv.Addr }
 
 func (s *Server) Start() error {
 	slog.Info("API server listening", "addr", s.srv.Addr)
@@ -174,6 +180,12 @@ func (s *Server) sendCommand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// JSON only: a browser can't send application/json cross-site without a
+	// CORS preflight, which this API never grants.
+	if ct := r.Header.Get("Content-Type"); !strings.HasPrefix(strings.ToLower(strings.TrimSpace(ct)), "application/json") {
+		writeJSON(w, http.StatusUnsupportedMediaType, map[string]string{"error": "Content-Type must be application/json"})
+		return
+	}
 	var req device.CommandRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request: " + err.Error()})

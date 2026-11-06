@@ -462,7 +462,7 @@ func (p *program) run(ctx context.Context) error {
 	slog.Info("av-bridge running",
 		"version", version,
 		"devices", len(cfg.Devices),
-		"listen", cfg.Hub.ListenAddr,
+		"listen", apiServer.Addr(),
 		"auth_enabled", cfg.API.Auth.Enabled,
 		"tls_enabled", cfg.API.TLS.Enabled,
 		"store", cfg.Hub.StorePath,
