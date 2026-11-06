@@ -23,7 +23,8 @@ lens:
   # Poly Lens enrichment — fills in MAC, IP, last-detected and other inventory
   # fields for any device tagged with lens_managed: "true". OAuth client
   # credentials come from the Lens portal (Settings → API Keys).
-  enabled: true
+  # Off by default: switch on only when Lens data is wanted.
+  enabled: false
   client_id: "${LENS_CLIENT_ID}"
   client_secret: "${LENS_CLIENT_SECRET}"
   poll_interval: 5m
