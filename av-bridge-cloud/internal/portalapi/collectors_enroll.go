@@ -424,10 +424,8 @@ func (h *Handler) DeleteCollector(w http.ResponseWriter, r *http.Request) {
 // updateCollectorReq — PATCH shape. Every field optional; only fields
 // present in the payload are written. Extend with new pointers rather
 // than adding zero-vs-set flags.
+// collectors.local_url is no longer read or written (touch-panel proxy removed); the column is kept for history.
 type updateCollectorReq struct {
-	// LocalURL: pass "" to clear (stored as NULL), pass a full URL
-	// (http[s]://host[:port]) to set. nil pointer = leave alone.
-	LocalURL *string `json:"local_url,omitempty"`
 	// Name: rename the collector. Empty string is rejected — a
 	// collector without a name is unusable in the fleet UI.
 	Name *string `json:"name,omitempty"`
@@ -438,9 +436,8 @@ type updateCollectorReq struct {
 
 // UpdateCollector — PATCH /api/v1/collectors/{id}
 //
-// Edits editable fields on an existing collector row. Currently
-// covers local_url (LAN-reachable bridge URL used by the touch-panel
-// proxy button) and name. Other fields — bridge_collector_id,
+// Edits editable fields on an existing collector row: name and the
+// automatic update window. Other fields — bridge_collector_id,
 // building_id, HMAC secret — are immutable via this path; changing
 // them would break the enrolled bridge's identity or configuration
 // and needs a re-enrolment flow instead.
@@ -455,24 +452,6 @@ func (h *Handler) UpdateCollector(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid JSON")
 		return
-	}
-
-	// Validate local_url shape when set — empty string is allowed (means
-	// clear the value). A malformed URL slipping in here would make the
-	// portal touch-panel button silently open to nothing, so fail fast.
-	if req.LocalURL != nil && *req.LocalURL != "" {
-		trimmed := strings.TrimSpace(*req.LocalURL)
-		if !strings.HasPrefix(trimmed, "http://") && !strings.HasPrefix(trimmed, "https://") {
-			writeErr(w, http.StatusBadRequest, "local_url must start with http:// or https://")
-			return
-		}
-		if len(trimmed) > 512 {
-			writeErr(w, http.StatusBadRequest, "local_url too long (max 512 chars)")
-			return
-		}
-		// Normalise: strip trailing slash so downstream URL construction
-		// doesn't produce doubled slashes.
-		req.LocalURL = strPtr(strings.TrimRight(trimmed, "/"))
 	}
 
 	if req.Name != nil && strings.TrimSpace(*req.Name) == "" {
@@ -496,9 +475,6 @@ func (h *Handler) UpdateCollector(w http.ResponseWriter, r *http.Request) {
 	add := func(col string, val any) {
 		args = append(args, val)
 		set = append(set, fmt.Sprintf("%s = $%d", col, len(args)))
-	}
-	if req.LocalURL != nil {
-		add("local_url", nullIfEmpty(*req.LocalURL))
 	}
 	if req.Name != nil {
 		add("name", strings.TrimSpace(*req.Name))
@@ -554,8 +530,6 @@ func (h *Handler) UpdateCollector(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
-
-func strPtr(s string) *string { return &s }
 
 // bridgeCollectorIDValid enforces the same shape defaultBridgeCollectorID
 // produces so a caller who supplies their own id can't sneak whitespace

@@ -141,7 +141,7 @@ if (-not (Test-Path $ConfigPath)) {
 # cloud on first heartbeat via /bridge/config. Edit here to override
 # local listen address, poll intervals, etc.
 hub:
-  listen_addr: "0.0.0.0:8080"
+  listen_addr: "127.0.0.1:8080"   # local API on this host only; to open it, also set api.auth with keys
   heartbeat_period: 30s
   log_level: info
   collector_id: "$BridgeId"
