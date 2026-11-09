@@ -239,6 +239,26 @@ func TestHelpdeskRoadmapEditorFlag(t *testing.T) {
 	})
 
 	asAdmin := portalauth.Principal{UserID: "00000000-0000-0000-0000-0000000000a1", Email: adminEmail, IsVendor: true, Role: "admin"}
+	var logs bytes.Buffer
+	e.h.log = slog.New(slog.NewJSONHandler(&logs, nil))
+	// changeLogs returns the "roadmap editor changed" lines logged since the
+	// last call, and checks none carries an email.
+	changeLogs := func() []map[string]any {
+		t.Helper()
+		var out []map[string]any
+		for _, line := range strings.Split(strings.TrimSpace(logs.String()), "\n") {
+			var m map[string]any
+			if json.Unmarshal([]byte(line), &m) != nil || m["msg"] != "helpdesk user roadmap editor changed" {
+				continue
+			}
+			if strings.Contains(line, "@") {
+				t.Errorf("log line carries an email: %s", line)
+			}
+			out = append(out, m)
+		}
+		logs.Reset()
+		return out
+	}
 	asOperator := portalauth.Principal{UserID: opID, Email: "op@roadmap.test", IsVendor: true, Role: "operator"}
 
 	mux := http.NewServeMux()
@@ -302,6 +322,17 @@ func TestHelpdeskRoadmapEditorFlag(t *testing.T) {
 	if !resolve(target).RoadmapEditor {
 		t.Fatal("resolved principal lacks RoadmapEditor")
 	}
+	if l := changeLogs(); len(l) != 1 || l[0]["level"] != "INFO" || l[0]["actor"] != "user:"+asAdmin.UserID ||
+		l[0]["target_user_id"] != target || l[0]["roadmap_editor"] != true {
+		t.Fatalf("change log = %v", l)
+	}
+	// Setting it to what it already is changes nothing and logs nothing.
+	if code, b := call(asAdmin, "PATCH", "/users/"+target, map[string]any{"roadmap_editor": true}); code != 204 {
+		t.Fatalf("admin set again = %d %s", code, b)
+	}
+	if l := changeLogs(); len(l) != 0 {
+		t.Fatalf("no-op set logged %v", l)
+	}
 
 	// An operator cannot, through the vendor-admin guard.
 	if code, _ := call(asOperator, "PATCH", "/users/"+target, map[string]any{"roadmap_editor": false}); code != 403 {
@@ -330,6 +361,9 @@ func TestHelpdeskRoadmapEditorFlag(t *testing.T) {
 	}
 	if listed(target) || resolve(target).RoadmapEditor {
 		t.Fatal("flag not cleared")
+	}
+	if l := changeLogs(); len(l) != 1 || l[0]["roadmap_editor"] != false || l[0]["target_user_id"] != target {
+		t.Fatalf("clear log = %v", l)
 	}
 }
 

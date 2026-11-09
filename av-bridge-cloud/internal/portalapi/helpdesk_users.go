@@ -123,10 +123,16 @@ func (h *Handler) HelpdeskUpdateUser(w http.ResponseWriter, r *http.Request) {
 
 	// Only Involve users can be roadmap editors. The UPDATE below is
 	// vendor-scoped, so a customer user would otherwise read as not found.
+	// wasEditor is the flag before this update, so only a real change is logged.
+	var wasEditor *bool
 	if req.RoadmapEditor != nil {
 		var customerID *string
+		var was bool
 		err := h.store.AdminPool().QueryRow(ctx,
-			`SELECT customer_id::text FROM users WHERE id = $1`, id).Scan(&customerID)
+			`SELECT customer_id::text, roadmap_editor FROM users WHERE id = $1`, id).Scan(&customerID, &was)
+		if err == nil {
+			wasEditor = &was
+		}
 		if err == nil && customerID != nil {
 			writeErr(w, http.StatusBadRequest, "Only Involve users can be roadmap editors.")
 			return
@@ -178,6 +184,12 @@ func (h *Handler) HelpdeskUpdateUser(w http.ResponseWriter, r *http.Request) {
 	if tag.RowsAffected() == 0 {
 		writeErr(w, http.StatusNotFound, "user not found")
 		return
+	}
+
+	if req.RoadmapEditor != nil && (wasEditor == nil || *wasEditor != *req.RoadmapEditor) {
+		p, _ := portalauth.From(r.Context())
+		h.log.Info("helpdesk user roadmap editor changed",
+			"actor", auditActorID(p), "target_user_id", id, "roadmap_editor", *req.RoadmapEditor)
 	}
 
 	// Disabling a user should also revoke every active session so the
