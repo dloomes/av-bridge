@@ -1,3 +1,8 @@
+"use client";
+
+import { useState } from "react";
+import { FileDown, Loader2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import type { Roadmap, RoadmapItem, RoadmapStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -26,6 +31,36 @@ function formatAsOf(iso: string): string {
   const mon = MONTHS[Number(m[2]) - 1];
   if (!mon) return iso;
   return `${Number(m[3])} ${mon} ${m[1]}`;
+}
+
+function DownloadPdfButton({ roadmap, sharedWith }: { roadmap: Roadmap; sharedWith?: string }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const run = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const { downloadRoadmapPdf } = await import("@/lib/roadmap-pdf");
+      await downloadRoadmapPdf(roadmap, sharedWith !== undefined ? { sharedWith } : undefined);
+    } catch (e) {
+      setError((e as Error).message || "The PDF couldn't be made.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="flex flex-wrap items-center gap-3">
+      <Button type="button" variant="outline" size="sm" onClick={run} disabled={busy}>
+        {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <FileDown className="mr-2 h-4 w-4" />}
+        Download PDF
+      </Button>
+      {error && (
+        <span className="text-sm text-destructive" role="alert">
+          Couldn&apos;t make the PDF: {error}
+        </span>
+      )}
+    </div>
+  );
 }
 
 function Dot({ status }: { status: RoadmapStatus }) {
@@ -90,6 +125,9 @@ export function RoadmapView({ roadmap, sharedWith }: { roadmap: Roadmap; sharedW
           {settings.headline}
         </h1>
         <p className="max-w-[62ch] text-base text-muted-foreground md:text-[17px]">{settings.lede}</p>
+        <div>
+          <DownloadPdfButton roadmap={roadmap} sharedWith={sharedWith} />
+        </div>
         <div className="mt-1.5 flex flex-wrap gap-x-5 gap-y-2.5 text-[13px] text-muted-foreground" aria-label="Legend">
           {LEGEND.map((l) => (
             <span key={l.status} className="inline-flex items-center gap-2">
