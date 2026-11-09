@@ -23,6 +23,7 @@ import {
   Palette,
   Puzzle,
   Radio,
+  Signpost,
   Server,
   ShieldCheck,
   Tags,
@@ -92,6 +93,11 @@ const DASHBOARDS_ITEM: NavItem = {
   label: "Dashboards",
   icon: LayoutGrid,
   requires: "view.dashboard",
+};
+const ROADMAP_ITEM: NavItem = {
+  href: "/roadmap",
+  label: "Roadmap",
+  icon: Signpost,
 };
 const MAP_ITEM: NavItem = {
   href: "/map",
@@ -276,6 +282,12 @@ export function Sidebar() {
               criticalOpen={criticalOpen}
             />
           )}
+          <NavLink
+            item={ROADMAP_ITEM}
+            active={pathname === "/roadmap"}
+            badge={0}
+            criticalOpen={criticalOpen}
+          />
         </div>
 
         <div className="pt-3">

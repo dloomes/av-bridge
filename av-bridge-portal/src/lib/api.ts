@@ -54,6 +54,8 @@ import type {
   UpdateVendorUserBody,
   UserRow,
   VendorUserRow,
+  Roadmap,
+  SharedRoadmap,
 } from "./types";
 
 // HTTP requests go to the Next.js dev server, which proxies to av-bridge via
@@ -1044,6 +1046,29 @@ function collectorLogQuery(f: CollectorLogFilter): string {
 }
 
 export const api = {
+  // -- roadmap -----------------------------------------------------------------
+  getRoadmap: (signal?: AbortSignal) =>
+    request<Roadmap>("/api/v1/roadmap", { signal }),
+
+  // Public share link. Plain fetch on purpose: no session header goes to a
+  // page a customer opens from an emailed link.
+  getSharedRoadmap: async (token: string, signal?: AbortSignal): Promise<SharedRoadmap> => {
+    const res = await fetch(`${API_BASE}/public/roadmap/${encodeURIComponent(token)}`, {
+      signal,
+      cache: "no-store",
+      credentials: "omit",
+      referrerPolicy: "no-referrer",
+    });
+    if (!res.ok) {
+      let msg = "";
+      try {
+        msg = ((await res.json()) as { error?: string }).error ?? "";
+      } catch {}
+      throw new ApiError(msg || `${res.status} ${res.statusText}`, res.status);
+    }
+    return (await res.json()) as SharedRoadmap;
+  },
+
   // -- auth --------------------------------------------------------------------
   //
   // Login is intentionally NOT guarded by AuthGuard — the caller has no token

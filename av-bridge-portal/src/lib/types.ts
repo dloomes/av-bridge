@@ -853,3 +853,60 @@ export interface AdapterInfo {
   docs_url?: string;
   device_count: number;
 }
+
+// Product roadmap (Involve's own plans). Mirrors cloud internal/roadmap.
+export type RoadmapStatus = "committed" | "planned" | "exploring";
+
+export interface RoadmapSettings {
+  title: string;
+  headline: string;
+  lede: string;
+  disclaimer: string;
+  as_of: string; // YYYY-MM-DD
+  updated_at: string;
+}
+
+export interface RoadmapPeriod {
+  id: string;
+  position: number;
+  name: string;
+  months: string;
+  is_current: boolean;
+}
+
+export interface RoadmapTheme {
+  id: string;
+  position: number;
+  name: string;
+  note: string;
+}
+
+export interface RoadmapItem {
+  id: string;
+  theme_id: string;
+  period: number;
+  status: RoadmapStatus;
+  release_month?: string;
+  title: string;
+  description: string;
+  position: number;
+}
+
+export interface RoadmapShipped {
+  id: string;
+  when: string;
+  title: string;
+  position: number;
+}
+
+export interface Roadmap {
+  settings: RoadmapSettings;
+  periods: RoadmapPeriod[];
+  themes: RoadmapTheme[];
+  items: RoadmapItem[];
+  shipped: RoadmapShipped[];
+}
+
+export interface SharedRoadmap extends Roadmap {
+  shared_with: string;
+}

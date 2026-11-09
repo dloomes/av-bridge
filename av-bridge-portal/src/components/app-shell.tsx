@@ -33,7 +33,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     pathname === "/forgot-password" ||
     pathname === "/reset-password" ||
     // Wall screens: full screen, and a display link needs no session.
-    pathname === "/display";
+    pathname === "/display" ||
+    // Customer share links for the roadmap: no session, no chrome.
+    pathname.startsWith("/roadmap/s/");
 
   // The trail Back links use to return where the user came from.
   useEffect(() => {
