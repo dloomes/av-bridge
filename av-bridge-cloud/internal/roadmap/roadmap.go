@@ -7,6 +7,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -362,7 +364,9 @@ func UpdateItem(ctx context.Context, tx pgx.Tx, id string, in ItemInput, by stri
 	}
 	moved := row.themeID != oldTheme || row.period != oldPeriod
 	if moved {
-		if err := lockCell(ctx, tx, row.themeID, row.period); err != nil {
+		// Both cells are renumbered, so both are locked, in a fixed order:
+		// two moves in opposite directions then queue instead of deadlocking.
+		if err := lockCells(ctx, tx, cell{oldTheme, oldPeriod}, cell{row.themeID, row.period}); err != nil {
 			return err
 		}
 	}
@@ -478,6 +482,28 @@ func lockCell(ctx context.Context, tx pgx.Tx, theme string, period int) error {
 	_, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('roadmap_cell:' || $1::text || ':' || $2::int))`,
 		theme, period)
 	return err
+}
+
+type cell struct {
+	theme  string
+	period int
+}
+
+func (c cell) key() string { return c.theme + ":" + strconv.Itoa(c.period) }
+
+// lockCells takes lockCell on each distinct cell, sorted by key, so every
+// writer that holds more than one cell lock takes them in the same order.
+func lockCells(ctx context.Context, tx pgx.Tx, cells ...cell) error {
+	sort.Slice(cells, func(i, j int) bool { return cells[i].key() < cells[j].key() })
+	for i, c := range cells {
+		if i > 0 && c == cells[i-1] {
+			continue
+		}
+		if err := lockCell(ctx, tx, c.theme, c.period); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // renumber rewrites one cell's positions as 0..n-1, keeping their order.
