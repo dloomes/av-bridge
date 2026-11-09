@@ -50,7 +50,7 @@ func (h *Handler) HelpdeskListUsers(w http.ResponseWriter, r *http.Request) {
 		SELECT id::text,
 		       lower(email),
 		       COALESCE(full_name,''),
-		       role,
+		       COALESCE(role,''),
 		       role_source,
 		       provider,
 		       disabled_at IS NOT NULL,
