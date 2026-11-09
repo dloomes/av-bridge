@@ -141,6 +141,16 @@ func TestRetentionRules(t *testing.T) {
 	add("api_tokens", true, apitok, cust, "api-exp-old-"+cust, time.Now().AddDate(0, 0, -91), nil)
 	add("api_tokens", false, apitok, cust, "api-active-"+cust, nil, nil)
 
+	// Roadmap share links: 180 days after expiry or revocation.
+	link := `INSERT INTO roadmap_share_links (name, token_hash, expires_at, created_by, revoked_at)
+	         VALUES ('rt', $1, $2::timestamptz, 'a', $3::timestamptz) RETURNING id::text`
+	day := func(n int) time.Time { return time.Now().AddDate(0, 0, -n) }
+	add("roadmap_share_links", true, link, "rl-rev-old-"+cust, time.Now().AddDate(0, 1, 0), day(181))
+	add("roadmap_share_links", false, link, "rl-rev-new-"+cust, time.Now().AddDate(0, 1, 0), day(179))
+	add("roadmap_share_links", true, link, "rl-exp-old-"+cust, day(181), nil)
+	add("roadmap_share_links", false, link, "rl-exp-new-"+cust, day(179), nil)
+	add("roadmap_share_links", false, link, "rl-active-"+cust, time.Now().AddDate(0, 1, 0), nil)
+
 	deadline := time.Now().Add(time.Minute)
 	for _, r := range Rules {
 		if _, err := Apply(ctx, admin, r, deadline); err != nil {

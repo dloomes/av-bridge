@@ -111,6 +111,12 @@ var Personal = []Entry{
 	{Table: "firmware_targets", Column: "updated_by", Key: KeyEmail, Category: "activity", Action: ActReplace, Scoped: true},
 	{Table: "schedule_date", Column: "created_by", Key: KeyEmail, Category: "activity", Action: ActReplace, Scoped: true},
 
+	// The roadmap is global (no customer), so these are not Scoped; only
+	// Involve editors write them.
+	{Table: "roadmap_settings", Column: "updated_by", Key: KeyEmail, Category: "activity", Action: ActReplace},
+	{Table: "roadmap_items", Column: "updated_by", Key: KeyEmail, Category: "activity", Action: ActReplace},
+	{Table: "roadmap_share_links", Column: "created_by", Key: KeyEmail, Category: "activity", Action: ActReplace},
+
 	// The audit log is rewritten by the SECURITY DEFINER function, not by Erase directly.
 	// JSONKeys are the keys the function removes from before, after and metadata;
 	// any other mention of the email there is replaced by the stand-in.
@@ -172,6 +178,9 @@ var NotPersonal = []Exempt{
 	{"nightly_test_routine", "name", "routine name"},
 	{"notification_channels", "name", "channel label"},
 	{"regions", "name", "region name"},
+	{"roadmap_periods", "name", "period name"},
+	{"roadmap_themes", "name", "theme name"},
+	{"roadmap_share_links", "name", "recipient label (a company) chosen by an Involve editor; not tied to an account"},
 	{"roles", "name", "role name"},
 	{"room_tags", "name", "tag name"},
 	{"rooms", "name", "room name, not a person"},

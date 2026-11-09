@@ -114,7 +114,9 @@ func leftovers(t *testing.T, ctx context.Context, su *pgx.Conn, e Entry, custome
 	if e.Key == KeyUserID {
 		conds = append(conds, "(t."+kc+"::text = ANY($4::text[]) AND t."+e.Column+" IS NOT NULL)")
 	}
-	if e.Scoped {
+	// A global (unscoped) table keyed by email, such as the roadmap, is
+	// matched on the value alone.
+	if e.Scoped || e.Key == KeyEmail {
 		val := "t." + e.Column + "::text"
 		if e.Table == "audit_log" {
 			val = "to_jsonb(t)::text"
@@ -215,6 +217,10 @@ func TestErase(t *testing.T) {
 	exec(`INSERT INTO firmware_targets (customer_id, make, model, updated_by) VALUES ($1, 'Cisco', 'Room Kit', 'alice@example.com')`, b)
 	exec(`INSERT INTO schedule_date (customer_id, on_date, closed, created_by) VALUES ($1, '2026-12-25', true, 'Alice@example.com')`, a)
 	exec(`INSERT INTO schedule_date (customer_id, on_date, closed, created_by) VALUES ($1, '2026-12-25', true, 'alice@example.com')`, b)
+	// Global roadmap rows edited by Alice (vendor staff share the register).
+	exec(`UPDATE roadmap_settings SET updated_by = 'Alice@Example.com'`)
+	exec(`UPDATE roadmap_items SET updated_by = 'alice@example.com' WHERE title = 'Bulk device import'`)
+	exec(`INSERT INTO roadmap_share_links (name, token_hash, expires_at, created_by) VALUES ('Acme', $1, now() + interval '1 day', 'ALICE@example.com')`, "erl-"+a)
 
 	audit := func(cust, actor, targetID, after string) {
 		exec(`INSERT INTO audit_log (customer_id, actor, action, target_kind, target_id, "after")

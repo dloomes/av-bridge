@@ -60,6 +60,9 @@ var Rules = []Rule{
 	// COALESCE is NULL, so it never matches.
 	{Name: "API tokens (90 days after revocation or expiry)", Table: "api_tokens",
 		Where: `COALESCE(t.revoked_at, t.expires_at) < now() - interval '90 days'`},
+	// A link ends at expiry or revocation, whichever came first.
+	{Name: "roadmap share links (180 days after expiry or revocation)", Table: "roadmap_share_links",
+		Where: `LEAST(t.expires_at, COALESCE(t.revoked_at, t.expires_at)) < now() - interval '180 days'`},
 }
 
 // Service runs retention passes.
