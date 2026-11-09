@@ -22,7 +22,8 @@ const INK: RGB = [24, 28, 36];
 const MUTED: RGB = [100, 110, 125];
 const FAINT: RGB = [130, 135, 145];
 const RULE: RGB = [210, 215, 222];
-const ACCENT: RGB = [29, 78, 216];
+// --primary (light mode) in globals.css: hsl(221 83% 53%).
+const ACCENT: RGB = [36, 99, 235];
 const NOW_TINT: RGB = [236, 242, 254];
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -62,6 +63,7 @@ interface Line {
   h: number; // line height, mm
   pre: number; // space above, mm
   status?: RoadmapStatus; // meta line: draws a swatch first
+  start?: boolean; // first line of an item: items stay together
 }
 
 export async function downloadRoadmapPdf(roadmap: Roadmap, opts?: { sharedWith?: string }): Promise<void> {
@@ -181,7 +183,7 @@ export async function downloadRoadmapPdf(roadmap: Roadmap, opts?: { sharedWith?:
       .forEach((i, idx) => {
         const pre = idx === 0 ? 0 : 3;
         wrap(i.title, colW - 2 * PAD, 9, true).forEach((t, k) =>
-          out.push({ text: t, bold: true, size: 9, rgb: INK, h: 4, pre: k === 0 ? pre : 0 })
+          out.push({ text: t, bold: true, size: 9, rgb: INK, h: 4, pre: k === 0 ? pre : 0, start: k === 0 })
         );
         const meta = STATUS_LABEL[i.status] ?? i.status;
         out.push({
@@ -201,24 +203,42 @@ export async function downloadRoadmapPdf(roadmap: Roadmap, opts?: { sharedWith?:
 
   const labelLines = (name: string, note: string): Line[] => {
     const w = LABEL_W - PAD - 2;
-    const out: Line[] = wrap(name, w, 9, true).map((t) => ({ text: t, bold: true, size: 9, rgb: INK, h: 4, pre: 0 }));
+    const out: Line[] = wrap(name, w, 9, true).map((t, k0) => ({ text: t, bold: true, size: 9, rgb: INK, h: 4, pre: 0, start: k0 === 0 }));
     wrap(note, w, 7.5).forEach((t, k) => out.push({ text: t, size: 7.5, rgb: MUTED, h: 3.4, pre: k === 0 ? 1 : 0 }));
     return out;
   };
 
-  // How many lines of `lines` (from `from`) fit in `avail` mm.
-  const fit = (lines: Line[], from: number, avail: number): { count: number; used: number } => {
+  // How many lines of `lines` (from `from`) fit in `avail` mm. Items are
+  // kept whole: one that doesn't fit is left for the next page, and is only
+  // split when it is taller than a full page (`full`).
+  const fit = (lines: Line[], from: number, avail: number, full = avail): { count: number; used: number } => {
     let used = 0;
-    let count = 0;
-    for (let k = from; k < lines.length; k++) {
-      const need = lines[k].h + (k === from ? 0 : lines[k].pre);
-      if (used + need > avail) break;
-      used += need;
-      count++;
+    let k = from;
+    while (k < lines.length) {
+      let e = k + 1;
+      while (e < lines.length && !lines[e].start) e++;
+      let gh = 0;
+      for (let j = k; j < e; j++) gh += lines[j].h + (j === k ? 0 : lines[j].pre);
+      const need = gh + (k === from ? 0 : lines[k].pre);
+      if (used + need <= avail) {
+        used += need;
+        k = e;
+        continue;
+      }
+      if (gh > full) {
+        // Taller than a page by itself: split by line.
+        for (; k < e; k++) {
+          const n = lines[k].h + (k === from ? 0 : lines[k].pre);
+          if (used + n > avail) break;
+          used += n;
+        }
+      }
+      break;
     }
-    return { count, used };
+    return { count: k - from, used };
   };
   const total = (lines: Line[]) => fit(lines, 0, 1e9).used;
+  const FULL = BOTTOM - M - HEAD_H - 2 * PAD;
 
   const drawLines = (lines: Line[], from: number, count: number, x: number, top: number) => {
     let cy = top;
@@ -243,8 +263,11 @@ export async function downloadRoadmapPdf(roadmap: Roadmap, opts?: { sharedWith?:
   drawPeriodHeader();
 
   themes.forEach((t) => {
+    const origLabel = labelLines(t.name, t.note);
+    const contLabel = labelLines(`${t.name} (continued)`, "");
+    let continued = false;
     const columns: Line[][] = [
-      labelLines(t.name, t.note),
+      origLabel,
       ...periods.map((p) => cellLines(t.id, p.position)),
     ];
     const cursor = columns.map(() => 0);
@@ -260,7 +283,12 @@ export async function downloadRoadmapPdf(roadmap: Roadmap, opts?: { sharedWith?:
     // Otherwise draw in chunks, repeating the period header per page.
     for (;;) {
       const avail = BOTTOM - y - 2 * PAD;
-      const chunk = columns.map((c, i) => fit(c, cursor[i], avail));
+      // On a continuation page the theme name is shown again.
+      if (continued && (columns[0] === contLabel || cursor[0] >= origLabel.length)) {
+        columns[0] = contLabel;
+        cursor[0] = 0;
+      }
+      const chunk = columns.map((c, i) => fit(c, cursor[i], avail, FULL));
       const progressed = chunk.some((c) => c.count > 0);
       if (!progressed) {
         // Nothing fits (a few mm left): go to the next page and retry.
@@ -287,6 +315,7 @@ export async function downloadRoadmapPdf(roadmap: Roadmap, opts?: { sharedWith?:
       for (let i = 0; i < cols; i++) doc.line(M + LABEL_W + i * colW, y, M + LABEL_W + i * colW, y + h);
       y += h;
       if (columns.every((c, i) => cursor[i] >= c.length)) break;
+      continued = true;
       newPage();
       drawPeriodHeader();
     }
