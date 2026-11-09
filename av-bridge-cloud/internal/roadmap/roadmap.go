@@ -347,29 +347,45 @@ func CreateItem(ctx context.Context, tx pgx.Tx, in ItemInput, by string) (string
 // UpdateItem applies a patch. An item moved to another theme or period goes
 // to the end of its new cell, and both cells are renumbered.
 func UpdateItem(ctx context.Context, tx pgx.Tx, id string, in ItemInput, by string) error {
-	var row itemRow
-	err := tx.QueryRow(ctx, `
-		SELECT theme_id::text, period_position, status, release_month, title, description
-		  FROM roadmap_items WHERE id::text = $1 FOR UPDATE`, id).
-		Scan(&row.themeID, &row.period, &row.status, &row.releaseMonth, &row.title, &row.description)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return ErrNotFound
+	readItem := func(lock string) (itemRow, error) {
+		var r itemRow
+		err := tx.QueryRow(ctx, `
+			SELECT theme_id::text, period_position, status, release_month, title, description
+			  FROM roadmap_items WHERE id::text = $1`+lock, id).
+			Scan(&r.themeID, &r.period, &r.status, &r.releaseMonth, &r.title, &r.description)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return r, ErrNotFound
+		}
+		return r, err
 	}
+
+	// Lock order matches OrderItems and CreateItem: cell advisory locks
+	// first, then row locks. So work out both cells from an unlocked read,
+	// lock them (sorted, de-duplicated), and only then lock the row.
+	peek, err := readItem("")
 	if err != nil {
 		return err
 	}
-	oldTheme, oldPeriod := row.themeID, row.period
+	oldTheme, oldPeriod := peek.themeID, peek.period
+	dest := peek
+	if err := applyItem(ctx, tx, &dest, in); err != nil {
+		return err
+	}
+	if err := lockCells(ctx, tx, cell{oldTheme, oldPeriod}, cell{dest.themeID, dest.period}); err != nil {
+		return err
+	}
+	row, err := readItem(" FOR UPDATE")
+	if err != nil {
+		return err
+	}
+	if row.themeID != oldTheme || row.period != oldPeriod {
+		// Someone moved it between the read and the lock.
+		return invalid("This item was just moved by someone else. Reload and try again.")
+	}
 	if err := applyItem(ctx, tx, &row, in); err != nil {
 		return err
 	}
 	moved := row.themeID != oldTheme || row.period != oldPeriod
-	if moved {
-		// Both cells are renumbered, so both are locked, in a fixed order:
-		// two moves in opposite directions then queue instead of deadlocking.
-		if err := lockCells(ctx, tx, cell{oldTheme, oldPeriod}, cell{row.themeID, row.period}); err != nil {
-			return err
-		}
-	}
 	_, err = tx.Exec(ctx, `
 		UPDATE roadmap_items
 		   SET theme_id = $2::uuid, period_position = $3, status = $4, release_month = $5,
