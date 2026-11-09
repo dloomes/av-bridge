@@ -61,6 +61,13 @@ func newRoadmapEnv(t *testing.T) *roadmapEnv {
 		t.Fatal(err)
 	}
 	t.Cleanup(st.Close)
+	// The roadmap tables are global and packages test concurrently against
+	// one database: hold the shared roadmap test lock for the whole test.
+	unlock, err := roadmap.TestLock(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(unlock)
 	return &roadmapEnv{t: t, ctx: ctx, su: su, st: st, h: New(st, nil, nil, nil, nil, quiet)}
 }
 
@@ -133,8 +140,10 @@ func TestRoadmapRead(t *testing.T) {
 	if err := json.Unmarshal(body, &rm); err != nil {
 		t.Fatal(err)
 	}
-	// The tables are global and TestRoadmapEditing changes them in
-	// parallel, so check shape rather than exact seed counts or text.
+	// The tables are global. Roadmap tests hold roadmap.TestLock, and
+	// TestRoadmapEditing restores what it changes, but earlier runs or
+	// future editors may leave extra rows, so check shape rather than
+	// exact seed counts or editable settings text.
 	if len(rm.Items) < 17 || len(rm.Periods) != 4 || len(rm.Themes) < 4 || len(rm.Shipped) < 7 {
 		t.Fatalf("counts items=%d periods=%d themes=%d shipped=%d, want >=17/4/>=4/>=7",
 			len(rm.Items), len(rm.Periods), len(rm.Themes), len(rm.Shipped))
@@ -409,12 +418,17 @@ func TestRoadmapEditing(t *testing.T) {
 		return roadmap.Item{}, false
 	}
 
-	snap := load()
-	theme := snap.Themes[0].ID
-	// Items this test creates live in an otherwise unused cell where
-	// possible, but are always deleted at the end.
+	// Items this test creates live in its own temporary theme, never in a
+	// seed cell; the theme and anything in it are removed at the end.
+	theme := e.q(`INSERT INTO roadmap_themes (position, name, note) VALUES (99, $1, '') RETURNING id::text`,
+		"Edit theme "+tag)
 	t.Cleanup(func() {
-		e.exec(`DELETE FROM roadmap_items WHERE title LIKE '%' || $1 || '%'`, tag)
+		e.exec(`DELETE FROM roadmap_items WHERE theme_id = $1 OR title LIKE '%' || $2 || '%'`, theme, tag)
+		e.exec(`DELETE FROM roadmap_themes WHERE id = $1`, theme)
+		// Close the position gap SaveThemes may have left on seed themes.
+		e.exec(`UPDATE roadmap_themes t SET position = r.rn - 1
+			FROM (SELECT id, row_number() OVER (ORDER BY position, name) AS rn FROM roadmap_themes) r
+			WHERE t.id = r.id`)
 	})
 
 	t.Run("non-editor Involve admin is refused", func(t *testing.T) {
@@ -671,9 +685,12 @@ func TestRoadmapEditing(t *testing.T) {
 
 	t.Run("settings", func(t *testing.T) {
 		cur := load()
+		by := e.q(`SELECT COALESCE(updated_by, '') FROM roadmap_settings`)
 		t.Cleanup(func() {
-			e.exec(`UPDATE roadmap_settings SET title = $1, headline = $2, lede = $3, disclaimer = $4, as_of = $5::date`,
-				cur.Settings.Title, cur.Settings.Headline, cur.Settings.Lede, cur.Settings.Disclaimer, cur.Settings.AsOf)
+			e.exec(`UPDATE roadmap_settings SET title = $1, headline = $2, lede = $3, disclaimer = $4, as_of = $5::date,
+				updated_at = $6, updated_by = NULLIF($7, '')`,
+				cur.Settings.Title, cur.Settings.Headline, cur.Settings.Lede, cur.Settings.Disclaimer, cur.Settings.AsOf,
+				cur.Settings.UpdatedAt, by)
 		})
 		body := map[string]any{"title": cur.Settings.Title, "headline": "Headline " + tag,
 			"lede": cur.Settings.Lede, "disclaimer": cur.Settings.Disclaimer, "as_of": cur.Settings.AsOf}

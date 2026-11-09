@@ -41,6 +41,11 @@ func TestRoadmapSeed(t *testing.T) {
 	if err := db.Migrate(ctx, dsn, slog.New(slog.NewTextHandler(io.Discard, nil))); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
+	unlock, err := TestLock(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(unlock)
 	admin := connectAs(t, ctx, dsn, "app_admin", "app_admin_dev")
 	tenant := connectAs(t, ctx, dsn, "app_tenant", "app_tenant_dev")
 
@@ -53,9 +58,9 @@ func TestRoadmapSeed(t *testing.T) {
 		return n
 	}
 
-	if n := count(`SELECT count(*) FROM roadmap_settings WHERE as_of = '2026-11-02'`); n != 1 {
-		t.Errorf("settings rows with as_of 2026-11-02 = %d, want 1", n)
-	}
+	// The tables are global and editor tests elsewhere may have changed
+	// them (restoring what they touch), so assert the named seed rows
+	// rather than exact totals or editable settings text.
 	if n := count(`SELECT count(*) FROM roadmap_settings`); n != 1 {
 		t.Errorf("settings rows = %d, want 1", n)
 	}
@@ -98,26 +103,42 @@ func TestRoadmapSeed(t *testing.T) {
 		themes = append(themes, n)
 	}
 	rows.Close()
-	if got := strings.Join(themes, ","); got != "Faster onboarding,Device coverage,Room operations,Integrations" {
+	if got := strings.Join(themes, ","); !strings.HasPrefix(got, "Faster onboarding,Device coverage,Room operations,Integrations") {
 		t.Errorf("themes = %s", got)
 	}
 
-	if n := count(`SELECT count(*) FROM roadmap_items`); n != 17 {
-		t.Errorf("items = %d, want 17", n)
+	seedItems := []string{
+		"Bulk device import", "Signed Windows Collector installer", "Onboarding checklist",
+		"Device discovery", "Collector virtual appliance", "Samsung and LG displays",
+		"NEC displays and projectors", "Microsoft Teams Rooms and Zoom Rooms", "Extron and AMX control",
+		"Q-SYS and Shure", "Sequenced power-on", "Firmware updates from the portal",
+		"Remote terminal and touch panel access", "End-to-end room tests", "Firmware vulnerability check",
+		"ServiceNow CMDB sync", "Microsoft Teams app",
+	}
+	for _, title := range seedItems {
+		if n := count(`SELECT count(*) FROM roadmap_items WHERE title = $1`, title); n != 1 {
+			t.Errorf("seed item %q present %d times, want 1", title, n)
+		}
 	}
 	if n := count(`SELECT count(*) FROM roadmap_items i JOIN roadmap_themes t ON t.id = i.theme_id
 		WHERE i.title = 'Firmware vulnerability check' AND i.status = 'exploring'
 		  AND i.period_position = 3 AND t.name = 'Room operations'`); n != 1 {
 		t.Errorf("Firmware vulnerability check not seeded as exploring / period 3 / Room operations")
 	}
-	if n := count(`SELECT count(*) FROM roadmap_items WHERE status = 'committed'`); n != 6 {
-		t.Errorf("committed items = %d, want 6", n)
+	if n := count(`SELECT count(*) FROM roadmap_items WHERE status = 'committed' AND title = ANY($1)`, seedItems); n != 6 {
+		t.Errorf("committed seed items = %d, want 6", n)
 	}
-	if n := count(`SELECT count(*) FROM roadmap_items WHERE release_month IS NOT NULL`); n != 6 {
-		t.Errorf("items with a release month = %d, want 6", n)
+	if n := count(`SELECT count(*) FROM roadmap_items WHERE release_month IS NOT NULL AND title = ANY($1)`, seedItems); n != 6 {
+		t.Errorf("seed items with a release month = %d, want 6", n)
 	}
-	if n := count(`SELECT count(*) FROM roadmap_shipped`); n != 7 {
-		t.Errorf("shipped = %d, want 7", n)
+	for _, title := range []string{
+		"Power schedules and one-off dates by room tag", "Room tags: filter, report, dashboards and commands by room type",
+		"Readiness checks by room tag", "Ping step and routine flow diagrams", "Device last contacted",
+		"Firmware versions in the Public API", "Collector logs in the portal",
+	} {
+		if n := count(`SELECT count(*) FROM roadmap_shipped WHERE title = $1`, title); n != 1 {
+			t.Errorf("seed shipped %q present %d times, want 1", title, n)
+		}
 	}
 
 	// Themes in use cannot be deleted.

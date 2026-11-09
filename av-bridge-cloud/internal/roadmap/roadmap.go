@@ -223,6 +223,9 @@ func SaveSettings(ctx context.Context, tx pgx.Tx, in SettingsInput, by string) e
 	if perr != nil {
 		return invalid("As-of date must be a date (YYYY-MM-DD).")
 	}
+	if err := lockList(ctx, tx, "roadmap_settings"); err != nil {
+		return err
+	}
 	_, err = tx.Exec(ctx, `
 		UPDATE roadmap_settings
 		   SET title = $1, headline = $2, lede = $3, disclaimer = $4, as_of = $5::date,
@@ -334,7 +337,7 @@ func CreateItem(ctx context.Context, tx pgx.Tx, in ItemInput, by string) (string
 		RETURNING id::text`,
 		row.themeID, row.period, row.status, row.releaseMonth, row.title, row.description, by).Scan(&id)
 	if err != nil {
-		return "", err
+		return "", themeGone(err)
 	}
 	return id, renumber(ctx, tx, row.themeID, row.period)
 }
@@ -373,7 +376,7 @@ func UpdateItem(ctx context.Context, tx pgx.Tx, id string, in ItemInput, by stri
 		 WHERE id::text = $1`,
 		id, row.themeID, row.period, row.status, row.releaseMonth, row.title, row.description, by, moved)
 	if err != nil {
-		return err
+		return themeGone(err)
 	}
 	if moved {
 		if err := renumber(ctx, tx, oldTheme, oldPeriod); err != nil {
@@ -451,6 +454,24 @@ func OrderItems(ctx context.Context, tx pgx.Tx, in OrderInput) error {
 	return err
 }
 
+// themeGone maps a foreign-key violation (the theme was deleted between the
+// existence check and the write) to the same 400 as an unknown theme.
+func themeGone(err error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23503" {
+		return invalid("Choose a theme.")
+	}
+	return err
+}
+
+// lockList serialises replace-style saves of one list (themes, periods,
+// shipped), so two concurrent saves cannot double it or interleave
+// positions under READ COMMITTED.
+func lockList(ctx context.Context, tx pgx.Tx, name string) error {
+	_, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, name)
+	return err
+}
+
 // lockCell serialises writers to one theme and period, so concurrent
 // creates and moves cannot hand out the same position.
 func lockCell(ctx context.Context, tx pgx.Tx, theme string, period int) error {
@@ -497,6 +518,9 @@ func SavePeriods(ctx context.Context, tx pgx.Tx, in []PeriodInput) error {
 	if current != 1 {
 		return invalid("Mark exactly one period as current.")
 	}
+	if err := lockList(ctx, tx, "roadmap_periods"); err != nil {
+		return err
+	}
 	for i, p := range in {
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO roadmap_periods (position, name, months, is_current) VALUES ($1, $2, $3, $4)
@@ -524,6 +548,9 @@ func SaveThemes(ctx context.Context, tx pgx.Tx, in []ThemeInput) error {
 	}
 	if len(in) > maxListLen {
 		return invalid(fmt.Sprintf("There can be at most %d themes.", maxListLen))
+	}
+	if err := lockList(ctx, tx, "roadmap_themes"); err != nil {
+		return err
 	}
 	rows, err := tx.Query(ctx, `SELECT id::text FROM roadmap_themes FOR UPDATE`)
 	if err != nil {
@@ -620,6 +647,9 @@ func SaveShipped(ctx context.Context, tx pgx.Tx, in []ShippedInput) error {
 		if in[i].Title, err = text(in[i].Title, "Shipped title", 1, 160); err != nil {
 			return err
 		}
+	}
+	if err := lockList(ctx, tx, "roadmap_shipped"); err != nil {
+		return err
 	}
 	rows, err := tx.Query(ctx, `DELETE FROM roadmap_shipped RETURNING id::text`)
 	if err != nil {

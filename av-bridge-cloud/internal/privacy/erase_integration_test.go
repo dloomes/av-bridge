@@ -8,10 +8,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/dloomes/av-bridge-cloud/internal/roadmap"
 )
 
 func TestStandIn(t *testing.T) {
@@ -218,6 +221,13 @@ func TestErase(t *testing.T) {
 	exec(`INSERT INTO schedule_date (customer_id, on_date, closed, created_by) VALUES ($1, '2026-12-25', true, 'Alice@example.com')`, a)
 	exec(`INSERT INTO schedule_date (customer_id, on_date, closed, created_by) VALUES ($1, '2026-12-25', true, 'alice@example.com')`, b)
 	// Global roadmap rows edited by Alice (vendor staff share the register).
+	// Hold the roadmap test lock from here to the end of the test, so the
+	// roadmap tests in other packages don't overwrite these rows meanwhile.
+	unlock, err := roadmap.TestLock(ctx, os.Getenv("TEST_DATABASE_URL"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(unlock)
 	exec(`UPDATE roadmap_settings SET updated_by = 'Alice@Example.com'`)
 	exec(`UPDATE roadmap_items SET updated_by = 'alice@example.com' WHERE title = 'Bulk device import'`)
 	exec(`INSERT INTO roadmap_share_links (name, token_hash, expires_at, created_by) VALUES ('Acme', $1, now() + interval '1 day', 'ALICE@example.com')`, "erl-"+a)
