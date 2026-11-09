@@ -177,14 +177,25 @@ export function ConfirmModal({
   onCancel: () => void;
   onConfirm: () => Promise<void>;
 }) {
-  const { busy, error, run } = useSave();
+  const { busy, error, setError, run } = useSave();
+  // A failure belongs to the row it was for: clear it whenever the modal
+  // opens (during render, so a stale error never paints) or is cancelled.
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (open) setError(null);
+  }
+  const cancel = () => {
+    setError(null);
+    onCancel();
+  };
   return (
-    <Modal open={open} onClose={onCancel} title={title} wide={false}>
+    <Modal open={open} onClose={cancel} title={title} wide={false}>
       <div className="flex flex-col gap-4 text-sm">
         <div>{body}</div>
         <ErrorBox message={error} />
         <div className="flex items-center justify-end gap-2 pt-2">
-          <Button type="button" variant="ghost" onClick={onCancel} disabled={busy}>
+          <Button type="button" variant="ghost" onClick={cancel} disabled={busy}>
             Cancel
           </Button>
           <Button type="button" disabled={busy} onClick={() => void run(onConfirm)}>
