@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/dloomes/av-bridge-cloud/internal/portalapi"
@@ -757,12 +758,33 @@ func logging(log *slog.Logger, next http.Handler) http.Handler {
 		next.ServeHTTP(rw, r)
 		log.Info("request",
 			"method", r.Method,
-			"path", r.URL.Path,
+			"path", logPath(r.URL.Path),
 			"status", rw.status,
 			"latency_ms", time.Since(start).Milliseconds(),
 			"remote", r.RemoteAddr,
 		)
 	})
+}
+
+// logPath is r.URL.Path made safe for the request log. Roadmap share
+// tokens (rmp_...) are bearer credentials carried in the path, so anything
+// under /public/roadmap/ is logged as /public/roadmap/{token}, and any other
+// path segment that looks like a share token is replaced too.
+func logPath(p string) string {
+	const roadmapPrefix = "/public/roadmap/"
+	if strings.HasPrefix(p, roadmapPrefix) {
+		return roadmapPrefix + "{token}"
+	}
+	if !strings.Contains(p, "rmp_") {
+		return p
+	}
+	segs := strings.Split(p, "/")
+	for i, s := range segs {
+		if strings.HasPrefix(s, "rmp_") {
+			segs[i] = "{token}"
+		}
+	}
+	return strings.Join(segs, "/")
 }
 
 type statusWriter struct {

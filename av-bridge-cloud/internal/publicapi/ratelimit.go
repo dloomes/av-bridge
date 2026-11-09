@@ -1,6 +1,11 @@
 package publicapi
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"net"
+	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -68,4 +73,25 @@ func (l *ipLimiter) size() int {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return len(l.windows)
+}
+
+// limiterKey is the bucket key for the roadmap limiter: the whole
+// X-Forwarded-For header plus the RemoteAddr host (port stripped). Behind
+// the portal's Next.js rewrite on Amplify, the last XFF hop is Amplify's
+// shared egress IP, so keying on it (as clientIP does) would put every
+// viewer in one bucket; the earlier entries tell viewers apart. A caller
+// that forges XFF only splits its own traffic across buckets, it cannot
+// drain anyone else's. Long keys are hashed so a huge header can't inflate
+// the limiter's memory.
+func limiterKey(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	key := strings.TrimSpace(r.Header.Get("X-Forwarded-For")) + "|" + host
+	if len(key) > 256 {
+		sum := sha256.Sum256([]byte(key))
+		key = "sha256:" + hex.EncodeToString(sum[:])
+	}
+	return key
 }

@@ -302,6 +302,15 @@ func TestRoadmapShareLinks(t *testing.T) {
 		if q(`SELECT use_count::text FROM roadmap_share_links WHERE id = $1`, link.ID) != "1" {
 			t.Fatal("use_count changed on a revoked link")
 		}
+		// A second revoke succeeds and keeps the original revoked_at.
+		first := q(`SELECT revoked_at::text FROM roadmap_share_links WHERE id = $1`, link.ID)
+		exec(`SELECT pg_sleep(0.01)`)
+		if code, b := call(edTok, "POST", "/"+link.ID+"/revoke", nil); code != 200 {
+			t.Fatalf("second revoke = %d %s", code, b)
+		}
+		if again := q(`SELECT revoked_at::text FROM roadmap_share_links WHERE id = $1`, link.ID); again != first {
+			t.Fatalf("revoked_at changed on second revoke: %s -> %s", first, again)
+		}
 		if code, b := call(edTok, "POST", "/00000000-0000-0000-0000-000000000000/revoke", nil); code != 404 {
 			t.Fatalf("revoke unknown = %d %s", code, b)
 		}

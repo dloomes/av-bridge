@@ -31,7 +31,7 @@ type roadmapPublicBody struct {
 func (h *Handler) RoadmapPublic(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Robots-Tag", "noindex, nofollow")
-	if !h.roadmapLimiter.Allow(clientIP(r)) {
+	if !h.roadmapLimiter.Allow(limiterKey(r)) {
 		w.Header().Set("Retry-After", "60")
 		writeJSONStatus(w, http.StatusTooManyRequests, map[string]string{
 			"error": "Too many requests. Try again in a minute.",
