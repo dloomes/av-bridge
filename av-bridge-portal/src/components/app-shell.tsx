@@ -9,7 +9,7 @@ import { BrandingProvider } from "@/components/branding-provider";
 import { ToastProvider } from "@/components/toast";
 import { useSession } from "@/hooks/useSession";
 import { api } from "@/lib/api";
-import { signIn, signOut } from "@/lib/session";
+import { getUser, signIn, signOut, updateUser } from "@/lib/session";
 import { trackPath } from "@/lib/nav-history";
 
 // AppShell owns the top-level chrome decision: sign-in screen gets the full
@@ -38,7 +38,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     pathname.startsWith("/roadmap/s/");
 
   // The trail Back links use to return where the user came from.
+  // A share-link path carries a secret token, so it never goes into the
+  // trail (which sits in sessionStorage).
   useEffect(() => {
+    if (pathname.startsWith("/roadmap/s/")) return;
     trackPath(pathname);
   }, [pathname]);
 
@@ -81,6 +84,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           customer_id: who.customer_id,
           role: who.role,
           is_vendor: who.is_vendor,
+          roadmap_editor: who.roadmap_editor,
           permissions: who.permissions ?? [],
           is_scoped: who.is_scoped,
           landing_page: who.landing_page,
@@ -91,6 +95,28 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       cancelled = true;
     };
   }, [session.hydrated, session.token, session.user, onSignIn]);
+
+  // An admin can flip an Involve user's roadmap-editor flag at any time, and
+  // the stored session only learns it at sign-in. Re-read it once per load
+  // for Involve users so the Helpdesk link follows. updateUser keeps the
+  // customer scope the helpdesk user is acting in.
+  const isVendorUser = !!session.user?.is_vendor;
+  useEffect(() => {
+    if (!session.hydrated || !session.token || onSignIn || !isVendorUser) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const who = await api.whoami();
+        if (cancelled) return;
+        const cur = getUser();
+        if (!cur || !!cur.roadmap_editor === !!who.roadmap_editor) return;
+        updateUser({ ...cur, roadmap_editor: who.roadmap_editor });
+      } catch {}
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [session.hydrated, session.token, onSignIn, isVendorUser]);
 
   if (onSignIn) {
     // Sign-in still gets ToastProvider so login errors can surface as

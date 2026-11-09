@@ -16,6 +16,7 @@ import {
   Pencil,
   Plus,
   ServerCrash,
+  Signpost,
   ShieldCheck,
   Wifi,
 } from "lucide-react";
@@ -107,6 +108,14 @@ export default function HelpdeskPage() {
               <Link href="/data-requests?helpdesk=1">
                 <ShieldCheck className="h-3.5 w-3.5" />
                 Data requests
+              </Link>
+            </Button>
+          )}
+          {session.user?.roadmap_editor && (
+            <Button asChild size="sm" variant="outline">
+              <Link href="/helpdesk/roadmap">
+                <Signpost className="h-3.5 w-3.5" />
+                Roadmap
               </Link>
             </Button>
           )}

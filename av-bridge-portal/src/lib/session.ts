@@ -15,6 +15,9 @@ export interface SessionUser {
   customer_id?: string;
   role: string;
   is_vendor?: boolean;
+  // Involve user the helpdesk admin has allowed to edit the roadmap (from
+  // /whoami; absent when false). The cloud enforces it; this only hides UI.
+  roadmap_editor?: boolean;
   // Effective permissions returned by /whoami. For vendor callers the
   // backend expands the "all permissions" bypass into the concrete set,
   // so UI code can just probe hasPermission() without a separate branch.
@@ -83,6 +86,13 @@ export function signIn(token: string, user: SessionUser): void {
   window.localStorage.setItem(TOKEN_KEY, token);
   window.localStorage.setItem(USER_KEY, JSON.stringify(user));
   window.localStorage.removeItem(SCOPE_KEY);
+  notify();
+}
+
+// updateUser stores a refreshed user for the current session. Unlike
+// signIn it keeps the helpdesk's customer scope.
+export function updateUser(user: SessionUser): void {
+  window.localStorage.setItem(USER_KEY, JSON.stringify(user));
   notify();
 }
 

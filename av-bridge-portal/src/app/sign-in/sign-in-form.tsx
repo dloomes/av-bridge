@@ -254,6 +254,7 @@ export function SignInForm({ branding, showVendorSSO = false, slug, appOrigin = 
           customer_id: who.customer_id,
           role: who.role,
           is_vendor: who.is_vendor,
+          roadmap_editor: who.roadmap_editor,
           permissions: who.permissions ?? [],
           is_scoped: who.is_scoped,
           landing_page: who.landing_page,

@@ -809,6 +809,7 @@ export interface VendorUserRow {
   role_source: string;  // 'entra' | 'manual'
   provider: string;     // 'local' | 'entra'
   disabled: boolean;
+  roadmap_editor?: boolean;
   created_at?: string;
   last_login_at?: string;
 }
@@ -817,6 +818,7 @@ export interface UpdateVendorUserBody {
   full_name?: string;
   role?: string;
   disabled?: boolean;
+  roadmap_editor?: boolean;
 }
 
 export interface HealthResponse {
@@ -909,4 +911,30 @@ export interface Roadmap {
 
 export interface SharedRoadmap extends Roadmap {
   shared_with: string;
+}
+
+// Roadmap editor (helpdesk). Bodies mirror cloud internal/roadmap inputs.
+export interface RoadmapItemBody {
+  theme_id?: string;
+  period?: number;
+  status?: RoadmapStatus;
+  release_month?: string;
+  title?: string;
+  description?: string;
+}
+
+export interface RoadmapLink {
+  id: string;
+  name: string;
+  expires_at: string;
+  created_by: string;
+  created_at: string;
+  last_used_at: string | null;
+  use_count: number;
+  revoked_at: string | null;
+}
+
+export interface RoadmapNewLink {
+  link: RoadmapLink;
+  url: string;
 }

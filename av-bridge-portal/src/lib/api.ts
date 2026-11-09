@@ -55,6 +55,11 @@ import type {
   UserRow,
   VendorUserRow,
   Roadmap,
+  RoadmapItemBody,
+  RoadmapLink,
+  RoadmapNewLink,
+  RoadmapPeriod,
+  RoadmapSettings,
   SharedRoadmap,
 } from "./types";
 
@@ -413,6 +418,7 @@ export interface WhoamiResponse {
   customer_id?: string;
   role: string;
   is_vendor?: boolean;
+  roadmap_editor?: boolean;
   // Effective permission keys for the caller. For vendor accounts the
   // backend expands the "all permissions" bypass, so this list is always
   // authoritative for UI gating.
@@ -1045,10 +1051,47 @@ function collectorLogQuery(f: CollectorLogFilter): string {
   return p.toString();
 }
 
+const ROADMAP_ED = "/api/v1/helpdesk/roadmap";
+
 export const api = {
   // -- roadmap -----------------------------------------------------------------
   getRoadmap: (signal?: AbortSignal) =>
     request<Roadmap>("/api/v1/roadmap", { signal }),
+
+  // Editor writes (Involve users flagged roadmap_editor). Each returns the
+  // whole roadmap, except the link calls.
+  saveRoadmapSettings: (
+    b: Pick<RoadmapSettings, "title" | "headline" | "lede" | "disclaimer" | "as_of">
+  ) => request<Roadmap>(ROADMAP_ED + "/settings", { method: "PUT", body: JSON.stringify(b) }),
+  createRoadmapItem: (b: RoadmapItemBody) =>
+    request<Roadmap>(ROADMAP_ED + "/items", { method: "POST", body: JSON.stringify(b) }),
+  updateRoadmapItem: (id: string, b: RoadmapItemBody) =>
+    request<Roadmap>(`${ROADMAP_ED}/items/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(b),
+    }),
+  deleteRoadmapItem: (id: string) =>
+    request<Roadmap>(`${ROADMAP_ED}/items/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  orderRoadmapItems: (b: { theme_id: string; period: number; ids: string[] }) =>
+    request<Roadmap>(ROADMAP_ED + "/items/order", { method: "PUT", body: JSON.stringify(b) }),
+  saveRoadmapPeriods: (b: Pick<RoadmapPeriod, "name" | "months" | "is_current">[]) =>
+    request<Roadmap>(ROADMAP_ED + "/periods", { method: "PUT", body: JSON.stringify(b) }),
+  saveRoadmapThemes: (b: { id: string; name: string; note: string }[]) =>
+    request<Roadmap>(ROADMAP_ED + "/themes", { method: "PUT", body: JSON.stringify(b) }),
+  saveRoadmapShipped: (b: { id: string; when: string; title: string }[]) =>
+    request<Roadmap>(ROADMAP_ED + "/shipped", { method: "PUT", body: JSON.stringify(b) }),
+  listRoadmapLinks: (signal?: AbortSignal) =>
+    request<{ links: RoadmapLink[] }>(ROADMAP_ED + "/links", { signal }),
+  createRoadmapLink: (b: { name: string; expires_in_days: number }) =>
+    request<RoadmapNewLink>(ROADMAP_ED + "/links", { method: "POST", body: JSON.stringify(b) }),
+  revokeRoadmapLink: (id: string) =>
+    request<{ links: RoadmapLink[] }>(`${ROADMAP_ED}/links/${encodeURIComponent(id)}/revoke`, {
+      method: "POST",
+    }),
+  deleteRoadmapLink: (id: string) =>
+    request<{ links: RoadmapLink[] }>(`${ROADMAP_ED}/links/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    }),
 
   // Public share link. Plain fetch on purpose: no session header goes to a
   // page a customer opens from an emailed link.

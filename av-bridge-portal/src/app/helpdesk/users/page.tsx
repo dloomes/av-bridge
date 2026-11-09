@@ -18,6 +18,7 @@ import { Modal } from "@/components/modal";
 import { MagicLinkModal, MagicLinkTrigger } from "@/components/magic-link-modal";
 import { useSession } from "@/hooks/useSession";
 import { api } from "@/lib/api";
+import { plainError } from "@/lib/download";
 import { formatRelative } from "@/lib/utils";
 import type { VendorUserRow } from "@/lib/types";
 
@@ -151,6 +152,7 @@ export default function HelpdeskUsersPage() {
         {editing && (
           <EditForm
             user={editing}
+            canSetRoadmapEditor={session.user?.role === "admin"}
             onCancel={() => setEditing(null)}
             onSaved={async () => {
               setEditing(null);
@@ -217,6 +219,11 @@ function UserRow({ u, isSelf, onEdit, onDelete, onMagicLink }: UserRowProps) {
               Disabled
             </span>
           )}
+          {u.roadmap_editor && (
+            <span className="rounded-md border border-input bg-transparent px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">
+              Roadmap editor
+            </span>
+          )}
           {isSelf && (
             <span className="rounded-md border border-primary/40 bg-primary/10 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-primary">
               You
@@ -281,19 +288,23 @@ function UserRow({ u, isSelf, onEdit, onDelete, onMagicLink }: UserRowProps) {
 
 interface EditFormProps {
   user: VendorUserRow;
+  // Only Involve admins may change the flag; everyone else doesn't see it.
+  canSetRoadmapEditor: boolean;
   onCancel: () => void;
   onSaved: () => Promise<void>;
 }
 
-function EditForm({ user, onCancel, onSaved }: EditFormProps) {
+function EditForm({ user, canSetRoadmapEditor, onCancel, onSaved }: EditFormProps) {
   const [fullName, setFullName] = useState(user.full_name ?? "");
   const [disabled, setDisabled] = useState(user.disabled);
+  const [roadmapEditor, setRoadmapEditor] = useState(!!user.roadmap_editor);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const dirty =
     fullName.trim() !== (user.full_name ?? "").trim() ||
-    disabled !== user.disabled;
+    disabled !== user.disabled ||
+    (canSetRoadmapEditor && roadmapEditor !== !!user.roadmap_editor);
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -313,15 +324,19 @@ function EditForm({ user, onCancel, onSaved }: EditFormProps) {
       const body: {
         full_name?: string;
         disabled?: boolean;
+        roadmap_editor?: boolean;
       } = {};
       if (fullName.trim() !== (user.full_name ?? "").trim()) {
         body.full_name = fullName.trim();
       }
       if (disabled !== user.disabled) body.disabled = disabled;
+      if (canSetRoadmapEditor && roadmapEditor !== !!user.roadmap_editor) {
+        body.roadmap_editor = roadmapEditor;
+      }
       await api.updateVendorUser(user.id, body);
       await onSaved();
     } catch (e) {
-      setError((e as Error).message);
+      setError(plainError(e));
       setSubmitting(false);
     }
   };
@@ -379,6 +394,24 @@ function EditForm({ user, onCancel, onSaved }: EditFormProps) {
           </div>
         </div>
       </label>
+
+      {canSetRoadmapEditor && (
+        <label className="flex items-start gap-3 rounded-md border border-input p-3">
+          <input
+            type="checkbox"
+            className="mt-1 h-4 w-4"
+            checked={roadmapEditor}
+            onChange={(e) => setRoadmapEditor(e.target.checked)}
+            disabled={submitting}
+          />
+          <div>
+            <div className="text-sm font-medium">Roadmap editor</div>
+            <div className="text-xs text-muted-foreground">
+              Can edit the product roadmap and create share links for it.
+            </div>
+          </div>
+        </label>
+      )}
 
       {error && (
         <div className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm [color:hsl(var(--destructive))]">
