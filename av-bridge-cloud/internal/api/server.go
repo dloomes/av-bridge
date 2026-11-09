@@ -181,6 +181,11 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 		// Product roadmap: any signed-in principal except a display link
 		// (checked in the handler).
 		mux.Handle("GET /api/v1/roadmap", wrap(portal.Portal.Roadmap))
+		// Roadmap editor APIs: Involve users only, and the handlers further
+		// require users.roadmap_editor (roadmap.CanEdit).
+		for _, rt := range portal.Portal.RoadmapEditorRoutes() {
+			mux.Handle(rt.Pattern, portalauth.Middleware(portal.Resolver, portalauth.RequireVendor(rt.Handler)))
+		}
 
 		// Vendor cross-tenant endpoints. Two tiers:
 		//   * RequireVendor       — any vendor role (admin/operator/viewer).
