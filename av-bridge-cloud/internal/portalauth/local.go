@@ -69,6 +69,7 @@ func (l *LocalResolver) Resolve(token string) (Principal, bool) {
 		disabledAt   *time.Time
 		perms        []string
 		scopeIDs     []string
+		roadmapEdit  bool
 	)
 	// Single query: session → user → user_roles → role_permissions. array_agg
 	// with a FILTER handles the LEFT JOINs: a vendor user (no user_roles
@@ -81,7 +82,7 @@ func (l *LocalResolver) Resolve(token string) (Principal, bool) {
 	var buScopeIDs, regionScopeIDs, locationScopeIDs, roomScopeIDs []string
 	err := l.pool.QueryRow(ctx, `
 		SELECT u.id::text, u.email, u.full_name, COALESCE(u.role, ''),
-		       u.customer_id::text, u.vendor_tenant_id::text, u.disabled_at,
+		       u.customer_id::text, u.vendor_tenant_id::text, u.disabled_at, u.roadmap_editor,
 		       COALESCE(array_agg(DISTINCT rp.permission) FILTER (WHERE rp.permission IS NOT NULL), '{}') AS perms,
 		       COALESCE(u.building_scope_ids::text[], '{}') AS scope_ids,
 		       COALESCE(u.business_unit_scope_ids::text[], '{}') AS bu_scope_ids,
@@ -98,7 +99,7 @@ func (l *LocalResolver) Resolve(token string) (Principal, bool) {
 		   AND `+db.UserActiveSQL("u.customer_id")+`
 		 GROUP BY u.id`,
 		HashToken(token)).
-		Scan(&userID, &email, &fullName, &role, &customerID, &vendorTenant, &disabledAt, &perms, &scopeIDs, &buScopeIDs,
+		Scan(&userID, &email, &fullName, &role, &customerID, &vendorTenant, &disabledAt, &roadmapEdit, &perms, &scopeIDs, &buScopeIDs,
 			&regionScopeIDs, &locationScopeIDs, &roomScopeIDs)
 	if err != nil {
 		return Principal{}, false
@@ -126,6 +127,7 @@ func (l *LocalResolver) Resolve(token string) (Principal, bool) {
 	}
 	if vendorTenant != nil {
 		p.IsVendor = true
+		p.RoadmapEditor = roadmapEdit
 		// CustomerID stays empty — vendor callers set it per-request via
 		// X-Customer-Scope (handled by Middleware).
 		// BuildingScopeIDs stays whatever came back from the DB (should be
@@ -145,4 +147,3 @@ func toPermSet(perms []string) map[string]struct{} {
 	}
 	return m
 }
-

@@ -27,15 +27,16 @@ import (
 // role came from an Entra mapping (auto-syncs on every sign-in) or from
 // a manual admin promotion (survives group churn).
 type vendorUserRow struct {
-	ID          string     `json:"id"`
-	Email       string     `json:"email"`
-	FullName    string     `json:"full_name,omitempty"`
-	Role        string     `json:"role"`
-	RoleSource  string     `json:"role_source"` // 'entra' | 'manual'
-	Provider    string     `json:"provider"`    // 'local' | 'entra'
-	Disabled    bool       `json:"disabled"`
-	CreatedAt   *time.Time `json:"created_at,omitempty"`
-	LastLoginAt *time.Time `json:"last_login_at,omitempty"`
+	ID            string     `json:"id"`
+	Email         string     `json:"email"`
+	FullName      string     `json:"full_name,omitempty"`
+	Role          string     `json:"role"`
+	RoleSource    string     `json:"role_source"` // 'entra' | 'manual'
+	Provider      string     `json:"provider"`    // 'local' | 'entra'
+	Disabled      bool       `json:"disabled"`
+	CreatedAt     *time.Time `json:"created_at,omitempty"`
+	LastLoginAt   *time.Time `json:"last_login_at,omitempty"`
+	RoadmapEditor bool       `json:"roadmap_editor"`
 }
 
 // HelpdeskListUsers — GET /api/v1/helpdesk/users
@@ -54,7 +55,8 @@ func (h *Handler) HelpdeskListUsers(w http.ResponseWriter, r *http.Request) {
 		       provider,
 		       disabled_at IS NOT NULL,
 		       created_at,
-		       last_login_at
+		       last_login_at,
+		       roadmap_editor
 		  FROM users
 		 WHERE vendor_tenant_id = $1
 		 ORDER BY lower(email)`,
@@ -70,7 +72,7 @@ func (h *Handler) HelpdeskListUsers(w http.ResponseWriter, r *http.Request) {
 		var u vendorUserRow
 		if err := rows.Scan(&u.ID, &u.Email, &u.FullName,
 			&u.Role, &u.RoleSource, &u.Provider,
-			&u.Disabled, &u.CreatedAt, &u.LastLoginAt); err != nil {
+			&u.Disabled, &u.CreatedAt, &u.LastLoginAt, &u.RoadmapEditor); err != nil {
 			h.log.Error("list vendor users scan", "error", err)
 			writeErr(w, http.StatusInternalServerError, "internal error")
 			return
@@ -82,8 +84,10 @@ func (h *Handler) HelpdeskListUsers(w http.ResponseWriter, r *http.Request) {
 
 type updateVendorUserReq struct {
 	FullName *string `json:"full_name,omitempty"`
-	Role     *string `json:"role,omitempty"`     // one of admin/operator/viewer
+	Role     *string `json:"role,omitempty"` // one of admin/operator/viewer
 	Disabled *bool   `json:"disabled,omitempty"`
+	// RoadmapEditor lets an Involve user edit the product roadmap.
+	RoadmapEditor *bool `json:"roadmap_editor,omitempty"`
 }
 
 // HelpdeskUpdateUser — PATCH /api/v1/helpdesk/users/{id}
@@ -117,6 +121,18 @@ func (h *Handler) HelpdeskUpdateUser(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 
+	// Only Involve users can be roadmap editors. The UPDATE below is
+	// vendor-scoped, so a customer user would otherwise read as not found.
+	if req.RoadmapEditor != nil {
+		var customerID *string
+		err := h.store.AdminPool().QueryRow(ctx,
+			`SELECT customer_id::text FROM users WHERE id = $1`, id).Scan(&customerID)
+		if err == nil && customerID != nil {
+			writeErr(w, http.StatusBadRequest, "Only Involve users can be roadmap editors.")
+			return
+		}
+	}
+
 	// Build the UPDATE dynamically so omitted fields don't overwrite
 	// stored values. disabled_at is handled with a SQL literal (now() /
 	// NULL) rather than a bound arg so we don't have to pass a Go
@@ -140,6 +156,10 @@ func (h *Handler) HelpdeskUpdateUser(w http.ResponseWriter, r *http.Request) {
 		} else {
 			set = append(set, "disabled_at = NULL")
 		}
+	}
+	if req.RoadmapEditor != nil {
+		args = append(args, *req.RoadmapEditor)
+		set = append(set, "roadmap_editor = $"+intToStr(len(args)))
 	}
 	if len(set) == 0 {
 		w.WriteHeader(http.StatusNoContent)

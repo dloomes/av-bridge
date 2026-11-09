@@ -35,13 +35,16 @@ import (
 // have an empty Permissions map because RequirePermission short-circuits on
 // IsVendor (they bypass tenant RBAC entirely).
 type Principal struct {
-	UserID      string
-	Email       string
-	Name        string
-	CustomerID  string
-	Role        string
-	IsVendor    bool
-	Permissions map[string]struct{}
+	UserID     string
+	Email      string
+	Name       string
+	CustomerID string
+	Role       string
+	IsVendor   bool
+	// RoadmapEditor is users.roadmap_editor: an Involve user who may edit
+	// the product roadmap (see roadmap.CanEdit).
+	RoadmapEditor bool
+	Permissions   map[string]struct{}
 	// BuildingScopeIDs restricts the caller to a subset of their tenant's
 	// buildings. Empty = full-tenant access. Enforced by the RLS policies
 	// added in migration 0019 whenever a handler runs its query under

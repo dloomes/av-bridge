@@ -66,10 +66,10 @@ type PubAPIRoutes struct {
 // install script. Nil fields skip registration. All are intentionally
 // under /public/*.
 type PublicRoutes struct {
-	Branding              http.HandlerFunc
-	PasswordResetRequest  http.HandlerFunc
-	PasswordResetComplete http.HandlerFunc
-	MagicLinkConsume      http.HandlerFunc
+	Branding                 http.HandlerFunc
+	PasswordResetRequest     http.HandlerFunc
+	PasswordResetComplete    http.HandlerFunc
+	MagicLinkConsume         http.HandlerFunc
 	CollectorEnroll          http.HandlerFunc
 	CollectorInstallScript   http.HandlerFunc
 	CollectorInstallScriptPS http.HandlerFunc
@@ -178,6 +178,9 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 		// Preference update — any authenticated user can flip their own
 		// landing_page. Same auth stance as whoami.
 		mux.Handle("PATCH /api/v1/me/preferences", wrap(portal.Portal.UpdateMyPreferences))
+		// Product roadmap: any signed-in principal except a display link
+		// (checked in the handler).
+		mux.Handle("GET /api/v1/roadmap", wrap(portal.Portal.Roadmap))
 
 		// Vendor cross-tenant endpoints. Two tiers:
 		//   * RequireVendor       — any vendor role (admin/operator/viewer).

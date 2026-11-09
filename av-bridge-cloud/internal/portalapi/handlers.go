@@ -16,8 +16,8 @@ import (
 	"time"
 
 	"github.com/dloomes/av-bridge-cloud/internal/audit"
-	"github.com/dloomes/av-bridge-cloud/internal/db"
 	"github.com/dloomes/av-bridge-cloud/internal/collectorupdate"
+	"github.com/dloomes/av-bridge-cloud/internal/db"
 	"github.com/dloomes/av-bridge-cloud/internal/devicestatus"
 	"github.com/dloomes/av-bridge-cloud/internal/nightly"
 	"github.com/dloomes/av-bridge-cloud/internal/notify"
@@ -154,10 +154,10 @@ func queryInt(r *http.Request, key string, def, max int) int {
 // as 'online' indefinitely.
 func (h *Handler) Status(w http.ResponseWriter, r *http.Request) {
 	type out struct {
-		Total   int    `json:"total"`
-		Online  int    `json:"online"`
-		Offline int    `json:"offline"`
-		Unknown int    `json:"unknown"`
+		Total   int `json:"total"`
+		Online  int `json:"online"`
+		Offline int `json:"offline"`
+		Unknown int `json:"unknown"`
 		// SwitchedOff: switched off for the night by Room Readiness.
 		SwitchedOff int    `json:"switched_off"`
 		Time        string `json:"time"`
@@ -381,18 +381,18 @@ func (h *Handler) ListDevices(w http.ResponseWriter, r *http.Request) {
 	collectorFilter := strings.TrimSpace(r.URL.Query().Get("collector_id"))
 
 	type item struct {
-		ID           string            `json:"id"`
-		Name         string            `json:"name"`
-		Type         string            `json:"type"`
-		Protocol     string            `json:"protocol"`
-		Location     string            `json:"location"`
-		Region       string            `json:"region,omitempty"`
-		LocationName string            `json:"location_name,omitempty"`
-		Building     string            `json:"building,omitempty"`
-		RoomID       *string           `json:"room_id,omitempty"`
-		CollectorID  string            `json:"collector_id,omitempty"`
-		Address      string            `json:"address,omitempty"`
-		Status       string            `json:"status"`
+		ID           string  `json:"id"`
+		Name         string  `json:"name"`
+		Type         string  `json:"type"`
+		Protocol     string  `json:"protocol"`
+		Location     string  `json:"location"`
+		Region       string  `json:"region,omitempty"`
+		LocationName string  `json:"location_name,omitempty"`
+		Building     string  `json:"building,omitempty"`
+		RoomID       *string `json:"room_id,omitempty"`
+		CollectorID  string  `json:"collector_id,omitempty"`
+		Address      string  `json:"address,omitempty"`
+		Status       string  `json:"status"`
 		// CollectorStatus is the derived status of the device's collector
 		// (online / offline / unknown) using the same freshness threshold
 		// as Status. Included so the portal can render "Collector offline"
@@ -518,38 +518,38 @@ func (h *Handler) GetDevice(w http.ResponseWriter, r *http.Request) {
 		Notes        string `json:"notes,omitempty"`
 	}
 	type out struct {
-		ID          string            `json:"id"`
-		CollectorID string            `json:"collector_id"`
-		RoomID      *string           `json:"room_id,omitempty"`
-		AssetID     *string           `json:"asset_id,omitempty"`
-		Asset       *deviceAsset      `json:"asset,omitempty"`
-		ReportedID  string            `json:"reported_id"`
-		Name        string            `json:"name"`
-		Type        string            `json:"type"`
-		Protocol    string            `json:"protocol"`
-		Location    string            `json:"location"`
+		ID          string       `json:"id"`
+		CollectorID string       `json:"collector_id"`
+		RoomID      *string      `json:"room_id,omitempty"`
+		AssetID     *string      `json:"asset_id,omitempty"`
+		Asset       *deviceAsset `json:"asset,omitempty"`
+		ReportedID  string       `json:"reported_id"`
+		Name        string       `json:"name"`
+		Type        string       `json:"type"`
+		Protocol    string       `json:"protocol"`
+		Location    string       `json:"location"`
 		// Address mirrors the address column (the config-pull truth) so the
 		// edit form sees what the bridge sees. The old GET used ip_address
 		// (an inventory column populated from telemetry) — kept the column
 		// separately exposed below as "ip_address" for back-compat.
-		Address          string            `json:"address,omitempty"`
-		IPAddress        string            `json:"ip_address,omitempty"`
-		BaudRate         int               `json:"baud_rate,omitempty"`
-		PollRate         int               `json:"poll_rate_seconds,omitempty"`
-		PowerWattsOn     *float64          `json:"power_watts_on,omitempty"`
-		PowerWattsStandby *float64         `json:"power_watts_standby,omitempty"`
-		Status           string            `json:"status"`
+		Address           string   `json:"address,omitempty"`
+		IPAddress         string   `json:"ip_address,omitempty"`
+		BaudRate          int      `json:"baud_rate,omitempty"`
+		PollRate          int      `json:"poll_rate_seconds,omitempty"`
+		PowerWattsOn      *float64 `json:"power_watts_on,omitempty"`
+		PowerWattsStandby *float64 `json:"power_watts_standby,omitempty"`
+		Status            string   `json:"status"`
 		// CollectorStatus surfaces the derived state of the device's
 		// collector so the UI can distinguish "device unknown BECAUSE
 		// the collector is offline" from "device unknown for other
 		// reasons" and label the pill accordingly.
-		CollectorStatus  string            `json:"collector_status,omitempty"`
+		CollectorStatus string `json:"collector_status,omitempty"`
 		// LastOnlineAt: when the device last answered its Collector
 		// ("Last contacted"). Absent if it hasn't in the records kept.
-		LastOnlineAt     *time.Time        `json:"last_online_at,omitempty"`
-		Tags             map[string]string `json:"tags,omitempty"`
-		Commands         map[string]string `json:"commands,omitempty"`
-		Subscriptions    []subscription    `json:"subscriptions,omitempty"`
+		LastOnlineAt  *time.Time        `json:"last_online_at,omitempty"`
+		Tags          map[string]string `json:"tags,omitempty"`
+		Commands      map[string]string `json:"commands,omitempty"`
+		Subscriptions []subscription    `json:"subscriptions,omitempty"`
 		// Capabilities is the adapter-declared shape (power/commands/metrics)
 		// stored on the row by the ingest handler. Surfaced so the device
 		// detail page's Command panel can render the correct buttons for
@@ -586,8 +586,8 @@ func (h *Handler) GetDevice(w http.ResponseWriter, r *http.Request) {
 			       d.poll_rate_seconds,
 			       d.power_watts_on::float8,
 			       d.power_watts_standby::float8,
-			       ` + devicestatus.EffectiveStatusSQL + `,
-			       ` + devicestatus.CollectorStatusSQL + `,
+			       `+devicestatus.EffectiveStatusSQL+`,
+			       `+devicestatus.CollectorStatusSQL+`,
 			       d.last_online_at,
 			       d.tags, d.commands, d.subscriptions, d.capabilities
 			  FROM devices d
@@ -722,7 +722,7 @@ func (h *Handler) GetTelemetry(w http.ResponseWriter, r *http.Request) {
 			         WHEN r.name IS NOT NULL THEN r.name
 			         ELSE ''
 			       END,
-			       ` + devicestatus.EffectiveStatusSQL + `,
+			       `+devicestatus.EffectiveStatusSQL+`,
 			       d.last_seen_at, d.latest_metrics, d.tags
 			  FROM devices d
 			  LEFT JOIN rooms r ON r.id = d.room_id
@@ -970,24 +970,24 @@ func (h *Handler) ListAlerts(w http.ResponseWriter, r *http.Request) {
 	status := r.URL.Query().Get("status")
 
 	type item struct {
-		ID              string          `json:"id"`
-		SubjectKind     string          `json:"subject_kind"` // "device" | "collector" | "room"
-		DeviceID        string          `json:"device_id,omitempty"`
-		DeviceName      string          `json:"device_name,omitempty"`
-		CollectorID     string          `json:"collector_id,omitempty"`
-		CollectorName   string          `json:"collector_name,omitempty"`
-		RoomID          string          `json:"room_id,omitempty"`
-		RoomName        string          `json:"room_name,omitempty"`
-		AlertKey        string          `json:"alert_key"`
-		Severity        string          `json:"severity"`
-		Message         string          `json:"message"`
-		Payload         json.RawMessage `json:"payload,omitempty"`
-		Status          string          `json:"status"`
-		OpenedAt        time.Time       `json:"opened_at"`
-		AcknowledgedAt  *time.Time      `json:"acknowledged_at,omitempty"`
-		AcknowledgedBy  string          `json:"acknowledged_by,omitempty"`
-		ResolvedAt      *time.Time      `json:"resolved_at,omitempty"`
-		ResolvedBy      string          `json:"resolved_by,omitempty"`
+		ID             string          `json:"id"`
+		SubjectKind    string          `json:"subject_kind"` // "device" | "collector" | "room"
+		DeviceID       string          `json:"device_id,omitempty"`
+		DeviceName     string          `json:"device_name,omitempty"`
+		CollectorID    string          `json:"collector_id,omitempty"`
+		CollectorName  string          `json:"collector_name,omitempty"`
+		RoomID         string          `json:"room_id,omitempty"`
+		RoomName       string          `json:"room_name,omitempty"`
+		AlertKey       string          `json:"alert_key"`
+		Severity       string          `json:"severity"`
+		Message        string          `json:"message"`
+		Payload        json.RawMessage `json:"payload,omitempty"`
+		Status         string          `json:"status"`
+		OpenedAt       time.Time       `json:"opened_at"`
+		AcknowledgedAt *time.Time      `json:"acknowledged_at,omitempty"`
+		AcknowledgedBy string          `json:"acknowledged_by,omitempty"`
+		ResolvedAt     *time.Time      `json:"resolved_at,omitempty"`
+		ResolvedBy     string          `json:"resolved_by,omitempty"`
 	}
 	out := []item{}
 
@@ -1158,6 +1158,7 @@ func (h *Handler) Whoami(w http.ResponseWriter, r *http.Request) {
 		CustomerID       string   `json:"customer_id,omitempty"`
 		Role             string   `json:"role"`
 		IsVendor         bool     `json:"is_vendor,omitempty"`
+		RoadmapEditor    bool     `json:"roadmap_editor,omitempty"`
 		Permissions      []string `json:"permissions"`
 		BuildingScopeIDs []string `json:"building_scope_ids"`
 		// IsScoped is true when the user is restricted at ANY hierarchy
@@ -1209,6 +1210,7 @@ func (h *Handler) Whoami(w http.ResponseWriter, r *http.Request) {
 		CustomerID:       p.CustomerID,
 		Role:             p.Role,
 		IsVendor:         p.IsVendor,
+		RoadmapEditor:    p.RoadmapEditor,
 		Permissions:      perms,
 		BuildingScopeIDs: scope,
 		IsScoped:         !principalScope(p).Empty(),
@@ -1271,21 +1273,21 @@ func (h *Handler) UpdateMyPreferences(w http.ResponseWriter, r *http.Request) {
 // tenant view.
 func (h *Handler) HelpdeskOverview(w http.ResponseWriter, r *http.Request) {
 	type item struct {
-		ID              string     `json:"id"`
-		Name            string     `json:"name"`
-		EntraTenantID   string     `json:"entra_tenant_id,omitempty"`
-		Slug            string     `json:"slug,omitempty"`
-		DevicesTotal    int        `json:"devices_total"`
-		DevicesOnline   int        `json:"devices_online"`
-		DevicesOffline  int        `json:"devices_offline"`
-		DevicesUnknown  int        `json:"devices_unknown"`
+		ID             string `json:"id"`
+		Name           string `json:"name"`
+		EntraTenantID  string `json:"entra_tenant_id,omitempty"`
+		Slug           string `json:"slug,omitempty"`
+		DevicesTotal   int    `json:"devices_total"`
+		DevicesOnline  int    `json:"devices_online"`
+		DevicesOffline int    `json:"devices_offline"`
+		DevicesUnknown int    `json:"devices_unknown"`
 		// Switched off for the night by Room Readiness: expected, so not
 		// counted as offline.
 		DevicesSwitchedOff int        `json:"devices_switched_off"`
-		AlertsOpen      int        `json:"alerts_open"`
-		AlertsCritical  int        `json:"alerts_critical"`
-		CollectorsTotal int        `json:"collectors_total"`
-		LastBridgeSeen  *time.Time `json:"last_bridge_seen,omitempty"`
+		AlertsOpen         int        `json:"alerts_open"`
+		AlertsCritical     int        `json:"alerts_critical"`
+		CollectorsTotal    int        `json:"collectors_total"`
+		LastBridgeSeen     *time.Time `json:"last_bridge_seen,omitempty"`
 	}
 	out := []item{}
 
