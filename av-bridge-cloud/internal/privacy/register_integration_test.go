@@ -81,6 +81,17 @@ func TestRegisterCoversSchema(t *testing.T) {
 		if e.KeyColumn != "" && !cols[e.Table+"."+e.KeyColumn] {
 			t.Errorf("%s.%s: KeyColumn %q does not exist", e.Table, e.Column, e.KeyColumn)
 		}
+		// An unscoped table found by email text can't be confined to the
+		// subject's customer, so a customer's request would reach every row
+		// with that email: it must be Involve's own (VendorOnly), which Collect
+		// and Erase skip for customers. Unscoped user-id tables are confined
+		// by the account ids instead.
+		if !e.Scoped && (e.Key == KeyEmail || e.Key == KeyEmailInText || e.Key == KeyEmailJSON) && !e.VendorOnly {
+			t.Errorf("%s.%s: unscoped email-keyed entry must be VendorOnly", e.Table, e.Column)
+		}
+		if e.VendorOnly && e.Scoped {
+			t.Errorf("%s.%s: VendorOnly on a Scoped table", e.Table, e.Column)
+		}
 	}
 
 	// Processing order: an entry found through key column K precedes any entry

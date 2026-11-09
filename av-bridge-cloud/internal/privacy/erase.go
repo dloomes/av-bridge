@@ -124,6 +124,9 @@ func erase(ctx context.Context, tx pgx.Tx, s Subject) (Result, error) {
 
 	deleted := map[string]bool{}
 	for _, e := range Personal {
+		if e.skipFor(s) {
+			continue // Involve's own rows: a customer's request never touches them
+		}
 		var (
 			n   int64
 			err error
@@ -202,6 +205,9 @@ type target struct {
 // key condition plus the scope filter. ok is false when nothing can match (a
 // user-id key and no account id).
 func (b *stmt) where(s target, e Entry) (cond string, ok bool, err error) {
+	if e.skipFor(s.Subject) {
+		return "", false, nil
+	}
 	k := "t." + pgx.Identifier{keyColumn(e)}.Sanitize()
 	switch e.Key {
 	case KeyUserID:

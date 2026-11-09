@@ -69,6 +69,9 @@ func Collect(ctx context.Context, tx pgx.Tx, s Subject) ([]Table, error) {
 	var order []string
 	byTable := map[string][]Entry{}
 	for _, e := range Personal {
+		if e.skipFor(s) {
+			continue // Involve's own rows: never in a customer's export
+		}
 		if _, ok := byTable[e.Table]; !ok {
 			order = append(order, e.Table)
 		}

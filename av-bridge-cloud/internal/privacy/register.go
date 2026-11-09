@@ -52,8 +52,17 @@ type Entry struct {
 	// on it. ScopeColumn names it; empty means customer_id (customers uses id).
 	Scoped      bool
 	ScopeColumn string
-	Reason      string // required for ActReport
+	// VendorOnly: the row belongs to Involve, not to any customer (the global
+	// roadmap, written only by Involve editors). Collect and Erase skip these
+	// entries for a customer's subject, so a customer's data request can't
+	// export or rewrite them; vendor staff subjects still get them.
+	VendorOnly bool
+	Reason     string // required for ActReport
 }
+
+// skipFor reports whether the entry is out of reach for the subject: a
+// VendorOnly entry for a customer's subject.
+func (e Entry) skipFor(s Subject) bool { return e.VendorOnly && s.CustomerID != "" }
 
 // Exempt is a column that matches GuardPattern but identifies no person.
 type Exempt struct{ Table, Column, Reason string }
@@ -112,10 +121,11 @@ var Personal = []Entry{
 	{Table: "schedule_date", Column: "created_by", Key: KeyEmail, Category: "activity", Action: ActReplace, Scoped: true},
 
 	// The roadmap is global (no customer), so these are not Scoped; only
-	// Involve editors write them.
-	{Table: "roadmap_settings", Column: "updated_by", Key: KeyEmail, Category: "activity", Action: ActReplace},
-	{Table: "roadmap_items", Column: "updated_by", Key: KeyEmail, Category: "activity", Action: ActReplace},
-	{Table: "roadmap_share_links", Column: "created_by", Key: KeyEmail, Category: "activity", Action: ActReplace},
+	// Involve editors write them, so they are VendorOnly: a customer's data
+	// request never reaches them.
+	{Table: "roadmap_settings", Column: "updated_by", Key: KeyEmail, Category: "activity", Action: ActReplace, VendorOnly: true},
+	{Table: "roadmap_items", Column: "updated_by", Key: KeyEmail, Category: "activity", Action: ActReplace, VendorOnly: true},
+	{Table: "roadmap_share_links", Column: "created_by", Key: KeyEmail, Category: "activity", Action: ActReplace, VendorOnly: true},
 
 	// The audit log is rewritten by the SECURITY DEFINER function, not by Erase directly.
 	// JSONKeys are the keys the function removes from before, after and metadata;

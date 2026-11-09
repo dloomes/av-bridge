@@ -8,13 +8,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"os"
 	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
-
-	"github.com/dloomes/av-bridge-cloud/internal/roadmap"
 )
 
 func TestStandIn(t *testing.T) {
@@ -117,9 +114,7 @@ func leftovers(t *testing.T, ctx context.Context, su *pgx.Conn, e Entry, custome
 	if e.Key == KeyUserID {
 		conds = append(conds, "(t."+kc+"::text = ANY($4::text[]) AND t."+e.Column+" IS NOT NULL)")
 	}
-	// A global (unscoped) table keyed by email, such as the roadmap, is
-	// matched on the value alone.
-	if e.Scoped || e.Key == KeyEmail {
+	if e.Scoped {
 		val := "t." + e.Column + "::text"
 		if e.Table == "audit_log" {
 			val = "to_jsonb(t)::text"
@@ -220,17 +215,10 @@ func TestErase(t *testing.T) {
 	exec(`INSERT INTO firmware_targets (customer_id, make, model, updated_by) VALUES ($1, 'Cisco', 'Room Kit', 'alice@example.com')`, b)
 	exec(`INSERT INTO schedule_date (customer_id, on_date, closed, created_by) VALUES ($1, '2026-12-25', true, 'Alice@example.com')`, a)
 	exec(`INSERT INTO schedule_date (customer_id, on_date, closed, created_by) VALUES ($1, '2026-12-25', true, 'alice@example.com')`, b)
-	// Global roadmap rows edited by Alice (vendor staff share the register).
-	// Hold the roadmap test lock from here to the end of the test, so the
-	// roadmap tests in other packages don't overwrite these rows meanwhile.
-	unlock, err := roadmap.TestLock(ctx, os.Getenv("TEST_DATABASE_URL"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(unlock)
-	exec(`UPDATE roadmap_settings SET updated_by = 'Alice@Example.com'`)
-	exec(`UPDATE roadmap_items SET updated_by = 'alice@example.com' WHERE title = 'Bulk device import'`)
-	exec(`INSERT INTO roadmap_share_links (name, token_hash, expires_at, created_by) VALUES ('Acme', $1, now() + interval '1 day', 'ALICE@example.com')`, "erl-"+a)
+	// Global roadmap rows whose editor email is the same as Alice's. They are
+	// Involve's (VendorOnly), so her erase as A's user must leave them alone.
+	roadmapBy := seedRoadmap(t, ctx, su, "alice@example.com", a)
+	roadmapBefore := roadmapBy()
 
 	audit := func(cust, actor, targetID, after string) {
 		exec(`INSERT INTO audit_log (customer_id, actor, action, target_kind, target_id, "after")
@@ -265,7 +253,7 @@ func TestErase(t *testing.T) {
 
 	// The seed must reach every entry Erase changes, or the final check proves nothing.
 	for _, e := range Personal {
-		if e.Action == ActReport {
+		if e.Action == ActReport || e.VendorOnly {
 			continue
 		}
 		if n := leftovers(t, ctx, su, e, a, ids, "alice@example.com", "Alice A"); n == 0 {
@@ -313,11 +301,19 @@ func TestErase(t *testing.T) {
 	}
 
 	for _, e := range Personal {
-		if e.Action == ActReport {
+		if e.Action == ActReport || e.VendorOnly {
 			continue
 		}
 		if n := leftovers(t, ctx, su, e, a, ids, "alice@example.com", "Alice A"); n != 0 {
 			t.Errorf("%s.%s: %d rows still identify her", e.Table, e.Column, n)
+		}
+	}
+	if got := roadmapBy(); got != roadmapBefore {
+		t.Errorf("customer erase changed the roadmap: %v, was %v", got, roadmapBefore)
+	}
+	for k := range res.Counts {
+		if strings.HasPrefix(k, "roadmap_") {
+			t.Errorf("customer erase counted %s", k)
 		}
 	}
 	if got := auditCount(a); got != auditA {
