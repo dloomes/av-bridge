@@ -351,6 +351,7 @@ func main() {
 		CollectorInstallScriptPS: publicH.ServeInstallScriptPS,
 		ListDownloads:            publicH.ListDownloads,
 		ServeDownload:            publicH.ServeDownload,
+		RoadmapShared:            publicH.RoadmapPublic,
 	}
 	// M4.1: seed the shared magic-link portal base URL used by the
 	// mint side of the flow (portalapi). Small package-var setter is

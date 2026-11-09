@@ -713,6 +713,7 @@ func TestRoadmapEditing(t *testing.T) {
 		routes := [][2]string{
 			{"PUT", "/settings"}, {"POST", "/items"}, {"PATCH", "/items/" + theme}, {"DELETE", "/items/" + theme},
 			{"PUT", "/items/order"}, {"PUT", "/periods"}, {"PUT", "/themes"}, {"PUT", "/shipped"},
+			{"GET", "/links"}, {"POST", "/links"}, {"POST", "/links/" + theme + "/revoke"}, {"DELETE", "/links/" + theme},
 		}
 		for _, rt := range routes {
 			for _, scope := range []string{"", cust} {

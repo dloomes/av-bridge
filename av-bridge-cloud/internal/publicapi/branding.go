@@ -18,6 +18,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/dloomes/av-bridge-cloud/internal/db"
 	"github.com/dloomes/av-bridge-cloud/internal/notify"
@@ -58,6 +59,8 @@ type Handler struct {
 	// on-site install script so the bridge's cloud.webhook_url doesn't
 	// have to be hand-configured.
 	cloudBaseURL string
+	// roadmapLimiter caps GET /public/roadmap/{token} per caller IP.
+	roadmapLimiter *ipLimiter
 }
 
 // NewHandler wires the public (unauthenticated) portal endpoints. smtp
@@ -83,6 +86,7 @@ func NewHandler(
 		customerSSOEnabled: customerSSOEnabled,
 		cipher:             cipher,
 		cloudBaseURL:       cloudBaseURL,
+		roadmapLimiter:     newIPLimiter(roadmapRateLimit, time.Minute, roadmapLimiterMaxIPs),
 	}
 }
 

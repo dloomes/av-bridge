@@ -75,6 +75,7 @@ type PublicRoutes struct {
 	CollectorInstallScriptPS http.HandlerFunc
 	ListDownloads            http.HandlerFunc
 	ServeDownload            http.HandlerFunc
+	RoadmapShared            http.HandlerFunc
 }
 
 // RemoteAccessRoutes wires remote access (internal/remote): collectors'
@@ -134,6 +135,11 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 	if public.ServeDownload != nil {
 		mux.Handle("GET /public/downloads/{key}", public.ServeDownload)
 	}
+	if public.RoadmapShared != nil {
+		// Roadmap share link: the token is the credential. Rate-limited per
+		// IP in the handler.
+		mux.Handle("GET /public/roadmap/{token}", public.RoadmapShared)
+	}
 
 	if portal != nil {
 		// wrap: any authenticated portal user — used for /whoami and the
@@ -181,8 +187,8 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 		// Product roadmap: any signed-in principal except a display link
 		// (checked in the handler).
 		mux.Handle("GET /api/v1/roadmap", wrap(portal.Portal.Roadmap))
-		// Roadmap editor APIs: Involve users only, and the handlers further
-		// require users.roadmap_editor (roadmap.CanEdit).
+		// Roadmap editor APIs, share links included: Involve users only, and
+		// the handlers further require users.roadmap_editor (roadmap.CanEdit).
 		for _, rt := range portal.Portal.RoadmapEditorRoutes() {
 			mux.Handle(rt.Pattern, portalauth.Middleware(portal.Resolver, portalauth.RequireVendor(rt.Handler)))
 		}
