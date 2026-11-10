@@ -66,6 +66,14 @@ const COMMAND_PROMPTS: Record<string, PromptedArg> = {
   outlet_off:    { kind: "number", arg: "outlet", label: "Outlet number to switch OFF", min: 1, max: 8 },
   outlet_reboot: { kind: "number", arg: "outlet", label: "Outlet number to reboot (power cycle)", min: 1, max: 8 },
   set_volume:   { kind: "number", arg: "level", label: "Volume level (0–100)", min: 0, max: 100 },
+  // NEC projectors: any [018] input terminal value, for inputs without a button.
+  input_select: {
+    kind: "text",
+    arg: "code",
+    label: "Input terminal code (hex)",
+    placeholder: "A1",
+    helpText: "The projector's input terminal value from NEC's command reference, such as A1 (HDMI1), A2 (HDMI2), A6 (DisplayPort), BF (HDBaseT) or 01 (Computer).",
+  },
   // Aurora DIDO 4x4 matrix: which input to show on an output (or all four).
   route_out1:   { kind: "number", arg: "input", label: "Input to show on output 1", min: 1, max: 4 },
   route_out2:   { kind: "number", arg: "input", label: "Input to show on output 2", min: 1, max: 4 },

@@ -482,6 +482,41 @@ var catalogue = []Info{
 	},
 
 	{
+		ID:          "nec_projector",
+		Name:        "NEC projector",
+		Vendor:      "Sharp NEC",
+		Kind:        KindVendor,
+		Description: "NEC and Sharp NEC projectors, such as the PA-series laser models, over NEC's projector control protocol on TCP port 7142. Power, input, picture and sound mute, volume and lens shutter; power state including warming up and cooling down, input and signal, light-source and filter hours, faults and identity.",
+		DeviceTypes: []string{"projector"},
+		Power:       PowerCapability{On: true, Off: true},
+		Commands: []string{
+			"power_on", "power_off",
+			"input_hdmi1", "input_hdmi2", "input_displayport", "input_hdbaset", "input_computer", "input_select",
+			"picture_mute", "picture_unmute", "sound_mute", "sound_unmute",
+			"set_volume", "volume_up", "volume_down",
+			"shutter_close", "shutter_open",
+		},
+		Metrics: []string{
+			"power_status", "operation_status",
+			"current_input", "signal_present", "display_content",
+			"picture_mute", "sound_mute", "onscreen_mute", "volume",
+			"light_source_hours", "light_source_life_pct", "filter_hours",
+			"fault_count", "faults",
+			"model", "serial_number", "mac_address",
+			"response_ms",
+		},
+		ConfigSchema: []ConfigField{
+			{Name: "address", Required: true, Description: "Projector IP or hostname. Port 7142 is the NEC control port default; append :port to override.", Example: "192.168.30.60"},
+			{Name: "tags.control_id", Required: false, Description: "The projector's Control ID (1–254), only if Control ID is turned on in its menu.", Example: "1"},
+		},
+		ExampleConfig: `- id: lecture-theatre-projector
+  name: Lecture Theatre Projector
+  type: projector
+  protocol: nec_projector
+  address: 192.168.30.60`,
+	},
+
+	{
 		ID:          "sony_bravia",
 		Name:        "Sony Bravia Professional",
 		Vendor:      "Sony",
@@ -590,7 +625,7 @@ var catalogue = []Info{
 		Name:        "Generic REST",
 		Kind:        KindTransport,
 		Description: "HTTP GET-based polling for devices that expose a plain REST endpoint. Use as a starting point when no vendor adapter fits.",
-		DeviceTypes: []string{"display", "conferencing", "audio", "camera", "control", "avoip", "power"},
+		DeviceTypes: []string{"display", "conferencing", "audio", "camera", "control", "avoip", "power", "projector"},
 		Power:       PowerCapability{On: false, Off: false},
 		ConfigSchema: []ConfigField{
 			{Name: "address", Required: true, Description: "Full URL to the endpoint being polled.", Example: "http://192.168.50.10/api/status"},
@@ -610,7 +645,7 @@ var catalogue = []Info{
 		Name:        "Generic WebSocket",
 		Kind:        KindTransport,
 		Description: "Long-lived WebSocket connection with periodic keep-alive probes. Suitable for devices that push state as JSON frames.",
-		DeviceTypes: []string{"display", "conferencing", "audio", "camera", "control", "avoip", "power"},
+		DeviceTypes: []string{"display", "conferencing", "audio", "camera", "control", "avoip", "power", "projector"},
 		Power:       PowerCapability{On: false, Off: false},
 		ConfigSchema: []ConfigField{
 			{Name: "address", Required: true, Description: "ws:// or wss:// URL of the endpoint.", Example: "wss://192.168.60.10/socket"},
@@ -666,7 +701,7 @@ var catalogue = []Info{
 		Name:        "ICMP Ping",
 		Kind:        KindProbe,
 		Description: "Network reachability probe. Sends ICMP echoes and records loss and latency. Use for devices with no vendor API — a switch, an unmanaged panel, an IP camera.",
-		DeviceTypes: []string{"display", "conferencing", "audio", "camera", "control", "avoip", "power"},
+		DeviceTypes: []string{"display", "conferencing", "audio", "camera", "control", "avoip", "power", "projector"},
 		Power:       PowerCapability{On: false, Off: false},
 		Commands:    []string{"ping"},
 		Metrics: []string{
@@ -692,7 +727,7 @@ var catalogue = []Info{
 		Name:        "Fake device (load test)",
 		Kind:        KindProbe,
 		Description: "Synthetic device for load testing and capacity benchmarking. Does no network I/O — every poll returns generated telemetry with configurable latency, jitter, flap probability, and event rate. Use to spin up hundreds or thousands of devices against a single Collector to measure real throughput. Not intended for production fleets.",
-		DeviceTypes: []string{"display", "conferencing", "audio", "camera", "control", "avoip", "power"},
+		DeviceTypes: []string{"display", "conferencing", "audio", "camera", "control", "avoip", "power", "projector"},
 		Power:       PowerCapability{On: false, Off: false},
 		Commands:    []string{"noop", "set_status"},
 		Metrics: []string{

@@ -133,7 +133,7 @@ cloud:
 devices:
   - id: d1
     name: D1
-    type: projector
+    type: toaster
     protocol: rest
     address: "1.2.3.4"
 `)

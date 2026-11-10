@@ -201,6 +201,8 @@ function deviceTypeToAssetCategory(deviceType?: string): string {
       return "audio";
     case "conferencing":
       return "conferencing";
+    case "projector":
+      return "projector";
     default:
       return "";
   }

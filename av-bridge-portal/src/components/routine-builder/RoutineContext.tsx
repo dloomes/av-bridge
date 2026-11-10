@@ -15,6 +15,7 @@ import type { AdapterInfo, DeviceSummary } from "@/lib/types";
 // without touching consuming components.
 export const DEVICE_TYPE_OPTIONS: Array<{ value: string; label: string }> = [
   { value: "display", label: "Display" },
+  { value: "projector", label: "Projector" },
   { value: "camera", label: "Camera" },
   { value: "conferencing", label: "Video codec" },
   { value: "audio", label: "DSP / audio" },

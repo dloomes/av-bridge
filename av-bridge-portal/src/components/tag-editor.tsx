@@ -42,6 +42,7 @@ const labelClass = "text-xs font-medium text-muted-foreground uppercase tracking
 const HINTS: Record<string, string> = {
   aten_pdu: "Label outlets with outlet_1_name, outlet_2_name … (the PDU can't report its own names over Telnet). Set outlet_count for PDUs with more than 8 outlets.",
   netgear_m4250: "For an M4350, set port_prefix to 1/0/.",
+  nec_projector: "Set control_id only if Control ID is turned on in the projector's menu.",
   cisco_roomos: "Set tls_skip_verify to true for a codec with a self-signed certificate.",
   cisco_tc: "Set tls_skip_verify to true for a codec with a self-signed certificate.",
   poly_videoos: "Set tls_skip_verify to true for a codec with a self-signed certificate.",

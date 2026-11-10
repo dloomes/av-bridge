@@ -57,6 +57,10 @@ func New(cfg config.DeviceConfig, deps Deps) (device.Device, error) {
 		// Philips professional displays (PPDS signage and meeting-room ranges) —
 		// SICP binary protocol on TCP 5000, Wake-on-LAN for power-on
 		return NewPhilipsSICPAdapter(cfg), nil
+	case "nec_projector":
+		// NEC / Sharp NEC projectors (PA-series and others) — NEC projector
+		// control protocol, binary with checksum, on TCP 7142
+		return NewNECProjectorAdapter(cfg), nil
 	case "cisco_roomos":
 		// Cisco RoomOS — Room Kit / Room Bar / Board / Desk / Codec series;
 		// xAPI over HTTP(S) (getxml / putxml) with Basic auth
@@ -97,6 +101,6 @@ func New(cfg config.DeviceConfig, deps Deps) (device.Device, error) {
 		return NewFakeAdapter(cfg), nil
 
 	default:
-		return nil, fmt.Errorf("unsupported protocol: %q (supported: rest, websocket, telnet, serial, visca_over_ip, tesira, sony_bravia, philips_sicp, poly_videoos, cisco_roomos, cisco_tc, aurora_rxt, aurora_vpx, aurora_dido, crestron, aten_pdu, netgear_m4250, ping, fake)", cfg.Protocol)
+		return nil, fmt.Errorf("unsupported protocol: %q (supported: rest, websocket, telnet, serial, visca_over_ip, tesira, sony_bravia, philips_sicp, nec_projector, poly_videoos, cisco_roomos, cisco_tc, aurora_rxt, aurora_vpx, aurora_dido, crestron, aten_pdu, netgear_m4250, ping, fake)", cfg.Protocol)
 	}
 }

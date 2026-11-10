@@ -534,7 +534,7 @@
         "properties": {
           "id": { "type": "string", "format": "uuid" },
           "name": { "type": "string", "description": "The device's display name. Falls back to the adapter's reported id when no override is set in the portal." },
-          "type": { "type": "string", "description": "Device category: `display`, `conferencing`, `audio`, `camera`, `control`, `avoip` (AV-over-IP) or `power`." },
+          "type": { "type": "string", "description": "Device category: `display`, `conferencing`, `audio`, `camera`, `control`, `avoip` (AV-over-IP), `power` or `projector`." },
           "protocol": { "type": "string", "description": "The adapter the Collector uses for the device, e.g. `sony_bravia`, `tesira`, `cisco_roomos`, `aten_pdu`." },
           "status": { "type": "string", "enum": ["online", "offline", "unknown", "switched_off"], "description": "`unknown` when the device's Collector isn't reporting; `switched_off` while Room Readiness has it switched off for the night." },
           "ip_address": { "type": "string" },

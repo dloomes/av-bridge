@@ -7,14 +7,16 @@ import { cn } from "@/lib/utils";
 // next to their status. Each reports it in the power_status reading; add
 // a protocol here, and its values to POWER_LABELS if they differ, to show
 // it for more devices.
-const POWER_PILL_PROTOCOLS = new Set(["sony_bravia"]);
+const POWER_PILL_PROTOCOLS = new Set(["sony_bravia", "nec_projector"]);
 
 // power_status values -> what the pill says. Sony reports "active" /
-// "standby".
+// "standby"; NEC projectors "on" / "standby" / "warming" / "cooling".
 const POWER_LABELS: Record<string, { label: string; on: boolean }> = {
   active: { label: "Power on", on: true },
   on: { label: "Power on", on: true },
+  warming: { label: "Warming up", on: true },
   standby: { label: "Standby", on: false },
+  cooling: { label: "Cooling down", on: false },
   off: { label: "Off", on: false },
 };
 

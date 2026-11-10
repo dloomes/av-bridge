@@ -1,14 +1,15 @@
 export type DeviceStatus = "online" | "offline" | "unknown" | "switched_off";
 
-export type DeviceType = "display" | "conferencing" | "audio" | "camera" | "control" | "power" | "avoip";
+export type DeviceType = "display" | "projector" | "conferencing" | "audio" | "camera" | "control" | "power" | "avoip";
 
 // Every device category, in the order pickers list them, with its label.
 // Mirrors allowedTypes in the cloud (portalapi/admin_handlers.go) and the
 // bridge's config validation.
-export const DEVICE_TYPES: DeviceType[] = ["display", "conferencing", "audio", "camera", "control", "avoip", "power"];
+export const DEVICE_TYPES: DeviceType[] = ["display", "projector", "conferencing", "audio", "camera", "control", "avoip", "power"];
 
 export const DEVICE_TYPE_LABELS: Record<DeviceType, string> = {
   display: "Display",
+  projector: "Projector",
   conferencing: "Conferencing",
   audio: "Audio",
   camera: "Camera",

@@ -1169,6 +1169,7 @@ func (h *Handler) DeleteRoom(w http.ResponseWriter, r *http.Request) {
 var allowedTypes = map[string]bool{
 	"display": true, "conferencing": true, "audio": true,
 	"camera": true, "control": true, "avoip": true, "power": true,
+	"projector": true,
 }
 
 // Subscription mirrors the bridge's SubscriptionSpec (and bridgecfg's
@@ -1547,6 +1548,8 @@ func deviceTypeToAssetCategory(deviceType string) string {
 		return "audio"
 	case "conferencing":
 		return "conferencing"
+	case "projector":
+		return "projector"
 	default:
 		return "other"
 	}
