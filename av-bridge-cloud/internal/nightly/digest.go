@@ -411,7 +411,17 @@ func (s *DigestSender) collectRecipients(ctx context.Context, c customerInfo) ([
 	if trimmed := strings.TrimSpace(c.helpdeskEmail); trimmed != "" {
 		cc = append(cc, trimmed)
 	}
+	to, cc = addressees(to, cc)
 	return to, cc, nil
+}
+
+// addressees makes sure a message has a To address: SES rejects an empty
+// To header, so with no email channel the helpdesk Cc becomes the To.
+func addressees(to, cc []string) ([]string, []string) {
+	if len(to) == 0 && len(cc) > 0 {
+		return cc, nil
+	}
+	return to, cc
 }
 
 // sendFor runs the full pipeline for one customer: collect, render, send,
