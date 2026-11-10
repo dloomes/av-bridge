@@ -491,7 +491,7 @@ var catalogue = []Info{
 		Power:       PowerCapability{On: true, Off: true},
 		Commands: []string{
 			"power_on", "power_off",
-			"input_hdmi1", "input_hdmi2", "input_displayport", "input_hdbaset", "input_computer", "input_select",
+			"input_hdmi1", "input_hdmi2", "input_displayport", "input_hdbaset", "input_bnc_video", "input_bnc_yc", "input_select",
 			"picture_mute", "picture_unmute", "sound_mute", "sound_unmute",
 			"set_volume", "volume_up", "volume_down",
 			"shutter_close", "shutter_open",

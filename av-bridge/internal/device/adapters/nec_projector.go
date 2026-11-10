@@ -112,7 +112,8 @@ func necVolumeCommand(relative bool, value int16) []byte {
 // for the NP-PA1004UL / NP-PA804UL family, from the appendix
 // "Supplementary Information by Command → Input terminal".
 var necInputCommands = map[string]byte{
-	"input_computer":    0x01, // COMPUTER
+	"input_bnc_video":   0x06, // BNC(CV), composite video
+	"input_bnc_yc":      0x0B, // BNC(Y/C)
 	"input_hdmi1":       0xA1, // HDMI1
 	"input_hdmi2":       0xA2, // HDMI2
 	"input_displayport": 0xA6, // DisplayPort
@@ -331,7 +332,7 @@ func (a *NECProjectorAdapter) pollPicture(s *necSession, m map[string]any) {
 //
 //	power_on / power_off                   [015] / [016]
 //	input_hdmi1, input_hdmi2, input_displayport, input_hdbaset,
-//	input_computer                         [018]
+//	input_bnc_video, input_bnc_yc          [018]
 //	input_select {code}                    [018] with a raw input terminal value, e.g. "A1"
 //	picture_mute / picture_unmute          [020] / [021]
 //	sound_mute / sound_unmute              [022] / [023]
@@ -553,7 +554,7 @@ func necLevelArg(v any) (int, error) {
 }
 
 // necInputCodeArg accepts an input terminal value as hex ("A1", "0xA1",
-// "A1h"), or a friendly name (hdmi1, hdmi2, displayport, hdbaset, computer).
+// "A1h"), or a friendly name (hdmi1, hdmi2, displayport, hdbaset, bnc_video, bnc_yc).
 func necInputCodeArg(v any) (byte, error) {
 	s := strings.ToLower(strings.TrimSpace(fmt.Sprintf("%v", v)))
 	if v == nil || s == "" {
@@ -656,7 +657,7 @@ var necProjectorCapabilities = device.Capabilities{
 	Power: device.PowerCapability{On: true, Off: true},
 	Commands: []string{
 		"power_on", "power_off",
-		"input_hdmi1", "input_hdmi2", "input_displayport", "input_hdbaset", "input_computer", "input_select",
+		"input_hdmi1", "input_hdmi2", "input_displayport", "input_hdbaset", "input_bnc_video", "input_bnc_yc", "input_select",
 		"picture_mute", "picture_unmute", "sound_mute", "sound_unmute",
 		"set_volume", "volume_up", "volume_down",
 		"shutter_close", "shutter_open",
