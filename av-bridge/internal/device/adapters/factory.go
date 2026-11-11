@@ -26,6 +26,25 @@ type Deps struct {
 // told to configure it. An adapter that lives here but not in the cloud
 // catalogue cannot be selected in the portal.
 func New(cfg config.DeviceConfig, deps Deps) (device.Device, error) {
+	// A device wired to an RXT serial port: its adapter dials the RXT's
+	// serial-over-IP port instead of the device (see serial_gateway.go).
+	gw, err := serialGatewayFromConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+	if gw != nil {
+		orig := cfg
+		cfg.Address = gw.dataAddr
+		dev, err := newAdapter(cfg, deps)
+		if err != nil {
+			return nil, err
+		}
+		return &gatewayDevice{Device: dev, orig: orig, gw: gw}, nil
+	}
+	return newAdapter(cfg, deps)
+}
+
+func newAdapter(cfg config.DeviceConfig, deps Deps) (device.Device, error) {
 	switch cfg.Protocol {
 	// ── Base transport adapters ──────────────────────────────────────────────
 	case "rest":

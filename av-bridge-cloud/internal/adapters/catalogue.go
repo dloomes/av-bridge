@@ -183,7 +183,7 @@ var catalogue = []Info{
 		Name:        "Aurora RXT-x Touch Panels",
 		Vendor:      "Aurora Multimedia",
 		Kind:        KindVendor,
-		Description: "Wall-mount control touch panels. JSON-RPC over Telnet on port 6975, with proximity, lux, and relay control.",
+		Description: "Wall-mount control touch panels. JSON-RPC over Telnet on port 6975, with proximity, lux, relay control and RS-232 port settings. A projector or other device wired to an RXT serial port can be monitored through it (set via_rxt_serial on that device).",
 		DeviceTypes: []string{"control"},
 		Power:       PowerCapability{On: false, Off: false},
 		Commands: []string{
@@ -199,6 +199,8 @@ var catalogue = []Info{
 			"lux", "proximity",
 			"auto_brightness",
 			"relay_1", "relay_2",
+			"rs232_1_baud", "rs232_1_format", "rs232_1_handshaking", "rs232_1_signal_level",
+			"rs232_2_baud", "rs232_2_format", "rs232_2_handshaking", "rs232_2_signal_level",
 			"event_manager",
 			"response_ms",
 		},
@@ -508,6 +510,9 @@ var catalogue = []Info{
 		ConfigSchema: []ConfigField{
 			{Name: "address", Required: true, Description: "Projector IP or hostname. Port 7142 is the NEC control port default; append :port to override.", Example: "192.168.30.60"},
 			{Name: "tags.control_id", Required: false, Description: "The projector's Control ID (1–254), only if Control ID is turned on in its menu.", Example: "1"},
+			{Name: "tags.via_rxt_serial", Required: false, Description: "Wired to an Aurora RXT's RS-232 port instead of the network: 1 or 2, the RXT serial port. The address is then the RXT's IP, and the Collector reaches the device through the RXT's serial-over-IP port.", Example: "1"},
+			{Name: "tags.soip_tcp_port", Required: false, Description: "With via_rxt_serial: the TCP port the RXT shares the serial port on. Defaults to 6900 for port 1 and 6901 for port 2.", Example: "6900"},
+			{Name: "tags.serial_settings", Required: false, Description: "With via_rxt_serial: serial settings to apply to the RXT port, as baud, data bits, stop bits, parity, handshaking. Left unchanged when not set.", Example: "38400 8 1 n none"},
 		},
 		ExampleConfig: `- id: lecture-theatre-projector
   name: Lecture Theatre Projector
@@ -667,6 +672,9 @@ var catalogue = []Info{
 		ConfigSchema: []ConfigField{
 			{Name: "address", Required: true, Description: "host:port of the Telnet endpoint.", Example: "192.168.70.10:23"},
 			{Name: "commands", Required: false, Description: "Named command strings sent on demand from the portal."},
+			{Name: "tags.via_rxt_serial", Required: false, Description: "Wired to an Aurora RXT's RS-232 port instead of the network: 1 or 2, the RXT serial port. The address is then the RXT's IP, and the Collector reaches the device through the RXT's serial-over-IP port.", Example: "1"},
+			{Name: "tags.soip_tcp_port", Required: false, Description: "With via_rxt_serial: the TCP port the RXT shares the serial port on. Defaults to 6900 for port 1 and 6901 for port 2.", Example: "6900"},
+			{Name: "tags.serial_settings", Required: false, Description: "With via_rxt_serial: serial settings to apply to the RXT port, as baud, data bits, stop bits, parity, handshaking. Left unchanged when not set.", Example: "38400 8 1 n none"},
 		},
 		ExampleConfig: `- id: custom-telnet-device
   name: Custom Telnet Device

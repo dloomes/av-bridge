@@ -283,6 +283,11 @@ func (a *AuroraAdapter) Poll(ctx context.Context) (*device.Telemetry, error) {
 			}
 		}
 	})
+	for _, port := range []string{"1", "2"} {
+		run("get_rs232 "+port, func(r map[string]any) {
+			addRS232Metrics(metrics, "rs232_"+port+"_", r)
+		})
+	}
 	run("event_manager status", func(r map[string]any) {
 		if v, ok := r["event_manager"].(string); ok {
 			metrics["event_manager"] = v == "enabled"
@@ -294,6 +299,41 @@ func (a *AuroraAdapter) Poll(ctx context.Context) (*device.Telemetry, error) {
 	t.Status = device.StatusOnline
 	t.Metrics = metrics
 	return t, nil
+}
+
+// addRS232Metrics turns a get_rs232 reply ({"rs232":{"baud_rate":115200,
+// "data_bit":8,"stop_bit":1,"parity":"n","handshaking":"none",
+// "signal_level":"RS232"}}) into readings: <prefix>baud, <prefix>format
+// ("8N1"), <prefix>handshaking, <prefix>signal_level. Numbers may arrive
+// as JSON numbers or strings.
+func addRS232Metrics(metrics map[string]any, prefix string, r map[string]any) {
+	cfg, ok := r["rs232"].(map[string]any)
+	if !ok {
+		return
+	}
+	str := func(k string) string {
+		switch v := cfg[k].(type) {
+		case string:
+			return strings.TrimSpace(v)
+		case float64:
+			return strconv.FormatFloat(v, 'f', -1, 64)
+		}
+		return ""
+	}
+	if b := str("baud_rate"); b != "" {
+		if n, err := strconv.Atoi(b); err == nil {
+			metrics[prefix+"baud"] = n
+		}
+	}
+	if d, p, s := str("data_bit"), str("parity"), str("stop_bit"); d != "" && p != "" && s != "" {
+		metrics[prefix+"format"] = d + strings.ToUpper(p[:1]) + s
+	}
+	if v := str("handshaking"); v != "" {
+		metrics[prefix+"handshaking"] = v
+	}
+	if v := str("signal_level"); v != "" {
+		metrics[prefix+"signal_level"] = v
+	}
 }
 
 // ── SendCommand ───────────────────────────────────────────────────────────────
