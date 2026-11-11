@@ -357,6 +357,11 @@ func (h *Hub) manageDevice(ctx context.Context, dev device.Device, polls <-chan 
 	pollTicker := time.NewTicker(device.PollRateFor(dev))
 	defer pollTicker.Stop()
 
+	// Poll once straight away rather than a whole poll interval later
+	// (5 minutes for a PDU): a tag edit restarts the adapter, and the new
+	// tags (outlet names, say) should reach the portal now, not next tick.
+	h.pollOnce(ctx, dev, log, polling)
+
 	heartbeat := time.NewTicker(h.cfg.Hub.HeartbeatPeriod)
 	defer heartbeat.Stop()
 
