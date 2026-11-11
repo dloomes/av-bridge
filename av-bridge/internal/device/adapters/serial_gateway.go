@@ -158,11 +158,42 @@ func soipPortOf(r map[string]any) int {
 	return 0
 }
 
+// gatewayOpener is a serial gateway that can be asked to share its port
+// before the device's adapter dials it.
+type gatewayOpener interface {
+	open(ctx context.Context) error
+}
+
+// gatewayFromConfig returns the gateway a device's tags ask for (an RXT or a
+// VPX serial port) and the address its adapter should dial, or nil.
+func gatewayFromConfig(cfg config.DeviceConfig) (gatewayOpener, string, error) {
+	rxt := strings.TrimSpace(cfg.Tags[tagViaRXTSerial]) != ""
+	vpx := strings.TrimSpace(cfg.Tags[tagViaVPXSerial]) != ""
+	if rxt && vpx {
+		return nil, "", fmt.Errorf("set %s or %s, not both", tagViaRXTSerial, tagViaVPXSerial)
+	}
+	if rxt {
+		gw, err := serialGatewayFromConfig(cfg)
+		if err != nil {
+			return nil, "", err
+		}
+		return gw, gw.dataAddr, nil
+	}
+	if vpx {
+		gw, err := vpxSerialGatewayFromConfig(cfg)
+		if err != nil || gw == nil {
+			return nil, "", err
+		}
+		return gw, gw.dataAddr, nil
+	}
+	return nil, "", nil
+}
+
 // gatewayDevice runs a device's own adapter over the gateway's SOIP port.
 type gatewayDevice struct {
 	device.Device
 	orig config.DeviceConfig
-	gw   *serialGateway
+	gw   gatewayOpener
 }
 
 // Info reports the device as configured (the RXT's address), not the

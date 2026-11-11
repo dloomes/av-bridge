@@ -26,15 +26,16 @@ type Deps struct {
 // told to configure it. An adapter that lives here but not in the cloud
 // catalogue cannot be selected in the portal.
 func New(cfg config.DeviceConfig, deps Deps) (device.Device, error) {
-	// A device wired to an RXT serial port: its adapter dials the RXT's
-	// serial-over-IP port instead of the device (see serial_gateway.go).
-	gw, err := serialGatewayFromConfig(cfg)
+	// A device wired to an RXT or VPX serial port: its adapter dials the
+	// gateway's serial-over-IP port instead of the device (see
+	// serial_gateway.go, serial_gateway_vpx.go).
+	gw, dataAddr, err := gatewayFromConfig(cfg)
 	if err != nil {
 		return nil, err
 	}
 	if gw != nil {
 		orig := cfg
-		cfg.Address = gw.dataAddr
+		cfg.Address = dataAddr
 		dev, err := newAdapter(cfg, deps)
 		if err != nil {
 			return nil, err

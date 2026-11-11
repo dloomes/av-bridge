@@ -323,6 +323,28 @@ func (a *AuroraVPXAdapter) applySettings(resp map[string]any, t *device.Telemetr
 				t.Metrics["remote_hostname"] = v
 			}
 		}
+		// The RS-232 port: whether serial-over-IP is on, in which mode
+		// (telnet = passthrough, or redirection to another VPX), its
+		// settings, and whether a client is connected.
+		if rs, ok := streams["rs232"].(map[string]any); ok {
+			if v, ok := rs["soip_status"].(string); ok {
+				t.Metrics["rs232_soip"] = v
+			}
+			if v, ok := rs["mode"].(string); ok && v != "" {
+				t.Metrics["rs232_mode"] = v
+			}
+			if v, ok := rs["baudrate"].(string); ok && v != "" {
+				t.Metrics["rs232_baud"] = v
+			}
+			d, _ := rs["data_bit"].(string)
+			s, _ := rs["stop_bit"].(string)
+			if p := vpxParity(fmt.Sprint(rs["parity"])); d != "" && s != "" && p != "" {
+				t.Metrics["rs232_format"] = d + strings.ToUpper(p) + s
+			}
+			if v, ok := rs["soip_connected"].(string); ok {
+				t.Metrics["rs232_connected"] = v == "true"
+			}
+		}
 	}
 }
 

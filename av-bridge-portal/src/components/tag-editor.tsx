@@ -42,7 +42,7 @@ const labelClass = "text-xs font-medium text-muted-foreground uppercase tracking
 const HINTS: Record<string, string> = {
   aten_pdu: "Label outlets with outlet_1_name, outlet_2_name … (the PDU can't report its own names over Telnet). Set outlet_count for PDUs with more than 8 outlets.",
   netgear_m4250: "For an M4350, set port_prefix to 1/0/.",
-  nec_projector: "Set control_id only if Control ID is turned on in the projector's menu. Wired to an Aurora RXT's RS-232 port? Set via_rxt_serial to 1 or 2 and the address to the RXT's IP (optional: soip_tcp_port, serial_settings like 38400 8 1 n none).",
+  nec_projector: "Set control_id only if Control ID is turned on in the projector's menu. Wired to an Aurora RXT's RS-232 port? Set via_rxt_serial to 1 or 2 and the address to the RXT's IP (optional: soip_tcp_port, serial_settings like 38400 8 1 n none). Wired to an Aurora VPX? Set via_vpx_serial to true, the address to the VPX's IP and soip_tcp_port to its serial-over-IP port.",
   cisco_roomos: "Set tls_skip_verify to true for a codec with a self-signed certificate.",
   cisco_tc: "Set tls_skip_verify to true for a codec with a self-signed certificate.",
   poly_videoos: "Set tls_skip_verify to true for a codec with a self-signed certificate.",

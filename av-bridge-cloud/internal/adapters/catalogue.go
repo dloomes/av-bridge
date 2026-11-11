@@ -222,7 +222,7 @@ var catalogue = []Info{
 		Name:        "Aurora VPX Series",
 		Vendor:      "Aurora Multimedia",
 		Kind:        KindVendor,
-		Description: "AV-over-IP encoders and decoders. JSON over Telnet on port 6970; encoder vs decoder mode is auto-detected at connect.",
+		Description: "AV-over-IP encoders and decoders. JSON over Telnet on port 6970; encoder vs decoder mode is auto-detected at connect. Shows the RS-232 port's serial-over-IP state; a projector wired to that port can be monitored through it (set via_vpx_serial on that device).",
 		DeviceTypes: []string{"avoip"},
 		Power:       PowerCapability{On: false, Off: false},
 		Commands: []string{
@@ -238,6 +238,7 @@ var catalogue = []Info{
 			"hdmi_hdcp", "hdmi_hpd_in1", "hdmi_hpd_in2",
 			"local_display_source", "stream_source", "stream_status",
 			"video_h_size", "video_v_size", "video_fps",
+			"rs232_soip", "rs232_mode", "rs232_baud", "rs232_format", "rs232_connected",
 		},
 		ConfigSchema: []ConfigField{
 			{Name: "address", Required: true, Description: "Encoder or decoder IP (port 6970 is implied).", Example: "192.168.10.20"},
@@ -511,8 +512,9 @@ var catalogue = []Info{
 			{Name: "address", Required: true, Description: "Projector IP or hostname. Port 7142 is the NEC control port default; append :port to override.", Example: "192.168.30.60"},
 			{Name: "tags.control_id", Required: false, Description: "The projector's Control ID (1–254), only if Control ID is turned on in its menu.", Example: "1"},
 			{Name: "tags.via_rxt_serial", Required: false, Description: "Wired to an Aurora RXT's RS-232 port instead of the network: 1 or 2, the RXT serial port. The address is then the RXT's IP, and the Collector reaches the device through the RXT's serial-over-IP port.", Example: "1"},
-			{Name: "tags.soip_tcp_port", Required: false, Description: "With via_rxt_serial: the TCP port the RXT shares the serial port on. Defaults to 6900 for port 1 and 6901 for port 2.", Example: "6900"},
-			{Name: "tags.serial_settings", Required: false, Description: "With via_rxt_serial: serial settings to apply to the RXT port, as baud, data bits, stop bits, parity, handshaking. Left unchanged when not set.", Example: "38400 8 1 n none"},
+			{Name: "tags.via_vpx_serial", Required: false, Description: "Wired to an Aurora VPX's RS-232 port instead of the network: true. The address is then the VPX's IP, and soip_tcp_port is required. The Collector switches on the VPX's serial-over-IP passthrough, and won't take over a port routed to another VPX or in use by another client.", Example: "true"},
+			{Name: "tags.soip_tcp_port", Required: false, Description: "With via_rxt_serial: the TCP port the RXT shares the serial port on, default 6900 for port 1 and 6901 for port 2. With via_vpx_serial: the VPX's serial-over-IP passthrough port (required).", Example: "6900"},
+			{Name: "tags.serial_settings", Required: false, Description: "With via_rxt_serial or via_vpx_serial: serial settings to apply to the port, as baud, data bits, stop bits, parity (and handshaking on an RXT). Left unchanged when not set.", Example: "38400 8 1 n none"},
 		},
 		ExampleConfig: `- id: lecture-theatre-projector
   name: Lecture Theatre Projector
@@ -673,8 +675,9 @@ var catalogue = []Info{
 			{Name: "address", Required: true, Description: "host:port of the Telnet endpoint.", Example: "192.168.70.10:23"},
 			{Name: "commands", Required: false, Description: "Named command strings sent on demand from the portal."},
 			{Name: "tags.via_rxt_serial", Required: false, Description: "Wired to an Aurora RXT's RS-232 port instead of the network: 1 or 2, the RXT serial port. The address is then the RXT's IP, and the Collector reaches the device through the RXT's serial-over-IP port.", Example: "1"},
-			{Name: "tags.soip_tcp_port", Required: false, Description: "With via_rxt_serial: the TCP port the RXT shares the serial port on. Defaults to 6900 for port 1 and 6901 for port 2.", Example: "6900"},
-			{Name: "tags.serial_settings", Required: false, Description: "With via_rxt_serial: serial settings to apply to the RXT port, as baud, data bits, stop bits, parity, handshaking. Left unchanged when not set.", Example: "38400 8 1 n none"},
+			{Name: "tags.via_vpx_serial", Required: false, Description: "Wired to an Aurora VPX's RS-232 port instead of the network: true. The address is then the VPX's IP, and soip_tcp_port is required. The Collector switches on the VPX's serial-over-IP passthrough, and won't take over a port routed to another VPX or in use by another client.", Example: "true"},
+			{Name: "tags.soip_tcp_port", Required: false, Description: "With via_rxt_serial: the TCP port the RXT shares the serial port on, default 6900 for port 1 and 6901 for port 2. With via_vpx_serial: the VPX's serial-over-IP passthrough port (required).", Example: "6900"},
+			{Name: "tags.serial_settings", Required: false, Description: "With via_rxt_serial or via_vpx_serial: serial settings to apply to the port, as baud, data bits, stop bits, parity (and handshaking on an RXT). Left unchanged when not set.", Example: "38400 8 1 n none"},
 		},
 		ExampleConfig: `- id: custom-telnet-device
   name: Custom Telnet Device
