@@ -328,22 +328,19 @@ func (a *AuroraVPXAdapter) applySettings(resp map[string]any, t *device.Telemetr
 
 // mapVPXStatus turns the device's state-machine value into our tri-state.
 // See §4.7.4.1 of the protocol guide.
+//
+// The state describes the stream, not whether the unit is up: a decoder
+// with no source selected sits in s_idle (or s_stop) indefinitely while
+// answering every request. Status is therefore about reachability — any
+// state reported over a working connection is online, and the state and
+// stream_status readings show whether it's actually streaming. Only
+// s_error (the unit reporting a fault) and an empty reply count as down.
 func mapVPXStatus(state string) device.Status {
 	switch state {
-	case "s_srv_on":
-		return device.StatusOnline
-	case "s_init", "s_search", "s_attaching", "s_start_srv_lp", "s_start_srv_hp":
-		// Transient startup states — device is reachable and coming up.
-		// Report as online so a short boot window doesn't fire alerts;
-		// a device that never leaves this state will still be caught by
-		// the operator (its telemetry payload carries the raw state).
-		return device.StatusOnline
-	case "s_stop", "s_error", "s_idle", "":
+	case "s_error", "":
 		return device.StatusOffline
 	default:
-		// Unknown state — treat as offline; the raw state is preserved
-		// in telemetry.tags for investigation.
-		return device.StatusOffline
+		return device.StatusOnline
 	}
 }
 
