@@ -51,6 +51,12 @@ import (
 // its full 5-minute step budget.
 const defaultCommandTimeout = 30 * time.Second
 
+// powerStepTimeout is the per-device wait for a power_on/power_off step
+// without its own timeout_seconds. Longer than other commands: a device
+// that's still booting (a PTZ camera calibrating, say) rejects commands
+// until it's done, and the Collector keeps trying for up to 90 seconds.
+const powerStepTimeout = 2 * time.Minute
+
 // ExecutorConfig — the executor's tunables. DryRun mirrors the
 // scheduler's dry-run flag; when true, write-side steps (power on/off,
 // device commands) log rather than dispatch. Read-side steps
@@ -655,7 +661,11 @@ func (e *Executor) stepPowerAction(ctx context.Context, run RunContext, s step, 
 		}
 	}
 
-	perDevice, allOK := e.dispatchAcross(ctx, run, devices, action, nil, body.TimeoutSeconds)
+	timeoutSecs := body.TimeoutSeconds
+	if timeoutSecs <= 0 {
+		timeoutSecs = int(powerStepTimeout.Seconds())
+	}
+	perDevice, allOK := e.dispatchAcross(ctx, run, devices, action, nil, timeoutSecs)
 	return stepResult{
 		Passed:    allOK,
 		Error:     dispatchFailures(perDevice),

@@ -451,10 +451,12 @@ func (a *ViscaOverIPAdapter) SendCommand(ctx context.Context, cmd device.Command
 	}, nil
 }
 
-// Power command pacing. Vars so tests can shorten them. viscaPowerBudget
-// stays under the cloud's default 30-second command wait.
+// Power command pacing. Vars so tests can shorten them. A PTZ camera can
+// take up to a minute to boot (pan/tilt calibration) and rejects commands
+// until it's done, so viscaPowerBudget covers that; it stays under the
+// cloud's 2-minute wait for routine power steps (powerStepTimeout).
 var (
-	viscaPowerBudget  = 25 * time.Second
+	viscaPowerBudget  = 90 * time.Second
 	viscaPowerAttempt = 5 * time.Second
 	viscaPowerRetry   = 2 * time.Second
 )
