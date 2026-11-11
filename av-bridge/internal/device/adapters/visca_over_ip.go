@@ -430,6 +430,9 @@ func (a *ViscaOverIPAdapter) SendCommand(ctx context.Context, cmd device.Command
 	if isJogCommand(cmd.Name) {
 		return a.sendJog(ctx, cmd)
 	}
+	if cmd.Name == "power_on" || cmd.Name == "power_off" {
+		return a.sendPower(ctx, cmd.Name == "power_on")
+	}
 	payload, err := a.buildCommand(cmd)
 	if err != nil {
 		return nil, err
@@ -446,6 +449,56 @@ func (a *ViscaOverIPAdapter) SendCommand(ctx context.Context, cmd device.Command
 		Raw:     fmt.Sprintf("% X", reply),
 		Latency: time.Since(start),
 	}, nil
+}
+
+// Power command pacing. Vars so tests can shorten them. viscaPowerBudget
+// stays under the cloud's default 30-second command wait.
+var (
+	viscaPowerBudget  = 25 * time.Second
+	viscaPowerAttempt = 5 * time.Second
+	viscaPowerRetry   = 2 * time.Second
+)
+
+// sendPower switches the camera on or off and confirms it. A camera
+// rejects commands ("not executable") while it's still powering up or
+// down, and some reject a power command when they're already in that
+// state, so a rejection or a missing completion isn't taken as failure
+// straight away: the camera's power state is asked, and if it already
+// matches the command counts as done. Otherwise the command is retried
+// until the camera takes it or viscaPowerBudget runs out.
+func (a *ViscaOverIPAdapter) sendPower(ctx context.Context, on bool) (*device.CommandResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, viscaPowerBudget)
+	defer cancel()
+	start := time.Now()
+	want := onOffString(on)
+	var lastErr error
+	for {
+		attemptCtx, attemptCancel := context.WithTimeout(ctx, viscaPowerAttempt)
+		reply, err := a.roundTrip(attemptCtx, viscaPayloadCommand, viscaPower(on))
+		attemptCancel()
+		if err == nil {
+			return &device.CommandResponse{Raw: fmt.Sprintf("% X", reply), Latency: time.Since(start)}, nil
+		}
+		lastErr = err
+
+		inqCtx, inqCancel := context.WithTimeout(ctx, 2*time.Second)
+		state, inqErr := a.roundTrip(inqCtx, viscaPayloadInquiry, viscaInqPower())
+		inqCancel()
+		if inqErr == nil {
+			if isOn, perr := parseInqPower(state); perr == nil && isOn == on {
+				return &device.CommandResponse{
+					Raw:     "power " + want + " (confirmed by inquiry after: " + err.Error() + ")",
+					Latency: time.Since(start),
+				}, nil
+			}
+		}
+
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("camera didn't switch %s within %s: %w", want, viscaPowerBudget, lastErr)
+		case <-time.After(viscaPowerRetry):
+		}
+	}
 }
 
 // isJogCommand reports whether cmd is one of the continuous-drive

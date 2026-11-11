@@ -658,6 +658,7 @@ func (e *Executor) stepPowerAction(ctx context.Context, run RunContext, s step, 
 	perDevice, allOK := e.dispatchAcross(ctx, run, devices, action, nil, body.TimeoutSeconds)
 	return stepResult{
 		Passed:    allOK,
+		Error:     dispatchFailures(perDevice),
 		Expected:  map[string]any{"action": action, "target_devices": len(devices)},
 		Actual:    map[string]any{"dispatched": true, "devices": len(devices), "per_device": perDevice},
 		StartedAt: started,
@@ -706,6 +707,7 @@ func (e *Executor) stepDeviceCommand(ctx context.Context, run RunContext, s step
 	perDevice, allOK := e.dispatchAcross(ctx, run, devices, body.Command, body.Parameters, body.TimeoutSeconds)
 	return stepResult{
 		Passed:    allOK,
+		Error:     dispatchFailures(perDevice),
 		Expected:  map[string]any{"command": body.Command, "target_devices": len(devices)},
 		Actual:    map[string]any{"dispatched": true, "devices": len(devices), "per_device": perDevice},
 		StartedAt: started,
@@ -755,6 +757,26 @@ func (e *Executor) dispatchAcross(
 		}
 	}
 	return perDevice, allOK
+}
+
+// dispatchFailures names each device whose command didn't succeed, with
+// its reason, as the step's error: "Camera: visca error 0x41: command not
+// executable; Display: timeout ...". Empty when all succeeded.
+func dispatchFailures(perDevice []map[string]any) string {
+	var parts []string
+	for _, r := range perDevice {
+		status, _ := r["status"].(string)
+		if status == string(commands.StatusSucceeded) {
+			continue
+		}
+		name, _ := r["device_name"].(string)
+		reason, _ := r["error"].(string)
+		if reason == "" {
+			reason = status
+		}
+		parts = append(parts, name+": "+reason)
+	}
+	return strings.Join(parts, "; ")
 }
 
 // dispatchOne enqueues one command against one device and waits until
