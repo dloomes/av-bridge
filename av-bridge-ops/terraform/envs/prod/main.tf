@@ -449,3 +449,22 @@ module "portal" {
     NEXT_TELEMETRY_DISABLED = "1"
   }
 }
+
+# -----------------------------------------------------------------------------
+# Alarms -> SNS -> email
+# -----------------------------------------------------------------------------
+
+module "monitoring" {
+  source = "../../modules/monitoring"
+
+  name_prefix = var.name_prefix
+  alert_email = var.alert_email
+
+  alb_arn_suffix                 = module.alb.arn_suffix
+  web_target_group_arn_suffix    = module.cloud_web.target_group_arn_suffix
+  worker_target_group_arn_suffix = module.cloud_worker.target_group_arn_suffix
+  cluster_name                   = module.cloud_web.cluster_name
+  web_service_name               = module.cloud_web.service_name
+  worker_service_name            = module.cloud_worker.service_name
+  db_instance_identifier         = module.db.identifier
+}

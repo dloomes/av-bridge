@@ -81,3 +81,8 @@ variable "mapbox_public_token" {
   type        = string
   default     = ""
 }
+
+variable "alert_email" {
+  description = "Address that receives production alarm emails (SNS subscription; must be confirmed)."
+  type        = string
+}

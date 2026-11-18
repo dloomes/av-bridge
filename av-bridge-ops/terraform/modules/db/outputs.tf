@@ -19,3 +19,8 @@ output "master_secret_arn" {
   description = "Secrets Manager ARN for master credentials + connection JSON"
   value       = aws_secretsmanager_secret.master.arn
 }
+
+output "identifier" {
+  description = "DB instance identifier, the CloudWatch DBInstanceIdentifier dimension."
+  value       = aws_db_instance.this.identifier
+}

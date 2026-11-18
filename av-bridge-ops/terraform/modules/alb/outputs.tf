@@ -26,3 +26,8 @@ output "primary_listener_arn" {
   description = "The listener that services should attach rules to — :443 when TLS is on, :80 otherwise."
   value       = local.tls_enabled ? aws_lb_listener.https[0].arn : aws_lb_listener.http[0].arn
 }
+
+output "arn_suffix" {
+  description = "ARN suffix for the CloudWatch LoadBalancer dimension."
+  value       = aws_lb.this.arn_suffix
+}

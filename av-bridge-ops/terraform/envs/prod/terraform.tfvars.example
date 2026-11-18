@@ -15,3 +15,6 @@ entra_vendor_client_id = "<entra-client-id>"
 # Optional
 dmarc_rua           = "<dmarc-report-address>"
 mapbox_public_token = "<mapbox-public-token>"
+
+# Production alarm emails (confirm the SNS subscription email after apply).
+alert_email = "<alert-email>"
