@@ -35,6 +35,11 @@ locals {
   # An externally supplied cluster_arn means a sibling service owns the
   # cluster; this module then only attaches its service to it.
   create_cluster = var.cluster_arn == ""
+
+  # Per-instance resource name stem. Services sharing a name_prefix (web and
+  # worker) are told apart by role; the cluster keeps the bare name_prefix.
+  # UAT has no role, so its names are unchanged.
+  svc = var.role == "" ? var.name_prefix : "${var.name_prefix}-${var.role}"
   cluster_arn    = local.create_cluster ? aws_ecs_cluster.this[0].arn : var.cluster_arn
 
   # Default reproduces the single catch-all rule this module always created.
@@ -86,7 +91,7 @@ resource "aws_ecs_cluster_capacity_providers" "this" {
 # -----------------------------------------------------------------------------
 
 resource "aws_cloudwatch_log_group" "this" {
-  name              = "/ecs/${var.name_prefix}-cloud"
+  name              = "/ecs/${local.svc}-cloud"
   retention_in_days = var.log_retention_days
 }
 
@@ -107,7 +112,7 @@ data "aws_iam_policy_document" "task_assume" {
 }
 
 resource "aws_iam_role" "execution" {
-  name               = "${var.name_prefix}-ecs-execution"
+  name               = "${local.svc}-ecs-execution"
   assume_role_policy = data.aws_iam_policy_document.task_assume.json
 }
 
@@ -135,7 +140,7 @@ data "aws_iam_policy_document" "execution_secrets" {
 }
 
 resource "aws_iam_policy" "execution_secrets" {
-  name   = "${var.name_prefix}-ecs-execution-secrets"
+  name   = "${local.svc}-ecs-execution-secrets"
   policy = data.aws_iam_policy_document.execution_secrets.json
 }
 
@@ -148,7 +153,7 @@ resource "aws_iam_role_policy_attachment" "execution_secrets" {
 # binary makes no AWS API calls. When we add S3 backups, KMS, etc, attach
 # policies here.
 resource "aws_iam_role" "task" {
-  name               = "${var.name_prefix}-ecs-task"
+  name               = "${local.svc}-ecs-task"
   assume_role_policy = data.aws_iam_policy_document.task_assume.json
 }
 
@@ -157,7 +162,7 @@ resource "aws_iam_role" "task" {
 # -----------------------------------------------------------------------------
 
 resource "aws_ecs_task_definition" "this" {
-  family                   = "${var.name_prefix}-cloud"
+  family                   = "${local.svc}-cloud"
   network_mode             = "awsvpc"
   requires_compatibilities = ["FARGATE"]
   cpu                      = var.cpu
@@ -269,11 +274,18 @@ resource "aws_ecs_task_definition" "this" {
 # -----------------------------------------------------------------------------
 
 resource "aws_lb_target_group" "this" {
-  name        = "${var.name_prefix}-cloud"
+  name        = "${local.svc}-cloud"
   port        = 8090
   protocol    = "HTTP"
   vpc_id      = var.vpc_id
   target_type = "ip"
+
+  lifecycle {
+    precondition {
+      condition     = length("${local.svc}-cloud") <= 32
+      error_message = "Target group name \"${local.svc}-cloud\" exceeds 32 characters; shorten name_prefix or role."
+    }
+  }
 
   health_check {
     path                = "/healthz"
@@ -298,7 +310,7 @@ resource "aws_lb_listener_rule" "this" {
   listener_arn = var.alb_listener_arn
   priority     = each.value.priority
 
-  # host_header requires a REAL host — ALB rejects bare "*". Until a domain
+  # host_header requires a REAL host - ALB rejects bare "*". Until a domain
   # is attached we scope by path only (/* matches everything). When a real
   # host lands, set host_headers to add a host_header condition.
   dynamic "condition" {
@@ -330,7 +342,7 @@ resource "aws_lb_listener_rule" "this" {
 # -----------------------------------------------------------------------------
 
 resource "aws_ecs_service" "this" {
-  name            = "${var.name_prefix}-cloud"
+  name            = "${local.svc}-cloud"
   cluster         = local.cluster_arn
   task_definition = aws_ecs_task_definition.this.arn
   desired_count   = var.desired_count
