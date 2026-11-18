@@ -85,6 +85,13 @@ func main() {
 		os.Exit(1)
 	}
 
+	// The vendor tenant row must exist in every environment: vendor users and
+	// role mappings reference it, and only the PoC bootstrap used to create it.
+	if err := store.EnsureVendorTenant(ctx, cfg.EntraVendorTenantID); err != nil {
+		log.Error("ensure vendor tenant", "error", err)
+		os.Exit(1)
+	}
+
 	if cfg.BootstrapPoC {
 		if err := store.BootstrapPoC(ctx, cipher, cfg.PoCBridgeID, cfg.PoCCustomerName, cfg.PoCHMACSecret); err != nil {
 			log.Error("poc bootstrap", "error", err)

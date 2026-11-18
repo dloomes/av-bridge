@@ -355,6 +355,24 @@ const (
 // row BootstrapPoC creates.
 func PocVendorTenantUUID() string { return pocVendorTenantUUID }
 
+// EnsureVendorTenant idempotently creates the Involve vendor tenant row that
+// vendor users and role mappings reference. It runs on every start in every
+// environment (not only with the PoC bootstrap). An existing row, matched by
+// id or by entra_tenant_id, is left untouched. An empty entraTenantID uses
+// PocVendorTenantID. Runs as app_admin (BYPASSRLS).
+func (s *Store) EnsureVendorTenant(ctx context.Context, entraTenantID string) error {
+	if entraTenantID == "" {
+		entraTenantID = PocVendorTenantID
+	}
+	if _, err := s.admin.Exec(ctx,
+		`INSERT INTO vendor_tenants (id, name, entra_tenant_id)
+		 VALUES ($1, 'Involve (Vendor)', $2) ON CONFLICT DO NOTHING`,
+		pocVendorTenantUUID, entraTenantID); err != nil {
+		return fmt.Errorf("ensure vendor tenant: %w", err)
+	}
+	return nil
+}
+
 // BootstrapPoC idempotently seeds one tenant's full hierarchy plus a collector
 // whose HMAC secret matches the on-prem bridge. Runs as app_admin (BYPASSRLS).
 // Re-running updates the collector secret (rotation) but leaves the rest.
@@ -403,9 +421,10 @@ func (s *Store) BootstrapPoC(ctx context.Context, cipher secrets.Cipher, bridgeI
 		  ON CONFLICT (customer_id, group_id) WHERE customer_id IS NOT NULL DO NOTHING`,
 			[]any{pocCustomerID}},
 
-		// Vendor (Involve / helpdesk) tenant + admin group mapping.
+		// Vendor admin group mapping (the tenant row itself comes from
+		// EnsureVendorTenant, called first in main.go on every start).
 		{`INSERT INTO vendor_tenants (id, name, entra_tenant_id)
-		  VALUES ($1, 'Involve (Vendor)', $2) ON CONFLICT (entra_tenant_id) DO NOTHING`,
+		  VALUES ($1, 'Involve (Vendor)', $2) ON CONFLICT DO NOTHING`,
 			[]any{pocVendorTenantUUID, PocVendorTenantID}},
 		{`INSERT INTO role_mappings (vendor_tenant_id, group_id, role) VALUES ($1, 'helpdesk-admins', 'admin')
 		  ON CONFLICT (vendor_tenant_id, group_id) WHERE vendor_tenant_id IS NOT NULL DO NOTHING`,
