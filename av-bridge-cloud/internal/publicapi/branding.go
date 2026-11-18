@@ -13,9 +13,9 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"github.com/dloomes/av-bridge-cloud/internal/brandurl"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -44,6 +44,8 @@ type Handler struct {
 	// users with a slug, the origin is derived by swapping the first
 	// hostname label to the slug (see resetOriginFor). Empty in dev.
 	portalBaseURL string
+	// brandedDomain is BRANDED_DOMAIN; empty = swap the first host label.
+	brandedDomain string
 	// customerSSOEnabled mirrors "cloud is running with customer Entra
 	// SSO configured" — set by main.go from cfg.EntraCustomerClientID/
 	// Secret/RedirectURI presence. Combined with each customer's
@@ -98,22 +100,13 @@ func NewHandler(
 // Returns "" when portalBaseURL is unset (dev): callers use the raw
 // path in that case so the email still contains a usable link.
 func (h *Handler) resetOriginFor(slug string) string {
-	if h.portalBaseURL == "" {
-		return ""
-	}
-	if slug == "" {
-		return strings.TrimRight(h.portalBaseURL, "/")
-	}
-	u, err := url.Parse(h.portalBaseURL)
-	if err != nil || u.Host == "" {
-		return strings.TrimRight(h.portalBaseURL, "/")
-	}
-	hostParts := strings.SplitN(u.Host, ".", 2)
-	if len(hostParts) < 2 {
-		return strings.TrimRight(h.portalBaseURL, "/")
-	}
-	u.Host = slug + "." + hostParts[1]
-	return strings.TrimRight(u.String(), "/")
+	return brandurl.Origin(h.portalBaseURL, h.brandedDomain, slug)
+}
+
+// SetBrandedDomain sets BRANDED_DOMAIN (see brandurl.Origin).
+func (h *Handler) SetBrandedDomain(d string) *Handler {
+	h.brandedDomain = d
+	return h
 }
 
 // brandingResp matches the portal's Branding type in

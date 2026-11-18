@@ -29,6 +29,11 @@ var reservedSlugs = map[string]bool{
 	"test":      true,
 	"demo":      true,
 	"support":   true,
+	"status":    true,
+	"access":    true,
+	"notify":    true,
+	"uat":       true,
+	"portal":    true,
 }
 
 // ErrSlugReserved is returned when the caller tries to set a slug that is

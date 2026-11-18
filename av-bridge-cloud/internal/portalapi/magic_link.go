@@ -7,9 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/dloomes/av-bridge-cloud/internal/brandurl"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
 
 	"github.com/dloomes/av-bridge-cloud/internal/audit"
@@ -282,23 +282,15 @@ func SetMagicLinkPortalBaseURL(v string) { magicLinkPortalBaseURL = v }
 // Slug empty => base portal (vendor path); slug present => swap the
 // first host label.
 func magicLinkOrigin(baseURL, slug string) string {
-	if baseURL == "" {
-		return ""
-	}
-	if slug == "" {
-		return strings.TrimRight(baseURL, "/")
-	}
-	u, err := url.Parse(baseURL)
-	if err != nil || u.Host == "" {
-		return strings.TrimRight(baseURL, "/")
-	}
-	hostParts := strings.SplitN(u.Host, ".", 2)
-	if len(hostParts) < 2 {
-		return strings.TrimRight(baseURL, "/")
-	}
-	u.Host = slug + "." + hostParts[1]
-	return strings.TrimRight(u.String(), "/")
+	return brandurl.Origin(baseURL, magicLinkBrandedDomain, slug)
 }
+
+// magicLinkBrandedDomain is BRANDED_DOMAIN, set once at startup like
+// magicLinkPortalBaseURL.
+var magicLinkBrandedDomain string
+
+// SetMagicLinkBrandedDomain is called once from main.go.
+func SetMagicLinkBrandedDomain(v string) { magicLinkBrandedDomain = v }
 
 // mintMagicRaw returns 64 hex chars of crypto/rand — same shape as
 // password reset tokens. No prefix; the token flows through URL params

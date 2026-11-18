@@ -189,6 +189,10 @@ type Config struct {
 	EntraVendorClientSecret string
 	EntraVendorRedirectURI  string
 	EntraPortalBaseURL      string
+	// BrandedDomain is BRANDED_DOMAIN: the domain customers' branded
+	// addresses live under (<slug>.<domain>). Empty swaps the first label
+	// of the portal base URL instead.
+	BrandedDomain string
 
 	// Entra ID customer sign-in — M2: multi-tenant Entra app registration
 	// in Involve's tenant, published as multi-tenant. One app registration
@@ -355,6 +359,7 @@ func FromEnv() (Config, error) {
 		EntraVendorClientSecret: os.Getenv("ENTRA_VENDOR_CLIENT_SECRET"),
 		EntraVendorRedirectURI:  os.Getenv("ENTRA_VENDOR_REDIRECT_URI"),
 		EntraPortalBaseURL:      os.Getenv("ENTRA_PORTAL_BASE_URL"),
+		BrandedDomain:           strings.TrimSpace(os.Getenv("BRANDED_DOMAIN")),
 
 		EntraCustomerClientID:     os.Getenv("ENTRA_CUSTOMER_CLIENT_ID"),
 		EntraCustomerClientSecret: os.Getenv("ENTRA_CUSTOMER_CLIENT_SECRET"),

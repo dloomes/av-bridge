@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/dloomes/av-bridge-cloud/internal/brandurl"
 	"io"
 	"log/slog"
 	"net/http"
@@ -53,6 +54,7 @@ type EntraCustomerHandler struct {
 	clientSecret  string
 	redirectURI   string
 	portalBaseURL string // app.<env> — origin the callback lands on
+	brandedDomain string // BRANDED_DOMAIN; empty = swap first host label
 	log           *slog.Logger
 	httpc         *http.Client
 
@@ -461,11 +463,11 @@ func (h *EntraCustomerHandler) linkOrCreateUser(ctx context.Context, customerID 
 // portal access on next sign-in.
 //
 // Contract:
-//   * user_roles rows with granted_by='entra' for this user are the
+//   - user_roles rows with granted_by='entra' for this user are the
 //     "authoritative Entra set" — this function wipes and rebuilds them.
-//   * user_roles rows with granted_by='manual' are the admin's own edits
+//   - user_roles rows with granted_by='manual' are the admin's own edits
 //     and are never touched.
-//   * ON CONFLICT DO NOTHING keeps a manual grant for the same role as
+//   - ON CONFLICT DO NOTHING keeps a manual grant for the same role as
 //     the target of a mapping — manual "wins" for storage of that
 //     (user, role) pair, so if the manual assignment is later revoked
 //     the entra sync will re-establish the grant.
@@ -571,28 +573,18 @@ func (h *EntraCustomerHandler) slugFromCookie(r *http.Request) string {
 func (h *EntraCustomerHandler) customerCallbackURL(slug, sessionToken string) string {
 	tok := url.QueryEscape(sessionToken)
 	base := strings.TrimRight(h.portalBaseURL, "/")
-	if slug == "" || base == "" {
-		if base == "" {
-			return "/sign-in/callback?token=" + tok
-		}
-		return base + "/sign-in/callback?token=" + tok
+	if base == "" {
+		return "/sign-in/callback?token=" + tok
 	}
-	// Swap the first host label to the slug. Matches how the reset URL
-	// builder in publicapi does it — one code path for the app→slug
-	// derivation and it keeps env suffix knowledge in one place per
-	// package. Duplicated here rather than exported from publicapi to
-	// keep the dependency direction (portalapi → publicapi) clean; if
-	// this grows a third caller, factor it up.
-	u, err := url.Parse(base)
-	if err != nil || u.Host == "" {
-		return base + "/sign-in/callback?token=" + tok
+	return brandurl.Origin(base, h.brandedDomain, slug) + "/sign-in/callback?token=" + tok
+}
+
+// SetBrandedDomain sets BRANDED_DOMAIN (see brandurl.Origin).
+func (h *EntraCustomerHandler) SetBrandedDomain(d string) *EntraCustomerHandler {
+	if h != nil {
+		h.brandedDomain = d
 	}
-	hostParts := strings.SplitN(u.Host, ".", 2)
-	if len(hostParts) < 2 {
-		return base + "/sign-in/callback?token=" + tok
-	}
-	u.Host = slug + "." + hostParts[1]
-	return strings.TrimRight(u.String(), "/") + "/sign-in/callback?token=" + tok
+	return h
 }
 
 // redirectSignInError bounces the browser back to the appropriate
@@ -615,17 +607,6 @@ func (h *EntraCustomerHandler) redirectSignInError(w http.ResponseWriter, r *htt
 		}
 		base = scheme + "://" + host
 	}
-	target := base + "/sign-in?entra_error=" + url.QueryEscape(code)
-	if slug != "" {
-		if u, err := url.Parse(base); err == nil && u.Host != "" {
-			hostParts := strings.SplitN(u.Host, ".", 2)
-			if len(hostParts) == 2 {
-				u.Host = slug + "." + hostParts[1]
-				u.Path = "/sign-in"
-				u.RawQuery = "entra_error=" + url.QueryEscape(code)
-				target = u.String()
-			}
-		}
-	}
+	target := brandurl.Origin(base, h.brandedDomain, slug) + "/sign-in?entra_error=" + url.QueryEscape(code)
 	http.Redirect(w, r, target, http.StatusFound)
 }

@@ -293,7 +293,7 @@ func main() {
 			cfg.EntraCustomerRedirectURI,
 			cfg.EntraPortalBaseURL,
 			log,
-		)
+		).SetBrandedDomain(cfg.BrandedDomain)
 
 		portalRoutes = &api.PortalRoutes{
 			Resolver:      resolver,
@@ -361,7 +361,7 @@ func main() {
 		customerSSOEnabled,
 		cipher,
 		cfg.CloudBaseURL,
-	)
+	).SetBrandedDomain(cfg.BrandedDomain)
 	publicRoutes := api.PublicRoutes{
 		Branding:               publicH.GetBranding,
 		PasswordResetRequest:   publicH.RequestReset,
@@ -379,6 +379,7 @@ func main() {
 	// cheaper than restructuring the existing portalapi.Handler ctor
 	// for one string.
 	portalapi.SetMagicLinkPortalBaseURL(cfg.EntraPortalBaseURL)
+	portalapi.SetMagicLinkBrandedDomain(cfg.BrandedDomain)
 
 	// Public integration API (/pub/v1). Its own auth resolver keyed on
 	// api_tokens rows, independent of the portal session chain. No

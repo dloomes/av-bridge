@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"github.com/dloomes/av-bridge-cloud/internal/brandurl"
 	"net/http"
 	"net/url"
 	"strings"
@@ -155,19 +156,7 @@ func (h *Handler) magicRedirectTarget(slug, sessionToken string) string {
 	if base == "" {
 		return "/sign-in/callback?token=" + tok
 	}
-	if slug == "" {
-		return base + "/sign-in/callback?token=" + tok
-	}
-	u, err := url.Parse(base)
-	if err != nil || u.Host == "" {
-		return base + "/sign-in/callback?token=" + tok
-	}
-	hostParts := strings.SplitN(u.Host, ".", 2)
-	if len(hostParts) < 2 {
-		return base + "/sign-in/callback?token=" + tok
-	}
-	u.Host = slug + "." + hostParts[1]
-	return strings.TrimRight(u.String(), "/") + "/sign-in/callback?token=" + tok
+	return brandurl.Origin(base, h.brandedDomain, slug) + "/sign-in/callback?token=" + tok
 }
 
 // redirectMagicError bounces the browser back to the base sign-in page
