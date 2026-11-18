@@ -21,12 +21,38 @@ type Store struct {
 	tenant *pgxpool.Pool
 }
 
+// defaultMaxConns is the pool size when the DSN doesn't set pool_max_conns.
+// pgx's own default (max(4, CPUs)) is too small: long-polling collectors, the
+// nightly executor and the live-event listener each hold a connection.
+const defaultMaxConns = 20
+
+// poolConfig parses dsn and applies defaultMaxConns unless the DSN sets
+// pool_max_conns itself.
+func poolConfig(dsn string) (*pgxpool.Config, error) {
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		return nil, err
+	}
+	if !strings.Contains(dsn, "pool_max_conns") {
+		cfg.MaxConns = defaultMaxConns
+	}
+	return cfg, nil
+}
+
+func newPool(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
+	cfg, err := poolConfig(dsn)
+	if err != nil {
+		return nil, err
+	}
+	return pgxpool.NewWithConfig(ctx, cfg)
+}
+
 func New(ctx context.Context, adminDSN, tenantDSN string) (*Store, error) {
-	admin, err := pgxpool.New(ctx, adminDSN)
+	admin, err := newPool(ctx, adminDSN)
 	if err != nil {
 		return nil, fmt.Errorf("admin pool: %w", err)
 	}
-	tenant, err := pgxpool.New(ctx, tenantDSN)
+	tenant, err := newPool(ctx, tenantDSN)
 	if err != nil {
 		admin.Close()
 		return nil, fmt.Errorf("tenant pool: %w", err)

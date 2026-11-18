@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"sync/atomic"
 	"time"
 
 	"github.com/dloomes/av-bridge-cloud/internal/db"
@@ -38,24 +39,71 @@ type liveMsg struct {
 
 // Relay carries live events and customer closes through Postgres
 // LISTEN/NOTIFY so browsers on every web copy see them. Publish and
-// CloseCustomer only send; Run receives (on every copy, including the
-// sender) and delivers into the local Hub.
+// CloseCustomer only enqueue; a sender goroutine (started by Run) does the
+// database work, so callers never wait on Postgres. Run also receives (on
+// every copy, including the sender) and delivers into the local Hub.
 type Relay struct {
-	pool *pgxpool.Pool
-	hub  *Hub
-	log  *slog.Logger
+	pool  *pgxpool.Pool
+	hub   *Hub
+	log   *slog.Logger
+	queue chan liveMsg
+
+	dropped  atomic.Int64
+	lastWarn atomic.Int64 // unix nanos of the last drop warning
 }
+
+// sendQueueSize bounds events waiting for the sender goroutine.
+const sendQueueSize = 1024
 
 func NewRelay(pool *pgxpool.Pool, hub *Hub, log *slog.Logger) *Relay {
-	return &Relay{pool: pool, hub: hub, log: log}
+	return &Relay{pool: pool, hub: hub, log: log, queue: make(chan liveMsg, sendQueueSize)}
 }
 
-// Publish sends ev to every copy. It never blocks ingest for long and never
-// fails it: errors are logged and the event dropped (live events are
-// observability, the persisted copy is the record).
+// Publish queues ev for every copy and returns at once. If the queue is full
+// (database slow or down) the event is dropped: live events are
+// observability, the persisted copy is the record.
 func (r *Relay) Publish(customerID string, ev Event) {
-	msg := liveMsg{C: customerID, K: "event", E: &ev}
-	b, err := json.Marshal(msg)
+	r.enqueue(liveMsg{C: customerID, K: "event", E: &ev})
+}
+
+// CloseCustomer asks every copy to end the customer's event streams. The
+// closes happen asynchronously, so the count is unknown here: returns 0.
+func (r *Relay) CloseCustomer(customerID string) int {
+	r.enqueue(liveMsg{C: customerID, K: "close"})
+	return 0
+}
+
+func (r *Relay) enqueue(m liveMsg) {
+	select {
+	case r.queue <- m:
+	default:
+		n := r.dropped.Add(1)
+		now := time.Now().UnixNano()
+		last := r.lastWarn.Load()
+		if now-last > int64(time.Minute) && r.lastWarn.CompareAndSwap(last, now) {
+			r.log.Warn("live event queue full, dropping events", "dropped_total", n)
+		} else {
+			r.log.Debug("live event queue full, dropping event", "customer", m.C)
+		}
+	}
+}
+
+// sendLoop drains the queue in order until ctx ends.
+func (r *Relay) sendLoop(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case m := <-r.queue:
+			r.send(m)
+		}
+	}
+}
+
+// send does the NOTIFY (and the overflow INSERT for a big event) under a
+// short timeout. Errors are logged, never returned.
+func (r *Relay) send(m liveMsg) {
+	b, err := json.Marshal(m)
 	if err != nil {
 		r.log.Warn("live event marshal failed", "error", err)
 		return
@@ -69,19 +117,9 @@ func (r *Relay) Publish(customerID string, ev Event) {
 			r.log.Warn("live event overflow insert failed", "error", err)
 			return
 		}
-		b, _ = json.Marshal(liveMsg{C: customerID, K: "ref", ID: id})
+		b, _ = json.Marshal(liveMsg{C: m.C, K: "ref", ID: id})
 	}
 	r.notify(ctx, b)
-}
-
-// CloseCustomer asks every copy to end the customer's event streams. The
-// closes happen asynchronously, so the count is unknown here: returns 0.
-func (r *Relay) CloseCustomer(customerID string) int {
-	b, _ := json.Marshal(liveMsg{C: customerID, K: "close"})
-	ctx, cancel := context.WithTimeout(context.Background(), publishTimeout)
-	defer cancel()
-	r.notify(ctx, b)
-	return 0
 }
 
 func (r *Relay) notify(ctx context.Context, payload []byte) {
@@ -91,9 +129,10 @@ func (r *Relay) notify(ctx context.Context, payload []byte) {
 }
 
 // Run listens until ctx is cancelled, reconnecting with backoff (1s to 30s)
-// if the connection drops, and prunes old overflow rows.
+// if the connection drops, sends queued events and prunes old overflow rows.
 func (r *Relay) Run(ctx context.Context) {
 	go r.sweepOverflow(ctx)
+	go r.sendLoop(ctx)
 	backoff := time.Second
 	for ctx.Err() == nil {
 		started := time.Now()

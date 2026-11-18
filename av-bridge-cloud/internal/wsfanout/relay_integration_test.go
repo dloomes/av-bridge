@@ -132,3 +132,21 @@ func newID() string {
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
 }
+
+// No database and no sender running: Publish must still return at once, and
+// overflow must drop rather than block.
+func TestRelayPublishNeverBlocks(t *testing.T) {
+	quiet := slog.New(slog.NewTextHandler(io.Discard, nil))
+	r := NewRelay(nil, NewHub(quiet), quiet)
+	start := time.Now()
+	for i := 0; i < 2000; i++ { // more than the queue holds
+		r.Publish("c", Event{DeviceID: "d", Timestamp: time.Now()})
+	}
+	r.CloseCustomer("c")
+	if d := time.Since(start); d > 100*time.Millisecond {
+		t.Fatalf("2000 Publish calls took %s", d)
+	}
+	if got := r.dropped.Load(); got < 2000+1-sendQueueSize {
+		t.Fatalf("dropped = %d, want at least %d", got, 2001-sendQueueSize)
+	}
+}
