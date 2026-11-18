@@ -61,3 +61,41 @@ func TunnelConnected(ctx context.Context, pool *pgxpool.Pool, collectorID string
 		`SELECT EXISTS (SELECT 1 FROM remote_tunnel WHERE collector_id = $1)`, collectorID).Scan(&ok)
 	return ok, err
 }
+
+// liveIDs lists the collectors with an open tunnel in this copy's map.
+func (t *Tunnels) liveIDs() []string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	ids := make([]string, 0, len(t.sessions))
+	for id, s := range t.sessions {
+		if !s.IsClosed() {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
+// reconcilePresence makes remote_tunnel match the live sessions: rows for
+// collectors with no live session go (an old worker exited mid-deploy
+// without closing its tunnels), and live sessions with no row get one (a
+// reconnect's close removed it, or a write failed). Valid because exactly one
+// copy serves tunnels per environment; only that copy's Sweep runs. A tunnel
+// connecting during the pass may lose its row until the next sweep.
+func (t *Tunnels) reconcilePresence(ctx context.Context) error {
+	if t.presence == nil {
+		return nil
+	}
+	ids := t.liveIDs()
+	if _, err := t.presence.Exec(ctx,
+		`DELETE FROM remote_tunnel WHERE NOT (collector_id::text = ANY($1))`, ids); err != nil {
+		return err
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	_, err := t.presence.Exec(ctx, `
+		INSERT INTO remote_tunnel (collector_id)
+		SELECT c.id FROM collectors c WHERE c.id::text = ANY($1)
+		ON CONFLICT (collector_id) DO NOTHING`, ids)
+	return err
+}

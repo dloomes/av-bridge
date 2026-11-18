@@ -216,7 +216,7 @@ func TestRemoteAccessEndToEnd(t *testing.T) {
 			}(stream)
 		}
 	}()
-	waitFor(t, func() bool { return tunnels.Connected(col) })
+	waitFor(t, func() bool { ok, _ := remote.TunnelConnected(context.Background(), st.AdminPool(), col); return ok })
 
 	// A port that isn't a web port is refused.
 	if code, _ := call("POST", "/devices/"+dev+"/remote-sessions", map[string]any{"port": 22}); code != http.StatusBadRequest {

@@ -131,6 +131,9 @@ func (s *Service) Sweep(ctx context.Context) error {
 	if err := s.dropOffboardingTunnels(ctx); err != nil {
 		s.log.Warn("remote access: dropping offboarding tunnels failed", "error", err)
 	}
+	if err := s.tunnels.reconcilePresence(ctx); err != nil {
+		s.log.Warn("remote access: reconciling tunnel presence failed", "error", err)
+	}
 	rows, err := s.pool.Query(ctx, `
 		UPDATE remote_session
 		   SET ended_at = now(),
