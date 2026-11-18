@@ -65,6 +65,14 @@ func main() {
 		os.Exit(1)
 	}
 
+	if cfg.DBAppAdminPassword != "" && cfg.DBAppTenantPassword != "" {
+		if err := db.SetRolePasswords(ctx, cfg.MigrationDSN, cfg.DBAppAdminPassword, cfg.DBAppTenantPassword); err != nil {
+			log.Error("set app role passwords", "error", err)
+			os.Exit(1)
+		}
+		log.Info("app role passwords set from configuration")
+	}
+
 	store, err := db.New(ctx, cfg.AdminDSN, cfg.TenantDSN)
 	if err != nil {
 		log.Error("db connect", "error", err)
@@ -251,7 +259,7 @@ func main() {
 	}
 
 	var portalRoutes *api.PortalRoutes
-	if cfg.PoCPortalToken != "" {
+	{
 		// Three-tier auth. Local is checked first: session tokens have a
 		// distinctive `av_` prefix so mismatches short-circuit without a DB
 		// query. Mock-JWT is next for the dev sign-in presets (off unless ALLOW_MOCK_JWT=true). Static token
@@ -263,10 +271,14 @@ func main() {
 			log.Warn("mock JWT sign-in enabled — dev only, never in production (ALLOW_MOCK_JWT=true)")
 		}
 		mock := portalauth.NewMockJWTResolver(lookup, cfg.AllowMockJWT)
-		static := portalauth.NewStaticResolver(cfg.PoCPortalToken, cfg.PoCPortalCustomerID, cfg.PoCPortalRole)
 		// Display links (dashboard wall screens) have their own dsp_ tokens.
 		display := portalauth.NewDisplayResolver(store.AdminPool())
-		resolver := portalauth.NewChainResolver(local, display, mock, static)
+		resolver := portalauth.NewChainResolver(withStaticResolver([]portalauth.Resolver{local, display, mock}, cfg)...)
+		if staticTokenAllowed(cfg) {
+			log.Warn("static portal token accepted (BOOTSTRAP_POC=true) - not for production")
+		} else {
+			log.Info("static portal token not accepted")
+		}
 
 		// Entra vendor SSO — constructed only when ALL four required
 		// values are configured. NewEntraVendorHandler returns nil (with
@@ -315,8 +327,6 @@ func main() {
 			"local_auth", "enabled", "mock_jwt", "enabled",
 			"entra_vendor_sso", entraStatus,
 			"entra_customer_sso", entraCustomerStatus)
-	} else {
-		log.Warn("POC_PORTAL_TOKEN not set — portal read API disabled")
 	}
 
 	bridgeCmds := commands.NewBridgeHandler(store, cipher, cfg.BridgePollMaxHold, log)
@@ -498,3 +508,17 @@ func main() {
 	log.Info("shutdown complete")
 }
 
+
+// staticTokenAllowed reports whether the static POC_PORTAL_TOKEN bearer is
+// accepted: only when the PoC bootstrap is on and a token is configured.
+func staticTokenAllowed(cfg config.Config) bool {
+	return cfg.BootstrapPoC && cfg.PoCPortalToken != ""
+}
+
+// withStaticResolver appends the static-token resolver to rs when allowed.
+func withStaticResolver(rs []portalauth.Resolver, cfg config.Config) []portalauth.Resolver {
+	if staticTokenAllowed(cfg) {
+		rs = append(rs, portalauth.NewStaticResolver(cfg.PoCPortalToken, cfg.PoCPortalCustomerID, cfg.PoCPortalRole))
+	}
+	return rs
+}

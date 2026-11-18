@@ -136,6 +136,7 @@ data "aws_iam_policy_document" "execution_secrets" {
       var.smtp_credentials_secret_arn,
       var.entra_vendor_client_secret_arn,
       var.vendor_admin_password_secret_arn,
+      var.db_app_credentials_secret_arn,
     ])
   }
 }
@@ -182,10 +183,15 @@ resource "aws_ecs_task_definition" "this" {
     }]
 
     environment = concat(
-      [
-        { name = "CLOUD_LISTEN_ADDR", value = ":8090" },
+      # Database URLs as plain env vars only for the legacy dev-password
+      # setup (UAT); with db_app_credentials_secret_arn they come from
+      # Secrets Manager (see the secrets block).
+      var.db_app_credentials_secret_arn == "" ? [
         { name = "DATABASE_ADMIN_URL", value = local.admin_url },
         { name = "DATABASE_TENANT_URL", value = local.tenant_url },
+      ] : [],
+      [
+        { name = "CLOUD_LISTEN_ADDR", value = ":8090" },
         { name = "BOOTSTRAP_POC", value = tostring(var.bootstrap_poc) },
         { name = "POC_BRIDGE_COLLECTOR_ID", value = var.poc_collector_id },
         { name = "POC_PORTAL_ROLE", value = var.poc_portal_role },
@@ -262,6 +268,16 @@ resource "aws_ecs_task_definition" "this" {
       # vendor_admin_password, not alongside it.
       var.vendor_admin_password_secret_arn == "" ? [] : [
         { name = "VENDOR_ADMIN_PASSWORD", valueFrom = var.vendor_admin_password_secret_arn },
+      ],
+      # App role connection URLs + passwords from one JSON secret (keys
+      # admin_url, tenant_url, admin_password, tenant_password). The service
+      # sets the role passwords at startup so the repo's dev passwords are
+      # never valid.
+      var.db_app_credentials_secret_arn == "" ? [] : [
+        { name = "DATABASE_ADMIN_URL", valueFrom = "${var.db_app_credentials_secret_arn}:admin_url::" },
+        { name = "DATABASE_TENANT_URL", valueFrom = "${var.db_app_credentials_secret_arn}:tenant_url::" },
+        { name = "DB_APP_ADMIN_PASSWORD", valueFrom = "${var.db_app_credentials_secret_arn}:admin_password::" },
+        { name = "DB_APP_TENANT_PASSWORD", valueFrom = "${var.db_app_credentials_secret_arn}:tenant_password::" },
       ],
     )
 

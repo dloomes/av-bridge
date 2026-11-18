@@ -182,6 +182,12 @@ variable "vendor_admin_password_secret_arn" {
   default     = ""
 }
 
+variable "db_app_credentials_secret_arn" {
+  description = "Secrets Manager ARN of a JSON secret with keys admin_url, tenant_url, admin_password, tenant_password. When set, DATABASE_ADMIN_URL / DATABASE_TENANT_URL / DB_APP_ADMIN_PASSWORD / DB_APP_TENANT_PASSWORD are injected from it and the plain DATABASE_*_URL env vars (dev passwords) are omitted. Empty = legacy dev-password URLs."
+  type        = string
+  default     = ""
+}
+
 variable "vendor_admin_name" {
   type    = string
   default = ""

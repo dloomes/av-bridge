@@ -194,6 +194,13 @@ type Config struct {
 	// of the portal base URL instead.
 	BrandedDomain string
 
+	// DBAppAdminPassword / DBAppTenantPassword are DB_APP_ADMIN_PASSWORD /
+	// DB_APP_TENANT_PASSWORD: when both are set the service sets the
+	// app_admin / app_tenant role passwords at startup (after migrating),
+	// replacing the dev passwords the migrations create. Both or neither.
+	DBAppAdminPassword  string
+	DBAppTenantPassword string
+
 	// Entra ID customer sign-in — M2: multi-tenant Entra app registration
 	// in Involve's tenant, published as multi-tenant. One app registration
 	// serves ALL customers. TenantID is intentionally absent — the customer
@@ -360,6 +367,8 @@ func FromEnv() (Config, error) {
 		EntraVendorRedirectURI:  os.Getenv("ENTRA_VENDOR_REDIRECT_URI"),
 		EntraPortalBaseURL:      os.Getenv("ENTRA_PORTAL_BASE_URL"),
 		BrandedDomain:           strings.TrimSpace(os.Getenv("BRANDED_DOMAIN")),
+		DBAppAdminPassword:      os.Getenv("DB_APP_ADMIN_PASSWORD"),
+		DBAppTenantPassword:     os.Getenv("DB_APP_TENANT_PASSWORD"),
 
 		EntraCustomerClientID:     os.Getenv("ENTRA_CUSTOMER_CLIENT_ID"),
 		EntraCustomerClientSecret: os.Getenv("ENTRA_CUSTOMER_CLIENT_SECRET"),
@@ -380,11 +389,20 @@ func FromEnv() (Config, error) {
 	if c.SecretKeyHex == "" {
 		return c, fmt.Errorf("CLOUD_SECRET_KEY is required (64 hex chars = 32 bytes)")
 	}
+	if (c.DBAppAdminPassword == "") != (c.DBAppTenantPassword == "") {
+		return c, fmt.Errorf("DB_APP_ADMIN_PASSWORD and DB_APP_TENANT_PASSWORD must be set together")
+	}
+	if c.DBAppAdminPassword != "" && (len(c.DBAppAdminPassword) < minDBPasswordLen || len(c.DBAppTenantPassword) < minDBPasswordLen) {
+		return c, fmt.Errorf("DB_APP_ADMIN_PASSWORD and DB_APP_TENANT_PASSWORD must be at least %d characters", minDBPasswordLen)
+	}
 	if c.BootstrapPoC && c.PoCHMACSecret == "" {
 		return c, fmt.Errorf("POC_HMAC_SECRET is required when BOOTSTRAP_POC=true")
 	}
 	return c, nil
 }
+
+// minDBPasswordLen is the shortest accepted app role password.
+const minDBPasswordLen = 24
 
 func getenv(k, def string) string {
 	if v := os.Getenv(k); v != "" {

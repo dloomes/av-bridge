@@ -116,3 +116,8 @@ output "entra_vendor_client_secret_arn" {
   description = "Hand-made Entra vendor client secret the services read."
   value       = data.aws_secretsmanager_secret.entra_vendor_client_secret.arn
 }
+
+output "db_app_credentials_secret_arn" {
+  description = "Secrets Manager ARN of the app database role URLs and passwords (ARN only)."
+  value       = aws_secretsmanager_secret.db_app_credentials.arn
+}

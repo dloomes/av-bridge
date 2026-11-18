@@ -72,6 +72,36 @@ resource "aws_secretsmanager_secret_version" "vendor_admin_password" {
   secret_string = random_password.vendor_admin.result
 }
 
+# Database app role credentials: generated here, held only in Secrets Manager.
+# The cloud services set the app_admin / app_tenant role passwords from this
+# secret at startup (after migrating), so the dev passwords in the migrations
+# are never valid in production. special = false keeps them URL-safe.
+resource "random_password" "db_app_admin" {
+  length  = 40
+  special = false
+}
+
+resource "random_password" "db_app_tenant" {
+  length  = 40
+  special = false
+}
+
+resource "aws_secretsmanager_secret" "db_app_credentials" {
+  name                    = "${var.name_prefix}/cloud/db_app_credentials"
+  description             = "App database role URLs and passwords (app_admin, app_tenant)"
+  recovery_window_in_days = 7
+}
+
+resource "aws_secretsmanager_secret_version" "db_app_credentials" {
+  secret_id = aws_secretsmanager_secret.db_app_credentials.id
+  secret_string = jsonencode({
+    admin_url       = "postgres://app_admin:${random_password.db_app_admin.result}@${module.db.address}:${module.db.port}/${module.db.db_name}?sslmode=require"
+    tenant_url      = "postgres://app_tenant:${random_password.db_app_tenant.result}@${module.db.address}:${module.db.port}/${module.db.db_name}?sslmode=require"
+    admin_password  = random_password.db_app_admin.result
+    tenant_password = random_password.db_app_tenant.result
+  })
+}
+
 # -----------------------------------------------------------------------------
 # DNS zones (stage 1: apply these first, then delegate at DNS Made Easy)
 # -----------------------------------------------------------------------------
@@ -295,6 +325,7 @@ module "cloud_web" {
   vendor_admin_name  = var.vendor_admin_name
   # Password via Secrets Manager (valueFrom), never a plain env var.
   vendor_admin_password_secret_arn = aws_secretsmanager_secret_version.vendor_admin_password.arn
+  db_app_credentials_secret_arn    = aws_secretsmanager_secret_version.db_app_credentials.arn
 
   nightly_dry_run = false
 
@@ -355,6 +386,7 @@ module "cloud_worker" {
   vendor_admin_name  = var.vendor_admin_name
   # Password via Secrets Manager (valueFrom), never a plain env var.
   vendor_admin_password_secret_arn = aws_secretsmanager_secret_version.vendor_admin_password.arn
+  db_app_credentials_secret_arn    = aws_secretsmanager_secret_version.db_app_credentials.arn
 
   nightly_dry_run = false
 
