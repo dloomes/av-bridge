@@ -9,8 +9,9 @@ variable "sending_domain" {
 }
 
 variable "hosted_zone_id" {
-  description = "Route 53 hosted zone ID for sending_domain. SES ownership + DKIM + SPF + DMARC records are added here."
+  description = "Route 53 hosted zone ID for sending_domain. SES ownership + DKIM + SPF + DMARC records are added here. Unused (leave empty) when manage_dns is false."
   type        = string
+  default     = ""
 }
 
 variable "from_local_part" {
@@ -58,4 +59,16 @@ variable "secret_recovery_window_days" {
   description = "Days AWS keeps the SMTP-credentials secret recoverable after a destroy. 0 = immediate delete (UAT convenience); prod should use 7-30."
   type        = number
   default     = 0
+}
+
+variable "manage_dns" {
+  description = "true = create the verification, DKIM, SPF, DMARC (and MAIL FROM) records in hosted_zone_id. false = the domain's DNS is hosted elsewhere: create no records and no verification resource, and output the records to add."
+  type        = bool
+  default     = true
+}
+
+variable "mail_from_subdomain" {
+  description = "Custom MAIL FROM subdomain label, e.g. \"bounce\" gives bounce.<sending_domain>. Empty = SES default MAIL FROM."
+  type        = string
+  default     = ""
 }

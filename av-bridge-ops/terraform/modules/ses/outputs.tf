@@ -39,3 +39,27 @@ output "sandbox_reminder" {
     "Approval typically lands within 24h."
   ])
 }
+
+output "dns_records" {
+  description = "DNS records the domain needs. Create them at the DNS provider when manage_dns is false; informational otherwise."
+  value = concat(
+    [{
+      name  = "_amazonses.${var.sending_domain}"
+      type  = "TXT"
+      value = aws_ses_domain_identity.this.verification_token
+    }],
+    [for t in aws_ses_domain_dkim.this.dkim_tokens : {
+      name  = "${t}._domainkey.${var.sending_domain}"
+      type  = "CNAME"
+      value = "${t}.dkim.amazonses.com"
+    }],
+    [
+      { name = var.sending_domain, type = "TXT", value = "v=spf1 include:amazonses.com -all" },
+      { name = "_dmarc.${var.sending_domain}", type = "TXT", value = local.dmarc_record },
+    ],
+    var.mail_from_subdomain == "" ? [] : [
+      { name = local.mail_from_domain, type = "MX", value = "10 feedback-smtp.${local.region}.amazonses.com" },
+      { name = local.mail_from_domain, type = "TXT", value = "v=spf1 include:amazonses.com -all" },
+    ],
+  )
+}

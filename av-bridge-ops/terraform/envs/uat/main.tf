@@ -136,6 +136,12 @@ module "cloud_service" {
   image_url = module.ecr_cloud.repository_url
   image_tag = "latest"
 
+  # UAT's cluster has always had Container Insights on.
+  container_insights = true
+  extra_environment = [
+    { name = "BRANDED_DOMAIN", value = var.dns_zone_name },
+  ]
+
   cpu           = 512
   memory        = 1024
   desired_count = 1
@@ -287,6 +293,9 @@ module "portal" {
     # a bill. Unset in terraform.tfvars leaves the map view rendering an
     # "add a token" hint rather than blowing up the build.
     NEXT_PUBLIC_MAPBOX_TOKEN = var.mapbox_public_token
+
+    # Domain per-customer branded sign-in addresses live under.
+    NEXT_PUBLIC_AV_BRIDGE_BRANDED_DOMAIN = var.dns_zone_name
 
     NEXT_TELEMETRY_DISABLED = "1"
   }

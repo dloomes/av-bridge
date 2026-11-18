@@ -31,23 +31,47 @@ locals {
 
   admin_url  = "postgres://app_admin:app_admin_dev@${var.db_host}:${var.db_port}/${var.db_name}?sslmode=require"
   tenant_url = "postgres://app_tenant:app_tenant_dev@${var.db_host}:${var.db_port}/${var.db_name}?sslmode=require"
+
+  # An externally supplied cluster_arn means a sibling service owns the
+  # cluster; this module then only attaches its service to it.
+  create_cluster = var.cluster_arn == ""
+  cluster_arn    = local.create_cluster ? aws_ecs_cluster.this[0].arn : var.cluster_arn
+
+  # Default reproduces the single catch-all rule this module always created.
+  listener_rules = length(var.listener_rules) > 0 ? var.listener_rules : [{
+    priority      = var.listener_rule_priority
+    host_headers  = var.listener_host_names
+    path_patterns = ["/*"]
+  }]
 }
 
 # -----------------------------------------------------------------------------
 # ECS cluster
 # -----------------------------------------------------------------------------
 
+moved {
+  from = aws_ecs_cluster.this
+  to   = aws_ecs_cluster.this[0]
+}
+
+moved {
+  from = aws_ecs_cluster_capacity_providers.this
+  to   = aws_ecs_cluster_capacity_providers.this[0]
+}
+
 resource "aws_ecs_cluster" "this" {
-  name = "${var.name_prefix}-cluster"
+  count = local.create_cluster ? 1 : 0
+  name  = "${var.name_prefix}-cluster"
 
   setting {
     name  = "containerInsights"
-    value = "enabled"
+    value = var.container_insights ? "enabled" : "disabled"
   }
 }
 
 resource "aws_ecs_cluster_capacity_providers" "this" {
-  cluster_name       = aws_ecs_cluster.this.name
+  count              = local.create_cluster ? 1 : 0
+  cluster_name       = aws_ecs_cluster.this[0].name
   capacity_providers = ["FARGATE", "FARGATE_SPOT"]
 
   default_capacity_provider_strategy {
@@ -164,6 +188,9 @@ resource "aws_ecs_task_definition" "this" {
         { name = "NIGHTLY_EXEC_ENABLED", value = tostring(var.nightly_exec_enabled) },
         { name = "NIGHTLY_DRY_RUN", value = tostring(var.nightly_dry_run) },
       ],
+      var.role == "" ? [] : [
+        { name = "MARCUS_ROLE", value = var.role }
+      ],
       # Origin Collectors are told to use for /ingest + /bridge/*. Without
       # it the install script bakes in whichever host served it — the
       # portal, when copied from Add Collector — and the portal doesn't
@@ -201,6 +228,7 @@ resource "aws_ecs_task_definition" "this" {
         { name = "ENTRA_VENDOR_REDIRECT_URI", value = var.entra_vendor_redirect_uri },
         { name = "ENTRA_PORTAL_BASE_URL", value = var.entra_portal_base_url },
       ],
+      var.extra_environment,
     )
 
     secrets = concat(
@@ -259,25 +287,35 @@ resource "aws_lb_target_group" "this" {
   deregistration_delay = 30
 }
 
-resource "aws_lb_listener_rule" "this" {
-  listener_arn = var.alb_listener_arn
-  priority     = var.listener_rule_priority
+moved {
+  from = aws_lb_listener_rule.this
+  to   = aws_lb_listener_rule.this["100"]
+}
 
-  # host_header requires a REAL host — ALB rejects bare "*". Until a domain
+resource "aws_lb_listener_rule" "this" {
+  for_each = { for r in local.listener_rules : tostring(r.priority) => r }
+
+  listener_arn = var.alb_listener_arn
+  priority     = each.value.priority
+
+  # host_header requires a REAL host � ALB rejects bare "*". Until a domain
   # is attached we scope by path only (/* matches everything). When a real
-  # host lands, set listener_host_names to add a host_header condition.
+  # host lands, set host_headers to add a host_header condition.
   dynamic "condition" {
-    for_each = length(var.listener_host_names) > 0 ? [1] : []
+    for_each = length(each.value.host_headers) > 0 ? [1] : []
     content {
       host_header {
-        values = var.listener_host_names
+        values = each.value.host_headers
       }
     }
   }
 
-  condition {
-    path_pattern {
-      values = ["/*"]
+  dynamic "condition" {
+    for_each = length(each.value.path_patterns) > 0 ? [1] : []
+    content {
+      path_pattern {
+        values = each.value.path_patterns
+      }
     }
   }
 
@@ -293,7 +331,7 @@ resource "aws_lb_listener_rule" "this" {
 
 resource "aws_ecs_service" "this" {
   name            = "${var.name_prefix}-cloud"
-  cluster         = aws_ecs_cluster.this.id
+  cluster         = local.cluster_arn
   task_definition = aws_ecs_task_definition.this.arn
   desired_count   = var.desired_count
   launch_type     = "FARGATE"

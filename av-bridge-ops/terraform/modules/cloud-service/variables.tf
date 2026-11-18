@@ -33,6 +33,40 @@ variable "listener_host_names" {
   default     = []
 }
 
+variable "listener_rules" {
+  description = "Listener rules forwarding to this service. Empty = one rule built from listener_rule_priority + listener_host_names matching path /*. An empty path_patterns omits the path condition (host-only rule)."
+  type = list(object({
+    priority      = number
+    host_headers  = list(string)
+    path_patterns = list(string)
+  }))
+  default = []
+}
+
+variable "cluster_arn" {
+  description = "ARN of an existing ECS cluster to run on. Empty = this module creates the cluster."
+  type        = string
+  default     = ""
+}
+
+variable "container_insights" {
+  description = "Enable CloudWatch Container Insights on the cluster this module creates."
+  type        = bool
+  default     = false
+}
+
+variable "role" {
+  description = "Value of MARCUS_ROLE (web, worker or all). Empty = variable not set, the app runs as all."
+  type        = string
+  default     = ""
+}
+
+variable "extra_environment" {
+  description = "Additional plaintext container environment variables."
+  type        = list(object({ name = string, value = string }))
+  default     = []
+}
+
 # -----------------------------------------------------------------------------
 # Container image
 # -----------------------------------------------------------------------------

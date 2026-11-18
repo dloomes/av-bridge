@@ -33,6 +33,8 @@ locals {
   from_address    = "${var.from_local_part}@${var.sending_domain}"
   from_with_name  = var.from_display_name == "" ? local.from_address : "${var.from_display_name} <${local.from_address}>"
 
+  mail_from_domain = var.mail_from_subdomain == "" ? "" : "${var.mail_from_subdomain}.${var.sending_domain}"
+
   # DMARC record body — string concatenation with a conditional rua= tag
   # so we don't emit "rua=" with nothing on the right when caller opts
   # out of aggregate reports.
@@ -60,7 +62,31 @@ resource "aws_ses_domain_identity" "this" {
   domain = var.sending_domain
 }
 
+moved {
+  from = aws_route53_record.domain_verification
+  to   = aws_route53_record.domain_verification[0]
+}
+
+moved {
+  from = aws_ses_domain_identity_verification.this
+  to   = aws_ses_domain_identity_verification.this[0]
+}
+
+moved {
+  from = aws_route53_record.spf
+  to   = aws_route53_record.spf[0]
+}
+
+moved {
+  from = aws_route53_record.dmarc
+  to   = aws_route53_record.dmarc[0]
+}
+
+# manage_dns = false: the domain's DNS lives outside Route 53, so no record
+# and no verification resource is created; the outputs list the records the
+# DNS owner must add.
 resource "aws_route53_record" "domain_verification" {
+  count   = var.manage_dns ? 1 : 0
   zone_id = var.hosted_zone_id
   name    = "_amazonses.${var.sending_domain}"
   type    = "TXT"
@@ -73,6 +99,7 @@ resource "aws_route53_record" "domain_verification" {
 # resources (the identity policy, verified recipients) don't race a
 # still-pending domain.
 resource "aws_ses_domain_identity_verification" "this" {
+  count      = var.manage_dns ? 1 : 0
   domain     = aws_ses_domain_identity.this.domain
   depends_on = [aws_route53_record.domain_verification]
 }
@@ -82,7 +109,7 @@ resource "aws_ses_domain_dkim" "this" {
 }
 
 resource "aws_route53_record" "dkim" {
-  count   = 3
+  count   = var.manage_dns ? 3 : 0
   zone_id = var.hosted_zone_id
   name    = "${aws_ses_domain_dkim.this.dkim_tokens[count.index]}._domainkey.${var.sending_domain}"
   type    = "CNAME"
@@ -100,6 +127,7 @@ resource "aws_route53_record" "dkim" {
 # the dmarc_policy variable once alignment is verified.
 
 resource "aws_route53_record" "spf" {
+  count   = var.manage_dns ? 1 : 0
   zone_id = var.hosted_zone_id
   name    = var.sending_domain
   type    = "TXT"
@@ -108,11 +136,43 @@ resource "aws_route53_record" "spf" {
 }
 
 resource "aws_route53_record" "dmarc" {
+  count   = var.manage_dns ? 1 : 0
   zone_id = var.hosted_zone_id
   name    = "_dmarc.${var.sending_domain}"
   type    = "TXT"
   ttl     = 300
   records = [local.dmarc_record]
+}
+
+# -----------------------------------------------------------------------------
+# Custom MAIL FROM (optional)
+# -----------------------------------------------------------------------------
+#
+# Aligns the SPF envelope sender with the sending domain. Needs an MX and an
+# SPF TXT record on the mail-from subdomain.
+
+resource "aws_ses_domain_mail_from" "this" {
+  count            = var.mail_from_subdomain == "" ? 0 : 1
+  domain           = aws_ses_domain_identity.this.domain
+  mail_from_domain = local.mail_from_domain
+}
+
+resource "aws_route53_record" "mail_from_mx" {
+  count   = var.manage_dns && var.mail_from_subdomain != "" ? 1 : 0
+  zone_id = var.hosted_zone_id
+  name    = local.mail_from_domain
+  type    = "MX"
+  ttl     = 300
+  records = ["10 feedback-smtp.${local.region}.amazonses.com"]
+}
+
+resource "aws_route53_record" "mail_from_spf" {
+  count   = var.manage_dns && var.mail_from_subdomain != "" ? 1 : 0
+  zone_id = var.hosted_zone_id
+  name    = local.mail_from_domain
+  type    = "TXT"
+  ttl     = 300
+  records = ["v=spf1 include:amazonses.com -all"]
 }
 
 # -----------------------------------------------------------------------------
