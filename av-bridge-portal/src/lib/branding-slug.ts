@@ -15,7 +15,21 @@ export const RESERVED_SLUGS = new Set<string>([
   "test",
   "demo",
   "support",
+  "status",
+  "access",
+  "notify",
+  "uat",
+  "portal",
 ]);
+
+// Domain under which customers' branded sign-in addresses live. Set at build
+// time; the default keeps UAT unchanged (production uses app.involvecloud.com).
+export const BRANDED_DOMAIN =
+  process.env.NEXT_PUBLIC_AV_BRIDGE_BRANDED_DOMAIN ?? "uat.involvecloud.com";
+
+export function brandedHost(slug: string): string {
+  return `${slug}.${BRANDED_DOMAIN}`;
+}
 
 // Same shape as the customers_slug_format CHECK in migration 0030 —
 // 3-50 chars, [a-z0-9-], must start AND end alphanumeric. A hostname

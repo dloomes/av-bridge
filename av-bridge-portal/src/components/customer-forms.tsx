@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Copy, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { api, type HelpdeskOverviewItem } from "@/lib/api";
-import { validateSlug } from "@/lib/branding-slug";
+import { BRANDED_DOMAIN, brandedHost, validateSlug } from "@/lib/branding-slug";
 import type { CreateCustomerBody, UpdateCustomerBody } from "@/lib/types";
 
 // customer-forms.tsx — shared vendor-only forms for creating and editing a
@@ -128,7 +128,7 @@ export function NewCustomerForm({
             }`}
           />
           <span className="text-xs text-muted-foreground shrink-0">
-            .uat.involvecloud.com
+            .{BRANDED_DOMAIN}
           </span>
         </div>
         {slugError ? (
@@ -323,7 +323,7 @@ export function EditCustomerForm({
             }`}
           />
           <span className="text-xs text-muted-foreground shrink-0">
-            .uat.involvecloud.com
+            .{BRANDED_DOMAIN}
           </span>
         </div>
         {slugError ? (
@@ -334,7 +334,7 @@ export function EditCustomerForm({
           <p className="text-[11px] text-muted-foreground">
             Sign-in page will render this customer&rsquo;s branding when reached via{" "}
             <span className="font-mono">
-              {slug}.uat.involvecloud.com
+              {brandedHost(slug)}
             </span>
             .
           </p>

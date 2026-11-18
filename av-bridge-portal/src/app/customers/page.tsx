@@ -18,6 +18,7 @@ import { NewCustomerForm, EditCustomerForm } from "@/components/customer-forms";
 import { usePolling } from "@/hooks/usePolling";
 import { useSession } from "@/hooks/useSession";
 import { setScope } from "@/lib/session";
+import { brandedHost } from "@/lib/branding-slug";
 import { api, type HelpdeskOverviewItem } from "@/lib/api";
 
 // /customers — vendor-only directory of every customer on the platform.
@@ -211,7 +212,7 @@ function CustomerRow({
   onEdit: () => void;
   onEditBranding: () => void;
 }) {
-  const slugHost = c.slug ? `${c.slug}.uat.involvecloud.com` : null;
+  const slugHost = c.slug ? brandedHost(c.slug) : null;
   return (
     <div className="grid grid-cols-[minmax(0,2fr)_minmax(0,2fr)_minmax(0,2fr)_auto_auto_auto] items-center gap-3 border-b px-4 py-3 text-sm last:border-b-0 hover:bg-muted/30">
       <div className="min-w-0">

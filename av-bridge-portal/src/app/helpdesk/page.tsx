@@ -28,6 +28,7 @@ import { NewCustomerForm, EditCustomerForm } from "@/components/customer-forms";
 import { usePolling } from "@/hooks/usePolling";
 import { useSession } from "@/hooks/useSession";
 import { setScope } from "@/lib/session";
+import { brandedHost } from "@/lib/branding-slug";
 import { api, type HelpdeskCustomer, type HelpdeskOverviewItem } from "@/lib/api";
 import { OffboardDialog, OffboardingBanner } from "@/components/offboarding";
 import { formatRelative } from "@/lib/utils";
@@ -285,7 +286,7 @@ function CustomerCard({
             {c.slug && (
               <div className="mt-0.5 flex items-center gap-1 text-[11px] text-muted-foreground truncate">
                 <LinkIcon className="h-3 w-3 shrink-0" />
-                <span className="truncate">{c.slug}.uat.involvecloud.com</span>
+                <span className="truncate">{brandedHost(c.slug)}</span>
               </div>
             )}
             {c.entra_tenant_id && (

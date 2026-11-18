@@ -8,6 +8,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { useBranding } from "@/components/branding-provider";
 import { useSession } from "@/hooks/useSession";
 import { setScope } from "@/lib/session";
+import { BRANDED_DOMAIN } from "@/lib/branding-slug";
 import { api } from "@/lib/api";
 import { PRODUCT_NAME } from "@/lib/brand";
 
@@ -336,7 +337,7 @@ export default function BrandingPage() {
                 <h2 className="text-sm font-semibold">Sign-in page</h2>
                 <p className="text-xs text-muted-foreground mt-0.5">
                   These fields render on the customer&rsquo;s branded sign-in page at{" "}
-                  <span className="font-mono">&lt;slug&gt;.uat.involvecloud.com</span>{" "}
+                  <span className="font-mono">&lt;slug&gt;.{BRANDED_DOMAIN}</span>{" "}
                   before the user has signed in.
                 </p>
               </div>
