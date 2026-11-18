@@ -64,7 +64,7 @@ resource "aws_amplify_branch" "this" {
   branch_name = var.branch_name
   stage       = var.stage
 
-  enable_auto_build       = true
+  enable_auto_build           = true
   enable_pull_request_preview = false
 
   framework = "Next.js - SSR"

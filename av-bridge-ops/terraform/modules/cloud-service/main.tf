@@ -39,8 +39,8 @@ locals {
   # Per-instance resource name stem. Services sharing a name_prefix (web and
   # worker) are told apart by role; the cluster keeps the bare name_prefix.
   # UAT has no role, so its names are unchanged.
-  svc = var.role == "" ? var.name_prefix : "${var.name_prefix}-${var.role}"
-  cluster_arn    = local.create_cluster ? aws_ecs_cluster.this[0].arn : var.cluster_arn
+  svc         = var.role == "" ? var.name_prefix : "${var.name_prefix}-${var.role}"
+  cluster_arn = local.create_cluster ? aws_ecs_cluster.this[0].arn : var.cluster_arn
 
   # Default reproduces the single catch-all rule this module always created.
   listener_rules = length(var.listener_rules) > 0 ? var.listener_rules : [{

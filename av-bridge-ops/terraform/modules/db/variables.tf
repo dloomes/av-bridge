@@ -72,6 +72,12 @@ variable "apply_immediately" {
   default     = false
 }
 
+variable "performance_insights_enabled" {
+  description = "Turn on RDS Performance Insights (7-day retention, the free tier)."
+  type        = bool
+  default     = false
+}
+
 variable "secret_recovery_window_days" {
   type    = number
   default = 0

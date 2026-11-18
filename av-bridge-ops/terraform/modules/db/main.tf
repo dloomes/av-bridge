@@ -118,6 +118,11 @@ resource "aws_db_instance" "this" {
   # unless this is set; applying them now restarts the database.
   apply_immediately = var.apply_immediately
 
+  # Performance Insights: off by default (UAT). 7 days is the free tier;
+  # null leaves the retention unset when PI is off.
+  performance_insights_enabled          = var.performance_insights_enabled
+  performance_insights_retention_period = var.performance_insights_enabled ? 7 : null
+
   auto_minor_version_upgrade = true
   deletion_protection        = var.deletion_protection
   skip_final_snapshot        = !var.deletion_protection

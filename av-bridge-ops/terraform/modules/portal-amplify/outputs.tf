@@ -18,7 +18,8 @@ output "branch_name" {
 # When a custom domain is set, Amplify's domain association resolves the
 # actual FQDN via <prefix>.<domain>. Empty otherwise.
 output "custom_domain_fqdn" {
-  value = var.custom_domain == "" ? "" : "${var.custom_domain_prefix}.${var.custom_domain}"
+  # An empty prefix serves the portal at the custom domain itself.
+  value = var.custom_domain == "" ? "" : (var.custom_domain_prefix == "" ? var.custom_domain : "${var.custom_domain_prefix}.${var.custom_domain}")
 }
 
 output "custom_domain_certificate_verification_dns_record" {

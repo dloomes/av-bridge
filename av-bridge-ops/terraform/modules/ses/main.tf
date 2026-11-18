@@ -30,8 +30,8 @@ locals {
   # SES SMTP endpoint hostname is region-specific.
   smtp_host = "email-smtp.${local.region}.amazonaws.com"
 
-  from_address    = "${var.from_local_part}@${var.sending_domain}"
-  from_with_name  = var.from_display_name == "" ? local.from_address : "${var.from_display_name} <${local.from_address}>"
+  from_address   = "${var.from_local_part}@${var.sending_domain}"
+  from_with_name = var.from_display_name == "" ? local.from_address : "${var.from_display_name} <${local.from_address}>"
 
   mail_from_domain = var.mail_from_subdomain == "" ? "" : "${var.mail_from_subdomain}.${var.sending_domain}"
 

@@ -1,0 +1,19 @@
+# Copy to terraform.tfvars (git-ignored) and fill in. Never commit real values.
+
+# Required: GitHub PAT for Amplify (repo + admin:repo_hook scopes).
+github_access_token = "<github-pat>"
+
+# First-boot vendor (helpdesk) admin. Seeded only when no vendor user exists;
+# rotate the password from the portal straight after first sign-in.
+vendor_admin_email    = "<vendor-admin-email>"
+vendor_admin_name     = "<vendor-admin-name>"
+vendor_admin_password = "<first-boot-password>"
+
+# Entra vendor SSO - all three, or leave empty to keep SSO off.
+entra_vendor_tenant_id     = "<entra-tenant-guid>"
+entra_vendor_client_id     = "<entra-client-id>"
+entra_vendor_client_secret = "<entra-client-secret-value>"
+
+# Optional
+dmarc_rua           = "<dmarc-report-address>"
+mapbox_public_token = "<mapbox-public-token>"
