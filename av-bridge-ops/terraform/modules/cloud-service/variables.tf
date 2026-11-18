@@ -43,8 +43,14 @@ variable "listener_rules" {
   default = []
 }
 
+variable "create_cluster" {
+  description = "true = this module creates the ECS cluster. false = run on cluster_arn (owned by a sibling instance). A plain bool so resource counts are known at plan time."
+  type        = bool
+  default     = true
+}
+
 variable "cluster_arn" {
-  description = "ARN of an existing ECS cluster to run on. Empty = this module creates the cluster."
+  description = "ARN of an existing ECS cluster to run on. Required when create_cluster = false; ignored otherwise."
   type        = string
   default     = ""
 }

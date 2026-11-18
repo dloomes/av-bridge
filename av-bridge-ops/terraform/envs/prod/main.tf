@@ -350,6 +350,7 @@ module "cloud_worker" {
 
   name_prefix       = var.name_prefix
   role              = "worker"
+  create_cluster    = false
   cluster_arn       = module.cloud_web.cluster_arn
   vpc_id            = module.network.vpc_id
   subnet_ids        = module.network.private_subnet_ids

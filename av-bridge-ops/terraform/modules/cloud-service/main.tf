@@ -32,9 +32,9 @@ locals {
   admin_url  = "postgres://app_admin:app_admin_dev@${var.db_host}:${var.db_port}/${var.db_name}?sslmode=require"
   tenant_url = "postgres://app_tenant:app_tenant_dev@${var.db_host}:${var.db_port}/${var.db_name}?sslmode=require"
 
-  # An externally supplied cluster_arn means a sibling service owns the
-  # cluster; this module then only attaches its service to it.
-  create_cluster = var.cluster_arn == ""
+  # create_cluster = false means a sibling service owns the cluster (passed
+  # in as cluster_arn); this is a plain bool so counts are known at plan time.
+  create_cluster = var.create_cluster
 
   # Per-instance resource name stem. Services sharing a name_prefix (web and
   # worker) are told apart by role; the cluster keeps the bare name_prefix.
@@ -401,6 +401,11 @@ resource "aws_ecs_service" "this" {
   # without terraform fighting.
   lifecycle {
     ignore_changes = [desired_count]
+
+    precondition {
+      condition     = var.create_cluster || var.cluster_arn != ""
+      error_message = "create_cluster = false needs cluster_arn (the sibling service's cluster)."
+    }
   }
 
   depends_on = [aws_lb_listener_rule.this]
