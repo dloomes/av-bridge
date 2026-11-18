@@ -9,6 +9,8 @@ func TestOrigin(t *testing.T) {
 		{"https://app.involvecloud.com/", "app.involvecloud.com", "", "https://app.involvecloud.com"},
 		{"", "x", "acme", ""},
 		{"https://localhost:3000", "", "acme", "https://localhost:3000"},
+		{"http://localhost:3000", "app.involvecloud.com", "acme", "http://acme.app.involvecloud.com"},
+		{"https://app.involvecloud.com", "  .app.involvecloud.com. ", "acme", "https://acme.app.involvecloud.com"},
 	}
 	for _, c := range cases {
 		if got := Origin(c.base, c.domain, c.slug); got != c.want {

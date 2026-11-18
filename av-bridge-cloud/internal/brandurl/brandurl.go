@@ -8,9 +8,11 @@ import (
 
 // Origin returns the origin (no trailing slash) a customer with the given
 // slug signs in at. portalBaseURL empty returns "". An empty slug returns the
-// portal base. With brandedDomain set the result is <scheme>://<slug>.<domain>;
-// otherwise the first host label of the portal base is replaced by the slug
-// (https://app.uat.x.com + acme -> https://acme.uat.x.com).
+// portal base. With brandedDomain set the result is <scheme>://<slug>.<domain>.
+// The branded domain is a bare host, so any port in portalBaseURL is dropped
+// (surrounding dots/whitespace in the domain are trimmed). With it empty, the
+// first host label of the portal base is replaced by the slug and the port is
+// kept (https://app.uat.x.com + acme -> https://acme.uat.x.com).
 func Origin(portalBaseURL, brandedDomain, slug string) string {
 	if portalBaseURL == "" {
 		return ""
