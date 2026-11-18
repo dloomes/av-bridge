@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/dloomes/av-bridge-cloud/internal/audit"
+	"github.com/dloomes/av-bridge-cloud/internal/db"
 )
 
 // Session limits.
@@ -127,6 +128,9 @@ func (s *Service) Run(ctx context.Context) {
 // Sweep ends every session past its limits. Exposed for tests.
 func (s *Service) Sweep(ctx context.Context) error {
 	s.flushAll(ctx)
+	if err := s.dropOffboardingTunnels(ctx); err != nil {
+		s.log.Warn("remote access: dropping offboarding tunnels failed", "error", err)
+	}
 	rows, err := s.pool.Query(ctx, `
 		UPDATE remote_session
 		   SET ended_at = now(),
@@ -316,4 +320,35 @@ func (s *Service) Machine(ctx context.Context, collectorID string) (string, erro
 	var id string
 	err := s.pool.QueryRow(ctx, `SELECT (`+TargetSQL+`)::text FROM collectors c WHERE c.id = $1`, collectorID).Scan(&id)
 	return id, err
+}
+
+// dropOffboardingTunnels closes the tunnels of collectors whose customer is
+// offboarding. A reconnect is refused at authentication.
+func (s *Service) dropOffboardingTunnels(ctx context.Context) error {
+	rows, err := s.pool.Query(ctx, `SELECT c.id::text FROM collectors c WHERE NOT `+db.CustomerActiveSQL("c.customer_id"))
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if n := s.tunnels.Drop(ids...); n > 0 {
+		s.log.Info("remote access: dropped tunnels of offboarding customers", "tunnels", n)
+	}
+	return nil
+}
+
+// TunnelConnected reports whether the collector (machine id) has a tunnel
+// open, according to the database, so it works on any copy.
+func (s *Service) TunnelConnected(ctx context.Context, machine string) (bool, error) {
+	return TunnelConnected(ctx, s.pool, machine)
 }

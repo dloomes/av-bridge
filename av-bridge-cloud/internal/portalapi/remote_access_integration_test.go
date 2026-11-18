@@ -114,6 +114,7 @@ func TestRemoteAccessEndToEnd(t *testing.T) {
 	// The cloud: tunnel endpoint and session addresses.
 	const domain = "access.test"
 	tunnels := remote.NewTunnels(bridgeauth.New(st, cipher, quiet), quiet)
+	tunnels.SetPresence(st.AdminPool())
 	svc := remote.NewService(st.AdminPool(), tunnels, domain, quiet)
 	cloud := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if svc.IsAccessHost(r.Host) {

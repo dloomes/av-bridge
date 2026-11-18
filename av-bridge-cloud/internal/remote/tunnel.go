@@ -27,6 +27,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/hashicorp/yamux"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/dloomes/av-bridge-cloud/internal/bridgeauth"
 )
@@ -35,13 +36,15 @@ import (
 // before remote access).
 var ErrNotConnected = errors.New("the device's Collector isn't connected for remote access")
 
-// Tunnels holds each connected collector's tunnel. Tunnels end on the cloud
-// task they connected to, so remote access assumes one cloud task (as UAT
-// runs); more tasks would need sessions routed to the task holding the
-// tunnel.
+// Tunnels holds each connected collector's tunnel. Tunnels end on the one
+// copy that serves them (the worker); its presence table (SetPresence) lets
+// other copies tell whether a collector is connected, but proxying a session
+// still happens on the copy holding the tunnel.
 type Tunnels struct {
 	auth *bridgeauth.Authenticator
 	log  *slog.Logger
+
+	presence *pgxpool.Pool // nil = in-memory only
 
 	mu       sync.Mutex
 	sessions map[string]*yamux.Session // collector (machine) id
@@ -88,6 +91,7 @@ func (t *Tunnels) Handle(w http.ResponseWriter, r *http.Request) {
 	}
 	t.sessions[col.ID] = sess
 	t.mu.Unlock()
+	connectedAt := t.recordConnect(r.Context(), col.ID)
 	t.log.Info("remote access tunnel connected", "collector", col.ID)
 
 	<-sess.CloseChan()
@@ -96,6 +100,10 @@ func (t *Tunnels) Handle(w http.ResponseWriter, r *http.Request) {
 		delete(t.sessions, col.ID)
 	}
 	t.mu.Unlock()
+	// The request context may be gone by now; use a fresh one.
+	cctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	t.recordClose(cctx, col.ID, connectedAt)
+	cancel()
 	t.log.Info("remote access tunnel closed", "collector", col.ID)
 }
 

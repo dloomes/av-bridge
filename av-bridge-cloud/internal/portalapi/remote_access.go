@@ -113,7 +113,13 @@ func (h *Handler) StartRemoteSession(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	if !h.remote.Tunnels().Connected(machine) {
+	connected, err := h.remote.TunnelConnected(r.Context(), machine)
+	if err != nil {
+		h.log.Error("remote access: tunnel presence lookup failed", "error", err)
+		writeErr(w, http.StatusServiceUnavailable, "remote access status unavailable")
+		return
+	}
+	if !connected {
 		writeErr(w, http.StatusConflict, "the device's Collector isn't connected for remote access: it may be offline, or need updating to the latest version")
 		return
 	}

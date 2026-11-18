@@ -236,6 +236,13 @@ func main() {
 	// through them to devices' web interfaces. Off without ACCESS_DOMAIN
 	// (tunnels are still accepted, so collectors don't retry-loop).
 	tunnels := remote.NewTunnels(bridgeauth.New(store, cipher, log), log)
+	tunnels.SetPresence(store.AdminPool())
+	if cfg.Role.ServesTunnels() {
+		// Tunnels don't survive a restart; drop rows left by the last run.
+		if err := remote.ClearPresence(context.Background(), store.AdminPool()); err != nil {
+			log.Warn("clearing tunnel presence failed", "error", err)
+		}
+	}
 	remoteSvc := remote.NewService(store.AdminPool(), tunnels, cfg.AccessDomain, log)
 	if remoteSvc.Enabled() {
 		log.Info("remote access enabled", "domain", cfg.AccessDomain)
@@ -384,7 +391,7 @@ func main() {
 
 	srv := api.NewServer(cfg.ListenAddr, h, adminH, portalRoutes, pubAPIRoutes, bridgeRoutes, bridgeConfigRoutes, publicRoutes,
 		&api.RemoteAccessRoutes{Tunnel: tunnels.Handle, Sessions: remoteSvc}, log)
-	if background && remoteSvc.Enabled() {
+	if cfg.Role.ServesTunnels() && remoteSvc.Enabled() {
 		go remoteSvc.Run(sweeperCtx)
 	}
 
