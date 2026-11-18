@@ -11,3 +11,6 @@
 /av-bridge/test-av-bridge.exe
 /av-bridge/av-bridge
 /av-bridge/av-bridge.exe
+
+# Claude Code worktrees
+.claude/worktrees/
