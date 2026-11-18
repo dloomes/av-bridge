@@ -4,13 +4,49 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
+
+// Role selects which parts of the service a process runs. "all" (the
+// default, and today's behaviour) runs everything in one process; "web"
+// serves HTTP only; "worker" additionally runs the background loops and
+// serves collector tunnels.
+type Role string
+
+const (
+	RoleAll    Role = "all"
+	RoleWeb    Role = "web"
+	RoleWorker Role = "worker"
+)
+
+// ParseRole parses MARCUS_ROLE. Empty means RoleAll; matching is
+// case-insensitive.
+func ParseRole(s string) (Role, error) {
+	switch Role(strings.ToLower(strings.TrimSpace(s))) {
+	case "", RoleAll:
+		return RoleAll, nil
+	case RoleWeb:
+		return RoleWeb, nil
+	case RoleWorker:
+		return RoleWorker, nil
+	}
+	return "", fmt.Errorf("invalid role %q: must be one of all, web, worker", s)
+}
+
+// RunsBackground reports whether this process runs the background loops.
+func (r Role) RunsBackground() bool { return r == RoleAll || r == RoleWorker }
+
+// ServesTunnels reports whether this process terminates collector tunnels.
+func (r Role) ServesTunnels() bool { return r == RoleAll || r == RoleWorker }
 
 // Config is loaded from the environment (12-factor) so the same binary runs
 // under Docker Compose, AWS, GCP, Azure, or bare metal.
 type Config struct {
 	ListenAddr string
+
+	// Role is MARCUS_ROLE: all (default), web or worker.
+	Role Role
 
 	// MigrationDSN points at a role that can run DDL (CREATE TABLE/ROLE, ALTER
 	// TABLE ENABLE RLS, CREATE POLICY). In dev compose it's the Postgres
@@ -261,7 +297,13 @@ func FromEnv() (Config, error) {
 		return Config{}, err
 	}
 
+	role, err := ParseRole(os.Getenv("MARCUS_ROLE"))
+	if err != nil {
+		return Config{}, fmt.Errorf("MARCUS_ROLE: %w", err)
+	}
+
 	c := Config{
+		Role:                 role,
 		ListenAddr:           getenv("CLOUD_LISTEN_ADDR", ":8090"),
 		MigrationDSN:         os.Getenv("DATABASE_MIGRATION_URL"),
 		AdminDSN:             os.Getenv("DATABASE_ADMIN_URL"),

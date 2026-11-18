@@ -176,13 +176,21 @@ func main() {
 	} else {
 		log.Info("no collector release bundled — updates disabled")
 	}
-	go collectorUpdates.Run(sweeperCtx)
+	log.Info("role", "role", cfg.Role)
+	background := cfg.Role.RunsBackground()
+	if background {
+		go collectorUpdates.Run(sweeperCtx)
+	}
 	// Telemetry: daily summaries for reports, and raw readings pruned
 	// after TELEMETRY_RETENTION_DAYS (default 90).
-	go telemetry.New(store.AdminPool(), cfg.TelemetryRetentionDays, log).Run(sweeperCtx)
+	if background {
+		go telemetry.New(store.AdminPool(), cfg.TelemetryRetentionDays, log).Run(sweeperCtx)
+	}
 	// Retention: audit log, alerts, events, commands, Room Readiness runs
 	// and remote sessions deleted after their published periods.
-	go retention.New(store.AdminPool(), log).Run(sweeperCtx)
+	if background {
+		go retention.New(store.AdminPool(), log).Run(sweeperCtx)
+	}
 
 	// Routine executor — Phase B slice 1. Constructed early so the
 	// portal handler can hold a reference for the run-now endpoint.
@@ -370,7 +378,7 @@ func main() {
 
 	srv := api.NewServer(cfg.ListenAddr, h, adminH, portalRoutes, pubAPIRoutes, bridgeRoutes, bridgeConfigRoutes, publicRoutes,
 		&api.RemoteAccessRoutes{Tunnel: tunnels.Handle, Sessions: remoteSvc}, log)
-	if remoteSvc.Enabled() {
+	if background && remoteSvc.Enabled() {
 		go remoteSvc.Run(sweeperCtx)
 	}
 
@@ -385,7 +393,9 @@ func main() {
 		cfg.CommandPendingExpireAfter,
 		log,
 	)
-	go sweeper.Run(sweeperCtx)
+	if background {
+		go sweeper.Run(sweeperCtx)
+	}
 
 	// Portal session housekeeping — deletes user_sessions rows that have
 	// been non-functional (expired or revoked) for longer than the
@@ -397,7 +407,9 @@ func main() {
 		cfg.SessionCleanupRetention,
 		log,
 	)
-	go sessionCleaner.Run(sweeperCtx)
+	if background {
+		go sessionCleaner.Run(sweeperCtx)
+	}
 
 	// Collector-health watcher — opens collector_offline alerts when a
 	// bridge stops phoning home, auto-resolves them when it returns.
@@ -410,7 +422,9 @@ func main() {
 		cfg.CollectorHealthOfflineAfter,
 		log,
 	)
-	go collectorWatcher.Run(sweeperCtx)
+	if background {
+		go collectorWatcher.Run(sweeperCtx)
+	}
 
 	// Nightly Room Readiness scheduler — enacts the customer + per-room
 	// schedules by creating nightly_run rows and walking each room
@@ -434,16 +448,22 @@ func main() {
 	// reference to it.
 	nightlyScheduler.SetExecutor(nightlyExecutor)
 	nightlyScheduler.SetDispatcher(dispatcher)
-	go nightlyScheduler.Run(sweeperCtx)
+	if background {
+		go nightlyScheduler.Run(sweeperCtx)
+	}
 
 	// Kick off the nightly digest sender goroutine — the sender itself
 	// was constructed earlier (main.go, right after the notify
 	// dispatcher) so the portal handler could take a reference.
-	go nightlyDigest.Run(sweeperCtx)
+	if background {
+		go nightlyDigest.Run(sweeperCtx)
+	}
 
 	// ServiceNow ticket sync — resolves incidents whose alert has cleared
 	// and retries incident opens that failed.
-	go dispatcher.RunTicketSync(sweeperCtx, time.Minute)
+	if background {
+		go dispatcher.RunTicketSync(sweeperCtx, time.Minute)
+	}
 
 	go func() {
 		log.Info("cloud ingest listening", "addr", cfg.ListenAddr)
