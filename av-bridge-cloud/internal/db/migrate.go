@@ -45,6 +45,10 @@ func WaitForDSN(ctx context.Context, dsn string, timeout time.Duration, log *slo
 	}
 }
 
+// migrateLockKey is the Postgres advisory lock key held while migrating
+// (0x4d415243 = "MARC").
+const migrateLockKey int64 = 0x4d415243
+
 // Migration is one applied schema change. Version comes from the filename
 // prefix (e.g. "0003_commands.sql" -> 3).
 type migration struct {
@@ -82,6 +86,19 @@ func Migrate(ctx context.Context, dsn string, log *slog.Logger) error {
 		return fmt.Errorf("connect for migrate: %w", err)
 	}
 	defer conn.Close(ctx)
+
+	// Serialise across processes: several copies may start at once on a deploy.
+	// Session-level lock on this dedicated connection; released explicitly, and
+	// implicitly if the connection closes.
+	if _, err := conn.Exec(ctx, `SELECT pg_advisory_lock($1)`, migrateLockKey); err != nil {
+		return fmt.Errorf("take migration lock: %w", err)
+	}
+	defer func() {
+		// Use a fresh context so the unlock still runs if ctx was cancelled.
+		uctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, _ = conn.Exec(uctx, `SELECT pg_advisory_unlock($1)`, migrateLockKey)
+	}()
 
 	if err := ensureMigrationsTable(ctx, conn); err != nil {
 		return err
