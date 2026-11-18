@@ -176,6 +176,12 @@ variable "vendor_admin_password" {
   sensitive   = true
 }
 
+variable "vendor_admin_password_secret_arn" {
+  description = "Secrets Manager ARN of the seed vendor admin password (plain string value), injected as VENDOR_ADMIN_PASSWORD via the task's secrets block. Empty = not used. Set this OR vendor_admin_password, not both."
+  type        = string
+  default     = ""
+}
+
 variable "vendor_admin_name" {
   type    = string
   default = ""

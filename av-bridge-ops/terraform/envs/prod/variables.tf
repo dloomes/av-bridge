@@ -43,12 +43,6 @@ variable "portal_branch" {
   default     = "release"
 }
 
-variable "github_access_token" {
-  description = "GitHub PAT for Amplify. Provide via terraform.tfvars (git-ignored) - never commit."
-  type        = string
-  sensitive   = true
-}
-
 variable "vendor_admin_email" {
   description = "First-boot vendor (helpdesk) admin email. Provide via terraform.tfvars (git-ignored)."
   type        = string
@@ -61,14 +55,9 @@ variable "vendor_admin_name" {
   default     = ""
 }
 
-variable "vendor_admin_password" {
-  description = "First-boot seed password for the vendor admin. Only used when no vendor user exists yet. Rotate immediately after first login. Provide via terraform.tfvars (git-ignored)."
-  type        = string
-  sensitive   = true
-  default     = ""
-}
-
-# Entra ID vendor SSO - set all three to enable. All empty = SSO disabled.
+# Entra ID vendor SSO. The client secret is the hand-made Secrets Manager
+# secret avrmm-prod/entra-vendor-client-secret (see main.tf). Empty ids =
+# the app logs a warning and leaves vendor SSO off.
 variable "entra_vendor_tenant_id" {
   description = "Entra tenant GUID for the vendor SSO app registration."
   type        = string
@@ -78,13 +67,6 @@ variable "entra_vendor_tenant_id" {
 variable "entra_vendor_client_id" {
   description = "Entra app registration Application ID (client_id)."
   type        = string
-  default     = ""
-}
-
-variable "entra_vendor_client_secret" {
-  description = "Entra app-registration client secret VALUE. Provide via terraform.tfvars (git-ignored)."
-  type        = string
-  sensitive   = true
   default     = ""
 }
 

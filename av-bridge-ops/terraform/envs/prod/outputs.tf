@@ -104,3 +104,15 @@ output "api_url" {
 output "app_url" {
   value = local.app_url
 }
+
+# --- Secrets (ARNs only, never values) ---------------------------------------
+
+output "vendor_admin_password_secret_arn" {
+  description = "Secrets Manager ARN of the first-boot vendor admin password. Read the value in the console (or aws secretsmanager get-secret-value) for the first sign-in, then change it in the portal."
+  value       = aws_secretsmanager_secret.vendor_admin_password.arn
+}
+
+output "entra_vendor_client_secret_arn" {
+  description = "Hand-made Entra vendor client secret the services read."
+  value       = data.aws_secretsmanager_secret.entra_vendor_client_secret.arn
+}

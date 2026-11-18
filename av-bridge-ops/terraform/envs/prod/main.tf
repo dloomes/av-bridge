@@ -16,16 +16,60 @@ locals {
   ws_url  = "wss://${local.api_domain}"
   app_url = "https://${local.app_domain}"
 
-  # Settings both cloud services carry (see the plan's Global Constraints).
-  # ENTRA_PORTAL_BASE_URL is also used for magic-link emails, but the module
-  # only emits it alongside the Entra settings; when Entra isn't configured
-  # it rides in extra_environment instead so it is always set exactly once.
-  cloud_extra_environment = concat(
-    [{ name = "BRANDED_DOMAIN", value = local.app_domain }],
-    var.entra_vendor_client_secret == "" ? [
-      { name = "ENTRA_PORTAL_BASE_URL", value = local.app_url },
-    ] : [],
-  )
+  # Settings both cloud services carry besides the module's own (see the
+  # plan's Global Constraints). ENTRA_PORTAL_BASE_URL comes from the module:
+  # the Entra secret ARN below is always set, so the module always emits it.
+  cloud_extra_environment = [
+    { name = "BRANDED_DOMAIN", value = local.app_domain },
+  ]
+
+  entra_redirect_uri = "https://${local.app_domain}/api/v1/auth/entra/vendor/callback"
+}
+
+# -----------------------------------------------------------------------------
+# Secrets created once by hand in avrmm-prod (plain string values), so no
+# secret ever sits in terraform.tfvars:
+#   avrmm-prod/github-token               GitHub PAT for Amplify
+#   avrmm-prod/entra-vendor-client-secret Entra vendor app client secret
+# A missing secret fails the plan at these data sources ("couldn't find
+# resource"). The zone-only stage 1 plan doesn't read them.
+# -----------------------------------------------------------------------------
+
+data "aws_secretsmanager_secret_version" "github_token" {
+  secret_id = "${var.name_prefix}/github-token"
+
+  lifecycle {
+    postcondition {
+      condition     = length(trimspace(self.secret_string)) > 0
+      error_message = "Secret ${var.name_prefix}/github-token is empty. Put the GitHub PAT (plain string) in it - see the Task 10 runbook."
+    }
+  }
+}
+
+# Metadata only: the ARN goes to the task definitions (valueFrom); terraform
+# never reads the secret value.
+data "aws_secretsmanager_secret" "entra_vendor_client_secret" {
+  name = "${var.name_prefix}/entra-vendor-client-secret"
+}
+
+# First-boot vendor admin password: generated here, held only in Secrets
+# Manager and injected via the task's secrets block. Fetch it from the
+# console (output vendor_admin_password_secret_arn) for the first sign-in,
+# then change it in the portal.
+resource "random_password" "vendor_admin" {
+  length           = 24
+  override_special = "-_.!"
+}
+
+resource "aws_secretsmanager_secret" "vendor_admin_password" {
+  name                    = "${var.name_prefix}/cloud/vendor_admin_password"
+  description             = "First-boot vendor admin password (seed only; change after first sign-in)"
+  recovery_window_in_days = 7
+}
+
+resource "aws_secretsmanager_secret_version" "vendor_admin_password" {
+  secret_id     = aws_secretsmanager_secret.vendor_admin_password.id
+  secret_string = random_password.vendor_admin.result
 }
 
 # -----------------------------------------------------------------------------
@@ -138,23 +182,11 @@ import {
   id = "notify.involvecloud.com"
 }
 
-# -----------------------------------------------------------------------------
-# Entra vendor SSO
-# -----------------------------------------------------------------------------
-
-module "entra" {
-  source = "../../modules/entra"
-
-  name_prefix = var.name_prefix
-
-  tenant_id     = var.entra_vendor_tenant_id
-  client_id     = var.entra_vendor_client_id
-  client_secret = var.entra_vendor_client_secret
-  # Callback goes through the portal origin so the authorize and callback
-  # share cookies (see envs/uat).
-  redirect_uri         = "https://${local.app_domain}/api/v1/auth/entra/vendor/callback"
-  recovery_window_days = 7
-}
+# Entra vendor SSO: no module.entra here. That module stores a client secret
+# value passed in through tfvars; prod instead hands the hand-made secret's
+# ARN straight to the services (data.aws_secretsmanager_secret above). The
+# callback goes through the portal origin so authorize and callback share
+# cookies (see envs/uat).
 
 # -----------------------------------------------------------------------------
 # Certificates + load balancer
@@ -258,10 +290,11 @@ module "cloud_web" {
   hmac_secret_arn      = module.secrets.hmac_secret_arn
 
   # No PoC tenant in prod.
-  bootstrap_poc         = false
-  vendor_admin_email    = var.vendor_admin_email
-  vendor_admin_name     = var.vendor_admin_name
-  vendor_admin_password = var.vendor_admin_password
+  bootstrap_poc      = false
+  vendor_admin_email = var.vendor_admin_email
+  vendor_admin_name  = var.vendor_admin_name
+  # Password via Secrets Manager (valueFrom), never a plain env var.
+  vendor_admin_password_secret_arn = aws_secretsmanager_secret_version.vendor_admin_password.arn
 
   nightly_dry_run = false
 
@@ -270,10 +303,10 @@ module "cloud_web" {
   smtp_from                   = module.ses.smtp_from
   smtp_credentials_secret_arn = module.ses.smtp_credentials_secret_arn
 
-  entra_vendor_tenant_id         = module.entra.tenant_id
-  entra_vendor_client_id         = module.entra.client_id
-  entra_vendor_redirect_uri      = module.entra.redirect_uri
-  entra_vendor_client_secret_arn = module.entra.client_secret_arn
+  entra_vendor_tenant_id         = var.entra_vendor_tenant_id
+  entra_vendor_client_id         = var.entra_vendor_client_id
+  entra_vendor_redirect_uri      = local.entra_redirect_uri
+  entra_vendor_client_secret_arn = data.aws_secretsmanager_secret.entra_vendor_client_secret.arn
   entra_portal_base_url          = local.app_url
   cloud_base_url                 = local.api_url
   access_domain                  = local.access_domain
@@ -317,10 +350,11 @@ module "cloud_worker" {
   portal_token_arn     = module.secrets.portal_token_arn
   hmac_secret_arn      = module.secrets.hmac_secret_arn
 
-  bootstrap_poc         = false
-  vendor_admin_email    = var.vendor_admin_email
-  vendor_admin_name     = var.vendor_admin_name
-  vendor_admin_password = var.vendor_admin_password
+  bootstrap_poc      = false
+  vendor_admin_email = var.vendor_admin_email
+  vendor_admin_name  = var.vendor_admin_name
+  # Password via Secrets Manager (valueFrom), never a plain env var.
+  vendor_admin_password_secret_arn = aws_secretsmanager_secret_version.vendor_admin_password.arn
 
   nightly_dry_run = false
 
@@ -329,10 +363,10 @@ module "cloud_worker" {
   smtp_from                   = module.ses.smtp_from
   smtp_credentials_secret_arn = module.ses.smtp_credentials_secret_arn
 
-  entra_vendor_tenant_id         = module.entra.tenant_id
-  entra_vendor_client_id         = module.entra.client_id
-  entra_vendor_redirect_uri      = module.entra.redirect_uri
-  entra_vendor_client_secret_arn = module.entra.client_secret_arn
+  entra_vendor_tenant_id         = var.entra_vendor_tenant_id
+  entra_vendor_client_id         = var.entra_vendor_client_id
+  entra_vendor_redirect_uri      = local.entra_redirect_uri
+  entra_vendor_client_secret_arn = data.aws_secretsmanager_secret.entra_vendor_client_secret.arn
   entra_portal_base_url          = local.app_url
   cloud_base_url                 = local.api_url
   access_domain                  = local.access_domain
@@ -354,7 +388,7 @@ module "portal" {
 
   name_prefix         = var.name_prefix
   repository_url      = var.portal_repository_url
-  github_access_token = var.github_access_token
+  github_access_token = data.aws_secretsmanager_secret_version.github_token.secret_string
   branch_name         = var.portal_branch
   stage               = "PRODUCTION"
 

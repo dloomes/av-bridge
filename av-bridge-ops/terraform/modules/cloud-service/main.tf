@@ -135,6 +135,7 @@ data "aws_iam_policy_document" "execution_secrets" {
       var.hmac_secret_arn,
       var.smtp_credentials_secret_arn,
       var.entra_vendor_client_secret_arn,
+      var.vendor_admin_password_secret_arn,
     ])
   }
 }
@@ -255,6 +256,12 @@ resource "aws_ecs_task_definition" "this" {
       # a JSON with keys), so no :key:: suffix.
       var.entra_vendor_client_secret_arn == "" ? [] : [
         { name = "ENTRA_VENDOR_CLIENT_SECRET", valueFrom = var.entra_vendor_client_secret_arn },
+      ],
+      # First-boot vendor admin password from Secrets Manager (plain string
+      # value), so it never appears in the task definition. Use instead of
+      # vendor_admin_password, not alongside it.
+      var.vendor_admin_password_secret_arn == "" ? [] : [
+        { name = "VENDOR_ADMIN_PASSWORD", valueFrom = var.vendor_admin_password_secret_arn },
       ],
     )
 
