@@ -45,7 +45,7 @@ type Handler struct {
 	remote *remote.Service
 	// events is the /ws/events hub; offboarding closes a customer's
 	// streams through it. nil = nothing to close.
-	events *wsfanout.Hub
+	events wsfanout.Publisher
 }
 
 // SetCustomerSSO records whether customer Microsoft sign-in is configured.

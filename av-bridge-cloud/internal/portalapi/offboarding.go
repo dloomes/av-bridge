@@ -32,7 +32,7 @@ const offboardingPeriod = "30 days"
 
 // SetLiveEvents wires the /ws/events hub so offboarding can close the
 // customer's open event streams.
-func (h *Handler) SetLiveEvents(hub *wsfanout.Hub) *Handler {
+func (h *Handler) SetLiveEvents(hub wsfanout.Publisher) *Handler {
 	h.events = hub
 	return h
 }
@@ -196,7 +196,7 @@ func (h *Handler) OffboardCustomer(w http.ResponseWriter, r *http.Request) {
 	h.log.Info("customer offboarding started", "customer", out.CustomerID,
 		"actor", auditActorID(p), "delete_after", out.DeleteAfter,
 		"sessions_revoked", out.SessionsRevoked, "remote_sessions_ended", out.RemoteSessionsEnded,
-		"event_streams_closed", streams, "tunnels_dropped", tunnels)
+		"event_streams_close_requested", streams, "tunnels_dropped", tunnels)
 	writeJSON(w, http.StatusOK, out)
 }
 

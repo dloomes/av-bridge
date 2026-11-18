@@ -110,6 +110,9 @@ func main() {
 	// Live-event fan-out: ingest publishes, portal /ws/events subscribes.
 	// Single hub is shared so events from ingest reach subscribed portals.
 	hub := wsfanout.NewHub(log)
+	// The relay carries events and customer closes through Postgres so
+	// browsers on every web copy get them; /ws/events itself stays on hub.
+	relay := wsfanout.NewRelay(store.AdminPool(), hub, log)
 
 	// Outbound notification dispatcher. SMTPHost empty → email sends log
 	// instead of fail (dev convenience). Real deployments configure SMTP
@@ -151,7 +154,7 @@ func main() {
 		log,
 	)
 
-	h := ingest.NewHandler(store, cipher, hub, dispatcher, log)
+	h := ingest.NewHandler(store, cipher, relay, dispatcher, log)
 
 	// Shared shutdown-context for every background goroutine (sweeper,
 	// session cleaner, nightly scheduler + digest + executor). Cancel
@@ -163,6 +166,9 @@ func main() {
 	// works because we don't cancel it here.
 	sweeperCtx, stopSweeper := context.WithCancel(context.Background())
 	defer stopSweeper()
+
+	// Runs in every role: each web copy must receive live events.
+	go relay.Run(sweeperCtx)
 
 	// Collector self-update: the release bundled into this image at
 	// /downloads (manifest.json written and signed at build time).
@@ -284,7 +290,7 @@ func main() {
 
 		portalRoutes = &api.PortalRoutes{
 			Resolver:      resolver,
-			Portal:        portalapi.New(store, cipher, dispatcher, nightlyDigest, nightlyExecutor, log).SetCustomerSSO(entraCustomer != nil).SetCollectorUpdates(collectorUpdates).SetRemoteAccess(remoteSvc).SetLiveEvents(hub),
+			Portal:        portalapi.New(store, cipher, dispatcher, nightlyDigest, nightlyExecutor, log).SetCustomerSSO(entraCustomer != nil).SetCollectorUpdates(collectorUpdates).SetRemoteAccess(remoteSvc).SetLiveEvents(relay),
 			WSHub:         hub,
 			EntraVendor:   entraVendor,
 			EntraCustomer: entraCustomer,

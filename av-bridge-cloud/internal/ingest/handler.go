@@ -86,7 +86,7 @@ type logDTO struct {
 type Handler struct {
 	store      *db.Store
 	cipher     secrets.Cipher
-	hub        *wsfanout.Hub
+	hub        wsfanout.Publisher
 	dispatcher *notify.Dispatcher
 	log        *slog.Logger
 }
@@ -94,7 +94,7 @@ type Handler struct {
 // NewHandler. hub and dispatcher may be nil — if so, events still persist
 // but no live fan-out and no outbound notifications happen. Handler
 // degrades gracefully so both side-effects are optional.
-func NewHandler(store *db.Store, cipher secrets.Cipher, hub *wsfanout.Hub, dispatcher *notify.Dispatcher, log *slog.Logger) *Handler {
+func NewHandler(store *db.Store, cipher secrets.Cipher, hub wsfanout.Publisher, dispatcher *notify.Dispatcher, log *slog.Logger) *Handler {
 	return &Handler{store: store, cipher: cipher, hub: hub, dispatcher: dispatcher, log: log}
 }
 
