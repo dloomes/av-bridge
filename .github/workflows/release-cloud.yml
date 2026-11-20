@@ -1,0 +1,109 @@
+name: Release cloud
+
+# On a v* tag: build the cloud image once (which also builds and signs the
+# Collector binaries), check the signed update manifest, push the image to the
+# UAT ECR repository, roll the UAT ECS service and wait for it to be healthy.
+# Tag-only (no workflow_dispatch) so only tags reach the AWS role, whose trust
+# policy is limited to ref:refs/tags/v*. release-bridge.yml also runs on v*.
+#
+# The signing key is the repository secret UPDATE_SIGNING_KEY. It is passed to
+# BuildKit as a secret mount only: never a build arg, never written to disk by
+# this workflow, never echoed.
+
+"on":
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: release-cloud
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: eu-west-2
+  ECR_REPO: 628088982408.dkr.ecr.eu-west-2.amazonaws.com/avrmm-uat-cloud
+  ECS_CLUSTER: avrmm-uat-cluster
+  ECS_SERVICE: avrmm-uat-cloud
+  HEALTH_URL: https://api.uat.involvecloud.com/healthz
+
+jobs:
+  release:
+    name: Build, sign and deploy to UAT
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::628088982408:role/github-deploy
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build image (signs the Collector manifest)
+        env:
+          TAG: ${{ github.ref_name }}
+          # Read by BuildKit via --secret ...,env=; the step never prints it.
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${UPDATE_SIGNING_KEY}" ]; then
+            echo "UPDATE_SIGNING_KEY secret is not set; refusing to build an unsigned release" >&2
+            exit 1
+          fi
+          BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          docker buildx build \
+            -f av-bridge-cloud/Dockerfile \
+            --build-arg "BRIDGE_VERSION=${TAG}" \
+            --build-arg "BRIDGE_BUILD_TIME=${BUILD_TIME}" \
+            --secret id=update_signing_key,env=UPDATE_SIGNING_KEY \
+            -t "${ECR_REPO}:${TAG}" \
+            -t "${ECR_REPO}:latest" \
+            --load \
+            .
+
+      - name: Check the signed update manifest
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          # The image is distroless (no shell), so copy the file out.
+          cid="$(docker create "${ECR_REPO}:${TAG}")"
+          trap 'docker rm -f "${cid}" >/dev/null' EXIT
+          docker cp "${cid}:/downloads/manifest.json" "${RUNNER_TEMP}/manifest.json"
+          grep -q "\"version\": \"${TAG}\"" "${RUNNER_TEMP}/manifest.json" \
+            || { echo "manifest version is not ${TAG}" >&2; exit 1; }
+          n="$(grep -c '"signature"' "${RUNNER_TEMP}/manifest.json" || true)"
+          if [ "${n}" != "3" ]; then
+            echo "manifest has ${n} signature entries, expected 3 (unsigned build?)" >&2
+            exit 1
+          fi
+          echo "manifest OK: version ${TAG}, 3 signatures"
+
+      - name: Push image
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          docker push "${ECR_REPO}:${TAG}"
+          docker push "${ECR_REPO}:latest"
+
+      - name: Deploy to UAT
+        run: |
+          set -euo pipefail
+          aws ecs update-service \
+            --cluster "${ECS_CLUSTER}" \
+            --service "${ECS_SERVICE}" \
+            --force-new-deployment \
+            --query 'service.deployments[0].rolloutState' --output text
+          aws ecs wait services-stable \
+            --cluster "${ECS_CLUSTER}" \
+            --services "${ECS_SERVICE}"
+
+      - name: Health check
+        run: curl -fsS --retry 5 --retry-delay 5 --retry-all-errors "${HEALTH_URL}"
