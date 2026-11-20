@@ -1,0 +1,212 @@
+name: Promote to production
+
+# Manual: promote a UAT-tested cloud version to production. Nothing is rebuilt;
+# the exact image already in the UAT ECR repository is copied to the production
+# one, so production runs the bytes that were tested.
+#
+# Order: check ref + version -> confirm and pull the image with the UAT role ->
+# snapshot the production database with the production role -> prune old
+# snapshots -> push the image -> roll worker, then web -> health check -> move
+# the `release` branch so Amplify builds the matching portal.
+#
+# Runs on main only: the production role trusts only
+# repo:dloomes/av-bridge:ref:refs/heads/main. The UAT role's credentials are
+# used strictly before the production role is assumed.
+
+"on":
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to promote, e.g. v1.0.96 (must already exist in the UAT ECR repository)"
+        required: true
+        type: string
+
+permissions:
+  id-token: write
+  contents: write # git push of the release branch
+
+concurrency:
+  group: promote-production
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: eu-west-2
+  UAT_ROLE: arn:aws:iam::628088982408:role/github-deploy
+  PROD_ROLE: arn:aws:iam::568339496641:role/github-deploy
+  UAT_REPO_NAME: avrmm-uat-cloud
+  UAT_ECR_REPO: 628088982408.dkr.ecr.eu-west-2.amazonaws.com/avrmm-uat-cloud
+  PROD_ECR_REPO: 568339496641.dkr.ecr.eu-west-2.amazonaws.com/avrmm-prod-cloud
+  PROD_CLUSTER: avrmm-prod-cluster
+  PROD_WORKER_SERVICE: avrmm-prod-worker-cloud
+  PROD_WEB_SERVICE: avrmm-prod-web-cloud
+  PROD_DB: avrmm-prod-postgres
+  HEALTH_URL: https://api.involvecloud.com/healthz
+  # Passed as an environment variable only (never expanded inside a script);
+  # the first step validates it before anything uses it.
+  VERSION: ${{ inputs.version }}
+
+jobs:
+  promote:
+    name: Promote ${{ inputs.version }} to production
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - name: Check branch and version
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          if [ "${REF}" != "refs/heads/main" ]; then
+            echo "Promotion must run from main (this run is on ${REF}). Re-run the workflow with 'Use workflow from' set to main." >&2
+            exit 1
+          fi
+          if ! printf '%s' "${VERSION}" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "version must look like v1.0.96 (got a value that does not match ^v[0-9]+\.[0-9]+\.[0-9]+\$)" >&2
+            exit 1
+          fi
+          echo "OK: promoting ${VERSION} from main"
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Check the version tag exists
+        run: |
+          set -euo pipefail
+          if ! commit="$(git rev-list -n1 "refs/tags/${VERSION}" 2>/dev/null)"; then
+            echo "git tag ${VERSION} not found; the portal cannot be matched to it" >&2
+            exit 1
+          fi
+          echo "OK: tag ${VERSION} -> ${commit}"
+
+      # ---- UAT account: confirm and pull the image ----
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.UAT_ROLE }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-duration-seconds: 3600
+
+      - name: Confirm the image exists in UAT
+        run: |
+          set -euo pipefail
+          if ! aws ecr describe-images \
+              --repository-name "${UAT_REPO_NAME}" \
+              --image-ids "imageTag=${VERSION}" \
+              --query 'imageDetails[0].imageDigest' --output text; then
+            echo "${UAT_REPO_NAME}:${VERSION} was not found in UAT; release and test it in UAT first" >&2
+            exit 1
+          fi
+
+      - uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Pull the image from UAT
+        run: |
+          set -euo pipefail
+          docker pull "${UAT_ECR_REPO}:${VERSION}"
+
+      # ---- Production account from here on ----
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.PROD_ROLE }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-duration-seconds: 3600
+
+      - name: Snapshot the production database
+        run: |
+          set -euo pipefail
+          # RDS identifiers allow letters, digits and hyphens only.
+          snap="avrmm-prod-pre-${VERSION//./-}"
+          if aws rds describe-db-snapshots \
+              --db-snapshot-identifier "${snap}" >/dev/null 2>&1; then
+            echo "Snapshot ${snap} already exists (earlier attempt); reusing it"
+          else
+            echo "Creating snapshot ${snap}"
+            aws rds create-db-snapshot \
+              --db-instance-identifier "${PROD_DB}" \
+              --db-snapshot-identifier "${snap}" \
+              --query 'DBSnapshot.Status' --output text
+          fi
+          aws rds wait db-snapshot-available --db-snapshot-identifier "${snap}"
+          echo "Snapshot ${snap} is available"
+
+      - name: Delete pre-release snapshots older than 365 days
+        run: |
+          set -euo pipefail
+          cutoff="$(date -u -d '365 days ago' +%Y-%m-%dT%H:%M:%S)"
+          echo "Cutoff: ${cutoff}"
+          deleted=0
+          # Text output: identifier <tab> creation time (ISO 8601, UTC).
+          while IFS=$'\t' read -r id created; do
+            [ -n "${id}" ] || continue
+            case "${id}" in
+              avrmm-prod-pre-*) ;;
+              *) continue ;; # never touch any other snapshot
+            esac
+            case "${created}" in
+              [0-9][0-9][0-9][0-9]-*) ;;
+              *) continue ;; # still being created
+            esac
+            if [[ "${created}" < "${cutoff}" ]]; then
+              echo "Deleting ${id} (created ${created})"
+              aws rds delete-db-snapshot --db-snapshot-identifier "${id}" >/dev/null
+              deleted=$((deleted + 1))
+            fi
+          done < <(aws rds describe-db-snapshots \
+            --db-instance-identifier "${PROD_DB}" \
+            --snapshot-type manual \
+            --query 'DBSnapshots[].[DBSnapshotIdentifier,SnapshotCreateTime]' \
+            --output text)
+          echo "Deleted ${deleted} old snapshot(s)"
+
+      - uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Push the image to production
+        run: |
+          set -euo pipefail
+          docker tag "${UAT_ECR_REPO}:${VERSION}" "${PROD_ECR_REPO}:${VERSION}"
+          docker tag "${UAT_ECR_REPO}:${VERSION}" "${PROD_ECR_REPO}:latest"
+          docker push "${PROD_ECR_REPO}:${VERSION}"
+          docker push "${PROD_ECR_REPO}:latest"
+          echo "Pushed ${PROD_ECR_REPO}:${VERSION} and :latest"
+
+      - name: Roll the worker service
+        run: |
+          set -euo pipefail
+          aws ecs update-service \
+            --cluster "${PROD_CLUSTER}" \
+            --service "${PROD_WORKER_SERVICE}" \
+            --force-new-deployment \
+            --query 'service.deployments[0].rolloutState' --output text
+          aws ecs wait services-stable \
+            --cluster "${PROD_CLUSTER}" \
+            --services "${PROD_WORKER_SERVICE}"
+          echo "${PROD_WORKER_SERVICE} is stable"
+
+      - name: Roll the web service
+        run: |
+          set -euo pipefail
+          aws ecs update-service \
+            --cluster "${PROD_CLUSTER}" \
+            --service "${PROD_WEB_SERVICE}" \
+            --force-new-deployment \
+            --query 'service.deployments[0].rolloutState' --output text
+          aws ecs wait services-stable \
+            --cluster "${PROD_CLUSTER}" \
+            --services "${PROD_WEB_SERVICE}"
+          echo "${PROD_WEB_SERVICE} is stable"
+
+      - name: Health check
+        run: |
+          set -euo pipefail
+          curl -fsS --retry 6 --retry-delay 10 --retry-all-errors "${HEALTH_URL}"
+          echo
+          echo "Health check OK"
+
+      - name: Move the release branch (Amplify builds the portal)
+        run: |
+          set -euo pipefail
+          commit="$(git rev-list -n1 "refs/tags/${VERSION}")"
+          echo "Pushing ${commit} (${VERSION}) to refs/heads/release"
+          git push origin "${commit}:refs/heads/release" --force
+          echo "release branch now at ${commit}"
