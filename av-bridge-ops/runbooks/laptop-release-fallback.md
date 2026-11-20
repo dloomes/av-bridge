@@ -20,7 +20,10 @@ here, and it must never be committed, printed or put in a build arg).
 
 1. The release commit is on `main` and tagged (`git tag -a vX.Y.Z -m ...` and
    `git push origin vX.Y.Z`); the production promotion normally requires this and
-   the portal build uses it.
+   the portal build uses it. If GitHub itself is down the tag cannot be pushed:
+   create it locally, and **push it as soon as GitHub is back, before any later
+   "Promote to production" run** (promote refuses a version whose tag is not on
+   `main`, and the `release` branch step needs it).
 2. `aws sso login --profile avrmm-prod` and, for the UAT leg, `--profile avrmm-uat`.
 3. Working tree state does not matter: the build uses `git archive` of the tag.
 
@@ -39,6 +42,7 @@ here, and it must never be committed, printed or put in a build arg).
      --build-arg "BRIDGE_VERSION=$VERSION" \
      --build-arg "BRIDGE_BUILD_TIME=$BUILD_TIME" \
      --secret id=update_signing_key,src=<signing-key-file> \
+     --provenance=false --sbom=false \
      -t "avrmm-cloud:$VERSION" "$SRC"
    ```
    Expected: build succeeds. If the secret is missing the Collector update

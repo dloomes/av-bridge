@@ -48,15 +48,24 @@ Related: [restore-rehearsal.md](restore-rehearsal.md),
 
 ## Steps
 
-1. Start a health probe in a second terminal. It logs one line every 2 seconds
-   with a UTC timestamp and HTTP status, so the outage window can be read off:
+1. Start the probes in a second terminal. **`/healthz` is liveness only**: it
+   returns a fixed `{"status":"ok"}` without touching the database (and
+   `/public/branding` swallows database errors), so it can stay green through a
+   database outage. The primary measure is a database-backed call: an
+   authenticated read on the Public API, which looks up the bearer token and reads
+   devices. Use a read-only token for a customer or test tenant, held in an
+   environment variable and never written into this runbook, a log or the Record
+   (`read -rs MARCUS_PUB_TOKEN; export MARCUS_PUB_TOKEN`). One line per second with a
+   UTC timestamp and status codes:
    ```sh
    while true; do
-     printf '%s %s\n' "$(date -u +%T)" \
+     printf '%s db=%s health=%s\n' "$(date -u +%T)" \
+       "$(curl -s -o /dev/null -m 3 -w '%{http_code}' -H "Authorization: Bearer $MARCUS_PUB_TOKEN" 'https://api.involvecloud.com/pub/v1/devices?limit=1')" \
        "$(curl -s -o /dev/null -m 3 -w '%{http_code}' https://api.involvecloud.com/healthz)"
-     sleep 2
+     sleep 1
    done | tee failover-probe.log
    ```
+   The log holds status codes only. Expected before the failover: `db=200 health=200`.
 2. **CUSTOMER-VISIBLE.** Start the failover and note the time:
    ```sh
    date -u +%FT%TZ
@@ -73,12 +82,21 @@ Related: [restore-rehearsal.md](restore-rehearsal.md),
    ```
    Expected messages include "Multi-AZ instance failover started" and
    "Multi-AZ instance failover completed".
-4. In the probe log, note: **T_down** (first non-200 or timeout), **T_up** (first
-   200 after the gap). Outage = T_up - T_down. Stop the probe with Ctrl+C once it
-   has returned 200 for a minute. Note that `/healthz` may stay 200 if it does
-   not touch the database; if the log shows no gap, also test a database-backed
-   call (for example the portal sign-in page loading data, or
-   `GET /pub/v1/...` with a test token) and record which probe you used.
+4. In the probe log, note **T_down** (first `db=` value that is not 200, or a
+   timeout, `000`) and **T_up** (first `db=200` after the gap). Outage = T_up -
+   T_down. Stop the probe with Ctrl+C once it has returned `db=200` for a minute,
+   then `unset MARCUS_PUB_TOKEN`. `health=` is expected to stay 200 throughout;
+   that is not a pass signal. Cross-check the outage with two other sources: the
+   RDS events from step 3 (failover started and completed times) and the ALB 5xx
+   count from the targets over the window:
+   ```sh
+   LB=$(aws elbv2 describe-load-balancers --query 'LoadBalancers[?contains(LoadBalancerName,`avrmm-prod`)].LoadBalancerArn' --output text | sed 's#.*:loadbalancer/##')
+   aws cloudwatch get-metric-statistics --namespace AWS/ApplicationELB \
+     --metric-name HTTPCode_Target_5XX_Count --dimensions Name=LoadBalancer,Value="$LB" \
+     --start-time <start-time-minus-5m> --end-time <end-time-plus-5m> --period 60 \
+     --statistics Sum --query 'sort_by(Datapoints,&Timestamp)[].[Timestamp,Sum]' --output text
+   ```
+   Record the minutes with 5xx errors next to the probe's outage.
 5. Check the instance is available in the other zone:
    ```sh
    aws rds describe-db-instances --db-instance-identifier avrmm-prod-postgres \
@@ -101,7 +119,7 @@ Related: [restore-rehearsal.md](restore-rehearsal.md),
 7. Check the alerting arrived. Within about 10 minutes:
    - RDS event emails for failover (via `avrmm-prod-rds-events`);
    - any CloudWatch alarm that moved to `ALARM` and back
-     (`aws cloudwatch describe-alarm-history --alarm-name-prefix avrmm-prod --history-item-type StateUpdate --start-date <start-time> --query 'AlarmHistoryItems[].[Timestamp,AlarmName,HistorySummary]' --output text`;
+     (`aws cloudwatch describe-alarm-history --profile avrmm-prod --region eu-west-2 --history-item-type StateUpdate --start-date <start-time> --query "AlarmHistoryItems[?starts_with(AlarmName,'avrmm-prod')].[Timestamp,AlarmName,HistorySummary]" --output text`;
      `avrmm-prod-rds-connections` and the healthy-host alarms are the likely ones).
    Record which emails arrived and how long after T_down. A missing email is a
    finding: fix the subscription or alarm and rerun.

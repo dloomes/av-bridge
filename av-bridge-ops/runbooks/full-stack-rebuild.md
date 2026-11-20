@@ -16,7 +16,11 @@ apply or destroy command below may be run without that approval.
 
 **Cost caveat.** While it exists the copy runs a Multi-AZ-sized database (use
 single-AZ), NAT gateways (use one), an ALB, and Fargate tasks. Roughly 5 to 10
-pounds per day. Destroy the same day. Customers are not affected, but this builds
+pounds per day. Destroy the same day. Customers are not affected **only if the
+safety settings in "Known gaps" item 8 are in place**: the rebuild database is a
+copy of real customer data (including their notification channels, webhooks and
+ServiceNow settings), and a running worker with live settings could email,
+call webhooks or raise tickets to real customers from the rebuild. This builds
 real resources in the production account.
 
 Related: [restore-rehearsal.md](restore-rehearsal.md) (restore and row-count
@@ -36,8 +40,16 @@ different key such as `envs/rebuild-YYYYMMDD/main.tfstate`.
 parameters. The first run of this runbook will find more; record them in Notes.
 Work on a **scratch copy** of the folder (do not edit `envs/prod` for the rebuild):
 
-1. `cp -r av-bridge-ops/terraform/envs/prod av-bridge-ops/terraform/envs/rebuild`
-   (git-ignored or deleted after the run; never commit the copy's tfvars).
+1. Copy the folder **without** terraform's local cache or any state:
+   ```sh
+   rsync -a --exclude .terraform --exclude '*.tfstate*' --exclude '*.tfplan' \
+     av-bridge-ops/terraform/envs/prod/ av-bridge-ops/terraform/envs/rebuild/
+   ```
+   (No rsync? `cp -r` then `rm -rf envs/rebuild/.terraform envs/rebuild/*.tfstate*`.)
+   Do not copy `.terraform/`: its cached backend points at production's state key,
+   and after editing `backend.tf` `terraform init` would offer to copy that state
+   into the rebuild key. Delete the folder after the run; never commit the copy's
+   tfvars.
 2. In the copy's `main.tf`: set the three `local.*_domain` values to rebuild
    names under a domain you control (for example `app.rb.involvecloud.com`,
    `api.rb.involvecloud.com`, `access.rb.involvecloud.com`). The `dns-zone`
@@ -74,6 +86,19 @@ Work on a **scratch copy** of the folder (do not edit `envs/prod` for the rebuil
    the rebuild domains unless you add a temporary redirect URI; skip sign-in in
    the test and say so in the Record.
 
+8. **Safety settings (mandatory; prevents the rebuild contacting customers).**
+   In the copy's `main.tf`, for **both** `cloud_web` and `cloud_worker`:
+   `smtp_host = ""` (email stays in dry-run; also replace the other `module.ses.*`
+   smtp arguments with `""`/defaults, since `module.ses` is removed),
+   `nightly_dry_run = true`, `nightly_exec_enabled = false`. For `cloud_worker`
+   also set `desired_count = 0`. The worker is where the Collector health watcher,
+   nightly runs and notification delivery run: with no Collectors connected it
+   would mark every Collector offline and raise alerts, which `internal/notify`
+   would send to customers' real email, webhook, Teams and ServiceNow targets.
+   Safer choice: validate the **web** service only and keep the worker at 0. If a
+   worker check is genuinely needed, first disable every channel in the rebuild
+   database only (step 7a) and tell Daniel before starting it.
+
 If any of these edits is not done, stop: a rebuild that silently reuses a
 production name or state is worse than none.
 
@@ -103,10 +128,12 @@ production name or state is worse than none.
 ## Steps
 
 1. Start the clock and record the date, the git commit of `main` and the snapshot id.
-2. Initialise against the rebuild state key and check production is not in it:
+2. Initialise against the rebuild state key and check production is not in it. **Never
+   answer yes if terraform offers to copy existing state** to the new backend: that
+   would copy production's state into the rebuild key. Answer no and stop:
    ```sh
    cd av-bridge-ops/terraform/envs/rebuild
-   terraform init
+   terraform init -reconfigure
    terraform state list | wc -l      # expected: 0 (empty state)
    ```
 3. Plan, read the whole plan, and check every resource name starts `avrmm-rb`
@@ -114,7 +141,7 @@ production name or state is worse than none.
    name, and nothing is replaced or destroyed:
    ```sh
    terraform plan -out rebuild.plan
-   terraform show -no-color rebuild.plan | grep -E "^\s+(#|\+) .*(avrmm-prod|involvecloud.com)" | head -40
+   terraform show -no-color rebuild.plan | grep -E "^\s+(#|\+) .*(avrmm-prod|app\.involvecloud\.com|api\.involvecloud\.com|access\.involvecloud\.com)" | head -40
    ```
    Expected: no `avrmm-prod` names. Show the plan summary to Daniel.
 4. **Approval gate: Daniel approves the apply.** Then apply in two phases so
@@ -127,10 +154,15 @@ production name or state is worse than none.
    Check: `nslookup -type=NS api.rb.involvecloud.com 8.8.8.8` returns the zone's
    name servers. (Certificates validate over these records and stay pending until
    they resolve.)
-6. **Approval gate: Daniel approves the full apply.** Run the rest (this is the
-   long step, 30 to 60 minutes; RDS creation and ACM validation dominate):
+6. **Approval gate: Daniel approves the full apply.** The step 3 plan is stale after
+   the targeted apply, so always plan again, review it (same name checks as step 3,
+   and confirm the safety settings from "Known gaps" item 8 appear), then apply
+   that new plan (the long step, 30 to 60 minutes; RDS creation and ACM validation
+   dominate):
    ```sh
-   terraform apply rebuild.plan    # or re-plan first if the plan is stale
+   terraform plan -out rebuild2.plan
+   terraform show -no-color rebuild2.plan | grep -E "avrmm-prod|app\.involvecloud\.com|api\.involvecloud\.com|access\.involvecloud\.com" | head
+   terraform apply rebuild2.plan
    ```
    Expected: `Apply complete! Resources: N added, 0 changed, 0 destroyed.` If a
    resource already exists (a global name collision) or a variable is missing,
@@ -142,16 +174,51 @@ production name or state is worse than none.
      `avrmm-rb-postgres`, never `avrmm-prod-postgres`, then restore `$SNAP` over
      it using `terraform apply -replace=module.db.aws_db_instance.this` with
      `snapshot_identifier` set, or restore by CLI and import it.
-   - After a restore the database roles keep production's passwords while the
-     rebuild's secrets hold new ones. Reset the roles to the rebuild's secrets with
-     the same one-off-task method as [restore-rehearsal.md](restore-rehearsal.md)
-     (run `ALTER ROLE app_admin PASSWORD ...` and `app_tenant` as the master user,
-     reading the new values from `avrmm-rb/cloud/db_app_credentials` at run time;
-     never print them), and reset the master password to the module's secret with
-     `aws rds modify-db-instance --db-instance-identifier avrmm-rb-postgres --master-user-password <from avrmm-rb/db/master> --apply-immediately`.
+   - After the restore, reset the master password to the rebuild's secret (the
+     restored database has production's master password). The services set the
+     application role passwords from the secret at start-up, so nothing else is
+     needed. The identifier must be `avrmm-rb-postgres`; the password never
+     appears on screen:
+     ```sh
+     PW=$(aws secretsmanager get-secret-value --profile avrmm-prod --region eu-west-2 \
+       --secret-id avrmm-rb/db/master --query SecretString --output text \
+       | python -I -c "import sys,json;print(json.load(sys.stdin)['password'])")
+     aws rds modify-db-instance --profile avrmm-prod --region eu-west-2 \
+       --db-instance-identifier avrmm-rb-postgres --master-user-password "$PW" \
+       --apply-immediately
+     unset PW
+     ```
    - Row counts (customers, devices, telemetry_daily) must match the snapshot
      time, using the check from [restore-rehearsal.md](restore-rehearsal.md)
      pointed at the rebuild instance. Record them.
+7a. **Only if the worker will be started** (otherwise skip): disable every
+   notification channel in the rebuild database, with the one-off task method of
+   [restore-rehearsal.md](restore-rehearsal.md) pointed at the rebuild instance
+   (keep its host-swap guard and the `inet_server_addr()` check, and stop if the
+   address equals production's). Run as `app_admin` (bypasses row-level security),
+   against the rebuild host only:
+   ```sql
+   UPDATE notification_channels SET enabled = false;  -- email, teams, webhook, servicenow
+   ```
+   Also review other outbound settings that may hold customer endpoints (for
+   example audit webhook URLs and the ServiceNow settings added in
+   `av-bridge-cloud/internal/db/migrations/0048_servicenow_channel.sql`); if you
+   cannot disable them all with certainty, keep the worker at 0.
+7b. **Pre-start check (always).** Print the rebuild task definitions' settings and
+   confirm them before any service starts:
+   ```sh
+   for f in web worker; do
+     echo "== $f"
+     aws ecs describe-task-definition --profile avrmm-prod --region eu-west-2 \
+       --task-definition avrmm-rb-$f-cloud \
+       --query 'taskDefinition.containerDefinitions[0].environment[?name==`NIGHTLY_DRY_RUN` || name==`NIGHTLY_EXEC_ENABLED` || name==`POC_SMTP_HOST` || name==`CLOUD_BASE_URL`].[name,value]' --output text
+   done
+   aws ecs describe-services --profile avrmm-prod --region eu-west-2 --cluster avrmm-rb-cluster \
+     --services avrmm-rb-worker-cloud --query 'services[0].desiredCount' --output text
+   ```
+   Expected: `NIGHTLY_DRY_RUN true`, `NIGHTLY_EXEC_ENABLED false`, no `POC_SMTP_HOST`
+   line (or an empty value), a `CLOUD_BASE_URL` on the rebuild domain, and worker
+   desired count `0`. If any value differs, stop and fix the copy.
 8. Get the application image into the rebuild repository and start it. ECR has
    no cross-repo copy, so pull and push with a temporary Docker config (the
    Windows credential-helper workaround from [laptop-release-fallback.md](laptop-release-fallback.md)):
@@ -163,12 +230,13 @@ production name or state is worse than none.
    docker tag  "$ACC/avrmm-prod-cloud:latest" "$ACC/avrmm-rb-cloud:latest"
    docker push "$ACC/avrmm-rb-cloud:latest"
    rm -rf "$DOCKER_CONFIG"; unset DOCKER_CONFIG
-   for s in avrmm-rb-worker-cloud avrmm-rb-web-cloud; do
-     aws ecs update-service --profile avrmm-prod --region eu-west-2 --cluster avrmm-rb-cluster --service $s --force-new-deployment
-     aws ecs wait services-stable --profile avrmm-prod --region eu-west-2 --cluster avrmm-rb-cluster --services $s
-   done
+   # Web only. The worker stays at desired count 0 (Known gaps item 8).
+   aws ecs update-service --profile avrmm-prod --region eu-west-2 --cluster avrmm-rb-cluster \
+     --service avrmm-rb-web-cloud --force-new-deployment
+   aws ecs wait services-stable --profile avrmm-prod --region eu-west-2 --cluster avrmm-rb-cluster \
+     --services avrmm-rb-web-cloud
    ```
-   Expected: both services stable (names follow the module pattern; confirm with
+   Expected: the web service stable (names follow the module pattern; confirm with
    `aws ecs list-services --cluster avrmm-rb-cluster`). Production's tasks are on a
    different cluster and are not touched.
 9. Validate end to end against the rebuild domain (not production):
@@ -177,15 +245,14 @@ production name or state is worse than none.
    - the portal (Amplify app `avrmm-rb-portal`) deployed and loads;
    - the API answers an authenticated read (use a read-only token created in the
      rebuild database; do not reuse a production customer's token);
-   - the web and worker tasks log no start-up errors (`aws logs tail /ecs/avrmm-rb-web-cloud --since 30m`);
+   - the web tasks log no start-up errors (`aws logs tail /ecs/avrmm-rb-web-cloud --since 30m`); the worker is not started, so worker behaviour (nightly runs, Collector tunnel) is not validated here unless step 7a was done;
    - the migrations ran and the schema version matches production;
    - alarms exist (`aws cloudwatch describe-alarms --alarm-name-prefix avrmm-rb`).
-   Do **not** enrol real Collectors, send real email, or let the rebuild reach
-   customer devices: check `NIGHTLY_EXEC_ENABLED` and `NIGHTLY_DRY_RUN` in the
-   rebuild task definitions are off/dry before the services start (they are copied
-   from production, where nightly power commands are live), and the rebuild
-   database holds real customer data, so keep access to yourself and delete it
-   the same day.
+   Do **not** enrol real Collectors or let the rebuild reach customer devices or
+   contact customers. The settings were checked in step 7b (they are copied from
+   production, where nightly power commands and email are live). The rebuild
+   database holds real customer data, so keep access to yourself and delete it the
+   same day.
 10. Stop the clock; record total time to a healthy stack (the rebuild RTO), the
     list of gaps found, and the cost estimate from Cost Explorer for the day.
 
@@ -201,7 +268,7 @@ production name or state is worse than none.
     ```
 12. **Approval gate: Daniel approves the destroy.** The rebuild database has
     deletion protection (copied from production), so first turn it off in the
-    rebuild only (`aws rds modify-db-instance --db-instance-identifier avrmm-rb-postgres --no-deletion-protection --apply-immediately`,
+    rebuild only (`aws rds modify-db-instance --profile avrmm-prod --region eu-west-2 --db-instance-identifier avrmm-rb-postgres --no-deletion-protection --apply-immediately`,
     and set `deletion_protection = false` in the copy), then:
     ```sh
     terraform apply destroy.plan
@@ -217,7 +284,9 @@ production name or state is worse than none.
     the rebuild snapshot and state:
     ```sh
     aws rds delete-db-snapshot --profile avrmm-prod --region eu-west-2 --db-snapshot-identifier "$SNAP"
-    aws s3 rm s3://avrmm-tf-state-prod/envs/rebuild-YYYYMMDD/main.tfstate --profile avrmm-prod
+    KEY=envs/rebuild-YYYYMMDD/main.tfstate
+    case "$KEY" in envs/rebuild-*) ;; *) echo "refusing: $KEY"; exit 1;; esac
+    aws s3 rm "s3://avrmm-tf-state-prod/$KEY" --profile avrmm-prod
     ```
     Only delete the state after `terraform state list` in the rebuild folder is
     empty. Delete the scratch copy of the folder.

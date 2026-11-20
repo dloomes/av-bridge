@@ -67,10 +67,14 @@ the closing marker starts in column 0.
 
 ### A. Restore to a temporary instance
 
-1. Pick the identifier and start the clock. Same instance class as production so
-   the RTO is honest; no Multi-AZ, not public, no deletion protection:
+1. Pick the identifier, capture the restore data point, and start the clock. Same
+   instance class as production so the RTO is honest; no Multi-AZ, not public, no
+   deletion protection:
    ```sh
    RID=avrmm-prod-restore-$(date -u +%Y%m%d)
+   # Data point for RPO, read just before the restore request:
+   aws rds describe-db-instances --db-instance-identifier avrmm-prod-postgres \
+     --query 'DBInstances[0].LatestRestorableTime' --output text
    T0=$(date -u +%s); echo "start $(date -u +%FT%TZ)"
    aws rds restore-db-instance-to-point-in-time \
      --source-db-instance-identifier avrmm-prod-postgres \
@@ -87,12 +91,9 @@ the closing marker starts in column 0.
    Expected: `<RID> creating`. To rehearse restoring a specific snapshot instead,
    use `restore-db-instance-from-db-snapshot --db-snapshot-identifier <id>` with
    the same networking flags.
-2. Record the data point (RPO) now:
-   ```sh
-   aws rds describe-db-instances --db-instance-identifier avrmm-prod-postgres \
-     --query 'DBInstances[0].LatestRestorableTime' --output text
-   ```
-   RPO = time of step 1 minus this value (normally under 5 minutes).
+2. Work out the RPO: RPO = time of the restore request in step 1 minus the
+   `LatestRestorableTime` printed just before it (normally under 5 minutes). A
+   restore with `--use-latest-restorable-time` recovers to about that point.
 3. Wait until available, then stop the clock:
    ```sh
    aws rds wait db-instance-available --db-instance-identifier "$RID"
@@ -115,8 +116,12 @@ the closing marker starts in column 0.
    cat > restore-check.sh <<'SCRIPT'
    for h in "$RESTORE_HOST" prod; do
      if [ "$h" = prod ]; then u="$DATABASE_ADMIN_URL"
-     else u=$(printf %s "$DATABASE_ADMIN_URL" | sed -E "s#@[^/@]+/#@$h/#"); fi
+     else
+       u=$(printf %s "$DATABASE_ADMIN_URL" | sed -E "s#@[^/@]+/#@$h/#")
+       [ "$u" != "$DATABASE_ADMIN_URL" ] || { echo "host swap failed"; exit 1; }
+     fi
      echo "== $h"
+     psql "$u" -At -c "select 'server_addr', inet_server_addr()" 2>&1 | sed -E 's#postgres(ql)?://[^ ]*#<url>#'
      psql "$u" -At -c "select 'customers', count(*) from customers union all select 'devices', count(*) from devices union all select 'telemetry_daily', count(*) from telemetry_daily" 2>&1 | sed -E 's#postgres(ql)?://[^ ]*#<url>#'
      psql "$u" -At -c "select 'telemetry_daily_latest_day', max(day) from telemetry_daily" 2>&1 | sed -E 's#postgres(ql)?://[^ ]*#<url>#'
    done
@@ -179,8 +184,11 @@ the closing marker starts in column 0.
    aws logs get-log-events --log-group-name /ecs/avrmm-prod-worker-cloud \
      --log-stream-name "restore-check/psql/${TASK##*/}" --query 'events[].message' --output text
    ```
-   Expected: two blocks, the restored host and `prod`, each with `customers`,
-   `devices`, `telemetry_daily` counts, then `CHECK_DONE`. Pass criteria:
+   Expected: two blocks, the restored host and `prod`, each with a `server_addr`
+   line, `customers`, `devices`, `telemetry_daily` counts, then `CHECK_DONE`.
+   Pass criteria: the two `server_addr` values **differ** (if they are equal, or the
+   output says `host swap failed`, the restored block queried production or did not
+   run: the check is void, fix and rerun); then
    `customers` and `devices` equal production (or differ by at most the changes
    since the restore point); `telemetry_daily` within a few percent of production
    (it grows continuously); no query errors. Record the counts in the Record table
@@ -192,7 +200,9 @@ the closing marker starts in column 0.
    snapshot. Never run this against `avrmm-prod-postgres` (it also has deletion
    protection on):
    ```sh
-   echo "$RID"   # must start with avrmm-prod-restore-
+   # If the shell restarted, recover RID from the instance list (pre-check 2 query):
+   #   aws rds describe-db-instances --query 'DBInstances[?starts_with(DBInstanceIdentifier,`avrmm-prod-restore-`)].DBInstanceIdentifier' --output text
+   case "$RID" in avrmm-prod-restore-2*) ;; *) echo "refusing: $RID"; exit 1;; esac
    aws rds delete-db-instance --db-instance-identifier "$RID" \
      --skip-final-snapshot --delete-automated-backups \
      --query 'DBInstance.DBInstanceStatus' --output text
