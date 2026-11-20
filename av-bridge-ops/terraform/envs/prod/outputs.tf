@@ -121,3 +121,11 @@ output "db_app_credentials_secret_arn" {
   description = "Secrets Manager ARN of the app database role URLs and passwords (ARN only)."
   value       = aws_secretsmanager_secret.db_app_credentials.arn
 }
+
+output "github_deploy_role_arn" {
+  value = module.github_oidc.role_arn
+}
+
+output "code_mirror_bucket" {
+  value = aws_s3_bucket.code_mirror.bucket
+}

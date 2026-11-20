@@ -309,3 +309,19 @@ module "portal" {
 # Amplify's outputs (custom_domain_certificate_verification_dns_record,
 # custom_domain_sub_domain_dns_records) are still there for informational
 # use / when the DNS zone lives in a different account (not our case yet).
+
+# -----------------------------------------------------------------------------
+# GitHub Actions deploy role (OIDC)
+# -----------------------------------------------------------------------------
+module "github_oidc" {
+  source = "../../modules/github-oidc"
+
+  github_subjects = [
+    "repo:dloomes/av-bridge:ref:refs/tags/v*",
+    "repo:dloomes/av-bridge:ref:refs/heads/main",
+  ]
+
+  ecr_push_repository_arns = [module.ecr_cloud.repository_arn]
+  ecs_cluster_name         = module.cloud_service.cluster_name
+  ecs_service_names        = [module.cloud_service.service_name]
+}

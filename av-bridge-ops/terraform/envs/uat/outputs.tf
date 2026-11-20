@@ -68,3 +68,7 @@ output "api_url" {
 output "app_url" {
   value = "https://app.${var.dns_zone_name}"
 }
+
+output "github_deploy_role_arn" {
+  value = module.github_oidc.role_arn
+}

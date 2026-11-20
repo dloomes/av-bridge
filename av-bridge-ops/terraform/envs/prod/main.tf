@@ -468,3 +468,94 @@ module "monitoring" {
   worker_service_name            = module.cloud_worker.service_name
   db_instance_identifier         = module.db.identifier
 }
+
+# -----------------------------------------------------------------------------
+# GitHub Actions deploy role (OIDC) and code-mirror bucket
+# -----------------------------------------------------------------------------
+module "github_oidc" {
+  source = "../../modules/github-oidc"
+
+  github_subjects = ["repo:dloomes/av-bridge:ref:refs/heads/main"]
+
+  ecr_push_repository_arns = [module.ecr_cloud.repository_arn]
+  ecs_cluster_name         = module.cloud_web.cluster_name
+  ecs_service_names        = [module.cloud_web.service_name, module.cloud_worker.service_name]
+
+  rds_instance_identifier = module.db.identifier
+  rds_snapshot_prefix     = "${var.name_prefix}-pre-"
+
+  s3_put_object_arns = ["${aws_s3_bucket.code_mirror.arn}/*"]
+}
+
+resource "aws_s3_bucket" "code_mirror" {
+  bucket = "${var.name_prefix}-code-mirror"
+}
+
+resource "aws_s3_bucket_versioning" "code_mirror" {
+  bucket = aws_s3_bucket.code_mirror.id
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "code_mirror" {
+  bucket = aws_s3_bucket.code_mirror.id
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}
+
+resource "aws_s3_bucket_public_access_block" "code_mirror" {
+  bucket                  = aws_s3_bucket.code_mirror.id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "code_mirror" {
+  bucket = aws_s3_bucket.code_mirror.id
+
+  rule {
+    id     = "expire-noncurrent"
+    status = "Enabled"
+    filter {}
+
+    noncurrent_version_expiration {
+      noncurrent_days = 90
+    }
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
+
+  depends_on = [aws_s3_bucket_versioning.code_mirror]
+}
+
+data "aws_iam_policy_document" "code_mirror" {
+  statement {
+    sid       = "DenyInsecureTransport"
+    effect    = "Deny"
+    actions   = ["s3:*"]
+    resources = [aws_s3_bucket.code_mirror.arn, "${aws_s3_bucket.code_mirror.arn}/*"]
+
+    principals {
+      type        = "*"
+      identifiers = ["*"]
+    }
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["false"]
+    }
+  }
+}
+
+resource "aws_s3_bucket_policy" "code_mirror" {
+  bucket = aws_s3_bucket.code_mirror.id
+  policy = data.aws_iam_policy_document.code_mirror.json
+
+  depends_on = [aws_s3_bucket_public_access_block.code_mirror]
+}
