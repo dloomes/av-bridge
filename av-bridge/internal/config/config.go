@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"github.com/dloomes/av-bridge/internal/cloudtls"
 	"os"
 	"path/filepath"
 	"time"
@@ -45,7 +46,12 @@ type CloudConfig struct {
 	PushInterval  time.Duration `yaml:"push_interval"`
 	RetryAttempts int           `yaml:"retry_attempts"`
 	RetryDelay    time.Duration `yaml:"retry_delay"`
-	TLSSkipVerify bool          `yaml:"tls_skip_verify"`
+	// CAFile is an optional PEM file of extra CA certificates to trust on
+	// every Collector-to-cloud connection (a TLS-inspecting proxy's CA).
+	CAFile string `yaml:"ca_file"`
+	// LegacyTLSSkipVerify is parsed only to refuse true: verification can no
+	// longer be disabled. false (as in older configs) is accepted.
+	LegacyTLSSkipVerify bool `yaml:"tls_skip_verify"`
 	// PortalAPI is the cloud service's base URL (e.g. http://cloud-host:8090).
 	// Used by the command poller for /bridge/poll and /bridge/commands/{id}/result.
 	// When empty, the command poller is disabled.
@@ -229,6 +235,12 @@ func applyDefaults(cfg *Config) {
 func validate(cfg *Config) error {
 	if cfg.Cloud.WebhookURL == "" {
 		return fmt.Errorf("cloud.webhook_url is required")
+	}
+	if cfg.Cloud.LegacyTLSSkipVerify {
+		return fmt.Errorf("cloud.tls_skip_verify is no longer supported: use cloud.ca_file to trust a TLS-inspecting proxy's certificate")
+	}
+	if _, err := cloudtls.Config(cfg.Cloud.CAFile); err != nil {
+		return err
 	}
 	if cfg.API.TLS.Enabled {
 		if cfg.API.TLS.CertFile == "" || cfg.API.TLS.KeyFile == "" {

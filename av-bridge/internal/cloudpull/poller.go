@@ -19,10 +19,10 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
-	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/dloomes/av-bridge/internal/cloudtls"
 	"io"
 	"log/slog"
 	"net/http"
@@ -177,7 +177,7 @@ func NewPoller(cloudCfg config.CloudConfig, interval time.Duration, collectorID,
 	base := strings.TrimRight(cloudCfg.PortalAPI, "/")
 	transport := &http.Transport{
 		Proxy:           http.ProxyFromEnvironment, // HTTPS_PROXY / NO_PROXY
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: cloudCfg.TLSSkipVerify},
+		TLSClientConfig: cloudtls.MustConfig(cloudCfg.CAFile),
 	}
 	return &Poller{
 		cfg:         cloudCfg,

@@ -99,7 +99,7 @@ func TestTunnelRelaysToDevice(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	c := New(cloud.URL, "col-1", secret, false, fakeDevices{"web": {Address: devAddr}})
+	c := New(cloud.URL, "col-1", secret, "", fakeDevices{"web": {Address: devAddr}})
 	go c.Run(ctx)
 
 	var sess *yamux.Session

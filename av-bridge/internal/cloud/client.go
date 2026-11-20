@@ -1,11 +1,11 @@
 package cloud
 
 import (
+	"github.com/dloomes/av-bridge/internal/cloudtls"
 	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
-	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -70,7 +70,7 @@ func NewClient(cfg config.CloudConfig, collectorID, siteID, version, buildTime s
 		// Honour HTTPS_PROXY / HTTP_PROXY / NO_PROXY (from the OS or the
 		// Collector's env file) so sites with an explicit proxy still report.
 		Proxy:           http.ProxyFromEnvironment,
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: cfg.TLSSkipVerify},
+		TLSClientConfig: cloudtls.MustConfig(cfg.CAFile),
 	}
 	c := &Client{
 		cfg:         cfg,

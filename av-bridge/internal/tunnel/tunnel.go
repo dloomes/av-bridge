@@ -16,10 +16,10 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
-	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/dloomes/av-bridge/internal/cloudtls"
 	"io"
 	"log/slog"
 	"net"
@@ -56,7 +56,7 @@ type Client struct {
 }
 
 // New returns a client for the cloud at portalAPI (http[s]://host).
-func New(portalAPI, collectorID, secret string, tlsSkipVerify bool, devices Devices) *Client {
+func New(portalAPI, collectorID, secret string, caFile string, devices Devices) *Client {
 	u := strings.TrimRight(portalAPI, "/")
 	u = strings.Replace(strings.Replace(u, "https://", "wss://", 1), "http://", "ws://", 1)
 	d := &net.Dialer{Timeout: 10 * time.Second}
@@ -67,7 +67,7 @@ func New(portalAPI, collectorID, secret string, tlsSkipVerify bool, devices Devi
 		devices:     devices,
 		dialer: websocket.Dialer{
 			HandshakeTimeout: 15 * time.Second,
-			TLSClientConfig:  &tls.Config{InsecureSkipVerify: tlsSkipVerify},
+			TLSClientConfig:  cloudtls.MustConfig(caFile),
 			Proxy:            http.ProxyFromEnvironment,
 		},
 		dialDevice: d.DialContext,

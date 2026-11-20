@@ -14,7 +14,7 @@ cloud:
   push_interval: "{{ av_bridge_cloud_push_interval }}"
   retry_attempts: {{ av_bridge_cloud_retry_attempts }}
   retry_delay: "5s"
-  tls_skip_verify: false
+  # ca_file: /etc/av-bridge/proxy-ca.pem   # PEM CA to trust (e.g. a TLS-inspecting proxy); verification is never disabled
 
 api:
   auth:

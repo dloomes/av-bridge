@@ -427,7 +427,7 @@ func (p *program) run(ctx context.Context) error {
 		ConfigPath: p.configPath,
 		EnvPath:    resolvedEnv,
 		CloudBase:  cfg.Cloud.PortalAPI,
-		TLSSkip:    cfg.Cloud.TLSSkipVerify,
+		CAFile:     cfg.Cloud.CAFile,
 		Service:    asService,
 	}, cmdPoller.ReportUpdate, func() { restartOnce.Do(func() { close(restartCh) }) })
 	watch := updater.Startup(ctx)
@@ -444,7 +444,7 @@ func (p *program) run(ctx context.Context) error {
 	// collector's devices' web interfaces from the portal.
 	if cfg.Cloud.PortalAPI != "" && cfg.Cloud.HMACSecret != "" {
 		go tunnel.New(cfg.Cloud.PortalAPI, cfg.Hub.CollectorID, cfg.Cloud.HMACSecret,
-			cfg.Cloud.TLSSkipVerify, h).Run(ctx)
+			cfg.Cloud.CAFile, h).Run(ctx)
 	}
 
 	go func() {

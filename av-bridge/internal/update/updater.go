@@ -3,11 +3,11 @@ package update
 import (
 	"context"
 	"crypto/sha256"
-	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/dloomes/av-bridge/internal/cloudtls"
 	"io"
 	"log/slog"
 	"net/http"
@@ -50,7 +50,7 @@ type Config struct {
 	ConfigPath string // passed to the new binary's -validate
 	EnvPath    string // passed to the new binary's -validate, if set
 	CloudBase  string // portal_api base URL; download URLs are relative to it
-	TLSSkip    bool
+	CAFile     string
 	// Service reports whether the process runs under a service manager
 	// that will restart it after the update exits it.
 	Service bool
@@ -68,7 +68,7 @@ type Updater struct {
 func New(cfg Config, report Reporter, restart func()) *Updater {
 	transport := &http.Transport{
 		Proxy:           http.ProxyFromEnvironment,
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: cfg.TLSSkip},
+		TLSClientConfig: cloudtls.MustConfig(cfg.CAFile),
 	}
 	return &Updater{
 		cfg:     cfg,
