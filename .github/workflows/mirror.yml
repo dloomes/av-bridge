@@ -1,0 +1,74 @@
+name: Nightly code mirror
+
+# Every night (and on demand) bundle the whole repository (all branches and
+# tags, full history) and copy it to a versioned S3 bucket in the production
+# account, so the code survives loss of the GitHub repository.
+#
+# Runs on main only: the production role trusts only
+# repo:dloomes/av-bridge:ref:refs/heads/main and may only PutObject on the
+# mirror bucket (no list/get). Scheduled runs always use the default branch.
+
+"on":
+  schedule:
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: code-mirror
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: eu-west-2
+  PROD_ROLE: arn:aws:iam::568339496641:role/github-deploy
+  MIRROR_BUCKET: avrmm-prod-code-mirror
+
+jobs:
+  mirror:
+    name: Mirror repository to S3
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check branch
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          if [ "${REF}" != "refs/heads/main" ]; then
+            echo "The mirror must run from main (this run is on ${REF})." >&2
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Create and verify the bundle
+        run: |
+          set -euo pipefail
+          # checkout fetches only the triggering branch; bring in every branch.
+          git fetch --no-tags origin '+refs/heads/*:refs/remotes/origin/*'
+          # Give each remote branch a local name so --all includes them.
+          git for-each-ref --format='%(refname:strip=3)' refs/remotes/origin/ \
+            | grep -v '^HEAD$' | while read -r b; do
+                git branch -f "${b}" "refs/remotes/origin/${b}" 2>/dev/null || true
+              done
+          BUNDLE="av-bridge-$(date -u +%F).bundle"
+          git bundle create "${BUNDLE}" --all
+          git bundle verify "${BUNDLE}"
+          git bundle list-heads "${BUNDLE}" | wc -l
+          echo "BUNDLE=${BUNDLE}" >> "${GITHUB_ENV}"
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.PROD_ROLE }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Upload to S3
+        run: |
+          set -euo pipefail
+          aws s3 cp "${BUNDLE}" "s3://${MIRROR_BUCKET}/av-bridge/${BUNDLE}" --sse AES256
