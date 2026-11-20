@@ -19,8 +19,8 @@ single-AZ), NAT gateways (use one), an ALB, and Fargate tasks. Roughly 5 to 10
 pounds per day. Destroy the same day. Customers are not affected **only if the
 safety settings in "Known gaps" item 8 are in place**: the rebuild database is a
 copy of real customer data (including their notification channels, webhooks and
-ServiceNow settings), and a running worker with live settings could email,
-call webhooks or raise tickets to real customers from the rebuild. This builds
+ServiceNow settings), and a running worker could email,
+call webhooks or raise tickets to real customers from the rebuild (so the worker is never started). This builds
 real resources in the production account.
 
 Related: [restore-rehearsal.md](restore-rehearsal.md) (restore and row-count
@@ -45,7 +45,8 @@ Work on a **scratch copy** of the folder (do not edit `envs/prod` for the rebuil
    rsync -a --exclude .terraform --exclude '*.tfstate*' --exclude '*.tfplan' \
      av-bridge-ops/terraform/envs/prod/ av-bridge-ops/terraform/envs/rebuild/
    ```
-   (No rsync? `cp -r` then `rm -rf envs/rebuild/.terraform envs/rebuild/*.tfstate*`.)
+   (No rsync? `cp -r av-bridge-ops/terraform/envs/prod av-bridge-ops/terraform/envs/rebuild`
+   then `rm -rf av-bridge-ops/terraform/envs/rebuild/.terraform av-bridge-ops/terraform/envs/rebuild/*.tfstate*`.)
    Do not copy `.terraform/`: its cached backend points at production's state key,
    and after editing `backend.tf` `terraform init` would offer to copy that state
    into the rebuild key. Delete the folder after the run; never commit the copy's
@@ -95,9 +96,10 @@ Work on a **scratch copy** of the folder (do not edit `envs/prod` for the rebuil
    nightly runs and notification delivery run: with no Collectors connected it
    would mark every Collector offline and raise alerts, which `internal/notify`
    would send to customers' real email, webhook, Teams and ServiceNow targets.
-   Safer choice: validate the **web** service only and keep the worker at 0. If a
-   worker check is genuinely needed, first disable every channel in the rebuild
-   database only (step 7a) and tell Daniel before starting it.
+   The worker stays at `desired_count = 0` for the whole rebuild, with no
+   exception: the database is a copy of real customer data with live customer
+   notification targets, and there is no safe way here to switch those off.
+   Only the web service is validated.
 
 If any of these edits is not done, stop: a rebuild that silently reuses a
 production name or state is worse than none.
@@ -191,20 +193,7 @@ production name or state is worse than none.
    - Row counts (customers, devices, telemetry_daily) must match the snapshot
      time, using the check from [restore-rehearsal.md](restore-rehearsal.md)
      pointed at the rebuild instance. Record them.
-7a. **Only if the worker will be started** (otherwise skip): disable every
-   notification channel in the rebuild database, with the one-off task method of
-   [restore-rehearsal.md](restore-rehearsal.md) pointed at the rebuild instance
-   (keep its host-swap guard and the `inet_server_addr()` check, and stop if the
-   address equals production's). Run as `app_admin` (bypasses row-level security),
-   against the rebuild host only:
-   ```sql
-   UPDATE notification_channels SET enabled = false;  -- email, teams, webhook, servicenow
-   ```
-   Also review other outbound settings that may hold customer endpoints (for
-   example audit webhook URLs and the ServiceNow settings added in
-   `av-bridge-cloud/internal/db/migrations/0048_servicenow_channel.sql`); if you
-   cannot disable them all with certainty, keep the worker at 0.
-7b. **Pre-start check (always).** Print the rebuild task definitions' settings and
+7a. **Pre-start check (always).** Print the rebuild task definitions' settings and
    confirm them before any service starts:
    ```sh
    for f in web worker; do
@@ -245,11 +234,14 @@ production name or state is worse than none.
    - the portal (Amplify app `avrmm-rb-portal`) deployed and loads;
    - the API answers an authenticated read (use a read-only token created in the
      rebuild database; do not reuse a production customer's token);
-   - the web tasks log no start-up errors (`aws logs tail /ecs/avrmm-rb-web-cloud --since 30m`); the worker is not started, so worker behaviour (nightly runs, Collector tunnel) is not validated here unless step 7a was done;
+   - the web tasks log no start-up errors (`aws logs tail /ecs/avrmm-rb-web-cloud --since 30m`); the worker is never started, so worker behaviour (nightly runs, Collector tunnel) is not validated by this runbook;
    - the migrations ran and the schema version matches production;
-   - alarms exist (`aws cloudwatch describe-alarms --alarm-name-prefix avrmm-rb`).
+   - alarms exist (`aws cloudwatch describe-alarms --profile avrmm-prod --region eu-west-2 --alarm-name-prefix avrmm-rb`). The rebuild's worker running-tasks
+     alarm (and worker healthy-hosts) will go to `ALARM` because the worker is at 0:
+     expected. It emails the rebuild's own alert topic (the test address), not
+     customers.
    Do **not** enrol real Collectors or let the rebuild reach customer devices or
-   contact customers. The settings were checked in step 7b (they are copied from
+   contact customers. The settings were checked in step 7a (they are copied from
    production, where nightly power commands and email are live). The rebuild
    database holds real customer data, so keep access to yourself and delete it the
    same day.
@@ -285,8 +277,10 @@ production name or state is worse than none.
     ```sh
     aws rds delete-db-snapshot --profile avrmm-prod --region eu-west-2 --db-snapshot-identifier "$SNAP"
     KEY=envs/rebuild-YYYYMMDD/main.tfstate
-    case "$KEY" in envs/rebuild-*) ;; *) echo "refusing: $KEY"; exit 1;; esac
-    aws s3 rm "s3://avrmm-tf-state-prod/$KEY" --profile avrmm-prod
+    case "$KEY" in
+      envs/rebuild-*) aws s3 rm "s3://avrmm-tf-state-prod/$KEY" --profile avrmm-prod ;;
+      *) echo "refusing: $KEY" ;;
+    esac
     ```
     Only delete the state after `terraform state list` in the rebuild folder is
     empty. Delete the scratch copy of the folder.

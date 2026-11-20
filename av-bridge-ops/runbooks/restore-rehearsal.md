@@ -43,21 +43,21 @@ the closing marker starts in column 0.
    for the commands below.
 2. No other rehearsal instance exists:
    ```sh
-   aws rds describe-db-instances --query 'DBInstances[?starts_with(DBInstanceIdentifier,`avrmm-prod-restore`)].DBInstanceIdentifier' --output text
+   aws rds describe-db-instances --profile avrmm-prod --region eu-west-2 --query 'DBInstances[?starts_with(DBInstanceIdentifier,`avrmm-prod-restore`)].DBInstanceIdentifier' --output text
    ```
    Expected: empty.
 3. Backups exist and the window is covered:
    ```sh
-   aws rds describe-db-instances --db-instance-identifier avrmm-prod-postgres \
+   aws rds describe-db-instances --profile avrmm-prod --region eu-west-2 --db-instance-identifier avrmm-prod-postgres \
      --query 'DBInstances[0].[BackupRetentionPeriod,LatestRestorableTime]' --output text
-   aws rds describe-db-snapshots --db-instance-identifier avrmm-prod-postgres --snapshot-type automated \
+   aws rds describe-db-snapshots --profile avrmm-prod --region eu-west-2 --db-instance-identifier avrmm-prod-postgres --snapshot-type automated \
      --query 'DBSnapshots[].[DBSnapshotIdentifier,SnapshotCreateTime,Status]' --output text
    ```
    Expected: retention `35`; `LatestRestorableTime` within about 5 minutes of now;
    automated snapshots `available`.
 4. Capture the production facts used later:
    ```sh
-   aws rds describe-db-instances --db-instance-identifier avrmm-prod-postgres \
+   aws rds describe-db-instances --profile avrmm-prod --region eu-west-2 --db-instance-identifier avrmm-prod-postgres \
      --query 'DBInstances[0].[DBInstanceClass,DBSubnetGroup.DBSubnetGroupName,VpcSecurityGroups[0].VpcSecurityGroupId,DBParameterGroups[0].DBParameterGroupName]' --output text
    ```
    Expected today: `db.t4g.medium avrmm-prod-db sg-0dc5eb729b72a94cd avrmm-prod-db-pg16`.
@@ -73,10 +73,10 @@ the closing marker starts in column 0.
    ```sh
    RID=avrmm-prod-restore-$(date -u +%Y%m%d)
    # Data point for RPO, read just before the restore request:
-   aws rds describe-db-instances --db-instance-identifier avrmm-prod-postgres \
+   aws rds describe-db-instances --profile avrmm-prod --region eu-west-2 --db-instance-identifier avrmm-prod-postgres \
      --query 'DBInstances[0].LatestRestorableTime' --output text
    T0=$(date -u +%s); echo "start $(date -u +%FT%TZ)"
-   aws rds restore-db-instance-to-point-in-time \
+   aws rds restore-db-instance-to-point-in-time --profile avrmm-prod --region eu-west-2 \
      --source-db-instance-identifier avrmm-prod-postgres \
      --target-db-instance-identifier "$RID" \
      --use-latest-restorable-time \
@@ -96,15 +96,15 @@ the closing marker starts in column 0.
    restore with `--use-latest-restorable-time` recovers to about that point.
 3. Wait until available, then stop the clock:
    ```sh
-   aws rds wait db-instance-available --db-instance-identifier "$RID"
+   aws rds wait --profile avrmm-prod --region eu-west-2 db-instance-available --db-instance-identifier "$RID"
    T1=$(date -u +%s); echo "restore took $(( (T1-T0)/60 )) min"
-   aws rds describe-db-instances --db-instance-identifier "$RID" \
+   aws rds describe-db-instances --profile avrmm-prod --region eu-west-2 --db-instance-identifier "$RID" \
      --query 'DBInstances[0].[DBInstanceStatus,PubliclyAccessible,MultiAZ,Endpoint.Address]' --output text
    ```
    Expected: `available False False <endpoint>`. The elapsed minutes are the
    measured RTO for the database restore (add the time to repoint services in a
    real incident). If `wait` times out (it polls for about 60 minutes), check
-   `aws rds describe-events --source-type db-instance --source-identifier "$RID" --duration 120`.
+   `aws rds describe-events --profile avrmm-prod --region eu-west-2 --source-type db-instance --source-identifier "$RID" --duration 120`.
 
 ### B. Check the data from inside the VPC
 
@@ -132,11 +132,11 @@ the closing marker starts in column 0.
    Then the task definition. The secret reference is copied from the live worker
    task definition so it is never typed here:
    ```sh
-   EXEC_ROLE=$(aws ecs describe-task-definition --task-definition avrmm-prod-worker-cloud \
+   EXEC_ROLE=$(aws ecs describe-task-definition --profile avrmm-prod --region eu-west-2 --task-definition avrmm-prod-worker-cloud \
      --query 'taskDefinition.executionRoleArn' --output text)
-   SECRET_REF=$(aws ecs describe-task-definition --task-definition avrmm-prod-worker-cloud \
+   SECRET_REF=$(aws ecs describe-task-definition --profile avrmm-prod --region eu-west-2 --task-definition avrmm-prod-worker-cloud \
      --query 'taskDefinition.containerDefinitions[0].secrets[?name==`DATABASE_ADMIN_URL`].valueFrom' --output text)
-   RESTORE_HOST=$(aws rds describe-db-instances --db-instance-identifier "$RID" \
+   RESTORE_HOST=$(aws rds describe-db-instances --profile avrmm-prod --region eu-west-2 --db-instance-identifier "$RID" \
      --query 'DBInstances[0].Endpoint.Address' --output text)
    cat > restore-check-taskdef.json <<JSON
    {
@@ -159,7 +159,7 @@ the closing marker starts in column 0.
      }]
    }
    JSON
-   aws ecs register-task-definition --cli-input-json file://restore-check-taskdef.json \
+   aws ecs register-task-definition --profile avrmm-prod --region eu-west-2 --cli-input-json file://restore-check-taskdef.json \
      --query 'taskDefinition.taskDefinitionArn' --output text
    ```
    Expected: an ARN ending `avrmm-prod-restore-check:1`. The script and JSON
@@ -168,12 +168,12 @@ the closing marker starts in column 0.
 5. Run it once on the production network (no public IP, same subnets and group as
    the services) and wait:
    ```sh
-   TASK=$(aws ecs run-task --cluster avrmm-prod-cluster --launch-type FARGATE \
+   TASK=$(aws ecs run-task --profile avrmm-prod --region eu-west-2 --cluster avrmm-prod-cluster --launch-type FARGATE \
      --task-definition avrmm-prod-restore-check \
      --network-configuration 'awsvpcConfiguration={subnets=[subnet-00077fa04c31e6e0c,subnet-07f7319705cb348f3,subnet-0ff63068b8f582fa6],securityGroups=[sg-0e25328a456001dfe],assignPublicIp=DISABLED}' \
      --query 'tasks[0].taskArn' --output text)
-   aws ecs wait tasks-stopped --cluster avrmm-prod-cluster --tasks "$TASK"
-   aws ecs describe-tasks --cluster avrmm-prod-cluster --tasks "$TASK" \
+   aws ecs wait --profile avrmm-prod --region eu-west-2 tasks-stopped --cluster avrmm-prod-cluster --tasks "$TASK"
+   aws ecs describe-tasks --profile avrmm-prod --region eu-west-2 --cluster avrmm-prod-cluster --tasks "$TASK" \
      --query 'tasks[0].[stopCode,containers[0].exitCode,stoppedReason]' --output text
    ```
    Expected: exit code `0`. If the task stops with an image-pull error, the NAT
@@ -181,7 +181,7 @@ the closing marker starts in column 0.
    repo you create temporarily and use that image instead.
 6. Read the output (the task id is the last part of the task ARN):
    ```sh
-   aws logs get-log-events --log-group-name /ecs/avrmm-prod-worker-cloud \
+   aws logs get-log-events --profile avrmm-prod --region eu-west-2 --log-group-name /ecs/avrmm-prod-worker-cloud \
      --log-stream-name "restore-check/psql/${TASK##*/}" --query 'events[].message' --output text
    ```
    Expected: two blocks, the restored host and `prod`, each with a `server_addr`
@@ -201,18 +201,21 @@ the closing marker starts in column 0.
    protection on):
    ```sh
    # If the shell restarted, recover RID from the instance list (pre-check 2 query):
-   #   aws rds describe-db-instances --query 'DBInstances[?starts_with(DBInstanceIdentifier,`avrmm-prod-restore-`)].DBInstanceIdentifier' --output text
-   case "$RID" in avrmm-prod-restore-2*) ;; *) echo "refusing: $RID"; exit 1;; esac
-   aws rds delete-db-instance --db-instance-identifier "$RID" \
-     --skip-final-snapshot --delete-automated-backups \
-     --query 'DBInstance.DBInstanceStatus' --output text
-   aws rds wait db-instance-deleted --db-instance-identifier "$RID"
+   #   aws rds describe-db-instances --profile avrmm-prod --region eu-west-2 --query 'DBInstances[?starts_with(DBInstanceIdentifier,`avrmm-prod-restore-`)].DBInstanceIdentifier' --output text
+   case "$RID" in
+     avrmm-prod-restore-2*)
+       aws rds delete-db-instance --profile avrmm-prod --region eu-west-2 --db-instance-identifier "$RID" \
+         --skip-final-snapshot --delete-automated-backups \
+         --query 'DBInstance.DBInstanceStatus' --output text
+       aws rds wait --profile avrmm-prod --region eu-west-2 db-instance-deleted --db-instance-identifier "$RID" ;;
+     *) echo "refusing: $RID" ;;
+   esac
    ```
 8. Confirm deletion and remove the helper files:
    ```sh
-   aws rds describe-db-instances --db-instance-identifier "$RID" 2>&1 | head -2
-   aws rds describe-db-instances --query 'DBInstances[].DBInstanceIdentifier' --output text
-   aws ecs deregister-task-definition --task-definition avrmm-prod-restore-check:1 >/dev/null
+   aws rds describe-db-instances --profile avrmm-prod --region eu-west-2 --db-instance-identifier "$RID" 2>&1 | head -2
+   aws rds describe-db-instances --profile avrmm-prod --region eu-west-2 --query 'DBInstances[].DBInstanceIdentifier' --output text
+   aws ecs deregister-task-definition --profile avrmm-prod --region eu-west-2 --task-definition avrmm-prod-restore-check:1 >/dev/null
    rm -f restore-check-taskdef.json restore-check.sh
    ```
    Expected: `DBInstanceNotFound` for `$RID`; the instance list shows only

@@ -20,17 +20,17 @@ Related: [restore-rehearsal.md](restore-rehearsal.md),
 1. `aws sso login --profile avrmm-prod`; `export AWS_PROFILE=avrmm-prod AWS_REGION=eu-west-2`.
 2. The instance is Multi-AZ and available, with a standby:
    ```sh
-   aws rds describe-db-instances --db-instance-identifier avrmm-prod-postgres \
+   aws rds describe-db-instances --profile avrmm-prod --region eu-west-2 --db-instance-identifier avrmm-prod-postgres \
      --query 'DBInstances[0].[DBInstanceStatus,MultiAZ,AvailabilityZone,SecondaryAvailabilityZone]' --output text
    ```
    Expected: `available True <az-a> <az-b>`. Note the primary AZ.
 3. Services are healthy and no alarm is firing:
    ```sh
    curl -fsS https://api.involvecloud.com/healthz
-   aws ecs describe-services --cluster avrmm-prod-cluster \
+   aws ecs describe-services --profile avrmm-prod --region eu-west-2 --cluster avrmm-prod-cluster \
      --services avrmm-prod-web-cloud avrmm-prod-worker-cloud \
      --query 'services[].[serviceName,runningCount,desiredCount]' --output text
-   aws cloudwatch describe-alarms --alarm-name-prefix avrmm-prod --state-value ALARM \
+   aws cloudwatch describe-alarms --profile avrmm-prod --region eu-west-2 --alarm-name-prefix avrmm-prod --state-value ALARM \
      --query 'MetricAlarms[].AlarmName' --output text
    ```
    Expected: healthz OK, web `2 2`, worker `1 1`, no alarms.
@@ -40,7 +40,7 @@ Related: [restore-rehearsal.md](restore-rehearsal.md),
    `avrmm-prod-alerts` and the `avrmm-prod-rds-events` subscription: categories
    failure, failover, low storage) and that the subscription is confirmed:
    ```sh
-   aws sns list-subscriptions-by-topic \
+   aws sns list-subscriptions-by-topic --profile avrmm-prod --region eu-west-2 \
      --topic-arn arn:aws:sns:eu-west-2:568339496641:avrmm-prod-alerts \
      --query 'Subscriptions[].[Protocol,SubscriptionArn]' --output text
    ```
@@ -69,14 +69,14 @@ Related: [restore-rehearsal.md](restore-rehearsal.md),
 2. **CUSTOMER-VISIBLE.** Start the failover and note the time:
    ```sh
    date -u +%FT%TZ
-   aws rds reboot-db-instance --db-instance-identifier avrmm-prod-postgres \
+   aws rds reboot-db-instance --profile avrmm-prod --region eu-west-2 --db-instance-identifier avrmm-prod-postgres \
      --force-failover \
      --query 'DBInstance.DBInstanceStatus' --output text
    ```
    Expected: `rebooting`.
 3. Watch RDS events until the failover completes (about 1 to 2 minutes):
    ```sh
-   aws rds describe-events --source-type db-instance \
+   aws rds describe-events --profile avrmm-prod --region eu-west-2 --source-type db-instance \
      --source-identifier avrmm-prod-postgres --duration 30 \
      --query 'Events[].[Date,Message]' --output text
    ```
@@ -90,8 +90,8 @@ Related: [restore-rehearsal.md](restore-rehearsal.md),
    RDS events from step 3 (failover started and completed times) and the ALB 5xx
    count from the targets over the window:
    ```sh
-   LB=$(aws elbv2 describe-load-balancers --query 'LoadBalancers[?contains(LoadBalancerName,`avrmm-prod`)].LoadBalancerArn' --output text | sed 's#.*:loadbalancer/##')
-   aws cloudwatch get-metric-statistics --namespace AWS/ApplicationELB \
+   LB=$(aws elbv2 describe-load-balancers --profile avrmm-prod --region eu-west-2 --query 'LoadBalancers[?contains(LoadBalancerName,`avrmm-prod`)].LoadBalancerArn' --output text | sed 's#.*:loadbalancer/##')
+   aws cloudwatch get-metric-statistics --profile avrmm-prod --region eu-west-2 --namespace AWS/ApplicationELB \
      --metric-name HTTPCode_Target_5XX_Count --dimensions Name=LoadBalancer,Value="$LB" \
      --start-time <start-time-minus-5m> --end-time <end-time-plus-5m> --period 60 \
      --statistics Sum --query 'sort_by(Datapoints,&Timestamp)[].[Timestamp,Sum]' --output text
@@ -99,17 +99,17 @@ Related: [restore-rehearsal.md](restore-rehearsal.md),
    Record the minutes with 5xx errors next to the probe's outage.
 5. Check the instance is available in the other zone:
    ```sh
-   aws rds describe-db-instances --db-instance-identifier avrmm-prod-postgres \
+   aws rds describe-db-instances --profile avrmm-prod --region eu-west-2 --db-instance-identifier avrmm-prod-postgres \
      --query 'DBInstances[0].[DBInstanceStatus,AvailabilityZone,SecondaryAvailabilityZone]' --output text
    ```
    Expected: `available`, and the two zones swapped compared with pre-check 2.
 6. Check the application reconnected without a restart:
    ```sh
-   aws ecs describe-services --cluster avrmm-prod-cluster \
+   aws ecs describe-services --profile avrmm-prod --region eu-west-2 --cluster avrmm-prod-cluster \
      --services avrmm-prod-web-cloud avrmm-prod-worker-cloud \
      --query 'services[].[serviceName,runningCount,desiredCount,deployments[0].rolloutState]' --output text
-   aws logs tail /ecs/avrmm-prod-web-cloud --since 15m | grep -i -E "error|connection|reset|refused" | tail -20
-   aws logs tail /ecs/avrmm-prod-worker-cloud --since 15m | grep -i -E "error|connection|reset|refused" | tail -20
+   aws logs tail --profile avrmm-prod --region eu-west-2 /ecs/avrmm-prod-web-cloud --since 15m | grep -i -E "error|connection|reset|refused" | tail -20
+   aws logs tail --profile avrmm-prod --region eu-west-2 /ecs/avrmm-prod-worker-cloud --since 15m | grep -i -E "error|connection|reset|refused" | tail -20
    ```
    Expected: counts unchanged (`2 2`, `1 1`), no task replacement, errors only
    within the failover window and none afterwards. Also check the Collectors list
@@ -130,7 +130,7 @@ Related: [restore-rehearsal.md](restore-rehearsal.md),
   The old primary comes back as the standby, so there is nothing to undo.
 - Abort before step 2 if a pre-check fails.
 - If the services do not recover within 10 minutes: force a new deployment of
-  worker then web (`aws ecs update-service --cluster avrmm-prod-cluster --service <name> --force-new-deployment`),
+  worker then web (`aws ecs update-service --profile avrmm-prod --region eu-west-2 --cluster avrmm-prod-cluster --service <name> --force-new-deployment`),
   look at the logs, and treat it as an incident; record it below. If the database
   itself is unhealthy, see [restore-rehearsal.md](restore-rehearsal.md) for the
   restore method.
