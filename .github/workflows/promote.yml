@@ -78,7 +78,11 @@ jobs:
             echo "git tag ${VERSION} not found; the portal cannot be matched to it" >&2
             exit 1
           fi
-          echo "OK: tag ${VERSION} -> ${commit}"
+          if ! git merge-base --is-ancestor "${commit}" origin/main; then
+            echo "tag ${VERSION} (${commit}) is not on main; only releases merged to main can be promoted" >&2
+            exit 1
+          fi
+          echo "OK: tag ${VERSION} -> ${commit} (on main)"
 
       # ---- UAT account: confirm and pull the image ----
       - uses: aws-actions/configure-aws-credentials@v4
@@ -105,6 +109,19 @@ jobs:
           set -euo pipefail
           docker pull "${UAT_ECR_REPO}:${VERSION}"
 
+      - name: Check the pulled image is this version
+        run: |
+          set -euo pipefail
+          # The image is distroless (no shell), so copy the file out.
+          cid="$(docker create "${UAT_ECR_REPO}:${VERSION}")"
+          trap 'docker rm -f "${cid}" >/dev/null' EXIT
+          docker cp "${cid}:/downloads/manifest.json" "${RUNNER_TEMP}/manifest.json"
+          m="${RUNNER_TEMP}/manifest.json"
+          echo "manifest version=$(jq -r '.version' "${m}")"
+          jq -e --arg t "${VERSION}" '.version==$t' "${m}" >/dev/null \
+            || { echo "image manifest version does not match ${VERSION}; refusing to promote" >&2; exit 1; }
+          echo "manifest OK: version ${VERSION}"
+
       # ---- Production account from here on ----
       - uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -115,12 +132,37 @@ jobs:
       - name: Snapshot the production database
         run: |
           set -euo pipefail
-          # RDS identifiers allow letters, digits and hyphens only.
-          snap="avrmm-prod-pre-${VERSION//./-}"
-          if aws rds describe-db-snapshots \
-              --db-snapshot-identifier "${snap}" >/dev/null 2>&1; then
-            echo "Snapshot ${snap} already exists (earlier attempt); reusing it"
+          # RDS identifiers allow letters, digits and hyphens only (start with
+          # a letter, no double or trailing hyphen). Base: avrmm-prod-pre-v1-0-96.
+          # Every snapshot gets -YYYYMMDDHHMM, which keeps the cleanup prefix
+          # and makes a re-promotion of the same version a fresh snapshot.
+          base="avrmm-prod-pre-${VERSION//./-}"
+          recent="$(date -u -d '6 hours ago' +%Y-%m-%dT%H:%M:%S)"
+          list="$(aws rds describe-db-snapshots \
+            --db-instance-identifier "${PROD_DB}" \
+            --snapshot-type manual \
+            --query 'DBSnapshots[].[DBSnapshotIdentifier,SnapshotCreateTime]' \
+            --output text)"
+          snap=""
+          while IFS=$'\t' read -r id created; do
+            [ -n "${id}" ] || continue
+            case "${id}" in
+              "${base}"-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]) ;;
+              *) continue ;;
+            esac
+            case "${created}" in
+              [0-9][0-9][0-9][0-9]-*) ;;
+              *) created="9999" ;; # still being created: an earlier attempt's own
+            esac
+            if [[ "${created}" > "${recent}" ]]; then
+              snap="${id}"
+              break
+            fi
+          done <<< "${list}"
+          if [ -n "${snap}" ]; then
+            echo "Recent snapshot ${snap} exists (earlier attempt, under 6 hours old); reusing it"
           else
+            snap="${base}-$(date -u +%Y%m%d%H%M)"
             echo "Creating snapshot ${snap}"
             aws rds create-db-snapshot \
               --db-instance-identifier "${PROD_DB}" \
@@ -128,6 +170,7 @@ jobs:
               --query 'DBSnapshot.Status' --output text
           fi
           aws rds wait db-snapshot-available --db-snapshot-identifier "${snap}"
+          echo "SNAPSHOT_ID=${snap}" >> "${GITHUB_ENV}"
           echo "Snapshot ${snap} is available"
 
       - name: Delete pre-release snapshots older than 365 days
@@ -136,7 +179,13 @@ jobs:
           cutoff="$(date -u -d '365 days ago' +%Y-%m-%dT%H:%M:%S)"
           echo "Cutoff: ${cutoff}"
           deleted=0
-          # Text output: identifier <tab> creation time (ISO 8601, UTC).
+          # Captured first so an API failure aborts the step (set -e) instead
+          # of reading as "Deleted 0". Text: identifier <tab> creation time.
+          list="$(aws rds describe-db-snapshots \
+            --db-instance-identifier "${PROD_DB}" \
+            --snapshot-type manual \
+            --query 'DBSnapshots[].[DBSnapshotIdentifier,SnapshotCreateTime]' \
+            --output text)"
           while IFS=$'\t' read -r id created; do
             [ -n "${id}" ] || continue
             case "${id}" in
@@ -152,16 +201,41 @@ jobs:
               aws rds delete-db-snapshot --db-snapshot-identifier "${id}" >/dev/null
               deleted=$((deleted + 1))
             fi
-          done < <(aws rds describe-db-snapshots \
-            --db-instance-identifier "${PROD_DB}" \
-            --snapshot-type manual \
-            --query 'DBSnapshots[].[DBSnapshotIdentifier,SnapshotCreateTime]' \
-            --output text)
+          done <<< "${list}"
           echo "Deleted ${deleted} old snapshot(s)"
 
       - uses: aws-actions/amazon-ecr-login@v2
 
+      - name: Record the current production image (for rollback)
+        id: prev
+        run: |
+          set -euo pipefail
+          if ! out="$(aws ecr describe-images \
+              --repository-name avrmm-prod-cloud \
+              --image-ids imageTag=latest \
+              --query 'imageDetails[0].[imageDigest,join(`,`,imageTags)]' \
+              --output text 2>&1)"; then
+            if printf '%s' "${out}" | grep -q 'ImageNotFoundException'; then
+              echo "No previous :latest in avrmm-prod-cloud (first promotion)"
+              echo "PREV_DIGEST=none" >> "${GITHUB_ENV}"
+              echo "PREV_TAGS=" >> "${GITHUB_ENV}"
+              exit 0
+            fi
+            echo "could not read the current :latest: ${out}" >&2
+            exit 1
+          fi
+          digest="$(printf '%s' "${out}" | cut -f1)"
+          tags="$(printf '%s' "${out}" | cut -f2)"
+          printf '%s' "${digest}" | grep -Eq '^sha256:[0-9a-f]{64}$' \
+            || { echo "unexpected digest: ${digest}" >&2; exit 1; }
+          # Keep only plain tag characters before it goes anywhere else.
+          tags="$(printf '%s' "${tags}" | tr -cd 'A-Za-z0-9._,-')"
+          echo "Current :latest digest ${digest}, tags ${tags}"
+          echo "PREV_DIGEST=${digest}" >> "${GITHUB_ENV}"
+          echo "PREV_TAGS=${tags}" >> "${GITHUB_ENV}"
+
       - name: Push the image to production
+        id: push
         run: |
           set -euo pipefail
           docker tag "${UAT_ECR_REPO}:${VERSION}" "${PROD_ECR_REPO}:${VERSION}"
@@ -210,3 +284,36 @@ jobs:
           echo "Pushing ${commit} (${VERSION}) to refs/heads/release"
           git push origin "${commit}:refs/heads/release" --force
           echo "release branch now at ${commit}"
+
+      - name: Rollback instructions
+        if: failure() && steps.push.outcome != 'skipped'
+        run: |
+          set -euo pipefail
+          {
+            echo "## Promotion of ${VERSION} failed after the image push started"
+            echo
+            echo "Production :latest may now point at ${VERSION}."
+            if [ "${PREV_DIGEST:-none}" = "none" ] || [ -z "${PREV_DIGEST:-}" ]; then
+              echo
+              echo "There was no previous :latest in avrmm-prod-cloud (first promotion), so there is no image to roll back to. Fix forward."
+            else
+              echo
+              echo "Previous image: ${PREV_DIGEST} (tags: ${PREV_TAGS:-none})."
+              echo
+              echo "Roll back with prod credentials in ${AWS_REGION}. ECR has no retag command, so :latest is re-pointed by putting the old manifest back:"
+              echo
+              echo '```sh'
+              echo "aws ecr batch-get-image --repository-name avrmm-prod-cloud \\"
+              echo "  --image-ids imageDigest=${PREV_DIGEST} \\"
+              echo "  --query 'images[0].imageManifest' --output text > prev-manifest.json"
+              echo "aws ecr put-image --repository-name avrmm-prod-cloud --image-tag latest \\"
+              echo "  --image-manifest file://prev-manifest.json"
+              echo "aws ecs update-service --cluster ${PROD_CLUSTER} --service ${PROD_WORKER_SERVICE} --force-new-deployment"
+              echo "aws ecs wait services-stable --cluster ${PROD_CLUSTER} --services ${PROD_WORKER_SERVICE}"
+              echo "aws ecs update-service --cluster ${PROD_CLUSTER} --service ${PROD_WEB_SERVICE} --force-new-deployment"
+              echo "aws ecs wait services-stable --cluster ${PROD_CLUSTER} --services ${PROD_WEB_SERVICE}"
+              echo '```'
+            fi
+            echo
+            echo "Database snapshot taken before this release: ${SNAPSHOT_ID:-unknown} (restore only if a migration damaged data)."
+          } | tee -a "${GITHUB_STEP_SUMMARY}"
