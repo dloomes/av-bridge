@@ -64,10 +64,15 @@ const viscaReplyHeader byte = 0x90
 // The VISCA packet terminator.
 const viscaTerminator byte = 0xFF
 
+// viscaMaxPayload is the most a VISCA message can carry (16 bytes, header
+// to terminator). Anything built from operator input is checked against it
+// before it reaches encodeViscaIP.
+const viscaMaxPayload = 16
+
 // encodeViscaIP wraps a raw VISCA payload (starting with 0x81, ending with
 // 0xFF) in the 8-byte over-IP transport header.
 func encodeViscaIP(payloadType uint16, seq uint32, payload []byte) []byte {
-	if len(payload) < 1 || len(payload) > 16 {
+	if len(payload) < 1 || len(payload) > viscaMaxPayload {
 		// Callers are internal — this would only fire on a programming
 		// mistake, so a panic is more honest than an error return that
 		// nothing checks. VISCA payload is always 3–16 bytes in practice.
@@ -75,7 +80,7 @@ func encodeViscaIP(payloadType uint16, seq uint32, payload []byte) []byte {
 	}
 	buf := make([]byte, 8+len(payload))
 	binary.BigEndian.PutUint16(buf[0:2], payloadType)
-	binary.BigEndian.PutUint16(buf[2:4], uint16(len(payload))) // #nosec G115 -- the guard above panics unless 1 <= len(payload) <= 16
+	binary.BigEndian.PutUint16(buf[2:4], uint16(len(payload))) // #nosec G115 -- the guard above panics unless 1 <= len(payload) <= 16; roundTrip and parseHexBytes refuse longer payloads with an error first
 	binary.BigEndian.PutUint32(buf[4:8], seq)
 	copy(buf[8:], payload)
 	return buf

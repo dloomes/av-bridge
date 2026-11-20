@@ -594,19 +594,16 @@ func (h *EntraCustomerHandler) SetBrandedDomain(d string) *EntraCustomerHandler 
 func (h *EntraCustomerHandler) redirectSignInError(w http.ResponseWriter, r *http.Request, slug, code string) {
 	base := strings.TrimRight(h.portalBaseURL, "/")
 	if base == "" {
-		// Dev fallback — the same scheme+host the callback came in on.
+		// Dev fallback — the same scheme+host the callback came in on
+		// (the request's own Host; X-Forwarded-Host is client-supplied).
 		scheme := "https"
 		if p := r.Header.Get("X-Forwarded-Proto"); p != "" {
 			scheme = p
 		} else if r.TLS == nil {
 			scheme = "http"
 		}
-		host := r.Host
-		if hv := r.Header.Get("X-Forwarded-Host"); hv != "" {
-			host = hv
-		}
-		base = scheme + "://" + host
+		base = scheme + "://" + r.Host
 	}
 	target := brandurl.Origin(base, h.brandedDomain, slug) + "/sign-in?entra_error=" + url.QueryEscape(code)
-	http.Redirect(w, r, target, http.StatusFound) // #nosec G710 -- target is brandurl.Origin of the configured ENTRA_PORTAL_BASE_URL (set by terraform in deployed environments) and the customer slug from our DB; the request-derived fallback is for local dev only and its headers cannot be set by a third party on a browser navigation; path fixed, query value escaped
+	http.Redirect(w, r, target, http.StatusFound) // #nosec G710 -- target is brandurl.Origin of the configured ENTRA_PORTAL_BASE_URL (set by terraform in deployed environments) and the customer slug from our DB; the fallback (local dev only) uses the request's own Host, never X-Forwarded-Host; path fixed, query value escaped
 }

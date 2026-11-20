@@ -173,13 +173,10 @@ func (h *Handler) redirectMagicError(w http.ResponseWriter, r *http.Request, cod
 		} else if r.TLS == nil {
 			scheme = "http"
 		}
-		host := r.Host
-		if hv := r.Header.Get("X-Forwarded-Host"); hv != "" {
-			host = hv
-		}
-		base = scheme + "://" + host
+		// The request's own Host: X-Forwarded-Host is client-supplied.
+		base = scheme + "://" + r.Host
 	}
-	http.Redirect(w, r, // #nosec G710 -- target origin is the configured ENTRA_PORTAL_BASE_URL in deployed environments (terraform); the request-derived fallback is for local dev only and its headers cannot be set by a third party on a browser navigation; path is fixed and the query value escaped
+	http.Redirect(w, r, // #nosec G710 -- target origin is the configured ENTRA_PORTAL_BASE_URL in deployed environments (terraform); the fallback (local dev only) uses the request's own Host, never X-Forwarded-Host; path is fixed and the query value escaped
 		base+"/sign-in?magic_error="+url.QueryEscape(code),
 		http.StatusFound)
 }

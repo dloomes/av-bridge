@@ -223,6 +223,9 @@ func (a *ViscaOverIPAdapter) roundTrip(ctx context.Context, payloadType uint16, 
 	if a.conn == nil {
 		return nil, fmt.Errorf("visca_over_ip: not connected")
 	}
+	if len(payload) < 1 || len(payload) > viscaMaxPayload {
+		return nil, fmt.Errorf("visca_over_ip: command is %d bytes; VISCA allows 1 to %d", len(payload), viscaMaxPayload)
+	}
 
 	seq := a.seq.Add(1)
 	ch := make(chan viscaReply, 1)
@@ -748,6 +751,9 @@ func parseHexBytes(s string) ([]byte, error) {
 	}
 	if len(out) < 3 || out[0] != viscaCmdHeader || out[len(out)-1] != viscaTerminator {
 		return nil, fmt.Errorf("visca_over_ip: raw command must start with 81 and end with FF")
+	}
+	if len(out) > viscaMaxPayload {
+		return nil, fmt.Errorf("visca_over_ip: raw command is %d bytes; VISCA allows at most %d", len(out), viscaMaxPayload)
 	}
 	return out, nil
 }
