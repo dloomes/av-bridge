@@ -65,7 +65,7 @@ func NewFakeAdapter(cfg config.DeviceConfig) *FakeAdapter {
 		metricsCount: 5,
 		// Seed from the device id so runs are deterministic per-device
 		// but different across the fleet — repeatable load tests.
-		rng: rand.New(rand.NewSource(int64(fnv1a(cfg.ID)))),
+		rng: rand.New(rand.NewSource(int64(fnv1a(cfg.ID)))), // #nosec G404 -- fake adapter for load tests; a deterministic, non-cryptographic seed is the point
 	}
 	if s := cfg.Tags["fake_status"]; s != "" {
 		a.pinnedStatus = device.Status(s)

@@ -782,20 +782,11 @@ func (h *Handler) ImportAssets(w http.ResponseWriter, r *http.Request) {
 	// Cap the upload — a proper CMDB import is tiny (a few thousand rows
 	// at 1KB each is ~2MB). Reject anything larger up front to avoid
 	// runaway parsing.
-	if err := r.ParseMultipartForm(4 << 20); err != nil {
-		writeErr(w, http.StatusBadRequest, "could not parse multipart body")
-		return
-	}
-	file, header, err := r.FormFile("file")
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "file field is required")
+	file, uploaded := csvUpload(w, r)
+	if !uploaded {
 		return
 	}
 	defer file.Close()
-	if header.Size > 4<<20 {
-		writeErr(w, http.StatusBadRequest, "file exceeds 4MB")
-		return
-	}
 
 	rows, err := parseAssetCSV(file)
 	if err != nil {

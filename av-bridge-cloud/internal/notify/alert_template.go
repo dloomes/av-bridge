@@ -5,6 +5,8 @@ import (
 	"html"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 // Alert email templates. Two entry points:
@@ -84,7 +86,7 @@ func renderAlertHTML(evt AlertEvent) string {
 	// effort — Gmail respects display:none, Apple Mail respects hidden,
 	// belt-and-braces both plus a trailing zero-width padding so the
 	// preview doesn't pick up the "AV BRIDGE ALERT" eyebrow.
-	preheaderRaw := fmt.Sprintf("%s alert on %s", strings.Title(strings.ToLower(evt.Severity)), evt.SubjectName())
+	preheaderRaw := fmt.Sprintf("%s alert on %s", titleWords(strings.ToLower(evt.Severity)), evt.SubjectName())
 	if message != "" {
 		preheaderRaw += " — " + message
 	}
@@ -145,6 +147,19 @@ func renderAlertHTML(evt AlertEvent) string {
 
 	b.WriteString(`</table></td></tr></table></body></html>`)
 	return b.String()
+}
+
+// titleWords upper-cases the first letter of each space-separated word
+// ("critical" → "Critical"). It replaces the deprecated strings.Title,
+// which it matches for severities and other plain words.
+func titleWords(s string) string {
+	words := strings.Split(s, " ")
+	for i, w := range words {
+		if r, n := utf8.DecodeRuneInString(w); n > 0 {
+			words[i] = string(unicode.ToTitle(r)) + w[n:]
+		}
+	}
+	return strings.Join(words, " ")
 }
 
 func writeAlertDetailRow(b *strings.Builder, label, value string, mono bool) {

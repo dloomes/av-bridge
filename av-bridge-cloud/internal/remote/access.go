@@ -173,7 +173,7 @@ func (s *Service) proxy(t sessionTarget) http.Handler {
 			// Devices nearly all use self-signed certificates. The hop
 			// from the cloud to the device runs inside the collector's
 			// authenticated tunnel.
-			TLSClientConfig:       &tls.Config{InsecureSkipVerify: true},
+			TLSClientConfig:       &tls.Config{InsecureSkipVerify: true}, // #nosec G402 -- remote-access proxy to a customer device's web UI only: DialContext above always dials the session's device through the Collector tunnel; devices use self-signed certificates
 			MaxIdleConnsPerHost:   6,
 			IdleConnTimeout:       90 * time.Second,
 			ResponseHeaderTimeout: 60 * time.Second,

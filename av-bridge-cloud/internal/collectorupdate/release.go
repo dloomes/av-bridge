@@ -38,7 +38,7 @@ type Release struct {
 // LoadRelease reads the manifest. A missing file returns (nil, nil): the
 // cloud runs fine without a bundled release, it just offers no updates.
 func LoadRelease(path string) (*Release, error) {
-	b, err := os.ReadFile(path)
+	b, err := os.ReadFile(path) // #nosec G304 -- the only caller passes the constant manifest path bundled in the image
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}

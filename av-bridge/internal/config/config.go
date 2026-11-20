@@ -148,7 +148,7 @@ type SubscriptionSpec struct {
 }
 
 func Load(path string) (*Config, error) {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G304 -- operator-supplied -config path
 	if err != nil {
 		return nil, fmt.Errorf("reading config: %w", err)
 	}

@@ -177,6 +177,7 @@ var (
 	// ErrNotFound is an item id that does not exist.
 	ErrNotFound = errors.New("not found")
 	// ErrThemeHasItems refuses removing a theme that still holds items.
+	//lint:ignore ST1005 user-facing sentence returned verbatim as the 409 body and matched by the portal tests
 	ErrThemeHasItems = errors.New("Move or delete this theme's items first.")
 )
 

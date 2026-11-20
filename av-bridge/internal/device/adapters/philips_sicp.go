@@ -423,10 +423,19 @@ func (a *PhilipsSICPAdapter) withConn(ctx context.Context, fn func(*sicpSession)
 	return fn(&sicpSession{conn: conn, id: a.monitorID})
 }
 
+// sicpMaxData is the most Data a frame can carry: MsgSize is one byte and
+// counts itself, Control, Group and the checksum.
+const sicpMaxData = 0xFF - 4
+
 // sicpFrame builds MsgSize | Control | Group(0) | data... | checksum.
+// Callers keep data within sicpMaxData (exchange checks it).
 func sicpFrame(id byte, data ...byte) []byte {
-	f := make([]byte, 0, len(data)+4)
-	f = append(f, byte(len(data)+4), id, 0x00)
+	size := len(data) + 4
+	if size > 0xFF {
+		panic(fmt.Sprintf("sicp: %d data bytes exceed the %d a frame can carry", len(data), sicpMaxData))
+	}
+	f := make([]byte, 0, size)
+	f = append(f, byte(size), id, 0x00)
 	f = append(f, data...)
 	var x byte
 	for _, b := range f {
@@ -439,6 +448,9 @@ func sicpFrame(id byte, data ...byte) []byte {
 // either the report for data[0] or a communication-control report. It
 // retries once when nothing arrives, as the spec allows.
 func (s *sicpSession) exchange(data ...byte) ([]byte, error) {
+	if len(data) > sicpMaxData {
+		return nil, fmt.Errorf("command is %d bytes; a SICP frame carries at most %d", len(data), sicpMaxData)
+	}
 	var lastErr error
 	for attempt := 0; attempt < 2; attempt++ {
 		_ = s.conn.SetWriteDeadline(time.Now().Add(2 * time.Second))

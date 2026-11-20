@@ -104,8 +104,8 @@ func necVolumeCommand(relative bool, value int16) []byte {
 	if relative {
 		mode = 0x01
 	}
-	v := uint16(value)
-	return []byte{0x03, 0x10, 0x00, 0x00, 0x05, 0x05, 0x00, mode, byte(v), byte(v >> 8)}
+	v := uint16(value) // #nosec G115 -- deliberate two's-complement: [030-2] sends the signed 16-bit value's bit pattern
+	return binary.LittleEndian.AppendUint16([]byte{0x03, 0x10, 0x00, 0x00, 0x05, 0x05, 0x00, mode}, v)
 }
 
 // necInputCommands are the input_* buttons: [018] input terminal values
@@ -411,6 +411,7 @@ func (a *NECProjectorAdapter) powerPrecheck(s *necSession, name string) (bool, m
 	if name == "power_on" {
 		switch rs.power {
 		case "cooling":
+			//lint:ignore ST1005 operator-facing sentence shown verbatim in the portal command result, same style as NECError
 			return false, nil, errors.New("Projector is cooling down; it can be switched on once cooling has finished (usually a minute or two)")
 		case "on", "warming":
 			return already()
@@ -419,6 +420,7 @@ func (a *NECProjectorAdapter) powerPrecheck(s *necSession, name string) (bool, m
 	}
 	switch rs.power {
 	case "warming":
+		//lint:ignore ST1005 operator-facing sentence shown verbatim in the portal command result, same style as NECError
 		return false, nil, errors.New("Projector is warming up; switch it off once it has finished starting")
 	case "standby", "cooling":
 		return already()
@@ -454,8 +456,10 @@ func (a *NECProjectorAdapter) explain(name string, err error) error {
 	}
 	switch a.transitionState() {
 	case "warming":
+		//lint:ignore ST1005 operator-facing sentence shown verbatim in the portal command result, same style as NECError
 		return fmt.Errorf("Projector is warming up; try again when it has finished starting (%w)", err)
 	case "cooling":
+		//lint:ignore ST1005 operator-facing sentence shown verbatim in the portal command result, same style as NECError
 		return fmt.Errorf("Projector is cooling down; try again when it has finished (%w)", err)
 	}
 	return err
@@ -510,7 +514,7 @@ func (a *NECProjectorAdapter) resolveCommand(req device.CommandRequest) ([]byte,
 		if err != nil {
 			return nil, err
 		}
-		return necVolumeCommand(false, int16(level)), nil
+		return necVolumeCommand(false, int16(level)), nil // #nosec G115 -- necLevelArg above rejects anything outside 0–100
 	}
 	return nil, fmt.Errorf("nec_projector: unknown command %q", req.Name)
 }
@@ -520,10 +524,12 @@ func necCheckResult(cmd, d []byte) error {
 	switch {
 	case cmd[0] == 0x02 && cmd[1] == 0x03: // [018] DATA01: 00h ok, FFh error (no switch made)
 		if len(d) >= 1 && d[0] != 0x00 {
+			//lint:ignore ST1005 operator-facing sentence shown verbatim in the portal command result, same style as NECError
 			return errors.New("Projector didn't switch input (no signal switch was made)")
 		}
 	case cmd[0] == 0x03 && cmd[1] == 0x10: // [030-x] DATA01-02: 0000h ok
 		if len(d) >= 2 && (d[0] != 0x00 || d[1] != 0x00) {
+			//lint:ignore ST1005 operator-facing sentence shown verbatim in the portal command result, same style as NECError
 			return errors.New("Projector reported the adjustment failed")
 		}
 	}
@@ -970,7 +976,7 @@ func necLampValue(d []byte, content byte) (int, bool) {
 	if len(d) < 6 || d[1] != content {
 		return 0, false
 	}
-	return int(int32(binary.LittleEndian.Uint32(d[2:6]))), true
+	return int(int32(binary.LittleEndian.Uint32(d[2:6]))), true // #nosec G115 -- deliberate signed reinterpretation: [037-4] value is signed 32-bit
 }
 
 // necFilterSeconds reads [037-3]: DATA01-04 filter usage time in seconds
@@ -979,7 +985,7 @@ func necFilterSeconds(d []byte) (int, bool) {
 	if len(d) < 4 {
 		return 0, false
 	}
-	return int(int32(binary.LittleEndian.Uint32(d[0:4]))), true
+	return int(int32(binary.LittleEndian.Uint32(d[0:4]))), true // #nosec G115 -- deliberate signed reinterpretation: [037-3] is signed 32-bit (-1 = not defined)
 }
 
 type necGain struct {
@@ -994,7 +1000,7 @@ func necParseGain(d []byte) (necGain, bool) {
 	if len(d) < 9 {
 		return necGain{}, false
 	}
-	le := func(i int) int { return int(int16(binary.LittleEndian.Uint16(d[i : i+2]))) }
+	le := func(i int) int { return int(int16(binary.LittleEndian.Uint16(d[i : i+2]))) } // #nosec G115 -- deliberate signed reinterpretation: [060-1] fields are signed 16-bit
 	return necGain{status: d[0], upper: le(1), lower: le(3), current: le(7)}, true
 }
 

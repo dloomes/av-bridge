@@ -75,7 +75,7 @@ func encodeViscaIP(payloadType uint16, seq uint32, payload []byte) []byte {
 	}
 	buf := make([]byte, 8+len(payload))
 	binary.BigEndian.PutUint16(buf[0:2], payloadType)
-	binary.BigEndian.PutUint16(buf[2:4], uint16(len(payload)))
+	binary.BigEndian.PutUint16(buf[2:4], uint16(len(payload))) // #nosec G115 -- the guard above panics unless 1 <= len(payload) <= 16
 	binary.BigEndian.PutUint32(buf[4:8], seq)
 	copy(buf[8:], payload)
 	return buf

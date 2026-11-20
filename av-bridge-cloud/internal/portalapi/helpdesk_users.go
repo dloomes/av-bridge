@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -149,11 +150,11 @@ func (h *Handler) HelpdeskUpdateUser(w http.ResponseWriter, r *http.Request) {
 	if req.FullName != nil {
 		v := strings.TrimSpace(*req.FullName)
 		args = append(args, nullIfEmpty(v))
-		set = append(set, "full_name = $"+intToStr(len(args)))
+		set = append(set, "full_name = $"+strconv.Itoa(len(args)))
 	}
 	if req.Role != nil {
 		args = append(args, *req.Role)
-		set = append(set, "role = $"+intToStr(len(args)))
+		set = append(set, "role = $"+strconv.Itoa(len(args)))
 		set = append(set, "role_source = 'manual'")
 	}
 	if req.Disabled != nil {
@@ -165,7 +166,7 @@ func (h *Handler) HelpdeskUpdateUser(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.RoadmapEditor != nil {
 		args = append(args, *req.RoadmapEditor)
-		set = append(set, "roadmap_editor = $"+intToStr(len(args)))
+		set = append(set, "roadmap_editor = $"+strconv.Itoa(len(args)))
 	}
 	if len(set) == 0 {
 		w.WriteHeader(http.StatusNoContent)
@@ -242,16 +243,6 @@ func (h *Handler) HelpdeskDeleteUser(w http.ResponseWriter, r *http.Request) {
 	h.log.Info("helpdesk user deleted", "action", "user.delete", "actor", actor,
 		"target_kind", "user", "target_id", id, "vendor_tenant_id", vendorID)
 	w.WriteHeader(http.StatusNoContent)
-}
-
-// intToStr is a small helper for building parameterised SQL. Kept local
-// so callers don't reach for strconv just to number placeholders.
-func intToStr(n int) string {
-	// Two-digit ceiling is fine — SET lists here never exceed a handful.
-	if n < 10 {
-		return string(rune('0' + n))
-	}
-	return string(rune('0'+n/10)) + string(rune('0'+n%10))
 }
 
 // unused imports guard for pgx — future error branches may want ErrNoRows.

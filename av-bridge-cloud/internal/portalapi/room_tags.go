@@ -493,20 +493,11 @@ type roomTagImportResult struct {
 // Every row is checked first: if any fails, nothing changes (400 with the
 // row errors), as the asset import.
 func (h *Handler) ImportRoomTags(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseMultipartForm(4 << 20); err != nil {
-		writeErr(w, http.StatusBadRequest, "could not parse multipart body")
-		return
-	}
-	file, header, err := r.FormFile("file")
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "file field is required")
+	file, uploaded := csvUpload(w, r)
+	if !uploaded {
 		return
 	}
 	defer file.Close()
-	if header.Size > 4<<20 {
-		writeErr(w, http.StatusBadRequest, "file exceeds 4MB")
-		return
-	}
 	rows, err := parseRoomTagCSV(file)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())

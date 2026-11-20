@@ -77,7 +77,7 @@ func LoadCache(path, hmacSecret string) (devices []config.DeviceConfig, ok bool,
 	if path == "" || hmacSecret == "" {
 		return nil, false, nil
 	}
-	sealed, err := os.ReadFile(path)
+	sealed, err := os.ReadFile(path) // #nosec G304 -- path comes from the Collector's own config; content is HMAC-checked before use
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, false, nil
 	}

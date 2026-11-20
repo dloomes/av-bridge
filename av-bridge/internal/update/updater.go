@@ -181,7 +181,7 @@ func (u *Updater) install(ctx context.Context, inst Instruction) error {
 	if !Verify(inst.Artefact, inst.Version, strings.ToLower(inst.SHA256), inst.Signature) {
 		return errors.New("signature check failed — update rejected")
 	}
-	if err := os.Chmod(tmp, 0o755); err != nil {
+	if err := os.Chmod(tmp, 0o755); err != nil { // #nosec G302 -- signature-verified Collector binary that replaces ExePath; keeps the installers' executable mode
 		return err
 	}
 
@@ -189,7 +189,7 @@ func (u *Updater) install(ctx context.Context, inst Instruction) error {
 	//    this collector's config.
 	vctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(vctx, tmp, "-version").CombinedOutput()
+	out, err := exec.CommandContext(vctx, tmp, "-version").CombinedOutput() // #nosec G204 -- tmp is the updater's own download, SHA-256 and Ed25519 signature verified above; fixed argument
 	if err != nil || !strings.Contains(string(out), inst.Version) {
 		return fmt.Errorf("new binary reports %q, expected %s", strings.TrimSpace(string(out)), inst.Version)
 	}
@@ -197,7 +197,7 @@ func (u *Updater) install(ctx context.Context, inst Instruction) error {
 	if u.cfg.EnvPath != "" {
 		args = append(args, "-env", u.cfg.EnvPath)
 	}
-	if out, err := exec.CommandContext(vctx, tmp, args...).CombinedOutput(); err != nil {
+	if out, err := exec.CommandContext(vctx, tmp, args...).CombinedOutput(); err != nil { // #nosec G204 -- same verified binary; fixed flags plus this Collector's own config/env paths
 		return fmt.Errorf("new version rejects this collector's config: %s", strings.TrimSpace(string(out)))
 	}
 
@@ -239,7 +239,7 @@ func (u *Updater) download(ctx context.Context, url, dest string) (string, error
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
-	f, err := os.OpenFile(dest, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o700)
+	f, err := os.OpenFile(dest, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o700) // #nosec G302 G304 -- dest is the updater's own temp path next to ExePath; owner-only and executable because it becomes the new binary
 	if err != nil {
 		return "", err
 	}
@@ -291,7 +291,7 @@ func writeMarker(dir string, m marker) error {
 }
 
 func readMarker(dir string) (marker, bool) {
-	b, err := os.ReadFile(filepath.Join(dir, markerName))
+	b, err := os.ReadFile(filepath.Join(dir, markerName)) // #nosec G304 -- fixed file name in the operator-configured state dir
 	if err != nil {
 		return marker{}, false
 	}

@@ -70,7 +70,7 @@ func main() {
 
 	m := manifest{Version: *version, Files: map[string]manifestFile{}}
 	for _, path := range flag.Args() {
-		b, err := os.ReadFile(path)
+		b, err := os.ReadFile(path) // #nosec G304 -- release-signing CLI: reads the artefacts named on its own command line
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
@@ -83,7 +83,7 @@ func main() {
 		m.Files[name] = f
 	}
 	b, _ := json.MarshalIndent(m, "", "  ")
-	if err := os.WriteFile(*out, b, 0o644); err != nil {
+	if err := os.WriteFile(*out, b, 0o644); err != nil { // #nosec G306 -- public release manifest (hashes and signatures, no secrets) served from /downloads
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
@@ -113,7 +113,7 @@ func readKey(path string) (ed25519.PrivateKey, error) {
 	if path == "" {
 		return nil, nil
 	}
-	b, err := os.ReadFile(path)
+	b, err := os.ReadFile(path) // #nosec G304 -- release-signing CLI: the key file named by its own -key flag
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}

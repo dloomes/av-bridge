@@ -22,7 +22,7 @@ import (
 // Returns nil (no error) if the file does not exist, so callers can probe for
 // optional defaults without checking os.IsNotExist themselves.
 func LoadEnvFile(path string) error {
-	f, err := os.Open(path)
+	f, err := os.Open(path) // #nosec G304 -- operator-supplied -env path
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil

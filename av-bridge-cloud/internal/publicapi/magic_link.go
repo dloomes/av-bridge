@@ -179,7 +179,7 @@ func (h *Handler) redirectMagicError(w http.ResponseWriter, r *http.Request, cod
 		}
 		base = scheme + "://" + host
 	}
-	http.Redirect(w, r,
+	http.Redirect(w, r, // #nosec G710 -- target origin is the configured ENTRA_PORTAL_BASE_URL in deployed environments (terraform); the request-derived fallback is for local dev only and its headers cannot be set by a third party on a browser navigation; path is fixed and the query value escaped
 		base+"/sign-in?magic_error="+url.QueryEscape(code),
 		http.StatusFound)
 }

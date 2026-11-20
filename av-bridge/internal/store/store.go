@@ -46,7 +46,7 @@ const FlushInterval = 10 * time.Second
 
 // New opens (or creates) the state file at path.
 func New(path string) (*Store, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return nil, fmt.Errorf("creating store dir: %w", err)
 	}
 
@@ -56,7 +56,7 @@ func New(path string) (*Store, error) {
 	}
 
 	// Load existing state if present
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G304 -- operator-configured hub.store_path
 	if err == nil {
 		_ = json.Unmarshal(data, &s.devices)
 	}

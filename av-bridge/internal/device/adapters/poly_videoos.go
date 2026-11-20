@@ -669,17 +669,9 @@ func (a *PolyVideoOSAdapter) Capabilities() device.Capabilities {
 
 // ── HTTP helpers ─────────────────────────────────────────────────────────────
 
-func (a *PolyVideoOSAdapter) get(ctx context.Context, path string) ([]byte, error) {
-	return a.do(ctx, http.MethodGet, path, nil)
-}
-
-func (a *PolyVideoOSAdapter) post(ctx context.Context, path string, body any) ([]byte, error) {
-	return a.do(ctx, http.MethodPost, path, body)
-}
-
 // getWithReauth / postWithReauth / doWithReauth retry once after re-authenticating
 // when the device returns 401. All Poll/SendCommand call sites should use these
-// rather than the bare do/get/post helpers.
+// rather than the bare do helper.
 func (a *PolyVideoOSAdapter) getWithReauth(ctx context.Context, path string) ([]byte, error) {
 	return a.doWithReauth(ctx, http.MethodGet, path, nil)
 }

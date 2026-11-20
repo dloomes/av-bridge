@@ -1,38 +1,13 @@
 package notify_test
 
 import (
-	"context"
 	"testing"
 	"time"
 
-	"github.com/dloomes/av-bridge/internal/config"
 	"github.com/dloomes/av-bridge/internal/device"
 	"github.com/dloomes/av-bridge/internal/notify"
 	"github.com/dloomes/av-bridge/internal/store"
 )
-
-// mockDevice satisfies device.Device for testing
-type mockDevice struct {
-	device.Base
-	id     string
-	status device.Status
-}
-
-func newMockDevice(id string, status device.Status) *mockDevice {
-	cfg := config.DeviceConfig{ID: id, Name: id, Type: "display", Location: "Test"}
-	return &mockDevice{Base: device.NewBase(cfg), id: id, status: status}
-}
-
-func (m *mockDevice) ID() string                  { return m.id }
-func (m *mockDevice) Status() device.Status        { return m.status }
-func (m *mockDevice) Connect(_ context.Context) error  { return nil }
-func (m *mockDevice) Disconnect() error                { return nil }
-func (m *mockDevice) Poll(_ context.Context) (*device.Telemetry, error) {
-	return m.BaseTelemetry(), nil
-}
-func (m *mockDevice) SendCommand(_ context.Context, _ device.CommandRequest) (*device.CommandResponse, error) {
-	return &device.CommandResponse{}, nil
-}
 
 // mockHub satisfies notify.DeviceSource
 type mockHub struct {
@@ -41,16 +16,7 @@ type mockHub struct {
 
 func (h *mockHub) Devices() []device.Device { return h.devs }
 
-// mockCloud captures enqueued events
-type mockCloud struct {
-	events []*device.Event
-}
-
-func (c *mockCloud) EnqueueEvent(e *device.Event) { c.events = append(c.events, e) }
-
-// alertEngine_mock wires a notify.Engine with a mockCloud
-// (we need to extend cloud.Client's interface minimally)
-// Instead we test the store integration directly
+// The engine is tested through its store integration directly.
 
 func TestAlertSuppression_RepeatInterval(t *testing.T) {
 	path := t.TempDir() + "/state.json"

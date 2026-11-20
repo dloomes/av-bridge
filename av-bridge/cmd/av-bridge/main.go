@@ -345,7 +345,7 @@ func (p *program) run(ctx context.Context) error {
 		slog.Info("lens enrichment enabled")
 
 		go func() {
-			schemaCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			schemaCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 			defer cancel()
 			schema, err := lensClient.Introspect(schemaCtx)
 			if err != nil {

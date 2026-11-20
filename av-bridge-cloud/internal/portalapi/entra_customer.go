@@ -608,5 +608,5 @@ func (h *EntraCustomerHandler) redirectSignInError(w http.ResponseWriter, r *htt
 		base = scheme + "://" + host
 	}
 	target := brandurl.Origin(base, h.brandedDomain, slug) + "/sign-in?entra_error=" + url.QueryEscape(code)
-	http.Redirect(w, r, target, http.StatusFound)
+	http.Redirect(w, r, target, http.StatusFound) // #nosec G710 -- target is brandurl.Origin of the configured ENTRA_PORTAL_BASE_URL (set by terraform in deployed environments) and the customer slug from our DB; the request-derived fallback is for local dev only and its headers cannot be set by a third party on a browser navigation; path fixed, query value escaped
 }

@@ -349,3 +349,25 @@ func TestPhilipsMonitorIDAndCustomCommand(t *testing.T) {
 		t.Errorf("defaults: %s id %d", b.address, b.monitorID)
 	}
 }
+
+// MsgSize is a single byte, so Data longer than 251 bytes can't be framed.
+// A config-defined command that long is refused, not sent with a wrapped
+// size byte.
+func TestSICPOversizeCommandRefused(t *testing.T) {
+	client, server := net.Pipe()
+	defer server.Close()
+	written := make(chan int64, 1)
+	go func() {
+		n, _ := io.Copy(io.Discard, server)
+		written <- n
+	}()
+	s := &sicpSession{conn: client, id: 1}
+	_, err := s.exchange(make([]byte, 252)...)
+	client.Close()
+	if err == nil {
+		t.Error("252-byte command: no error")
+	}
+	if n := <-written; n != 0 {
+		t.Errorf("252-byte command: %d bytes sent to the display, want none", n)
+	}
+}

@@ -34,7 +34,7 @@ func OpenRotatingFile(path string, maxBytes int64, keep int) (*RotatingFile, err
 }
 
 func (r *RotatingFile) open() error {
-	f, err := os.OpenFile(r.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o640)
+	f, err := os.OpenFile(r.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o640) // #nosec G302 -- Collector log file; group-readable is the conventional log mode so operators in the service group can read it
 	if err != nil {
 		return err
 	}

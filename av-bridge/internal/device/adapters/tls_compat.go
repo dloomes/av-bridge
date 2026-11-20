@@ -50,7 +50,7 @@ func deviceTLSConfig(skipVerify bool) *tls.Config {
 // accepted too, with 3DES as a last resort. Only for adapters that need it.
 func legacyDeviceTLSConfig(skipVerify bool) *tls.Config {
 	c := deviceTLSConfig(skipVerify)
-	c.MinVersion = tls.VersionTLS10                                            //nolint:gosec // device firmware that predates TLS 1.2
-	c.CipherSuites = append(c.CipherSuites, tls.TLS_RSA_WITH_3DES_EDE_CBC_SHA) //nolint:gosec // as above
+	c.MinVersion = tls.VersionTLS10                                            // #nosec G402 -- device HTTPS only (used solely by NewCiscoTCAdapter): Cisco TC firmware predates TLS 1.2; never used for cloud connections
+	c.CipherSuites = append(c.CipherSuites, tls.TLS_RSA_WITH_3DES_EDE_CBC_SHA) // #nosec G402 -- as above, last-resort suite for the same device firmware
 	return c
 }

@@ -166,7 +166,9 @@ func (r *Resolver) Middleware(next http.Handler) http.Handler {
 			writeErr(w, http.StatusUnauthorized, "invalid token")
 			return
 		}
-		go r.TouchLastUsed(context.Background(), p.TokenID, clientIP(req))
+		// WithoutCancel: the touch outlives the response; TouchLastUsed
+		// sets its own one-second deadline.
+		go r.TouchLastUsed(context.WithoutCancel(req.Context()), p.TokenID, clientIP(req))
 		next.ServeHTTP(w, req.WithContext(withPrincipal(req.Context(), p)))
 	})
 }

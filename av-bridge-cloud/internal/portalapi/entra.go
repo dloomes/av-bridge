@@ -219,7 +219,7 @@ func (h *EntraVendorHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	)
 
 	target := h.portalOrigin(r) + "/sign-in/callback?token=" + url.QueryEscape(sessionToken)
-	http.Redirect(w, r, target, http.StatusFound)
+	http.Redirect(w, r, target, http.StatusFound) // #nosec G710 -- target origin is the configured ENTRA_PORTAL_BASE_URL in deployed environments (terraform); the request-derived fallback is for local dev only and its headers cannot be set by a third party on a browser navigation; path is fixed and the query value escaped
 }
 
 // exchangeCode POSTs the authorization code + PKCE verifier to
@@ -486,7 +486,7 @@ func (h *EntraVendorHandler) portalOrigin(r *http.Request) string {
 
 func (h *EntraVendorHandler) redirectSignInError(w http.ResponseWriter, r *http.Request, code string) {
 	target := h.portalOrigin(r) + "/sign-in?entra_error=" + url.QueryEscape(code)
-	http.Redirect(w, r, target, http.StatusFound)
+	http.Redirect(w, r, target, http.StatusFound) // #nosec G710 -- target origin is the configured ENTRA_PORTAL_BASE_URL in deployed environments (terraform); the request-derived fallback is for local dev only and its headers cannot be set by a third party on a browser navigation; path is fixed and the query value escaped
 }
 
 // randomToken returns a base64url-encoded n-byte random string. Used for
