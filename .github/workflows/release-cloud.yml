@@ -64,6 +64,8 @@ jobs:
             --secret id=update_signing_key,env=UPDATE_SIGNING_KEY \
             -t "${ECR_REPO}:${TAG}" \
             -t "${ECR_REPO}:latest" \
+            --provenance=false \
+            --sbom=false \
             --load \
             .
 
@@ -76,13 +78,12 @@ jobs:
           cid="$(docker create "${ECR_REPO}:${TAG}")"
           trap 'docker rm -f "${cid}" >/dev/null' EXIT
           docker cp "${cid}:/downloads/manifest.json" "${RUNNER_TEMP}/manifest.json"
-          grep -q "\"version\": \"${TAG}\"" "${RUNNER_TEMP}/manifest.json" \
-            || { echo "manifest version is not ${TAG}" >&2; exit 1; }
-          n="$(grep -c '"signature"' "${RUNNER_TEMP}/manifest.json" || true)"
-          if [ "${n}" != "3" ]; then
-            echo "manifest has ${n} signature entries, expected 3 (unsigned build?)" >&2
-            exit 1
-          fi
+          m="${RUNNER_TEMP}/manifest.json"
+          ver="$(jq -r '.version' "${m}")"
+          n="$(jq '[.files[] | .signature // empty | select(length>0)] | length' "${m}")"
+          echo "manifest version=${ver} signatures=${n}"
+          jq -e --arg t "${TAG}" '.version==$t and ([.files[] | .signature // empty | select(length>0)] | length)==3' "${m}" >/dev/null \
+            || { echo "manifest check failed: want version ${TAG} and 3 signatures (unsigned build?)" >&2; exit 1; }
           echo "manifest OK: version ${TAG}, 3 signatures"
 
       - name: Push image
