@@ -1,0 +1,120 @@
+name: CI
+
+# Runs on every push and pull request: Go vet + tests for both Go modules
+# (cloud integration tests run against a Postgres 16 service), portal
+# type-check + build, and static security analysis (gosec, staticcheck).
+# No secrets are used. Third-party actions are pinned to a major version tag.
+
+"on":
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go:
+    name: Go (${{ matrix.module }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module: [av-bridge, av-bridge-cloud]
+    defaults:
+      run:
+        working-directory: ${{ matrix.module }}
+    # Only the cloud module's integration tests read TEST_DATABASE_URL; the
+    # Collector module ignores it.
+    env:
+      TEST_DATABASE_URL: postgres://postgres:pgtest@localhost:5432/postgres?sslmode=disable
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: pgtest
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: ${{ matrix.module }}/go.mod
+          cache-dependency-path: ${{ matrix.module }}/go.sum
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./... -count=1
+
+  portal:
+    name: Portal (type-check + build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: av-bridge-portal
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: av-bridge-portal/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Type-check
+        run: npx tsc --noEmit
+
+      - name: Build
+        run: npm run build
+
+  security:
+    name: Security (${{ matrix.module }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module: [av-bridge, av-bridge-cloud]
+    defaults:
+      run:
+        working-directory: ${{ matrix.module }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: ${{ matrix.module }}/go.mod
+          cache-dependency-path: ${{ matrix.module }}/go.sum
+
+      - name: Install analysers
+        run: |
+          go install github.com/securego/gosec/v2/cmd/gosec@v2.30.0
+          go install honnef.co/go/tools/cmd/staticcheck@v0.8.2
+
+      # Fails on findings of severity medium or higher AND confidence medium
+      # or higher. Genuine false positives are annotated in code with
+      # `// #nosec Gxxx -- reason`.
+      - name: gosec
+        run: $(go env GOPATH)/bin/gosec -severity medium -confidence medium ./...
+
+      - name: staticcheck
+        run: $(go env GOPATH)/bin/staticcheck ./...
