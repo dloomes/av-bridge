@@ -139,4 +139,4 @@ Related: [restore-rehearsal.md](restore-rehearsal.md),
 
 | Date | Operator | Result | Outage (T_down to T_up) | App reconnect time | RDS events / alarm emails received | Notes |
 |---|---|---|---|---|---|---|
-| | | | | | | |
+| 2026-11-20 | Claude (approved by Daniel) | Pass | DB failover 44 s (started 15:10:54Z, completed 15:11:38Z); no user traffic, 0 ALB 5xx | No reconnect errors logged by web or worker; no task replaced | RDS events present; RDS event emails: pending Daniel's confirmation; no CloudWatch alarm state changes (none expected) | First rehearsal, before go-live. Primary moved eu-west-2a → eu-west-2c (zone fields took ~2 min to update after "completed"). DB-backed probe not run (no Public API token in prod yet) — measured from RDS events, app logs and ALB 5xx; create a read-only Public API token before the next run. |

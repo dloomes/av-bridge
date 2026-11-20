@@ -232,4 +232,4 @@ the closing marker starts in column 0.
 
 | Date | Operator | Result | Restore time (RTO) | Data point (RPO) | customers (restored / prod) | devices (restored / prod) | telemetry_daily (restored / prod) | Notes |
 |---|---|---|---|---|---|---|---|---|
-| | | | | | | | | |
+| 2026-11-20 | Claude (approved by Daniel) | Pass | 19 min 23 s | 3 min 16 s (restored to 14:44:03Z, requested 14:47:19Z) | 1 / 1 | 0 / 0 | 0 / 0 | First rehearsal, before go-live; production nearly empty. server_addr differed (10.20.79.121 vs 10.20.62.72). Temp instance and task definition removed. In Git Bash, prefix `aws logs` commands with `MSYS_NO_PATHCONV=1` or the `/ecs/...` log-group name is rewritten. |
