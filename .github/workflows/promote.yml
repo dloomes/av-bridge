@@ -85,7 +85,7 @@ jobs:
           echo "OK: tag ${VERSION} -> ${commit} (on main)"
 
       # ---- UAT account: confirm and pull the image ----
-      - uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ env.UAT_ROLE }}
           aws-region: ${{ env.AWS_REGION }}
@@ -123,7 +123,7 @@ jobs:
           echo "manifest OK: version ${VERSION}"
 
       # ---- Production account from here on ----
-      - uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ env.PROD_ROLE }}
           aws-region: ${{ env.AWS_REGION }}
