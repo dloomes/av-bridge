@@ -36,6 +36,7 @@ import { LocationNav } from "@/components/location-nav";
 import { useBranding } from "@/components/branding-provider";
 import { usePolling } from "@/hooks/usePolling";
 import { useSession } from "@/hooks/useSession";
+import { isProductionEnv } from "@/lib/env";
 import { api } from "@/lib/api";
 import { hasPermission } from "@/lib/session";
 import { cn } from "@/lib/utils";
@@ -342,9 +343,11 @@ export function Sidebar() {
         })}
       </nav>
 
-      <div className="px-5 py-4 border-t border-white/5 text-xs text-sidebar-foreground/50">
-        <EnvironmentBadge />
-      </div>
+      {!isProductionEnv() && (
+        <div className="px-5 py-4 border-t border-white/5 text-xs text-sidebar-foreground/50">
+          <EnvironmentBadge />
+        </div>
+      )}
     </>
   );
 
@@ -503,13 +506,12 @@ function SectionHeader({
 // terraform rather than sniffed at runtime. Unset falls back to "local"
 // so a plain `npm run dev` still gets a sensible label.
 function EnvironmentBadge() {
+  if (isProductionEnv()) return null;
   const raw = (process.env.NEXT_PUBLIC_AV_BRIDGE_ENV ?? "local").toLowerCase();
   const tone =
-    raw === "prod" || raw === "production"
-      ? { chip: "bg-red-500/15 text-red-300 ring-red-500/30", dot: "bg-red-400" }
-      : raw === "uat" || raw === "staging"
-        ? { chip: "bg-amber-500/15 text-amber-300 ring-amber-500/30", dot: "bg-amber-400" }
-        : { chip: "bg-white/5 text-slate-300 ring-white/10", dot: "bg-slate-400" };
+    raw === "uat" || raw === "staging"
+      ? { chip: "bg-amber-500/15 text-amber-300 ring-amber-500/30", dot: "bg-amber-400" }
+      : { chip: "bg-white/5 text-slate-300 ring-white/10", dot: "bg-slate-400" };
   return (
     <div className="flex items-center gap-2">
       <ActivityIcon className="h-3.5 w-3.5" />

@@ -2,13 +2,14 @@ import type { Metadata } from "next";
 import { PRODUCT_NAME } from "@/lib/brand";
 import "./globals.css";
 import { AppShell } from "@/components/app-shell";
+import { isProductionEnv } from "@/lib/env";
 
 // Prefix the browser tab title with the env label so an operator with
 // UAT + prod tabs open can tell them apart at a glance. Local dev stays
 // unprefixed to keep the tab clean.
 function envTitlePrefix(): string {
+  if (isProductionEnv()) return "";
   const raw = (process.env.NEXT_PUBLIC_AV_BRIDGE_ENV ?? "").toLowerCase();
-  if (raw === "prod" || raw === "production") return "[PROD] ";
   if (raw === "uat" || raw === "staging") return "[UAT] ";
   return "";
 }
@@ -23,8 +24,8 @@ export const metadata: Metadata = {
 // to justify a module. Reads process.env directly; NEXT_PUBLIC_ inlining
 // makes this work in both server and client bundles.
 function envStripeClass(): string | null {
+  if (isProductionEnv()) return null; // production: no environment labelling
   const raw = (process.env.NEXT_PUBLIC_AV_BRIDGE_ENV ?? "").toLowerCase();
-  if (raw === "prod" || raw === "production") return "bg-red-500";
   if (raw === "uat" || raw === "staging") return "bg-amber-400";
   return null; // local/dev: no stripe — the chip in the sidebar footer is enough
 }
