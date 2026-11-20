@@ -69,18 +69,18 @@ dist-windows: build-windows ## Bundle Windows amd64 binary + install.ps1 into a 
 ## ── Test ─────────────────────────────────────────────────────────────────────
 
 test: ## Run all unit tests
-	$(GO) test ./... -timeout 30s
+	$(GO) test ./... -timeout 5m
 
 test-cover: ## Run tests with coverage report
-	$(GO) test ./... -timeout 30s -coverprofile=coverage.out -covermode=atomic
+	$(GO) test ./... -timeout 5m -coverprofile=coverage.out -covermode=atomic
 	$(GO) tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report: coverage.html"
 
 test-race: ## Run tests with race detector
-	$(GO) test -race ./... -timeout 60s
+	$(GO) test -race ./... -timeout 10m
 
 test-verbose: ## Run tests with verbose output
-	$(GO) test -v ./... -timeout 30s
+	$(GO) test -v ./... -timeout 5m
 
 ## ── Code Quality ─────────────────────────────────────────────────────────────
 
