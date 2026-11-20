@@ -90,6 +90,7 @@ data "aws_iam_policy_document" "permissions" {
       actions = [
         "ecr:BatchCheckLayerAvailability",
         "ecr:BatchGetImage",
+        "ecr:DescribeImages",
         "ecr:GetDownloadUrlForLayer",
       ]
       resources = local.ecr_pull_arns
@@ -117,8 +118,17 @@ data "aws_iam_policy_document" "permissions" {
   dynamic "statement" {
     for_each = var.rds_instance_identifier != "" ? [1] : []
     content {
-      sid       = "RdsSnapshotDescribeDelete"
-      actions   = ["rds:DescribeDBSnapshots", "rds:DeleteDBSnapshot"]
+      sid       = "RdsSnapshotDescribe"
+      actions   = ["rds:DescribeDBSnapshots"]
+      resources = [local.rds_instance_arn, "arn:aws:rds:${local.region}:${local.account_id}:snapshot:*"]
+    }
+  }
+
+  dynamic "statement" {
+    for_each = var.rds_instance_identifier != "" ? [1] : []
+    content {
+      sid       = "RdsSnapshotDelete"
+      actions   = ["rds:DeleteDBSnapshot"]
       resources = [local.rds_snapshot_arn]
     }
   }
@@ -127,7 +137,7 @@ data "aws_iam_policy_document" "permissions" {
     for_each = length(var.s3_put_object_arns) > 0 ? [1] : []
     content {
       sid       = "S3Put"
-      actions   = ["s3:PutObject"]
+      actions   = ["s3:PutObject", "s3:AbortMultipartUpload"]
       resources = var.s3_put_object_arns
     }
   }

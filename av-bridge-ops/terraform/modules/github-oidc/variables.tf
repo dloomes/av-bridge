@@ -50,6 +50,11 @@ variable "rds_snapshot_prefix" {
   description = "Only snapshots whose identifier starts with this are touched."
   type        = string
   default     = ""
+
+  validation {
+    condition     = var.rds_instance_identifier == "" || var.rds_snapshot_prefix != ""
+    error_message = "rds_snapshot_prefix must be set when rds_instance_identifier is set."
+  }
 }
 
 variable "s3_put_object_arns" {
