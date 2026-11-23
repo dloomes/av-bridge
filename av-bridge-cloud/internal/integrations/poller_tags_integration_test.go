@@ -153,11 +153,11 @@ func TestTagPendingRetriesAfterForbidden(t *testing.T) {
 	}
 }
 
-func TestTagPendingGivesUpAfterFifteenMinutes(t *testing.T) {
+func TestTagPendingGivesUpAfterThirtyMinutes(t *testing.T) {
 	e := newEnv(t)
 	lens := newTagLens(t)
 	lens.forbid = -1
-	f, dev := e.pendingFixture("acct-tag-giveup", true, "16 minutes")
+	f, dev := e.pendingFixture("acct-tag-giveup", true, "31 minutes")
 	// It has been tried before: the window runs from the first attempt.
 	e.exec(`UPDATE integration_devices SET tag_attempted_at = now() - interval '1 minute' WHERE device_id = $1`, dev)
 	if err := e.tagPoller(lens, f.cust).PollOnce(context.Background()); err != nil {
@@ -265,7 +265,7 @@ func TestTagPendingOtherErrorKeepsMessageAndTag(t *testing.T) {
 	if creates != 1 {
 		t.Fatalf("creates %d: %v", creates, lens.tagCalls())
 	}
-	e.exec(`UPDATE integration_devices SET tag_requested_at = now() - interval '16 minutes' WHERE device_id = $1`, dev)
+	e.exec(`UPDATE integration_devices SET tag_requested_at = now() - interval '31 minutes' WHERE device_id = $1`, dev)
 	if err := p.PollOnce(context.Background()); err != nil {
 		t.Fatal(err)
 	}

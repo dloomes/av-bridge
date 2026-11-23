@@ -22,7 +22,8 @@ const (
 	// maxTagOps bounds the tag operations per integration per cycle.
 	maxTagOps = 20
 	// tagGiveUp is how long a link may stay pending before it is marked failed.
-	tagGiveUp = 15 * time.Minute
+	// Lens can refuse a new tag for ~10 minutes (seen in UAT), so allow 30.
+	tagGiveUp = 30 * time.Minute
 
 	msgTagRole   = "Lens role can't tag devices"
 	msgTagFailed = "Poly Lens did not accept the tag"

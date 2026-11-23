@@ -10,7 +10,7 @@ const str = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
 const bool = (v: unknown): boolean | undefined => (typeof v === "boolean" ? v : undefined);
 
 const TAG_STATE: Record<string, string> = {
-  pending: "Tag pending",
+  pending: "Tag pending (Lens can take up to 10 minutes)",
   tagged: "Tagged in Lens",
   failed: "Tagging failed",
   none: "Not tagged",
