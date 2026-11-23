@@ -46,6 +46,10 @@ const OfflineAfter = 5 * time.Minute
 // uses the later of that and the primary's own last_seen_at — devices
 // stay visible while the primary machine itself is down.
 //
+// Devices with no Collector (d.collector_id IS NULL, e.g. Poly Lens
+// managed) skip check 1: only the 15-minute staleness and latest_status
+// apply to them.
+//
 // Uses "d." for the device row and "c." for the collector row — every
 // calling query must LEFT JOIN collectors c ON c.id = d.collector_id
 // (or an equivalent alias mapping).
@@ -54,8 +58,9 @@ const OfflineAfter = 5 * time.Minute
 // fragment is baked into many static queries and passing arguments
 // everywhere buys nothing at current scale.
 const EffectiveStatusSQL = `CASE
-  WHEN GREATEST(c.last_seen_at, c.serving_seen_at) IS NULL
-    OR GREATEST(c.last_seen_at, c.serving_seen_at) < now() - interval '5 minutes'
+  WHEN d.collector_id IS NOT NULL
+    AND (GREATEST(c.last_seen_at, c.serving_seen_at) IS NULL
+      OR GREATEST(c.last_seen_at, c.serving_seen_at) < now() - interval '5 minutes')
     THEN 'unknown'
   WHEN d.switched_off_by_run IS NOT NULL
     AND (d.latest_status IS DISTINCT FROM 'online'

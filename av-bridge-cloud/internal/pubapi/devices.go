@@ -43,6 +43,12 @@ type publicDevice struct {
 	Building       string            `json:"building,omitempty"`
 	LastSeenAt     *time.Time        `json:"last_seen_at,omitempty"`
 	Tags           map[string]string `json:"tags,omitempty"`
+	// Source: "collector" (polled by a Collector) or "poly_lens" (a
+	// device with no Collector, managed through the Poly Lens
+	// integration). Platform: "windows" or "android" for Teams Rooms
+	// devices.
+	Source   string `json:"source"`
+	Platform string `json:"platform,omitempty"`
 }
 
 // scanDeviceRow reads one row of the shared device SELECT into a
@@ -84,7 +90,9 @@ var publicDeviceColumns = `
 	       COALESCE(b.id::text, ''),
 	       COALESCE(b.name, ''),
 	       d.last_seen_at,
-	       d.tags`
+	       d.tags,
+	       d.source,
+	       COALESCE(d.platform, '')`
 
 const publicDeviceFrom = `
 	  FROM devices d
@@ -161,7 +169,7 @@ func scanDevice(scan func(dest ...any) error) (publicDevice, error) {
 		&d.ID, &d.Name, &d.Type, &d.Protocol, &d.Status, &d.IPAddress,
 		&d.Make, &d.Model, &d.SerialNumber, &d.FirmwareVersion, &d.TargetFirmware, &d.FirmwareStatus, &d.MACAddress,
 		&d.RoomID, &d.Room, &d.BuildingID, &d.Building,
-		&d.LastSeenAt, &tags,
+		&d.LastSeenAt, &tags, &d.Source, &d.Platform,
 	); err != nil {
 		return d, err
 	}
@@ -323,7 +331,7 @@ func (h *Handler) GetDevice(w http.ResponseWriter, r *http.Request) {
 			&out.ID, &out.Name, &out.Type, &out.Protocol, &out.Status, &out.IPAddress,
 			&out.Make, &out.Model, &out.SerialNumber, &out.FirmwareVersion, &out.TargetFirmware, &out.FirmwareStatus, &out.MACAddress,
 			&out.RoomID, &out.Room, &out.BuildingID, &out.Building,
-			&out.LastSeenAt, &tags, &metrics,
+			&out.LastSeenAt, &tags, &out.Source, &out.Platform, &metrics,
 		)
 		if errors.Is(err, pgx.ErrNoRows) {
 			notFound = true

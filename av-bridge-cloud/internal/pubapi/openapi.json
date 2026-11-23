@@ -550,7 +550,9 @@
           "building_id": { "type": "string", "format": "uuid" },
           "building": { "type": "string" },
           "last_seen_at": { "type": ["string", "null"], "format": "date-time" },
-          "tags": { "type": "object", "additionalProperties": { "type": "string" } }
+          "tags": { "type": "object", "additionalProperties": { "type": "string" } },
+          "source": { "type": "string", "enum": ["collector", "poly_lens"], "description": "`collector` for devices polled by a Collector; `poly_lens` for devices with no Collector, managed through the Poly Lens integration." },
+          "platform": { "type": "string", "enum": ["windows", "android"], "description": "The device's operating platform, for Microsoft Teams Rooms devices. Absent otherwise." }
         },
         "example": {
           "id": "3f8b0f2c-1c1e-4c6b-9b2a-d0d9d4d1d3d4",
@@ -571,7 +573,8 @@
           "building_id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
           "building": "HQ",
           "last_seen_at": "2026-08-26T09:14:03Z",
-          "tags": { "site": "hq", "row": "front" }
+          "tags": { "site": "hq", "row": "front" },
+          "source": "collector"
         }
       },
       "DeviceDetail": {

@@ -374,6 +374,39 @@ func computeConfigSyncStatus(lastPull *time.Time, now time.Time) string {
 // can breadcrumb it in group headers. Location (the existing "Building / Room"
 // display string) is kept for back-compat with the bridge's own DeviceSummary
 // contract.
+// deviceIntegration is the Integration summary on a device's JSON (null for
+// Collector devices).
+type deviceIntegration struct {
+	Provider     string `json:"provider"`
+	ExternalName string `json:"external_name"`
+	AccountName  string `json:"account_name"`
+	TagState     string `json:"tag_state"`
+}
+
+// integrationSQL is the select-list + join for a device's Integration
+// summary: it yields provider, external_name, account_name, tag_state (all
+// NULL for devices with no Integration link). Callers alias devices as d.
+const integrationSelectSQL = `ig.provider, idv.external_name, ig.account_name, idv.tag_state`
+const integrationJoinSQL = `LEFT JOIN integration_devices idv ON idv.device_id = d.id
+			  LEFT JOIN integrations ig ON ig.id = idv.integration_id`
+
+func buildDeviceIntegration(provider, extName, acct, tagState *string) *deviceIntegration {
+	if provider == nil {
+		return nil
+	}
+	di := &deviceIntegration{Provider: *provider}
+	if extName != nil {
+		di.ExternalName = *extName
+	}
+	if acct != nil {
+		di.AccountName = *acct
+	}
+	if tagState != nil {
+		di.TagState = *tagState
+	}
+	return di
+}
+
 func (h *Handler) ListDevices(w http.ResponseWriter, r *http.Request) {
 	// Optional filter: ?collector_id=<uuid>. Empty string means "all
 	// devices". Validated only loosely — a garbage value returns an empty
@@ -390,9 +423,15 @@ func (h *Handler) ListDevices(w http.ResponseWriter, r *http.Request) {
 		LocationName string  `json:"location_name,omitempty"`
 		Building     string  `json:"building,omitempty"`
 		RoomID       *string `json:"room_id,omitempty"`
-		CollectorID  string  `json:"collector_id,omitempty"`
+		CollectorID  *string `json:"collector_id,omitempty"`
 		Address      string  `json:"address,omitempty"`
-		Status       string  `json:"status"`
+		// Source: "collector" or "poly_lens". Platform: windows/android
+		// for Lens devices (nullable). Integration: the Integration link
+		// for devices with no Collector (null otherwise).
+		Source      string             `json:"source"`
+		Platform    *string            `json:"platform"`
+		Integration *deviceIntegration `json:"integration"`
+		Status      string             `json:"status"`
 		// CollectorStatus is the derived status of the device's collector
 		// (online / offline / unknown) using the same freshness threshold
 		// as Status. Included so the portal can render "Collector offline"
@@ -435,6 +474,8 @@ func (h *Handler) ListDevices(w http.ResponseWriter, r *http.Request) {
 			       COALESCE(d.ip_address, ''),
 			       ` + devicestatus.EffectiveStatusSQL + `,
 			       ` + devicestatus.CollectorStatusSQL + `,
+			       d.source, d.platform,
+			       ` + integrationSelectSQL + `,
 			       d.tags,
 			       d.capabilities,
 			       COALESCE(d.latest_metrics->>'power_status', ''),
@@ -447,6 +488,7 @@ func (h *Handler) ListDevices(w http.ResponseWriter, r *http.Request) {
 			  LEFT JOIN locations loc ON loc.id = b.location_id
 			  LEFT JOIN regions reg  ON reg.id = loc.region_id
 			  LEFT JOIN collectors c ON c.id   = d.collector_id
+			  ` + integrationJoinSQL + `
 			 WHERE d.deleted_at IS NULL`
 		args := []any{}
 		if collectorFilter != "" {
@@ -464,12 +506,19 @@ func (h *Handler) ListDevices(w http.ResponseWriter, r *http.Request) {
 			var it item
 			var tags []byte
 			var caps []byte
+			var igProv, igExt, igAcct, igTag *string
 			if err := rows.Scan(&it.ID, &it.Name, &it.Type, &it.Protocol,
 				&it.Location, &it.Region, &it.LocationName, &it.Building,
 				&it.RoomID, &it.CollectorID, &it.Address, &it.Status,
-				&it.CollectorStatus, &tags, &caps, &it.PowerStatus,
+				&it.CollectorStatus, &it.Source, &it.Platform,
+				&igProv, &igExt, &igAcct, &igTag,
+				&tags, &caps, &it.PowerStatus,
 				&it.ActiveCalls, &it.CallState); err != nil {
 				return err
+			}
+			it.Integration = buildDeviceIntegration(igProv, igExt, igAcct, igTag)
+			if it.CollectorID == nil {
+				it.CollectorStatus = ""
 			}
 			if len(tags) > 0 {
 				_ = json.Unmarshal(tags, &it.Tags)
@@ -518,16 +567,19 @@ func (h *Handler) GetDevice(w http.ResponseWriter, r *http.Request) {
 		Notes        string `json:"notes,omitempty"`
 	}
 	type out struct {
-		ID          string       `json:"id"`
-		CollectorID string       `json:"collector_id"`
-		RoomID      *string      `json:"room_id,omitempty"`
-		AssetID     *string      `json:"asset_id,omitempty"`
-		Asset       *deviceAsset `json:"asset,omitempty"`
-		ReportedID  string       `json:"reported_id"`
-		Name        string       `json:"name"`
-		Type        string       `json:"type"`
-		Protocol    string       `json:"protocol"`
-		Location    string       `json:"location"`
+		ID          string             `json:"id"`
+		CollectorID *string            `json:"collector_id"`
+		Source      string             `json:"source"`
+		Platform    *string            `json:"platform"`
+		Integration *deviceIntegration `json:"integration"`
+		RoomID      *string            `json:"room_id,omitempty"`
+		AssetID     *string            `json:"asset_id,omitempty"`
+		Asset       *deviceAsset       `json:"asset,omitempty"`
+		ReportedID  string             `json:"reported_id"`
+		Name        string             `json:"name"`
+		Type        string             `json:"type"`
+		Protocol    string             `json:"protocol"`
+		Location    string             `json:"location"`
 		// Address mirrors the address column (the config-pull truth) so the
 		// edit form sees what the bridge sees. The old GET used ip_address
 		// (an inventory column populated from telemetry) — kept the column
@@ -566,6 +618,8 @@ func (h *Handler) GetDevice(w http.ResponseWriter, r *http.Request) {
 			roomID                 *string
 			baudRate               *int
 			pollRate               *int
+			igProv, igExt, igAcct  *string
+			igTag                  *string
 		)
 		err := tx.QueryRow(ctx, `
 			SELECT d.id::text,
@@ -589,11 +643,14 @@ func (h *Handler) GetDevice(w http.ResponseWriter, r *http.Request) {
 			       `+devicestatus.EffectiveStatusSQL+`,
 			       `+devicestatus.CollectorStatusSQL+`,
 			       d.last_online_at,
-			       d.tags, d.commands, d.subscriptions, d.capabilities
+			       d.tags, d.commands, d.subscriptions, d.capabilities,
+			       d.source, d.platform,
+			       `+integrationSelectSQL+`
 			  FROM devices d
 			  LEFT JOIN rooms r ON r.id = d.room_id
 			  LEFT JOIN buildings b ON b.id = r.building_id
 			  LEFT JOIN collectors c ON c.id = d.collector_id
+			  `+integrationJoinSQL+`
 			 WHERE d.id = $1 AND d.deleted_at IS NULL`, id).
 			Scan(&o.ID, &o.CollectorID, &roomID, &o.AssetID, &o.ReportedID,
 				&o.Name, &o.Type, &o.Protocol, &o.Location,
@@ -601,7 +658,9 @@ func (h *Handler) GetDevice(w http.ResponseWriter, r *http.Request) {
 				&o.PowerWattsOn, &o.PowerWattsStandby,
 				&o.Status, &o.CollectorStatus,
 				&o.LastOnlineAt,
-				&tags, &cmds, &subs, &caps)
+				&tags, &cmds, &subs, &caps,
+				&o.Source, &o.Platform,
+				&igProv, &igExt, &igAcct, &igTag)
 		if errors.Is(err, pgx.ErrNoRows) {
 			notFound = true
 			return nil
@@ -610,6 +669,10 @@ func (h *Handler) GetDevice(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 		o.RoomID = roomID
+		o.Integration = buildDeviceIntegration(igProv, igExt, igAcct, igTag)
+		if o.CollectorID == nil {
+			o.CollectorStatus = ""
+		}
 		if baudRate != nil {
 			o.BaudRate = *baudRate
 		}
@@ -1311,29 +1374,19 @@ func (h *Handler) HelpdeskOverview(w http.ResponseWriter, r *http.Request) {
 		  col.last_seen
 		FROM customers c
 		LEFT JOIN (
-		  SELECT dv.customer_id,
+		  SELECT d.customer_id,
 		    COUNT(*)::int AS total,
 		    COUNT(*) FILTER (WHERE eff.status = 'online')::int AS online,
 		    COUNT(*) FILTER (WHERE eff.status = 'offline')::int AS offline,
 		    COUNT(*) FILTER (WHERE eff.status = 'unknown')::int AS unknown,
 		    COUNT(*) FILTER (WHERE eff.status = 'switched_off')::int AS switched_off
-		  FROM devices dv
-		  LEFT JOIN collectors dc ON dc.id = dv.collector_id
+		  FROM devices d
+		  LEFT JOIN collectors c ON c.id = d.collector_id
 		  CROSS JOIN LATERAL (
-		    SELECT CASE
-		      WHEN GREATEST(dc.last_seen_at, dc.serving_seen_at) IS NULL
-		        OR GREATEST(dc.last_seen_at, dc.serving_seen_at) < now() - interval '5 minutes'
-		        THEN 'unknown'
-		      -- Same rule as devicestatus.EffectiveStatusSQL.
-		      WHEN dv.switched_off_by_run IS NOT NULL
-		        AND (dv.latest_status IS DISTINCT FROM 'online'
-		             OR dv.last_seen_at < now() - interval '15 minutes')
-		        THEN 'switched_off'
-		      ELSE COALESCE(dv.latest_status, 'unknown')
-		    END AS status
+		    SELECT `+devicestatus.EffectiveStatusSQL+` AS status
 		  ) eff
-		  WHERE dv.deleted_at IS NULL
-		  GROUP BY dv.customer_id
+		  WHERE d.deleted_at IS NULL
+		  GROUP BY d.customer_id
 		) d ON d.customer_id = c.id
 		LEFT JOIN (
 		  SELECT customer_id,
