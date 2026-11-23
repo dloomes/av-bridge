@@ -27,12 +27,22 @@ type Integration struct {
 
 // GetIntegration returns the customer's integration for a provider, or nil.
 func GetIntegration(ctx context.Context, tx pgx.Tx, provider string) (*Integration, error) {
+	return getIntegration(ctx, tx, provider, "")
+}
+
+// GetIntegrationForUpdate is GetIntegration with the row locked until the
+// transaction ends, for read-check-write sequences.
+func GetIntegrationForUpdate(ctx context.Context, tx pgx.Tx, provider string) (*Integration, error) {
+	return getIntegration(ctx, tx, provider, " FOR UPDATE")
+}
+
+func getIntegration(ctx context.Context, tx pgx.Tx, provider, lock string) (*Integration, error) {
 	var i Integration
 	err := tx.QueryRow(ctx, `
 		SELECT id::text, customer_id::text, provider, status, COALESCE(client_id, ''), secret_enc,
 		       COALESCE(account_id, ''), COALESCE(account_name, ''), allow_tagging,
 		       last_success_at, COALESCE(last_error, '')
-		  FROM integrations WHERE provider = $1`, provider).
+		  FROM integrations WHERE provider = $1`+lock, provider).
 		Scan(&i.ID, &i.CustomerID, &i.Provider, &i.Status, &i.ClientID, &i.SecretEnc,
 			&i.AccountID, &i.AccountName, &i.AllowTagging, &i.LastSuccessAt, &i.LastError)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -73,7 +83,9 @@ func ListIntegrations(ctx context.Context, tx pgx.Tx) ([]Integration, map[string
 }
 
 // UpsertIntegration connects or updates the customer's integration. A nil
-// SecretEnc keeps the stored secret. It marks the integration connected and
+// SecretEnc keeps the stored secret and the current status and last error
+// (a settings-only change proves nothing about the connection); a new secret
+// has been verified against Lens, so it marks the integration connected and
 // clears the last error. Returns the integration id and whether it was new.
 func UpsertIntegration(ctx context.Context, tx pgx.Tx, customerID string, in Integration, actor string) (string, bool, error) {
 	var id string
@@ -83,14 +95,14 @@ func UpsertIntegration(ctx context.Context, tx pgx.Tx, customerID string, in Int
 		                          allow_tagging, last_success_at, created_by, updated_by)
 		VALUES ($1, $2, 'connected', $3, $4, $5, $6, $7, now(), $8, $8)
 		ON CONFLICT (customer_id, provider) DO UPDATE SET
-		    status = 'connected',
+		    status = CASE WHEN EXCLUDED.secret_enc IS NOT NULL THEN 'connected' ELSE integrations.status END,
 		    client_id = EXCLUDED.client_id,
 		    secret_enc = COALESCE(EXCLUDED.secret_enc, integrations.secret_enc),
 		    account_id = EXCLUDED.account_id,
 		    account_name = EXCLUDED.account_name,
 		    allow_tagging = EXCLUDED.allow_tagging,
-		    last_success_at = now(),
-		    last_error = NULL,
+		    last_success_at = CASE WHEN EXCLUDED.secret_enc IS NOT NULL THEN now() ELSE integrations.last_success_at END,
+		    last_error = CASE WHEN EXCLUDED.secret_enc IS NOT NULL THEN NULL ELSE integrations.last_error END,
 		    updated_at = now(),
 		    updated_by = EXCLUDED.updated_by
 		RETURNING id::text, (xmax = 0)`,

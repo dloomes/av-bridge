@@ -48,6 +48,9 @@ type Handler struct {
 	events wsfanout.Publisher
 	// lensTokenURL / lensGraphQLURL override the Poly Lens endpoints (tests); empty = production.
 	lensTokenURL, lensGraphQLURL string
+	// beforeIntegrationWrite runs inside PutPolyLens's write transaction before
+	// the row is locked; tests use it to change the row between read and write.
+	beforeIntegrationWrite func()
 }
 
 // SetCustomerSSO records whether customer Microsoft sign-in is configured.

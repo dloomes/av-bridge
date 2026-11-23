@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
@@ -26,7 +27,7 @@ import (
 
 const fakeLensSecret = "fake-secret-value-123"
 
-func newFakeLens(t *testing.T) *httptest.Server {
+func newFakeLens(t *testing.T, degraded *atomic.Bool) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
 	mux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {
@@ -48,6 +49,10 @@ func newFakeLens(t *testing.T) *httptest.Server {
 		_ = json.NewDecoder(r.Body).Decode(&req)
 		if strings.Contains(req.Query, "tenants") {
 			io.WriteString(w, `{"data":{"tenants":[{"id":"acct-a","name":"Acme Test"},{"id":"acct-b","name":"Other Test Co"}]}}`)
+			return
+		}
+		if degraded.Load() && strings.Contains(req.Query, "callStatus") {
+			io.WriteString(w, `{"errors":[{"message":"Cannot query field \"callStatus\" on type \"Device\".","extensions":{"code":"GRAPHQL_VALIDATION_FAILED"}}]}`)
 			return
 		}
 		if req.Variables["tenantId"] != "acct-a" {
@@ -113,7 +118,8 @@ func TestIntegrationsAPI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lens := newFakeLens(t)
+	var degraded atomic.Bool
+	lens := newFakeLens(t, &degraded)
 	h := New(st, cipher, nil, nil, nil, quiet).SetLensBaseURLs(lens.URL+"/token", lens.URL+"/graphql")
 
 	all := map[string]struct{}{}
@@ -255,6 +261,18 @@ func TestIntegrationsAPI(t *testing.T) {
 		}
 	})
 
+	// Changing the client id needs the secret again.
+	if code, _ := call("admin", "PUT", base, map[string]any{"client_id": "other-client", "account_id": "acct-a"}); code != 400 {
+		t.Errorf("customer changing client_id without secret = %d, want 400", code)
+	}
+	// Vendor reuse of the stored secret only for the stored client id.
+	if code, _ := call("vendor", "POST", base+"/test", map[string]any{"client_id": "other-client"}); code != 400 {
+		t.Errorf("vendor test with another client_id and no secret = %d, want 400", code)
+	}
+	// A settings-only change keeps status and last_error.
+	if _, err := su.Exec(ctx, `UPDATE integrations SET status = 'error', last_error = 'earlier failure' WHERE customer_id = $1`, cust); err != nil {
+		t.Fatal(err)
+	}
 	// A customer may change settings on the same account without the secret.
 	if code, body := call("admin", "PUT", base, map[string]any{"client_id": "c", "account_id": "acct-a", "allow_tagging": false}); code != 200 {
 		t.Errorf("update tagging only: %d %s", code, body)
@@ -263,6 +281,14 @@ func TestIntegrationsAPI(t *testing.T) {
 	_ = su.QueryRow(ctx, `SELECT allow_tagging FROM integrations WHERE customer_id = $1`, cust).Scan(&tagging)
 	if tagging {
 		t.Error("allow_tagging not updated")
+	}
+	var keptStatus, keptErr string
+	_ = su.QueryRow(ctx, `SELECT status, COALESCE(last_error, '') FROM integrations WHERE customer_id = $1`, cust).Scan(&keptStatus, &keptErr)
+	if keptStatus != "error" || keptErr != "earlier failure" {
+		t.Errorf("settings-only PUT changed status/last_error: %q %q", keptStatus, keptErr)
+	}
+	if _, err := su.Exec(ctx, `UPDATE integrations SET status = 'connected', last_error = NULL WHERE customer_id = $1`, cust); err != nil {
+		t.Fatal(err)
 	}
 	var updates int
 	_ = su.QueryRow(ctx, `SELECT count(*) FROM audit_log WHERE customer_id = $1 AND action = 'integration.update'`, cust).Scan(&updates)
@@ -310,6 +336,12 @@ func TestIntegrationsAPI(t *testing.T) {
 	if _, body := call("admin", "GET", base+"/devices?q=free", nil); strings.Count(body, `"external_id"`) != 1 {
 		t.Errorf("q filter: %s", body)
 	}
+	// Degraded: Lens rejects the optional fields, so the picker says so.
+	degraded.Store(true)
+	if _, body := call("admin", "GET", base+"/devices", nil); !strings.Contains(body, `"degraded":true`) {
+		t.Errorf("degraded flag missing: %s", body)
+	}
+	degraded.Store(false)
 	// Another customer sees nothing of this one's integration.
 	if code, _ := call("other", "GET", base+"/devices", nil); code != 409 {
 		t.Errorf("other customer picker = %d, want 409", code)
@@ -337,6 +369,21 @@ func TestIntegrationsAPI(t *testing.T) {
 	if code, body := call("admin", "PUT", base, map[string]any{"client_id": "c", "client_secret": fakeLensSecret, "account_id": "acct-a"}); code != 200 {
 		t.Errorf("reconnect same account: %d %s", code, body)
 	}
+
+	// A change landing between the PUT's read and its write is refused, not overwritten.
+	h.beforeIntegrationWrite = func() {
+		if _, err := su.Exec(ctx, `UPDATE integrations SET account_id = 'acct-b', account_name = 'Other Test Co' WHERE customer_id = $1`, cust); err != nil {
+			t.Error(err)
+		}
+	}
+	code, body = call("admin", "PUT", base, map[string]any{"client_id": "c", "account_id": "acct-a", "allow_tagging": true})
+	h.beforeIntegrationWrite = nil
+	var nowAcct string
+	_ = su.QueryRow(ctx, `SELECT account_id FROM integrations WHERE customer_id = $1`, cust).Scan(&nowAcct)
+	if code != 409 || nowAcct != "acct-b" {
+		t.Errorf("stale PUT: %d %s, account now %q (want 409, acct-b)", code, body, nowAcct)
+	}
+	_, _ = su.Exec(ctx, `UPDATE integrations SET account_id = 'acct-a', account_name = 'Acme Test' WHERE customer_id = $1`, cust)
 
 	// ServiceNow status comes from notification channels.
 	q(`INSERT INTO notification_channels (customer_id, name, type, target) VALUES ($1, 'sn-fake', 'servicenow', 'https://sn.example.test') RETURNING id::text`, cust)

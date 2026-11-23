@@ -134,9 +134,10 @@ func (h *Handler) loadIntegration(w http.ResponseWriter, r *http.Request) (*db.I
 	return cur, ok
 }
 
-// lensFailure writes the response for a failed Lens call and says whether the
-// error was a credential rejection. Messages never carry the secret.
-func lensFailure(w http.ResponseWriter, err error) {
+// lensFailure writes the response for a failed Lens call: 400 for rejected
+// credentials, 429 when rate limited, 502 otherwise (the error is logged; it
+// never carries the secret).
+func (h *Handler) lensFailure(w http.ResponseWriter, err error) {
 	var rl *polylens.RateLimitError
 	switch {
 	case errors.Is(err, polylens.ErrUnauthorized):
@@ -147,6 +148,7 @@ func lensFailure(w http.ResponseWriter, err error) {
 		}
 		writeErr(w, http.StatusTooManyRequests, "Poly Lens is rate limiting requests; try again shortly")
 	default:
+		h.log.Warn("poly lens call failed", "error", err)
 		writeErr(w, http.StatusBadGateway, "Could not reach Poly Lens")
 	}
 }
@@ -162,7 +164,7 @@ func (h *Handler) credentialsFor(p portalauth.Principal, in lensCredentials, cur
 		}
 		return clientID, in.ClientSecret, 0, ""
 	}
-	if !p.IsVendor || cur == nil || len(cur.SecretEnc) == 0 {
+	if !p.IsVendor || cur == nil || len(cur.SecretEnc) == 0 || (clientID != "" && clientID != cur.ClientID) {
 		return "", "", http.StatusBadRequest, "client_secret is required"
 	}
 	plain, err := h.cipher.Decrypt(cur.SecretEnc)
@@ -198,7 +200,7 @@ func (h *Handler) TestPolyLens(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	accts, err := h.lensClient(clientID, secret).Accounts(ctx)
 	if err != nil {
-		lensFailure(w, err)
+		h.lensFailure(w, err)
 		return
 	}
 	out := make([]lensAccountOut, 0, len(accts))
@@ -209,6 +211,16 @@ func (h *Handler) TestPolyLens(w http.ResponseWriter, r *http.Request) {
 		out = append(out, lensAccountOut{ID: a.ID, Name: a.Name})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"accounts": out})
+}
+
+// integrationChanged reports whether the row locked in the write transaction
+// differs from the one the account and secret rules were decided on.
+func integrationChanged(read, locked *db.Integration) bool {
+	if read == nil || locked == nil {
+		return read != locked
+	}
+	return read.AccountID != locked.AccountID || read.ClientID != locked.ClientID ||
+		len(read.SecretEnc) > 0 != (len(locked.SecretEnc) > 0) || read.Status != locked.Status
 }
 
 func integrationSnapshot(i *db.Integration) map[string]any {
@@ -277,7 +289,7 @@ func (h *Handler) PutPolyLens(w http.ResponseWriter, r *http.Request) {
 		defer cancel()
 		accts, err := h.lensClient(in.ClientID, in.ClientSecret).Accounts(ctx)
 		if err != nil {
-			lensFailure(w, err)
+			h.lensFailure(w, err)
 			return
 		}
 		found := false
@@ -305,10 +317,18 @@ func (h *Handler) PutPolyLens(w http.ResponseWriter, r *http.Request) {
 	}
 	var saved *db.Integration
 	var linked int
+	stale := false
 	if !h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
-		before, err := db.GetIntegration(ctx, tx, providerPolyLens)
+		if h.beforeIntegrationWrite != nil {
+			h.beforeIntegrationWrite()
+		}
+		before, err := db.GetIntegrationForUpdate(ctx, tx, providerPolyLens)
 		if err != nil {
 			return err
+		}
+		if integrationChanged(cur, before) {
+			stale = true
+			return nil
 		}
 		id, _, err := db.UpsertIntegration(ctx, tx, p.CustomerID, next, actor)
 		if err != nil {
@@ -329,6 +349,10 @@ func (h *Handler) PutPolyLens(w http.ResponseWriter, r *http.Request) {
 			Before: integrationSnapshot(before), After: integrationSnapshot(saved),
 		}))
 	}) {
+		return
+	}
+	if stale {
+		writeErr(w, http.StatusConflict, "The integration changed while you were editing it; reload and try again")
 		return
 	}
 	writeJSON(w, http.StatusOK, viewOf(*saved, linked))
@@ -436,8 +460,7 @@ func (h *Handler) ListPolyLensDevices(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusBadGateway, "Poly Lens rejected the stored credentials; reconnect the integration")
 			return
 		}
-		h.log.Warn("poly lens device list failed", "error", err)
-		lensFailure(w, err)
+		h.lensFailure(w, err)
 		return
 	}
 	if cur.Status == "error" {
