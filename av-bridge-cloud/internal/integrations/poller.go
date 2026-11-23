@@ -120,6 +120,11 @@ type linkedDevice struct {
 	deviceID, name, typ, externalID string
 }
 
+// onlyCustomersSQL limits a pass to $1 when it lists customers. pgx sends a
+// nil slice (production) as NULL, and cardinality(NULL) is NULL, so the
+// COALESCE is what makes an unset filter mean "every customer".
+const onlyCustomersSQL = `(COALESCE(cardinality($1::text[]), 0) = 0 OR customer_id::text = ANY($1))`
+
 // PollOnce does one pass over every Poly Lens integration. A failure on one
 // integration never stops the others.
 func (p *Poller) PollOnce(ctx context.Context) error {
@@ -127,7 +132,7 @@ func (p *Poller) PollOnce(ctx context.Context) error {
 		SELECT id::text, customer_id::text, status, COALESCE(client_id, ''), COALESCE(account_id, ''), secret_enc, allow_tagging
 		  FROM integrations WHERE provider = 'poly_lens'
 		   AND `+db.CustomerActiveSQL("customer_id")+`
-		   AND (cardinality($1::text[]) = 0 OR customer_id::text = ANY($1))`, p.onlyCustomers)
+		   AND `+onlyCustomersSQL, p.onlyCustomers)
 	if err != nil {
 		return err
 	}

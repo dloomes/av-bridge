@@ -119,6 +119,34 @@ func (e *env) count(sql string, args ...any) int {
 	return n
 }
 
+// TestOnlyCustomersFilterNilMeansEveryone pins the production case: the
+// poller's filter is a nil slice, which pgx sends as NULL. The filter must
+// then match every customer (v1.2.0 matched none, so nothing was polled).
+func TestOnlyCustomersFilterNilMeansEveryone(t *testing.T) {
+	e := newEnv(t)
+	match := func(filter []string, customer string) bool {
+		var ok bool
+		sql := `SELECT ` + strings.ReplaceAll(onlyCustomersSQL, "customer_id", "$2::text") + ` IS TRUE`
+		if err := e.su.QueryRow(context.Background(), sql, filter, customer).Scan(&ok); err != nil {
+			t.Fatal(err)
+		}
+		return ok
+	}
+	cust := "11111111-2222-3333-4444-555555555555"
+	if !match(nil, cust) {
+		t.Fatal("nil filter (production) must match every customer")
+	}
+	if !match([]string{}, cust) {
+		t.Fatal("empty filter must match every customer")
+	}
+	if !match([]string{cust}, cust) {
+		t.Fatal("filter listing the customer must match it")
+	}
+	if match([]string{"99999999-2222-3333-4444-555555555555"}, cust) {
+		t.Fatal("filter listing another customer must not match")
+	}
+}
+
 func newEnv(t *testing.T) *env {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
