@@ -192,9 +192,13 @@ func (h *Handler) createLensDevice(w http.ResponseWriter, r *http.Request, req c
 	// left to the poller, which retries. A tagging failure never blocks linking.
 	tagState := "none"
 	if tagging {
-		tagState = "pending"
-		if !h.markLensTagPending(r, id) && !h.markLensTagPending(r, id) {
-			tagState = "none"
+		// One retry: the response must match what was stored.
+		tagState = "none"
+		for attempt := 0; attempt < 2; attempt++ {
+			if h.markLensTagPending(r, id) {
+				tagState = "pending"
+				break
+			}
 		}
 	}
 	writeJSON(w, http.StatusCreated, map[string]string{"id": id, "tag_state": tagState})

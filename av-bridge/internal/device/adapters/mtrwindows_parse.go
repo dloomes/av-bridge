@@ -68,7 +68,7 @@ const mtrErrorWindow = 15 * time.Minute
 func mtrReadings(raw []byte, now time.Time) (map[string]any, map[string]string, error) {
 	var out mtrScriptOutput
 	if err := json.Unmarshal(mtrJSONObject(raw), &out); err != nil {
-		return nil, nil, fmt.Errorf("Teams Rooms script output unreadable: %w", err)
+		return nil, nil, fmt.Errorf("teams rooms script output unreadable: %w", err)
 	}
 	m := map[string]any{}
 

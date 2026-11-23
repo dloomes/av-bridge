@@ -41,7 +41,6 @@ type alertFx struct {
 	clock    time.Time
 	disp     *recDispatch
 	alerter  *Alerter
-	evalErrs int
 }
 
 func at(h, m int) time.Time { return time.Date(2026, 11, 23, h, m, 0, 0, time.UTC) }
