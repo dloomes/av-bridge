@@ -761,8 +761,11 @@ func TestHelpdeskOffboardCancelExport(t *testing.T) {
 	               VALUES ($1, $2, 'od', 'Other device', 'ping') RETURNING id::text`, other, otherCol)
 	exec(`INSERT INTO telemetry_daily (customer_id, device_id, day, samples) VALUES ($1, $2, current_date - 1, 5)`, other, otherDev)
 	otherChan := q(`INSERT INTO notification_channels (customer_id, name, type, target) VALUES ($1, 'm', 'email', 'x@other.test') RETURNING id::text`, other)
-	otherAudit := q(`INSERT INTO audit_log (customer_id, actor, action, target_kind) VALUES ($1, 'test', 'other.thing', 'customer') RETURNING id::text`, other)
-	otherIDs := []string{other, otherUser, otherCol, otherDev, otherChan, otherAudit}
+	// The other customer's audit row is found by its unique action, not its
+	// id: audit ids are short sequential numbers (e.g. "171") that can appear
+	// in an export by coincidence. The UUID ids below are safe to search for.
+	q(`INSERT INTO audit_log (customer_id, actor, action, target_kind) VALUES ($1, 'test', 'other.thing.`+tag+`', 'customer') RETURNING id::text`, other)
+	otherIDs := []string{other, otherUser, otherCol, otherDev, otherChan, "other.thing." + tag}
 
 	// --- Export.
 	{

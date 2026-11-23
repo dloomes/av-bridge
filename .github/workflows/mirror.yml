@@ -42,7 +42,7 @@ jobs:
             exit 1
           fi
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           fetch-tags: true
@@ -63,7 +63,7 @@ jobs:
           git bundle list-heads "${BUNDLE}" | wc -l
           echo "BUNDLE=${BUNDLE}" >> "${GITHUB_ENV}"
 
-      - uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ env.PROD_ROLE }}
           aws-region: ${{ env.AWS_REGION }}

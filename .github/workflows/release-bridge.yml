@@ -37,7 +37,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           # Full history so `git describe --tags` in the Makefile resolves
           # cleanly to the tag we're building.
@@ -114,7 +114,7 @@ jobs:
           fi
 
       - name: Publish GitHub release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           # softprops runs at repo root, not the job's default working-directory.
           # Paths must therefore be repo-root-relative.
