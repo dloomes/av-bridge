@@ -120,6 +120,7 @@ type Config struct {
 	// scan cadence; keep it below OfflineAfter so a fresh-offline
 	// collector doesn't wait a full window before being noticed.
 	CollectorHealthInterval     time.Duration
+	IntegrationPollInterval     time.Duration
 	CollectorHealthOfflineAfter time.Duration
 
 	// Nightly Room Readiness — see docs/nightly-lifecycle-spec.md and
@@ -271,6 +272,10 @@ func FromEnv() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	integrationPollInterval, err := getenvDuration("INTEGRATION_POLL_INTERVAL", 60*time.Second)
+	if err != nil {
+		return Config{}, err
+	}
 	collectorHealthOfflineAfter, err := getenvDuration("COLLECTOR_HEALTH_OFFLINE_AFTER", 5*time.Minute)
 	if err != nil {
 		return Config{}, err
@@ -337,6 +342,7 @@ func FromEnv() (Config, error) {
 		SessionCleanupInterval:  sessionCleanupInterval,
 		SessionCleanupRetention: sessionCleanupRetention,
 		CollectorHealthInterval:     collectorHealthInterval,
+		IntegrationPollInterval:     integrationPollInterval,
 		CollectorHealthOfflineAfter: collectorHealthOfflineAfter,
 		NightlyTickInterval:     nightlyTick,
 		NightlyGraceWindow:      nightlyGrace,

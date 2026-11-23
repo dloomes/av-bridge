@@ -31,6 +31,7 @@ import (
 	"github.com/dloomes/av-bridge-cloud/internal/publicapi"
 	"github.com/dloomes/av-bridge-cloud/internal/secrets"
 	"github.com/dloomes/av-bridge-cloud/internal/collectorhealth"
+	"github.com/dloomes/av-bridge-cloud/internal/integrations"
 	"github.com/dloomes/av-bridge-cloud/internal/sessioncleanup"
 	"github.com/dloomes/av-bridge-cloud/internal/wsfanout"
 )
@@ -455,6 +456,13 @@ func main() {
 	)
 	if background {
 		go collectorWatcher.Run(sweeperCtx)
+	}
+
+	// Poly Lens poller — status and readings of Teams Rooms devices that
+	// have no Collector. Task 8 passes an alert evaluator; nil until then.
+	lensPoller := integrations.NewPoller(store.AdminPool(), cipher, relay, nil, cfg.IntegrationPollInterval, log)
+	if background {
+		go lensPoller.Run(sweeperCtx)
 	}
 
 	// Nightly Room Readiness scheduler — enacts the customer + per-room
