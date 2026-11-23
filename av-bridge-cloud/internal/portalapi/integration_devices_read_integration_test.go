@@ -71,6 +71,8 @@ func TestIntegrationDeviceInReadPaths(t *testing.T) {
 	}
 	fresh := lens("lens fresh", "ext-1", "0 minutes")
 	stale := lens("lens stale", "ext-2", "16 minutes")
+	q(`UPDATE devices SET make='Poly', model='Fake Model X', serial_number='FAKE-SN-1', firmware_version='9.9.9', mac_address='00:00:00:00:00:01'
+	   WHERE id = $1 RETURNING id::text`, fresh)
 
 	all := map[string]struct{}{}
 	for p := range portalauth.KnownPermissions {
@@ -111,6 +113,11 @@ func TestIntegrationDeviceInReadPaths(t *testing.T) {
 		Platform    *string      `json:"platform"`
 		Status      string       `json:"status"`
 		Integration *integration `json:"integration"`
+		Make            *string `json:"make"`
+		Model           *string `json:"model"`
+		SerialNumber    *string `json:"serial_number"`
+		FirmwareVersion *string `json:"firmware_version"`
+		MACAddress      *string `json:"mac_address"`
 	}
 	check := func(where string, d dev, wantSource, wantStatus string) {
 		t.Helper()
@@ -147,6 +154,12 @@ func TestIntegrationDeviceInReadPaths(t *testing.T) {
 	var one dev
 	get("/api/v1/devices/"+fresh, &one)
 	check("detail fresh", one, "poly_lens", "online")
+	if one.Make == nil || *one.Make != "Poly" || one.Model == nil || *one.Model != "Fake Model X" ||
+		one.SerialNumber == nil || *one.SerialNumber != "FAKE-SN-1" ||
+		one.FirmwareVersion == nil || *one.FirmwareVersion != "9.9.9" ||
+		one.MACAddress == nil || *one.MACAddress != "00:00:00:00:00:01" {
+		t.Errorf("detail fresh inventory = %+v", one)
+	}
 	one = dev{}
 	get("/api/v1/devices/"+stale, &one)
 	check("detail stale", one, "poly_lens", "offline")

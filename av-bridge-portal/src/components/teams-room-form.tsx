@@ -58,6 +58,7 @@ export function TeamsRoomForm({
   const [devices, setDevices] = useState<LensDevice[] | null>(null);
   const [degraded, setDegraded] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
+  const [integrationsError, setIntegrationsError] = useState<string | null>(null);
   const [listLoading, setListLoading] = useState(false);
 
   const [submitting, setSubmitting] = useState(false);
@@ -79,7 +80,7 @@ export function TeamsRoomForm({
       .catch((e) => {
         if (!ctrl.signal.aborted) {
           setIntegrations([]);
-          setListError(apiMessage(e));
+          setIntegrationsError(apiMessage(e));
         }
       });
     return () => ctrl.abort();
@@ -271,7 +272,13 @@ export function TeamsRoomForm({
             <img src="/integrations/poly.svg" alt="" className="h-5 w-5" />
             <span className="font-semibold">Poly Lens</span>
             <span className={cn("ml-auto text-xs", lensConnected ? "[color:hsl(var(--success))]" : "text-muted-foreground")}>
-              {integrations === null ? "Checking…" : lensConnected ? "● Connected" : "Connect Poly Lens in Integrations first"}
+              {integrations === null
+                ? "Checking…"
+                : integrationsError
+                  ? integrationsError
+                  : lensConnected
+                    ? "● Connected"
+                    : "Connect Poly Lens in Integrations first"}
             </span>
           </div>
           <div className="rounded-md border p-2.5 text-sm text-muted-foreground opacity-60" aria-disabled="true">

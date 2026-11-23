@@ -74,8 +74,8 @@ export function TeamsRoomCards({ device, metrics }: { device: DeviceDetail; metr
   const m = metrics ?? {};
   const linked = bool(m.peripherals_linked);
   const lastSeen = str(m.lens_last_seen);
-  const model = str(m.model) || str(m.hardware_model);
-  const serial = str(m.serial_number) || str(m.serial);
+  const model = str(device.model);
+  const serial = str(device.serial_number);
   const integ = device.integration;
   const tagState = integ?.tag_state ?? "";
 
@@ -98,7 +98,7 @@ export function TeamsRoomCards({ device, metrics }: { device: DeviceDetail; metr
       </Panel>
       <Panel title="Device">
         <Row label="Model">{model || dash}</Row>
-        <Row label="Software">{str(m.software_version) || dash}</Row>
+        <Row label="Software">{str(m.software_version) || str(device.firmware_version) || dash}</Row>
         <Row label="Serial">{serial || dash}</Row>
         <Row label="Last seen by Lens">
           {lastSeen ? <span title={formatTimestamp(lastSeen)}>{formatRelative(lastSeen)}</span> : dash}

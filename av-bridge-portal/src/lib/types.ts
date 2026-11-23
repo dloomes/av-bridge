@@ -115,6 +115,12 @@ export interface DeviceDetail extends DeviceSummary {
   asset_id?: string | null;
   asset?: DeviceAssetInput;
   reported_id: string;
+  // Inventory columns, null when unknown (filled by Poly Lens or ingest).
+  make?: string | null;
+  model?: string | null;
+  serial_number?: string | null;
+  firmware_version?: string | null;
+  mac_address?: string | null;
   ip_address?: string;
   baud_rate?: number;
   poll_rate_seconds?: number;

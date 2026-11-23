@@ -603,7 +603,14 @@ func (h *Handler) GetDevice(w http.ResponseWriter, r *http.Request) {
 		CollectorStatus string `json:"collector_status,omitempty"`
 		// LastOnlineAt: when the device last answered its Collector
 		// ("Last contacted"). Absent if it hasn't in the records kept.
-		LastOnlineAt  *time.Time        `json:"last_online_at,omitempty"`
+		LastOnlineAt *time.Time `json:"last_online_at,omitempty"`
+		// Inventory columns (filled by the Lens poller and by ingest); null
+		// when unknown.
+		Make            *string           `json:"make"`
+		Model           *string           `json:"model"`
+		SerialNumber    *string           `json:"serial_number"`
+		FirmwareVersion *string           `json:"firmware_version"`
+		MACAddress      *string           `json:"mac_address"`
 		Tags          map[string]string `json:"tags,omitempty"`
 		Commands      map[string]string `json:"commands,omitempty"`
 		Subscriptions []subscription    `json:"subscriptions,omitempty"`
@@ -650,7 +657,8 @@ func (h *Handler) GetDevice(w http.ResponseWriter, r *http.Request) {
 			       d.last_online_at,
 			       d.tags, d.commands, d.subscriptions, d.capabilities,
 			       d.source, d.platform,
-			       `+integrationSelectSQL+`
+			       `+integrationSelectSQL+`,
+			       d.make, d.model, d.serial_number, d.firmware_version, d.mac_address
 			  FROM devices d
 			  LEFT JOIN rooms r ON r.id = d.room_id
 			  LEFT JOIN buildings b ON b.id = r.building_id
@@ -665,7 +673,8 @@ func (h *Handler) GetDevice(w http.ResponseWriter, r *http.Request) {
 				&o.LastOnlineAt,
 				&tags, &cmds, &subs, &caps,
 				&o.Source, &o.Platform,
-				&igProv, &igExt, &igAcct, &igTag)
+				&igProv, &igExt, &igAcct, &igTag,
+				&o.Make, &o.Model, &o.SerialNumber, &o.FirmwareVersion, &o.MACAddress)
 		if errors.Is(err, pgx.ErrNoRows) {
 			notFound = true
 			return nil

@@ -337,7 +337,14 @@ export default function DeviceDetailPage() {
         <div className="grid gap-6 p-6 lg:grid-cols-[minmax(0,1fr)_360px]">
           <div className="space-y-6 min-w-0">
             {isLens ? (
-              <TeamsRoomCards device={device} metrics={lensMetrics} />
+              <>
+                {telemetry.error && (
+                  <div role="alert" className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm [color:hsl(var(--destructive))]">
+                    {telemetry.error.message}
+                  </div>
+                )}
+                <TeamsRoomCards device={device} metrics={lensMetrics} />
+              </>
             ) : (
               <TelemetryGrid
                 metrics={telemetry.data?.metrics}
