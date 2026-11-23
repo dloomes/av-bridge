@@ -176,6 +176,34 @@ func TestMaintenanceHold(t *testing.T) {
 			t.Fatal("not opened at 05:03")
 		}
 	})
+	t.Run("started 00:58 held until 05:00", func(t *testing.T) {
+		f := newAlertFx(t, "")
+		f.eval(t, at(0, 58), offline)
+		f.eval(t, at(1, 30), offline)
+		f.eval(t, at(4, 59), offline)
+		if f.open("device_offline") != 0 {
+			t.Fatal("opened inside the window")
+		}
+		f.eval(t, at(5, 0), offline)
+		if f.open("device_offline") != 1 {
+			t.Fatal("not opened at 05:00")
+		}
+	})
+	t.Run("DST transition day follows local time", func(t *testing.T) {
+		// 2026-03-29: London moves to BST at 01:00 UTC. 04:30 UTC = 05:30 BST (open);
+		// 03:30 UTC = 04:30 BST (held).
+		f := newAlertFx(t, "Europe/London")
+		d := func(h, m int) time.Time { return time.Date(2026, 3, 29, h, m, 0, 0, time.UTC) }
+		f.eval(t, d(2, 0), offline)
+		f.eval(t, d(3, 30), offline)
+		if f.open("device_offline") != 0 {
+			t.Fatal("opened at 04:30 BST")
+		}
+		f.eval(t, d(4, 30), offline)
+		if f.open("device_offline") != 1 {
+			t.Fatal("not opened at 05:30 BST")
+		}
+	})
 	t.Run("building time zone decides the window", func(t *testing.T) {
 		f := newAlertFx(t, "America/New_York") // 06:30 UTC = 01:30 local
 		f.eval(t, at(6, 0), offline)
@@ -218,8 +246,8 @@ func TestAutoResolveAndRecovered(t *testing.T) {
 	if len(f.disp.keys()) != 2 {
 		t.Fatal("recovered notification repeated")
 	}
-	if f.disp.evs[1].Severity != "info" {
-		t.Fatalf("recovered severity %q", f.disp.evs[1].Severity)
+	if ev := f.disp.evs[1]; ev.Severity != "critical" || ev.Payload["recovered"] != true || ev.Payload["alert_key"] != "device_offline" {
+		t.Fatalf("recovered event %q %v", ev.Severity, ev.Payload)
 	}
 }
 

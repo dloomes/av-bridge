@@ -179,6 +179,11 @@ func newEnv(t *testing.T) *env {
 			w.WriteHeader(401)
 			return
 		}
+		if e.mode.Load() == "forbidden" {
+			w.WriteHeader(403)
+			io.WriteString(w, `{"errors":[{"message":"no","extensions":{"code":"AUTHORIZATION_ERROR"}}]}`)
+			return
+		}
 		if e.mode.Load() == "ratelimit" {
 			w.Header().Set("ratelimit-reset", "30")
 			w.WriteHeader(429)
@@ -357,6 +362,23 @@ func TestPollFailureMarksUnknownNotOffline(t *testing.T) {
 	}
 }
 
+func TestPollForbiddenIsRoleError(t *testing.T) {
+	e := newEnv(t)
+	f := e.tenant("acct-forb", "ext-1")
+	e.mode.Store("forbidden")
+	defer e.mode.Store("ok")
+	if err := e.poller(nil, nil, f.cust).PollOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.integration(f.integ); got != "error|Poly Lens role lacks permission" {
+		t.Fatalf("integration %q", got)
+	}
+	status, metrics, _ := e.dev(f.devs["ext-1"])
+	if status != "unknown" || !strings.Contains(metrics, "Poly Lens role lacks permission") {
+		t.Fatalf("%q %s", status, metrics)
+	}
+}
+
 func TestPollNetworkFailureIsUnreachable(t *testing.T) {
 	e := newEnv(t)
 	f := e.tenant("acct-net", "ext-1")
@@ -404,6 +426,19 @@ func TestPollDisconnectedIntegrationNotPolled(t *testing.T) {
 	}
 	if n := e.gqlCalls("acct-disc2"); n != 0 {
 		t.Fatalf("called Lens %d times", n)
+	}
+}
+
+func TestPollOffboardingCustomerNotPolled(t *testing.T) {
+	e := newEnv(t)
+	f := e.tenant("acct-offb", "ext-1")
+	e.exec(`UPDATE customers SET offboarding_started_at = now(), offboarding_started_by = 'test',
+	        delete_after = now() + interval '30 days' WHERE id = $1`, f.cust)
+	if err := e.poller(nil, nil, f.cust).PollOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if n := e.gqlCalls("acct-offb"); n != 0 {
+		t.Fatalf("offboarding customer's integration called Lens %d times", n)
 	}
 }
 

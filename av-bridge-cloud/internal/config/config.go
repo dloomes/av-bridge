@@ -120,8 +120,11 @@ type Config struct {
 	// scan cadence; keep it below OfflineAfter so a fresh-offline
 	// collector doesn't wait a full window before being noticed.
 	CollectorHealthInterval     time.Duration
-	IntegrationPollInterval     time.Duration
 	CollectorHealthOfflineAfter time.Duration
+
+	// IntegrationPollInterval is how often vendor-cloud integrations (Poly
+	// Lens) are polled; zero or negative disables the poller.
+	IntegrationPollInterval time.Duration
 
 	// Nightly Room Readiness — see docs/nightly-lifecycle-spec.md and
 	// internal/nightly. TickInterval is how often the scheduler wakes;
@@ -342,8 +345,8 @@ func FromEnv() (Config, error) {
 		SessionCleanupInterval:  sessionCleanupInterval,
 		SessionCleanupRetention: sessionCleanupRetention,
 		CollectorHealthInterval:     collectorHealthInterval,
-		IntegrationPollInterval:     integrationPollInterval,
 		CollectorHealthOfflineAfter: collectorHealthOfflineAfter,
+		IntegrationPollInterval:     integrationPollInterval,
 		NightlyTickInterval:     nightlyTick,
 		NightlyGraceWindow:      nightlyGrace,
 		NightlyWarmupSeconds:    nightlyWarmup,

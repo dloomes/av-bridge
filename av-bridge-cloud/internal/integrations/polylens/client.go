@@ -345,6 +345,7 @@ func (c *Client) AddTag(ctx context.Context, accountID, deviceID, tag string) er
 	if err != nil {
 		return err
 	}
+	created := false
 	if id == "" {
 		var cr struct {
 			CreateTag struct {
@@ -358,19 +359,37 @@ func (c *Client) AddTag(ctx context.Context, accountID, deviceID, tag string) er
 		if id = cr.CreateTag.ID; id == "" {
 			return errors.New("polylens: createTag returned no id")
 		}
+		created = true
 	}
 	var out struct {
 		R tagResult `json:"addLensTagToDevice"`
 	}
 	if err := c.graphql(ctx, `mutation($tagIds: [String!]!, $deviceIds: [String!]!) { addLensTagToDevice(tagIds: $tagIds, deviceIds: $deviceIds) { deviceId success } }`,
 		map[string]any{"tagIds": []string{id}, "deviceIds": []string{deviceID}}, &out); err != nil {
+		c.discardTag(ctx, id, created)
 		return err
 	}
-	return out.R.check()
+	if err := out.R.check(); err != nil {
+		c.discardTag(ctx, id, created)
+		return err
+	}
+	return nil
+}
+
+// discardTag best-effort deletes a tag this call just created, so a role that
+// can create but not assign tags does not leave an orphan per device. Any
+// failure (including a 403) is ignored.
+func (c *Client) discardTag(ctx context.Context, id string, created bool) {
+	if !created {
+		return
+	}
+	_ = c.graphql(ctx, `mutation($id: String!) { deleteTag(id: $id) { success } }`, map[string]any{"id": id}, nil)
 }
 
 // RemoveTag removes a tag from a device. A tag that does not exist is a no-op.
-// The account-level tag itself is left in place (other devices may use it).
+// A per-device tag ("marcus:<device id>") is unique to that device, so it is
+// deleted after the unassign (best effort; failures such as a 403 are ignored).
+// Any other tag is left in place because other devices may use it.
 func (c *Client) RemoveTag(ctx context.Context, accountID, deviceID, tag string) error {
 	id, err := c.tagID(ctx, accountID, tag)
 	if err != nil || id == "" {
@@ -383,7 +402,11 @@ func (c *Client) RemoveTag(ctx context.Context, accountID, deviceID, tag string)
 		map[string]any{"tagId": id, "deviceIds": []string{deviceID}}, &out); err != nil {
 		return err
 	}
-	return out.R.check()
+	if err := out.R.check(); err != nil {
+		return err
+	}
+	c.discardTag(ctx, id, strings.HasPrefix(tag, "marcus:"))
+	return nil
 }
 
 // schemaError marks a GraphQL validation error (unknown field/argument).

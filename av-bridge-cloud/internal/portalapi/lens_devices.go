@@ -7,6 +7,7 @@ package portalapi
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -14,6 +15,7 @@ import (
 
 	"github.com/dloomes/av-bridge-cloud/internal/audit"
 	"github.com/dloomes/av-bridge-cloud/internal/db"
+	"github.com/dloomes/av-bridge-cloud/internal/integrations/polylens"
 	"github.com/dloomes/av-bridge-cloud/internal/portalauth"
 )
 
@@ -43,8 +45,6 @@ func validateLensCreate(req createDeviceReq) string {
 		return "collector_id, reported_id and protocol are not used for a Poly Lens device"
 	case req.Address != "" || req.Username != "" || req.Password != "":
 		return "address and credentials are not used for a Poly Lens device"
-	case req.AssetID != "" || req.Asset.hasAny():
-		return "assets cannot be attached to a Poly Lens device here"
 	}
 	return ""
 }
@@ -99,6 +99,8 @@ func (h *Handler) createLensDevice(w http.ResponseWriter, r *http.Request, req c
 		id        string
 		roomBad   bool
 		duplicate bool
+		assetBad  bool
+		assetErr  error
 		stale     bool
 		tagging   bool
 	)
@@ -137,11 +139,19 @@ func (h *Handler) createLensDevice(w http.ResponseWriter, r *http.Request, req c
 		if req.RoomID != "" {
 			roomParam = req.RoomID
 		}
+		assetParam, bad, aerr, err := resolveDeviceAsset(ctx, tx, p.CustomerID, roomParam, "teams_room", name, req.AssetID, req.Asset)
+		if err != nil {
+			return err
+		}
+		if bad || aerr != nil {
+			assetBad, assetErr = bad, aerr
+			return nil
+		}
 		if err := tx.QueryRow(ctx, `
-			INSERT INTO devices (customer_id, source, platform, room_id, name, type, serial_number, mac_address, tags)
-			VALUES ($1, 'poly_lens', $2, $3, NULLIF($4,''), 'teams_room', NULLIF($5,''), NULLIF($6,''), $7::jsonb)
+			INSERT INTO devices (customer_id, source, platform, room_id, name, type, serial_number, mac_address, tags, asset_id)
+			VALUES ($1, 'poly_lens', $2, $3, NULLIF($4,''), 'teams_room', NULLIF($5,''), NULLIF($6,''), $7::jsonb, $8)
 			RETURNING id::text`,
-			p.CustomerID, req.Platform, roomParam, name, lens.serial, lens.mac, jsonOrNil(req.Tags)).Scan(&id); err != nil {
+			p.CustomerID, req.Platform, roomParam, name, lens.serial, lens.mac, jsonOrNil(req.Tags), assetParam).Scan(&id); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, `
@@ -169,6 +179,12 @@ func (h *Handler) createLensDevice(w http.ResponseWriter, r *http.Request, req c
 	case roomBad:
 		writeErr(w, http.StatusBadRequest, "room_id not found in this customer")
 		return
+	case assetBad:
+		writeErr(w, http.StatusBadRequest, "asset_id not found in this customer")
+		return
+	case assetErr != nil:
+		writeErr(w, http.StatusBadRequest, assetErr.Error())
+		return
 	case duplicate:
 		writeErr(w, http.StatusConflict, "That Poly Lens device is already linked")
 		return
@@ -184,14 +200,21 @@ func (h *Handler) createLensDevice(w http.ResponseWriter, r *http.Request, req c
 		if err := client.AddTag(tctx, cur.AccountID, req.ExternalID, lensTagPrefix+id); err != nil {
 			h.log.Warn("poly lens tagging failed", "device_id", id, "error", err)
 			tagState, tagErr = "failed", "Poly Lens did not accept the tag"
+			if errors.Is(err, polylens.ErrForbidden) {
+				tagErr = "Lens role can't tag devices"
+			}
 		}
 		tcancel()
-		h.setLensTagState(r, id, tagState, tagErr)
+		// The response reflects what is stored: if the state cannot be
+		// recorded (after one retry) the row still says none.
+		if !h.setLensTagState(r, id, tagState, tagErr) && !h.setLensTagState(r, id, tagState, tagErr) {
+			tagState = "none"
+		}
 	}
 	writeJSON(w, http.StatusCreated, map[string]string{"id": id, "tag_state": tagState})
 }
 
-func (h *Handler) setLensTagState(r *http.Request, deviceID, state, errMsg string) {
+func (h *Handler) setLensTagState(r *http.Request, deviceID, state, errMsg string) bool {
 	p, _ := portalauth.From(r.Context())
 	err := h.store.WithTenantScope(r.Context(), p.CustomerID, principalScope(p), func(tx pgx.Tx) error {
 		_, err := tx.Exec(r.Context(),
@@ -201,7 +224,9 @@ func (h *Handler) setLensTagState(r *http.Request, deviceID, state, errMsg strin
 	})
 	if err != nil {
 		h.log.Error("record lens tag state failed", "device_id", deviceID, "error", err)
+		return false
 	}
+	return true
 }
 
 // releaseLensTag runs before a device is deleted. For a tagged Lens device it

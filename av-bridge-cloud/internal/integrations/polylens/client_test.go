@@ -396,3 +396,74 @@ func TestAuthorizationErrorIsForbidden(t *testing.T) {
 		t.Fatalf("err %v", err)
 	}
 }
+
+// tagFake serves the tag calls: existing says whether the tag is already in
+// the account; failAdd makes the assignment 403; failDelete makes deleteTag 403.
+func tagFake(t *testing.T, existing, failAdd, failDelete bool, seen *[]string) *Client {
+	f := &fake{t: t, handler: func(w http.ResponseWriter, r *http.Request, req gqlReq) {
+		switch {
+		case strings.Contains(req.Query, "lensTags(filter"):
+			if existing {
+				io.WriteString(w, `{"data":{"tenant":{"lensTags":[{"id":"t1","name":"marcus:abc"}]}}}`)
+			} else {
+				io.WriteString(w, `{"data":{"tenant":{"lensTags":[]}}}`)
+			}
+		case strings.Contains(req.Query, "createTag"):
+			*seen = append(*seen, "create")
+			io.WriteString(w, `{"data":{"createTag":{"id":"t1"}}}`)
+		case strings.Contains(req.Query, "addLensTagToDevice"):
+			*seen = append(*seen, "add")
+			if failAdd {
+				w.WriteHeader(403)
+				io.WriteString(w, `{"errors":[{"message":"no","extensions":{"code":"AUTHORIZATION_ERROR"}}]}`)
+				return
+			}
+			io.WriteString(w, `{"data":{"addLensTagToDevice":[{"deviceId":"dev1","success":true}]}}`)
+		case strings.Contains(req.Query, "deleteTag"):
+			*seen = append(*seen, "delete")
+			if failDelete {
+				w.WriteHeader(403)
+				io.WriteString(w, `{"errors":[{"message":"no","extensions":{"code":"AUTHORIZATION_ERROR"}}]}`)
+				return
+			}
+			io.WriteString(w, `{"data":{"deleteTag":{"success":true}}}`)
+		default:
+			*seen = append(*seen, "remove")
+			io.WriteString(w, `{"data":{"removeLensTagFromDevice":[{"deviceId":"dev1","success":true}]}}`)
+		}
+	}}
+	return f.start()
+}
+
+func TestAddTagDeletesOrphanItCreated(t *testing.T) {
+	var seen []string
+	err := tagFake(t, false, true, false, &seen).AddTag(context.Background(), "acc1", "dev1", "marcus:abc")
+	if !errors.Is(err, ErrForbidden) || strings.Join(seen, ",") != "create,add,delete" {
+		t.Fatalf("err %v seen %v", err, seen)
+	}
+	// A 403 on the cleanup delete is ignored; the original error is returned.
+	seen = nil
+	err = tagFake(t, false, true, true, &seen).AddTag(context.Background(), "acc1", "dev1", "marcus:abc")
+	if !errors.Is(err, ErrForbidden) || strings.Join(seen, ",") != "create,add,delete" {
+		t.Fatalf("err %v seen %v", err, seen)
+	}
+}
+
+func TestAddTagKeepsPreExistingTag(t *testing.T) {
+	var seen []string
+	err := tagFake(t, true, true, false, &seen).AddTag(context.Background(), "acc1", "dev1", "marcus:abc")
+	if err == nil || strings.Join(seen, ",") != "add" {
+		t.Fatalf("err %v seen %v", err, seen)
+	}
+}
+
+func TestRemoveTagDeletesPerDeviceTag(t *testing.T) {
+	var seen []string
+	if err := tagFake(t, true, false, false, &seen).RemoveTag(context.Background(), "acc1", "dev1", "marcus:abc"); err != nil || strings.Join(seen, ",") != "remove,delete" {
+		t.Fatalf("err %v seen %v", err, seen)
+	}
+	seen = nil // a 403 on delete is ignored
+	if err := tagFake(t, true, false, true, &seen).RemoveTag(context.Background(), "acc1", "dev1", "marcus:abc"); err != nil || strings.Join(seen, ",") != "remove,delete" {
+		t.Fatalf("err %v seen %v", err, seen)
+	}
+}

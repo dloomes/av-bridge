@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/dloomes/av-bridge-cloud/internal/db"
 	"github.com/dloomes/av-bridge-cloud/internal/integrations/polylens"
 	"github.com/dloomes/av-bridge-cloud/internal/secrets"
 	"github.com/dloomes/av-bridge-cloud/internal/wsfanout"
@@ -42,6 +43,7 @@ const (
 	msgDisconnected = "Integration disconnected"
 	msgRejected     = "Poly Lens rejected the credentials"
 	msgNoSecret     = "Stored Poly Lens credentials could not be read"
+	msgForbidden    = "Poly Lens role lacks permission"
 )
 
 // Poller polls every Poly Lens integration on an interval. It runs as the
@@ -123,6 +125,7 @@ func (p *Poller) PollOnce(ctx context.Context) error {
 	rows, err := p.admin.Query(ctx, `
 		SELECT id::text, customer_id::text, status, COALESCE(client_id, ''), COALESCE(account_id, ''), secret_enc
 		  FROM integrations WHERE provider = 'poly_lens'
+		   AND `+db.CustomerActiveSQL("customer_id")+`
 		   AND (cardinality($1::text[]) = 0 OR customer_id::text = ANY($1))`, p.onlyCustomers)
 	if err != nil {
 		return err
@@ -262,6 +265,8 @@ func (p *Poller) pollIntegration(ctx context.Context, in integrationRow) error {
 			p.log.Info("poly lens rate limited; skipping cycle", "integration", in.id, "retry_after", rl.RetryAfter)
 		case errors.Is(err, polylens.ErrUnauthorized):
 			p.failIntegration(ctx, in, devs, msgRejected)
+		case errors.Is(err, polylens.ErrForbidden):
+			p.failIntegration(ctx, in, devs, msgForbidden)
 		case ctx.Err() != nil:
 			return ctx.Err()
 		default:
@@ -305,8 +310,12 @@ func (p *Poller) failIntegration(ctx context.Context, in integrationRow, devs []
 	if err := p.setIntegration(ctx, in, msg); err != nil {
 		p.log.Warn("mark integration error failed", "integration", in.id, "error", err)
 	}
+	reason := msgUnreachable
+	if msg == msgForbidden {
+		reason = msg // a role problem is not an outage
+	}
 	for _, d := range devs {
-		p.markUnknown(ctx, in, d, msgUnreachable, true)
+		p.markUnknown(ctx, in, d, reason, true)
 	}
 }
 

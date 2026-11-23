@@ -51,6 +51,7 @@ func (h *Handler) lensClient(clientID, secret string) *polylens.Client {
 type integrationView struct {
 	Provider      string     `json:"provider"`
 	Status        string     `json:"status"`
+	AccountID     string     `json:"account_id,omitempty"`
 	AccountName   string     `json:"account_name,omitempty"`
 	AllowTagging  bool       `json:"allow_tagging"`
 	HasSecret     bool       `json:"has_secret"`
@@ -62,7 +63,7 @@ type integrationView struct {
 
 func viewOf(i db.Integration, linked int) integrationView {
 	return integrationView{
-		Provider: i.Provider, Status: i.Status, AccountName: i.AccountName, AllowTagging: i.AllowTagging,
+		Provider: i.Provider, Status: i.Status, AccountID: i.AccountID, AccountName: i.AccountName, AllowTagging: i.AllowTagging,
 		HasSecret: len(i.SecretEnc) > 0, ClientID: i.ClientID, LastSuccessAt: i.LastSuccessAt,
 		LastError: i.LastError, LinkedDevices: linked,
 	}
@@ -88,6 +89,10 @@ func (h *Handler) ListIntegrations(w http.ResponseWriter, r *http.Request) {
 		if i.Provider == providerPolyLens {
 			lens = viewOf(i, linked[i.Provider])
 		}
+	}
+	// The client id is a credential half: only managers (and Involve) see it.
+	if p, _ := portalauth.From(r.Context()); !p.IsVendor && !p.HasPermission(portalauth.PermIntegrationManage) {
+		lens.ClientID = ""
 	}
 	snStatus := "not_connected"
 	if snow {
@@ -142,6 +147,8 @@ func (h *Handler) lensFailure(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, polylens.ErrUnauthorized):
 		writeErr(w, http.StatusBadRequest, "Poly Lens rejected these credentials")
+	case errors.Is(err, polylens.ErrForbidden):
+		writeErr(w, http.StatusBadRequest, "Your Poly Lens API role doesn't have permission for this")
 	case errors.As(err, &rl):
 		if secs := int(rl.RetryAfter.Seconds()); secs > 0 {
 			w.Header().Set("Retry-After", strconv.Itoa(secs))
@@ -214,13 +221,15 @@ func (h *Handler) TestPolyLens(w http.ResponseWriter, r *http.Request) {
 }
 
 // integrationChanged reports whether the row locked in the write transaction
-// differs from the one the account and secret rules were decided on.
+// differs from the one the account and secret rules were decided on. Status is
+// not compared: the rules depend only on account, client id and whether a
+// secret is stored.
 func integrationChanged(read, locked *db.Integration) bool {
 	if read == nil || locked == nil {
 		return read != locked
 	}
 	return read.AccountID != locked.AccountID || read.ClientID != locked.ClientID ||
-		len(read.SecretEnc) > 0 != (len(locked.SecretEnc) > 0) || read.Status != locked.Status
+		len(read.SecretEnc) > 0 != (len(locked.SecretEnc) > 0)
 }
 
 func integrationSnapshot(i *db.Integration) map[string]any {

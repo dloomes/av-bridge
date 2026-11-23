@@ -107,17 +107,17 @@ func TestIntegrationDeviceInReadPaths(t *testing.T) {
 		TagState     string `json:"tag_state"`
 	}
 	type dev struct {
-		ID          string       `json:"id"`
-		CollectorID *string      `json:"collector_id"`
-		Source      string       `json:"source"`
-		Platform    *string      `json:"platform"`
-		Status      string       `json:"status"`
-		Integration *integration `json:"integration"`
-		Make            *string `json:"make"`
-		Model           *string `json:"model"`
-		SerialNumber    *string `json:"serial_number"`
-		FirmwareVersion *string `json:"firmware_version"`
-		MACAddress      *string `json:"mac_address"`
+		ID              string       `json:"id"`
+		CollectorID     *string      `json:"collector_id"`
+		Source          string       `json:"source"`
+		Platform        *string      `json:"platform"`
+		Status          string       `json:"status"`
+		Integration     *integration `json:"integration"`
+		Make            *string      `json:"make"`
+		Model           *string      `json:"model"`
+		SerialNumber    *string      `json:"serial_number"`
+		FirmwareVersion *string      `json:"firmware_version"`
+		MACAddress      *string      `json:"mac_address"`
 	}
 	check := func(where string, d dev, wantSource, wantStatus string) {
 		t.Helper()

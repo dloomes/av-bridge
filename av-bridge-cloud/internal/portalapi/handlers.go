@@ -370,15 +370,6 @@ func computeConfigSyncStatus(lastPull *time.Time, now time.Time) string {
 	return "current"
 }
 
-// ListDevices — GET /api/v1/devices. Shape matches the bridge's DeviceSummary.
-//
-// room_id is included so callers (e.g. the locations page's delete-impact
-// preview) can group devices by their placement without an extra fetch.
-//
-// region / location_name / building expose the full hierarchy so the portal
-// can breadcrumb it in group headers. Location (the existing "Building / Room"
-// display string) is kept for back-compat with the bridge's own DeviceSummary
-// contract.
 // deviceIntegration is the Integration summary on a device's JSON (null for
 // Collector devices).
 type deviceIntegration struct {
@@ -388,7 +379,7 @@ type deviceIntegration struct {
 	TagState     string `json:"tag_state"`
 }
 
-// integrationSQL is the select-list + join for a device's Integration
+// integrationSelectSQL is the select-list + join for a device's Integration
 // summary: it yields provider, external_name, account_name, tag_state (all
 // NULL for devices with no Integration link). Callers alias devices as d.
 const integrationSelectSQL = `ig.provider, idv.external_name, ig.account_name, idv.tag_state`
@@ -412,6 +403,15 @@ func buildDeviceIntegration(provider, extName, acct, tagState *string) *deviceIn
 	return di
 }
 
+// ListDevices — GET /api/v1/devices. Shape matches the bridge's DeviceSummary.
+//
+// room_id is included so callers (e.g. the locations page's delete-impact
+// preview) can group devices by their placement without an extra fetch.
+//
+// region / location_name / building expose the full hierarchy so the portal
+// can breadcrumb it in group headers. Location (the existing "Building / Room"
+// display string) is kept for back-compat with the bridge's own DeviceSummary
+// contract.
 func (h *Handler) ListDevices(w http.ResponseWriter, r *http.Request) {
 	// Optional filter: ?collector_id=<uuid>. Empty string means "all
 	// devices". Validated only loosely — a garbage value returns an empty
@@ -611,9 +611,9 @@ func (h *Handler) GetDevice(w http.ResponseWriter, r *http.Request) {
 		SerialNumber    *string           `json:"serial_number"`
 		FirmwareVersion *string           `json:"firmware_version"`
 		MACAddress      *string           `json:"mac_address"`
-		Tags          map[string]string `json:"tags,omitempty"`
-		Commands      map[string]string `json:"commands,omitempty"`
-		Subscriptions []subscription    `json:"subscriptions,omitempty"`
+		Tags            map[string]string `json:"tags,omitempty"`
+		Commands        map[string]string `json:"commands,omitempty"`
+		Subscriptions   []subscription    `json:"subscriptions,omitempty"`
 		// Capabilities is the adapter-declared shape (power/commands/metrics)
 		// stored on the row by the ingest handler. Surfaced so the device
 		// detail page's Command panel can render the correct buttons for

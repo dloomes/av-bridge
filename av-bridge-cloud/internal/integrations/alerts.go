@@ -184,7 +184,7 @@ func (a *Alerter) Evaluate(ctx context.Context, customerID, deviceID string, r R
 					return err
 				}
 				if tag.RowsAffected() > 0 {
-					events = append(events, a.event(customerID, deviceID, name, *alertID, c.key+"_recovered", "info", c.recovered, now))
+					events = append(events, a.event(customerID, deviceID, name, *alertID, c.key+"_recovered", c.severity, c.recovered, now, true))
 				}
 			}
 			if _, err := tx.Exec(ctx, `DELETE FROM integration_alert_state WHERE device_id = $1 AND condition = $2`, deviceID, c.key); err != nil {
@@ -227,7 +227,7 @@ func (a *Alerter) Evaluate(ctx context.Context, customerID, deviceID string, r R
 			return err
 		}
 		if inserted {
-			events = append(events, a.event(customerID, deviceID, name, id, c.key, c.severity, msg, openedAt))
+			events = append(events, a.event(customerID, deviceID, name, id, c.key, c.severity, msg, openedAt, false))
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -239,7 +239,12 @@ func (a *Alerter) Evaluate(ctx context.Context, customerID, deviceID string, r R
 	return nil
 }
 
-func (a *Alerter) event(customerID, deviceID, name, alertID, key, severity, msg string, at time.Time) notify.AlertEvent {
+func (a *Alerter) event(customerID, deviceID, name, alertID, key, severity, msg string, at time.Time, recovered bool) notify.AlertEvent {
+	payload := map[string]any{"severity": severity, "message": msg, "source": "poly_lens"}
+	if recovered {
+		payload["recovered"] = true
+		payload["alert_key"] = strings.TrimSuffix(key, "_recovered")
+	}
 	return notify.AlertEvent{
 		AlertID:    alertID,
 		CustomerID: customerID,
@@ -249,6 +254,6 @@ func (a *Alerter) event(customerID, deviceID, name, alertID, key, severity, msg 
 		Severity:   severity,
 		Message:    msg,
 		OpenedAt:   at,
-		Payload:    map[string]any{"severity": severity, "message": msg, "source": "poly_lens"},
+		Payload:    payload,
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -21,6 +22,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/dloomes/av-bridge-cloud/internal/db"
+	"github.com/dloomes/av-bridge-cloud/internal/integrations/polylens"
 	"github.com/dloomes/av-bridge-cloud/internal/portalauth"
 	"github.com/dloomes/av-bridge-cloud/internal/secrets"
 )
@@ -221,6 +223,15 @@ func TestIntegrationsAPI(t *testing.T) {
 	if code != 200 || strings.Contains(body+listBody, fakeLensSecret) || !strings.Contains(listBody, `"has_secret":true`) {
 		t.Errorf("secret leaked or has_secret missing: %d %s %s", code, body, listBody)
 	}
+	if !strings.Contains(body, `"account_id":"acct-a"`) || !strings.Contains(listBody, `"account_id":"acct-a"`) {
+		t.Errorf("account_id not returned: %s %s", body, listBody)
+	}
+	if strings.Contains(listBody, `"client_id"`) {
+		t.Errorf("client_id returned to a caller without integration.manage: %s", listBody)
+	}
+	if _, adminList := call("admin", "GET", "/api/v1/integrations", nil); !strings.Contains(adminList, `"client_id":"c"`) {
+		t.Errorf("client_id missing for a manager: %s", adminList)
+	}
 	var audits string
 	if err := su.QueryRow(ctx, `SELECT string_agg(action || ':' || COALESCE(before::text, '') || COALESCE("after"::text, '') || COALESCE(metadata::text, ''), '|') FROM audit_log WHERE customer_id = $1 AND action LIKE 'integration.%'`, cust).Scan(&audits); err != nil {
 		t.Fatal(err)
@@ -400,5 +411,25 @@ func TestIntegrationsAPI(t *testing.T) {
 		if e.Provider == "poly_lens" && e.Status != "connected" {
 			t.Errorf("poly_lens status = %q", e.Status)
 		}
+	}
+}
+
+func TestIntegrationChangedIgnoresStatus(t *testing.T) {
+	a := &db.Integration{AccountID: "x", ClientID: "c", SecretEnc: []byte{1}, Status: "connected"}
+	b := &db.Integration{AccountID: "x", ClientID: "c", SecretEnc: []byte{1}, Status: "error"}
+	if integrationChanged(a, b) {
+		t.Fatal("a status flip made the write stale")
+	}
+	b.AccountID = "y"
+	if !integrationChanged(a, b) {
+		t.Fatal("account change not detected")
+	}
+}
+
+func TestLensFailureForbidden(t *testing.T) {
+	rec := httptest.NewRecorder()
+	(&Handler{}).lensFailure(rec, fmt.Errorf("wrapped: %w", polylens.ErrForbidden))
+	if rec.Code != 400 || !strings.Contains(rec.Body.String(), "API role doesn't have permission") {
+		t.Fatalf("%d %s", rec.Code, rec.Body.String())
 	}
 }
