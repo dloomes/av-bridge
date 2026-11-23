@@ -11,7 +11,7 @@ require (
 	github.com/masterzen/winrm v0.0.0-20260407182533-5570be7f80cf
 	github.com/prometheus-community/pro-bing v0.9.1
 	go.bug.st/serial v1.8.0
-	golang.org/x/crypto v0.53.0
+	golang.org/x/crypto v0.59.0
 	golang.org/x/sys v0.50.0
 	gopkg.in/yaml.v3 v3.0.1
 )
@@ -33,7 +33,7 @@ require (
 	github.com/jcmturner/rpc/v2 v2.0.3 // indirect
 	github.com/masterzen/simplexml v0.0.0-20190410153822-31eea3082786 // indirect
 	github.com/tidwall/transform v0.0.0-20201103190739-32f242e2dbde // indirect
-	golang.org/x/net v0.56.0 // indirect
-	golang.org/x/sync v0.21.0 // indirect
-	golang.org/x/text v0.38.0 // indirect
+	golang.org/x/net v0.62.0 // indirect
+	golang.org/x/sync v0.25.0 // indirect
+	golang.org/x/text v0.44.0 // indirect
 )
