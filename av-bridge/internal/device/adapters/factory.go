@@ -112,6 +112,10 @@ func newAdapter(cfg config.DeviceConfig, deps Deps) (device.Device, error) {
 		// NETGEAR M4250 / M4350 (AV Line) managed switches — Telnet CLI on
 		// port 23; PoE budget and per-port PoE/link state, PoE power-cycle
 		return NewNetgearM4250Adapter(cfg), nil
+	case "mtr_windows":
+		// Microsoft Teams Rooms on Windows — read-only monitoring over WinRM
+		// (HTTPS 5986, NTLM): one embedded PowerShell script per poll
+		return NewMTRWindowsAdapter(cfg), nil
 	case "ping":
 		// ICMP reachability probe for devices with no vendor API
 		return NewPingAdapter(cfg), nil
@@ -121,6 +125,6 @@ func newAdapter(cfg config.DeviceConfig, deps Deps) (device.Device, error) {
 		return NewFakeAdapter(cfg), nil
 
 	default:
-		return nil, fmt.Errorf("unsupported protocol: %q (supported: rest, websocket, telnet, serial, visca_over_ip, tesira, sony_bravia, philips_sicp, nec_projector, poly_videoos, cisco_roomos, cisco_tc, aurora_rxt, aurora_vpx, aurora_dido, crestron, aten_pdu, netgear_m4250, ping, fake)", cfg.Protocol)
+		return nil, fmt.Errorf("unsupported protocol: %q (supported: rest, websocket, telnet, serial, visca_over_ip, tesira, sony_bravia, philips_sicp, nec_projector, poly_videoos, cisco_roomos, cisco_tc, aurora_rxt, aurora_vpx, aurora_dido, crestron, aten_pdu, netgear_m4250, mtr_windows, ping, fake)", cfg.Protocol)
 	}
 }
