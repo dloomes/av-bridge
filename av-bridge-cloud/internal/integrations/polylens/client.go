@@ -27,6 +27,7 @@ const (
 
 	pageSize  = 500
 	batchSize = 500
+	maxPages  = 200
 )
 
 var (
@@ -67,10 +68,16 @@ type Client struct {
 	token    string
 	tokenExp time.Time
 
-	// noOptional is set once Lens rejected the optional (undocumented) fields;
-	// later queries then go straight to the base selection.
-	noOptional atomic.Bool
+	// Set once Lens rejected the optional (undocumented) fields of that query
+	// kind AND the base query then succeeded; later queries of that kind go
+	// straight to the base selection.
+	noOptionalInv, noOptionalAcc atomic.Bool
 }
+
+// Degraded reports whether optional fields had to be dropped from any query,
+// so Teams-specific data (call status, health, presence, peripherals, tags)
+// is unavailable and ListTeamsRooms cannot filter to Teams devices.
+func (c *Client) Degraded() bool { return c.noOptionalInv.Load() || c.noOptionalAcc.Load() }
 
 // New returns a client for the given OAuth credentials.
 func New(clientID, clientSecret string, opts ...Option) *Client {
@@ -162,7 +169,7 @@ func (c *Client) Accounts(ctx context.Context) ([]Account, error) {
 		} `json:"tenants"`
 	}
 	// unverified: confirm in Task 11 - docs show only `tenants { id }`; `name` is optional.
-	if err := c.graphqlOptional(ctx, `query { tenants { id name } }`, `query { tenants { id } }`, nil, &out); err != nil {
+	if err := c.graphqlOptional(ctx, `query { tenants { id name } }`, `query { tenants { id } }`, nil, &out, &c.noOptionalAcc); err != nil {
 		return nil, err
 	}
 	res := make([]Account, 0, len(out.Tenants))
@@ -210,14 +217,18 @@ type searchResp struct {
 func (c *Client) search(ctx context.Context, accountID string, filter map[string]any) ([]Device, error) {
 	var devs []Device
 	var next *string
-	for {
+	seen := map[string]bool{}
+	for page := 0; ; page++ {
+		if page >= maxPages {
+			return nil, fmt.Errorf("polylens: device search exceeded %d pages", maxPages)
+		}
 		params := map[string]any{"pageSize": pageSize, "nextToken": next}
 		if filter != nil {
 			params["filter"] = filter
 		}
 		var out searchResp
 		err := c.graphqlOptional(ctx, inventoryQuery(baseFields+" "+optionalFields), inventoryQuery(baseFields),
-			map[string]any{"tenantId": accountID, "params": params}, &out)
+			map[string]any{"tenantId": accountID, "params": params}, &out, &c.noOptionalInv)
 		if err != nil {
 			return nil, err
 		}
@@ -228,6 +239,10 @@ func (c *Client) search(ctx context.Context, accountID string, filter map[string
 		if !ds.PageInfo.HasNextPage || ds.PageInfo.NextToken == nil || *ds.PageInfo.NextToken == "" {
 			return devs, nil
 		}
+		if seen[*ds.PageInfo.NextToken] {
+			return nil, errors.New("polylens: device search repeated a page token")
+		}
+		seen[*ds.PageInfo.NextToken] = true
 		next = ds.PageInfo.NextToken
 	}
 }
@@ -238,6 +253,11 @@ func (c *Client) ListTeamsRooms(ctx context.Context, accountID string) ([]Device
 	all, err := c.search(ctx, accountID, nil)
 	if err != nil {
 		return nil, err
+	}
+	if c.noOptionalInv.Load() {
+		// Teams fields are unavailable: filtering would hide every device.
+		// Callers should check Degraded().
+		return all, nil
 	}
 	var res []Device
 	for _, d := range all {
@@ -294,15 +314,19 @@ type schemaError struct{ msg string }
 func (e *schemaError) Error() string { return e.msg }
 
 // graphqlOptional runs full; if Lens rejects it as a schema/validation error it
-// remembers that and runs base instead.
-func (c *Client) graphqlOptional(ctx context.Context, full, base string, vars map[string]any, out any) error {
-	if !c.noOptional.Load() {
+// runs base instead and, if that succeeds, remembers the choice in flag.
+func (c *Client) graphqlOptional(ctx context.Context, full, base string, vars map[string]any, out any, flag *atomic.Bool) error {
+	if !flag.Load() {
 		err := c.graphql(ctx, full, vars, out)
 		var se *schemaError
 		if err == nil || !errors.As(err, &se) {
 			return err
 		}
-		c.noOptional.Store(true)
+		if err := c.graphql(ctx, base, vars, out); err != nil {
+			return err
+		}
+		flag.Store(true) // only once the fallback is proven to work
+		return nil
 	}
 	return c.graphql(ctx, base, vars, out)
 }
@@ -345,21 +369,26 @@ func (c *Client) graphql(ctx context.Context, query string, vars map[string]any,
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 
 	switch {
-	case resp.StatusCode == http.StatusUnauthorized:
+	case resp.StatusCode == http.StatusUnauthorized, resp.StatusCode == http.StatusForbidden:
 		return ErrUnauthorized
 	case resp.StatusCode == http.StatusTooManyRequests:
 		return &RateLimitError{RetryAfter: parseReset(resp.Header.Get("ratelimit-reset"))}
-	case resp.StatusCode >= 400:
-		return fmt.Errorf("polylens: graphql HTTP %d: %s", resp.StatusCode, snippet(respBody))
 	}
 	var env struct {
 		Data   json.RawMessage `json:"data"`
 		Errors []struct {
-			Message string `json:"message"`
+			Message    string `json:"message"`
+			Extensions struct {
+				Code string `json:"code"`
+			} `json:"extensions"`
 		} `json:"errors"`
 	}
-	if err := json.Unmarshal(respBody, &env); err != nil {
-		return fmt.Errorf("polylens: parse graphql response: %w", err)
+	parseErr := json.Unmarshal(respBody, &env)
+	if resp.StatusCode >= 400 && (parseErr != nil || len(env.Errors) == 0) {
+		return fmt.Errorf("polylens: graphql HTTP %d: %s", resp.StatusCode, snippet(respBody))
+	}
+	if parseErr != nil {
+		return fmt.Errorf("polylens: parse graphql response: %w", parseErr)
 	}
 	if len(env.Errors) > 0 {
 		msgs := make([]string, 0, len(env.Errors))
@@ -367,7 +396,7 @@ func (c *Client) graphql(ctx context.Context, query string, vars map[string]any,
 		for _, e := range env.Errors {
 			msgs = append(msgs, e.Message)
 			m := strings.ToLower(e.Message)
-			if !strings.Contains(m, "cannot query field") && !strings.Contains(m, "unknown argument") &&
+			if e.Extensions.Code != "GRAPHQL_VALIDATION_FAILED" && !strings.Contains(m, "cannot query field") && !strings.Contains(m, "unknown argument") &&
 				!strings.Contains(m, "unknown type") {
 				schema = false
 			}

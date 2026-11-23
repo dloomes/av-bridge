@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -155,24 +156,104 @@ func TestMissingOptionalFieldsAreZero(t *testing.T) {
 }
 
 func TestOptionalFieldsDroppedWhenSchemaRejects(t *testing.T) {
+	for _, status := range []int{200, 400} {
+		f := &fake{t: t, handler: func(w http.ResponseWriter, r *http.Request, req gqlReq) {
+			if strings.Contains(req.Query, "callStatus") {
+				w.WriteHeader(status)
+				io.WriteString(w, `{"errors":[{"message":"Cannot query field \"callStatus\" on type \"Device\".","extensions":{"code":"GRAPHQL_VALIDATION_FAILED"}}]}`)
+				return
+			}
+			io.WriteString(w, `{"data":{"tenant":{"inventory":{"deviceSearch":{"pageInfo":{"hasNextPage":false},"edges":[{"node":{"id":"d1","name":"R"}},{"node":{"id":"d2","name":"S"}}]}}}}}`)
+		}}
+		c := f.start()
+		if c.Degraded() {
+			t.Fatal("degraded before any query")
+		}
+		got, err := c.ListTeamsRooms(context.Background(), "a")
+		if err != nil {
+			t.Fatal(err)
+		}
+		// No Teams fields available: all devices returned, not an empty list.
+		if len(got) != 2 || !c.Degraded() {
+			t.Fatalf("status %d: got %d devices, degraded=%v", status, len(got), c.Degraded())
+		}
+		if f.gqlCalls.Load() != 2 {
+			t.Fatalf("calls=%d want 2", f.gqlCalls.Load())
+		}
+		// The choice is remembered: one call next time.
+		c.ListTeamsRooms(context.Background(), "a")
+		if f.gqlCalls.Load() != 3 {
+			t.Fatalf("calls=%d want 3", f.gqlCalls.Load())
+		}
+	}
+}
+
+func TestAccountsFallbackDoesNotAffectInventory(t *testing.T) {
 	f := &fake{t: t, handler: func(w http.ResponseWriter, r *http.Request, req gqlReq) {
-		if strings.Contains(req.Query, "callStatus") {
-			io.WriteString(w, `{"errors":[{"message":"Cannot query field \"callStatus\" on type \"Device\"."}]}`)
+		if strings.Contains(req.Query, "tenants { id name }") {
+			io.WriteString(w, `{"errors":[{"message":"Cannot query field \"name\" on type \"Tenant\"."}]}`)
 			return
 		}
-		io.WriteString(w, `{"data":{"tenant":{"inventory":{"deviceSearch":{"pageInfo":{"hasNextPage":false},"edges":[{"node":{"id":"d1","name":"R"}}]}}}}}`)
+		io.WriteString(w, `{"data":{"tenants":[{"id":"a1"}]}}`)
 	}}
 	c := f.start()
-	if _, err := c.ListTeamsRooms(context.Background(), "a"); err != nil {
+	if _, err := c.Accounts(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if f.gqlCalls.Load() != 2 {
-		t.Fatalf("calls=%d want 2", f.gqlCalls.Load())
+	if !c.Degraded() {
+		t.Fatal("accounts fallback should show as degraded")
 	}
-	// The choice is remembered: one call next time.
-	c.ListTeamsRooms(context.Background(), "a")
-	if f.gqlCalls.Load() != 3 {
-		t.Fatalf("calls=%d want 3", f.gqlCalls.Load())
+	var seenFull bool
+	f.handler = func(w http.ResponseWriter, r *http.Request, req gqlReq) {
+		seenFull = strings.Contains(req.Query, "callStatus")
+		io.WriteString(w, file(t, "minimal.json"))
+	}
+	got, err := c.ListTeamsRooms(context.Background(), "a")
+	if err != nil || len(got) != 1 || !seenFull {
+		t.Fatalf("inventory must still request optional fields: %v %v full=%v", got, err, seenFull)
+	}
+}
+
+func TestFlagNotSetWhenFallbackFails(t *testing.T) {
+	f := &fake{t: t, handler: func(w http.ResponseWriter, r *http.Request, req gqlReq) {
+		if strings.Contains(req.Query, "callStatus") {
+			io.WriteString(w, `{"errors":[{"message":"Cannot query field \"callStatus\""}]}`)
+			return
+		}
+		w.WriteHeader(500)
+	}}
+	c := f.start()
+	if _, err := c.ListTeamsRooms(context.Background(), "a"); err == nil {
+		t.Fatal("want error")
+	}
+	if c.Degraded() {
+		t.Fatal("flag set although fallback failed")
+	}
+}
+
+func TestPagingGuards(t *testing.T) {
+	f := &fake{t: t, handler: func(w http.ResponseWriter, r *http.Request, _ gqlReq) {
+		io.WriteString(w, `{"data":{"tenant":{"inventory":{"deviceSearch":{"pageInfo":{"nextToken":"same","hasNextPage":true},"edges":[]}}}}}`)
+	}}
+	if _, err := f.start().ListTeamsRooms(context.Background(), "a"); err == nil || !strings.Contains(err.Error(), "repeated") {
+		t.Fatalf("err %v", err)
+	}
+	var n atomic.Int32
+	f2 := &fake{t: t, handler: func(w http.ResponseWriter, r *http.Request, _ gqlReq) {
+		fmt.Fprintf(w, `{"data":{"tenant":{"inventory":{"deviceSearch":{"pageInfo":{"nextToken":"t%d","hasNextPage":true},"edges":[]}}}}}`, n.Add(1))
+	}}
+	if _, err := f2.start().ListTeamsRooms(context.Background(), "a"); err == nil || !strings.Contains(err.Error(), "pages") {
+		t.Fatalf("err %v", err)
+	}
+	if n.Load() != 200 {
+		t.Fatalf("pages=%d", n.Load())
+	}
+}
+
+func TestGraphQL403IsUnauthorized(t *testing.T) {
+	f := &fake{t: t, handler: func(w http.ResponseWriter, r *http.Request, _ gqlReq) { w.WriteHeader(403) }}
+	if _, err := f.start().Accounts(context.Background()); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("err %v", err)
 	}
 }
 
