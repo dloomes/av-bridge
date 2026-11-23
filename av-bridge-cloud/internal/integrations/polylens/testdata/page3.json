@@ -1,0 +1,2 @@
+{"data":{"tenant":{"inventory":{"deviceSearch":{"pageInfo":{"nextToken":null,"hasNextPage":false},"edges":[
+{"node":{"id":"d4","name":"Room Four","connected":true,"teamsDeviceHealthStatus":"Unhealthy","allPeripheralsLinked":false}}]}}}}}

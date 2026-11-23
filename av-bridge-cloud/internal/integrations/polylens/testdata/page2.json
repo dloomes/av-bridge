@@ -1,0 +1,2 @@
+{"data":{"tenant":{"inventory":{"deviceSearch":{"pageInfo":{"nextToken":"t3","hasNextPage":true},"edges":[
+{"node":{"id":"d3","name":"Room Three","connected":false,"activeApplicationName":"Teams"}}]}}}}}
