@@ -25,14 +25,18 @@ const (
 	defaultTokenURL   = "https://login.lens.poly.com/oauth/token"
 	defaultGraphQLURL = "https://api.silica-prod01.io.lens.poly.com/graphql"
 
-	pageSize  = 500
-	batchSize = 500
+	pageSize  = 200 // Lens caps query cost at 10000; ~25 points per device with all fields
+	batchSize = 200
 	maxPages  = 200
 )
 
 var (
 	// ErrUnauthorized means Lens rejected the credentials.
 	ErrUnauthorized = errors.New("polylens: unauthorized")
+	// ErrForbidden means the credential is valid but its Lens role may not do
+	// this (Lens answers 403 with an AUTHORIZATION_ERROR GraphQL error), e.g.
+	// assigning tags to devices.
+	ErrForbidden = errors.New("polylens: forbidden: the Lens role does not allow this")
 	// ErrRateLimited means Lens answered 429. Use errors.As with *RateLimitError
 	// for the wait Lens asked for.
 	ErrRateLimited = errors.New("polylens: rate limited")
@@ -124,14 +128,14 @@ type rawDevice struct {
 	Site            *nameRef   `json:"site"`
 
 	// Optional / undocumented.
-	ActiveApplicationName    string   `json:"activeApplicationName"`
-	ActiveApplicationVersion string   `json:"activeApplicationVersion"`
-	CallStatus               string   `json:"callStatus"`
-	TeamsDeviceHealthStatus  string   `json:"teamsDeviceHealthStatus"`
-	TeamsPresenceAvail       string   `json:"teamsPresenceAvailability"`
-	TeamsPresenceActivity    string   `json:"teamsPresenceActivity"`
-	AllPeripheralsLinked     *bool    `json:"allPeripheralsLinked"`
-	Tags                     []string `json:"tags"`
+	ActiveApplicationName    string    `json:"activeApplicationName"`
+	ActiveApplicationVersion string    `json:"activeApplicationVersion"`
+	CallStatus               string    `json:"callStatus"`
+	TeamsDeviceHealthStatus  string    `json:"teamsDeviceHealthStatus"`
+	TeamsPresenceAvail       string    `json:"teamsPresenceAvailability"`
+	TeamsPresenceActivity    string    `json:"teamsPresenceActivity"`
+	AllPeripheralsLinked     *bool     `json:"allPeripheralsLinked"`
+	LensTags                 []nameRef `json:"lensTags"`
 }
 
 func (r rawDevice) device() Device {
@@ -141,7 +145,12 @@ func (r rawDevice) device() Device {
 		AppName: r.ActiveApplicationName, AppVersion: r.ActiveApplicationVersion,
 		CallStatus: r.CallStatus, TeamsHealth: r.TeamsDeviceHealthStatus,
 		PresenceAvailability: r.TeamsPresenceAvail, PresenceActivity: r.TeamsPresenceActivity,
-		PeripheralsLinked: r.AllPeripheralsLinked, Tags: r.Tags,
+		PeripheralsLinked: r.AllPeripheralsLinked,
+	}
+	for _, t := range r.LensTags {
+		if t.Name != "" {
+			d.Tags = append(d.Tags, t.Name)
+		}
 	}
 	if r.LastDetected != nil {
 		d.LastDetected = *r.LastDetected
@@ -168,7 +177,6 @@ func (c *Client) Accounts(ctx context.Context) ([]Account, error) {
 			Name string `json:"name"`
 		} `json:"tenants"`
 	}
-	// unverified: confirm in Task 11 - docs show only `tenants { id }`; `name` is optional.
 	if err := c.graphqlOptional(ctx, `query { tenants { id name } }`, `query { tenants { id } }`, nil, &out, &c.noOptionalAcc); err != nil {
 		return nil, err
 	}
@@ -184,9 +192,9 @@ room { name } site { name }`
 
 // Optional, undocumented fields. Lens rejects unknown fields, so these live in
 // a separate selection that is dropped if the first query fails with a schema error.
-// unverified: confirm in Task 11 - names of all fields below, including `tags`.
+// Verified against a real tenant (Task 11); the deprecated `tags` field is replaced by `lensTags { name }`.
 const optionalFields = `activeApplicationName activeApplicationVersion callStatus teamsDeviceHealthStatus
-teamsPresenceAvailability teamsPresenceActivity allPeripheralsLinked tags`
+teamsPresenceAvailability teamsPresenceActivity allPeripheralsLinked lensTags { name }`
 
 func inventoryQuery(fields string) string {
 	return `query Inventory($tenantId: ID!, $params: DeviceFindArgs) {
@@ -268,7 +276,7 @@ func (c *Client) ListTeamsRooms(ctx context.Context, accountID string) ([]Device
 	return res, nil
 }
 
-// Devices re-reads the given devices (at most 500 ids per query) within one account.
+// Devices re-reads the given devices (at most 200 ids per query) within one account.
 func (c *Client) Devices(ctx context.Context, accountID string, ids []string) ([]Device, error) {
 	var res []Device
 	for start := 0; start < len(ids); start += batchSize {
@@ -276,7 +284,6 @@ func (c *Client) Devices(ctx context.Context, accountID string, ids []string) ([
 		if end > len(ids) {
 			end = len(ids)
 		}
-		// unverified: confirm in Task 11 - OR filter of id equality.
 		or := make([]map[string]any, 0, end-start)
 		for _, id := range ids[start:end] {
 			or = append(or, map[string]any{"field": "id", "eq": id})
@@ -294,18 +301,89 @@ func (c *Client) Devices(ctx context.Context, accountID string, ids []string) ([
 	return res, nil
 }
 
-// AddTag adds a tag to a device.
-func (c *Client) AddTag(ctx context.Context, deviceID, tag string) error {
-	// unverified: confirm in Task 11 - mutation argument names and return type.
-	return c.graphql(ctx, `mutation($deviceId: ID!, $tag: String!) { addDeviceTag(deviceId: $deviceId, tag: $tag) }`,
-		map[string]any{"deviceId": deviceID, "tag": tag}, nil)
+// tagID finds a Lens tag by exact name in the account; "" if it does not exist.
+func (c *Client) tagID(ctx context.Context, accountID, tag string) (string, error) {
+	var out struct {
+		Tenant struct {
+			LensTags []struct {
+				ID   string `json:"id"`
+				Name string `json:"name"`
+			} `json:"lensTags"`
+		} `json:"tenant"`
+	}
+	err := c.graphql(ctx, `query($tenantId: ID!, $name: String) { tenant(id: $tenantId) { lensTags(filter: {name: $name}) { id name } } }`,
+		map[string]any{"tenantId": accountID, "name": tag}, &out)
+	if err != nil {
+		return "", err
+	}
+	for _, t := range out.Tenant.LensTags {
+		if t.Name == tag { // Lens's name filter may be a substring match
+			return t.ID, nil
+		}
+	}
+	return "", nil
 }
 
-// RemoveTag removes a tag from a device.
-func (c *Client) RemoveTag(ctx context.Context, deviceID, tag string) error {
-	// unverified: confirm in Task 11 - mutation argument names and return type.
-	return c.graphql(ctx, `mutation($deviceId: ID!, $tag: String!) { removeDeviceTag(deviceId: $deviceId, tag: $tag) }`,
-		map[string]any{"deviceId": deviceID, "tag": tag}, nil)
+type tagResult []struct {
+	DeviceID string `json:"deviceId"`
+	Success  *bool  `json:"success"`
+}
+
+func (r tagResult) check() error {
+	for _, x := range r {
+		if x.Success != nil && !*x.Success {
+			return errors.New("polylens: tag change was not applied")
+		}
+	}
+	return nil
+}
+
+// AddTag adds a tag to a device, creating the tag in the account if needed.
+// Lens tags are account-level entities; devices reference them by id.
+func (c *Client) AddTag(ctx context.Context, accountID, deviceID, tag string) error {
+	id, err := c.tagID(ctx, accountID, tag)
+	if err != nil {
+		return err
+	}
+	if id == "" {
+		var cr struct {
+			CreateTag struct {
+				ID string `json:"id"`
+			} `json:"createTag"`
+		}
+		if err := c.graphql(ctx, `mutation($tenantId: String!, $name: String!) { createTag(tenantId: $tenantId, input: {name: $name}) { id } }`,
+			map[string]any{"tenantId": accountID, "name": tag}, &cr); err != nil {
+			return err
+		}
+		if id = cr.CreateTag.ID; id == "" {
+			return errors.New("polylens: createTag returned no id")
+		}
+	}
+	var out struct {
+		R tagResult `json:"addLensTagToDevice"`
+	}
+	if err := c.graphql(ctx, `mutation($tagIds: [String!]!, $deviceIds: [String!]!) { addLensTagToDevice(tagIds: $tagIds, deviceIds: $deviceIds) { deviceId success } }`,
+		map[string]any{"tagIds": []string{id}, "deviceIds": []string{deviceID}}, &out); err != nil {
+		return err
+	}
+	return out.R.check()
+}
+
+// RemoveTag removes a tag from a device. A tag that does not exist is a no-op.
+// The account-level tag itself is left in place (other devices may use it).
+func (c *Client) RemoveTag(ctx context.Context, accountID, deviceID, tag string) error {
+	id, err := c.tagID(ctx, accountID, tag)
+	if err != nil || id == "" {
+		return err
+	}
+	var out struct {
+		R tagResult `json:"removeLensTagFromDevice"`
+	}
+	if err := c.graphql(ctx, `mutation($tagId: String!, $deviceIds: [String!]!) { removeLensTagFromDevice(tagId: $tagId, deviceIds: $deviceIds) { deviceId success } }`,
+		map[string]any{"tagId": id, "deviceIds": []string{deviceID}}, &out); err != nil {
+		return err
+	}
+	return out.R.check()
 }
 
 // schemaError marks a GraphQL validation error (unknown field/argument).
@@ -369,6 +447,8 @@ func (c *Client) graphql(ctx context.Context, query string, vars map[string]any,
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 
 	switch {
+	case resp.StatusCode == http.StatusForbidden && bytes.Contains(respBody, []byte("AUTHORIZATION_ERROR")):
+		return ErrForbidden
 	case resp.StatusCode == http.StatusUnauthorized, resp.StatusCode == http.StatusForbidden:
 		return ErrUnauthorized
 	case resp.StatusCode == http.StatusTooManyRequests:

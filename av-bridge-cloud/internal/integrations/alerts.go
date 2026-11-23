@@ -57,7 +57,8 @@ var conditions = []condition{
 			switch h {
 			case "", "unknown":
 				return false, false
-			// unverified: confirm in Task 11 - the real teamsDeviceHealthStatus values.
+			// Still unverified: teamsDeviceHealthStatus was empty on every Teams Room in
+			// the real tenant checked in Task 11, so these values are a guess.
 			case "healthy", "ok", "normal", "good":
 				return false, true
 			}

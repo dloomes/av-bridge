@@ -110,7 +110,7 @@ func TestListTeamsRoomsPagingAndFilter(t *testing.T) {
 			t.Errorf("tenantId = %v", req.Variables["tenantId"])
 		}
 		p := req.Variables["params"].(map[string]any)
-		if p["pageSize"].(float64) != 500 {
+		if p["pageSize"].(float64) != pageSize {
 			t.Errorf("pageSize = %v", p["pageSize"])
 		}
 		tokens = append(tokens, p["nextToken"])
@@ -304,23 +304,63 @@ func TestRateLimited(t *testing.T) {
 
 func TestAddAndRemoveTag(t *testing.T) {
 	var seen []gqlReq
+	have := false // whether the tag exists in the account
 	f := &fake{t: t, handler: func(w http.ResponseWriter, r *http.Request, req gqlReq) {
 		seen = append(seen, req)
-		io.WriteString(w, `{"data":{}}`)
+		switch {
+		case strings.Contains(req.Query, "lensTags(filter"):
+			if have {
+				io.WriteString(w, `{"data":{"tenant":{"lensTags":[{"id":"t0","name":"marcus:abcd"},{"id":"t1","name":"marcus:abc"}]}}}`)
+			} else {
+				io.WriteString(w, `{"data":{"tenant":{"lensTags":[{"id":"t0","name":"marcus:abcd"}]}}}`)
+			}
+		case strings.Contains(req.Query, "createTag"):
+			have = true
+			io.WriteString(w, `{"data":{"createTag":{"id":"t1"}}}`)
+		case strings.Contains(req.Query, "addLensTagToDevice"):
+			io.WriteString(w, `{"data":{"addLensTagToDevice":[{"deviceId":"dev1","success":true}]}}`)
+		default:
+			io.WriteString(w, `{"data":{"removeLensTagFromDevice":[{"deviceId":"dev1","success":true}]}}`)
+		}
 	}}
 	c := f.start()
-	if err := c.AddTag(context.Background(), "dev1", "marcus:abc"); err != nil {
+	if err := c.AddTag(context.Background(), "acc1", "dev1", "marcus:abc"); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.RemoveTag(context.Background(), "dev1", "marcus:abc"); err != nil {
+	if err := c.RemoveTag(context.Background(), "acc1", "dev1", "marcus:abc"); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(seen[0].Query, "addDeviceTag(deviceId: $deviceId, tag: $tag)") ||
-		seen[0].Variables["deviceId"] != "dev1" || seen[0].Variables["tag"] != "marcus:abc" {
-		t.Fatalf("%+v", seen[0])
+	var add, rem *gqlReq
+	creates := 0
+	for i := range seen {
+		switch {
+		case strings.Contains(seen[i].Query, "createTag"):
+			creates++
+		case strings.Contains(seen[i].Query, "addLensTagToDevice"):
+			add = &seen[i]
+		case strings.Contains(seen[i].Query, "removeLensTagFromDevice"):
+			rem = &seen[i]
+		}
 	}
-	if !strings.Contains(seen[1].Query, "removeDeviceTag") {
-		t.Fatalf("%+v", seen[1])
+	if creates != 1 || add == nil || rem == nil {
+		t.Fatalf("creates=%d add=%v rem=%v", creates, add, rem)
+	}
+	if ids, _ := add.Variables["tagIds"].([]any); len(ids) != 1 || ids[0] != "t1" { // exact-name match, not t0
+		t.Fatalf("%+v", add.Variables)
+	}
+	if rem.Variables["tagId"] != "t1" {
+		t.Fatalf("%+v", rem.Variables)
+	}
+}
+
+func TestRemoveTagMissingIsNoop(t *testing.T) {
+	n := 0
+	f := &fake{t: t, handler: func(w http.ResponseWriter, r *http.Request, req gqlReq) {
+		n++
+		io.WriteString(w, `{"data":{"tenant":{"lensTags":[]}}}`)
+	}}
+	if err := f.start().RemoveTag(context.Background(), "acc1", "dev1", "marcus:abc"); err != nil || n != 1 {
+		t.Fatalf("err %v n %d", err, n)
 	}
 }
 
@@ -336,12 +376,23 @@ func TestDevicesBatches(t *testing.T) {
 		}
 		io.WriteString(w, `{"data":{"tenant":{"inventory":{"deviceSearch":{"pageInfo":{"hasNextPage":false},"edges":[{"node":{"id":"x"}}]}}}}}`)
 	}}
-	ids := make([]string, 1001)
+	ids := make([]string, 2*batchSize+1)
 	for i := range ids {
 		ids[i] = "id"
 	}
 	got, err := f.start().Devices(context.Background(), "a", ids)
-	if err != nil || len(sizes) != 3 || sizes[0] != 500 || sizes[1] != 500 || sizes[2] != 1 || len(got) != 3 {
+	if err != nil || len(sizes) != 3 || sizes[0] != batchSize || sizes[1] != batchSize || sizes[2] != 1 || len(got) != 3 {
 		t.Fatalf("sizes %v got %d err %v", sizes, len(got), err)
+	}
+}
+
+func TestAuthorizationErrorIsForbidden(t *testing.T) {
+	f := &fake{t: t, handler: func(w http.ResponseWriter, r *http.Request, req gqlReq) {
+		w.WriteHeader(403)
+		io.WriteString(w, `{"errors":[{"message":"Authorization failed","extensions":{"code":"AUTHORIZATION_ERROR"}}]}`)
+	}}
+	err := f.start().AddTag(context.Background(), "acc1", "dev1", "marcus:abc")
+	if !errors.Is(err, ErrForbidden) || errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("err %v", err)
 	}
 }

@@ -469,7 +469,8 @@ func readingsFor(f polylens.Device) (map[string]any, *bool) {
 }
 
 // callState maps Lens's callStatus text to in_call, idle or unknown.
-// unverified: confirm in Task 11 - the real callStatus values.
+// Observed on a real tenant (Task 11): IN_CALL, NOT_IN_CALL, UNKNOWN and
+// UNSUPPORTED (devices that cannot report); the last two map to unknown.
 func callState(s string) string {
 	n := strings.NewReplacer(" ", "", "_", "", "-", "").Replace(strings.ToLower(s))
 	switch n {

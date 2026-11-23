@@ -181,7 +181,7 @@ func (h *Handler) createLensDevice(w http.ResponseWriter, r *http.Request, req c
 		tagErr := ""
 		tagState = "tagged"
 		tctx, tcancel := context.WithTimeout(r.Context(), lensTimeout)
-		if err := client.AddTag(tctx, req.ExternalID, lensTagPrefix+id); err != nil {
+		if err := client.AddTag(tctx, cur.AccountID, req.ExternalID, lensTagPrefix+id); err != nil {
 			h.log.Warn("poly lens tagging failed", "device_id", id, "error", err)
 			tagState, tagErr = "failed", "Poly Lens did not accept the tag"
 		}
@@ -236,7 +236,7 @@ func (h *Handler) releaseLensTag(r *http.Request, deviceID string) string {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), lensTimeout)
 	defer cancel()
-	if err := h.lensClient(integ.ClientID, string(plain)).RemoveTag(ctx, link.ExternalID, lensTagPrefix+deviceID); err != nil {
+	if err := h.lensClient(integ.ClientID, string(plain)).RemoveTag(ctx, integ.AccountID, link.ExternalID, lensTagPrefix+deviceID); err != nil {
 		h.log.Warn("poly lens tag removal failed", "device_id", deviceID, "error", err)
 		return "left_behind"
 	}
