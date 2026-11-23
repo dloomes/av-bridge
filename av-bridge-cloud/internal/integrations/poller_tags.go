@@ -45,7 +45,10 @@ func (p *Poller) tagPending(ctx context.Context, in integrationRow, client *poly
 		return
 	}
 	rows, err := p.admin.Query(ctx, `
-		SELECT l.device_id::text, l.external_id, COALESCE(l.tag_requested_at, now())
+		SELECT l.device_id::text, l.external_id,
+		       -- the give-up window starts at the first attempt, so a poller
+		       -- outage can't make a link fail before it was ever tried
+		       CASE WHEN l.tag_attempted_at IS NULL THEN now() ELSE COALESCE(l.tag_requested_at, now()) END
 		  FROM integration_devices l JOIN devices d ON d.id = l.device_id
 		 WHERE l.integration_id = $1 AND l.customer_id = $2 AND l.tag_state = 'pending'
 		   AND d.customer_id = l.customer_id AND d.deleted_at IS NULL
@@ -234,7 +237,9 @@ func (p *Poller) recordTag(ctx, tctx context.Context, in integrationRow, client 
 		p.log.Info("poly lens tagging will be retried", "device_id", t.deviceID, "error", err)
 	}
 	if _, uerr := p.admin.Exec(ctx, `
-		UPDATE integration_devices SET tag_state = $3, tag_error = NULLIF($4, ''), tag_attempted_at = now(),
+		UPDATE integration_devices SET tag_state = $3, tag_error = NULLIF($4, ''),
+		       tag_requested_at = CASE WHEN tag_attempted_at IS NULL THEN now() ELSE tag_requested_at END,
+		       tag_attempted_at = now(),
 		       lens_tag_id = CASE WHEN $5 THEN NULL ELSE lens_tag_id END
 		 WHERE device_id = $1 AND customer_id = $2 AND tag_state = 'pending'`,
 		t.deviceID, in.customerID, state, msg, clearTag); uerr != nil {

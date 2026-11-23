@@ -257,9 +257,14 @@ func (h *Handler) releaseLensTag(r *http.Request, deviceID string) string {
 	defer cancel()
 	client := h.lensClient(integ.ClientID, string(plain))
 	var rerr error
-	if link.LensTagID != "" {
+	switch {
+	case link.LensTagID != "" && link.TagState != "tagged":
+		// Never assigned to the device, so there is nothing to unassign:
+		// delete the tag itself (unassigning first could fail and skip it).
+		rerr = client.DeleteTag(ctx, link.LensTagID)
+	case link.LensTagID != "":
 		rerr = client.RemoveTagByID(ctx, link.LensTagID, link.ExternalID)
-	} else {
+	default:
 		rerr = client.RemoveTag(ctx, integ.AccountID, link.ExternalID, lensTagPrefix+deviceID)
 	}
 	if link.TagState != "tagged" {

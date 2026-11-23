@@ -286,7 +286,8 @@ func TestLensDeviceCreateDelete(t *testing.T) {
 	if code != 201 || state != "pending" {
 		t.Fatalf("create ext-4 = %d state %q", code, state)
 	}
-	// The poller already created its tag: delete unassigns and deletes it by id.
+	// The poller already created its tag but never assigned it: delete just
+	// deletes the tag by id (nothing to unassign).
 	q(`UPDATE integration_devices SET lens_tag_id = $2 WHERE device_id = $1 RETURNING 'x'`, dPend, "tag-marcus:"+dPend)
 	mu.Lock()
 	lensTags["tag-marcus:"+dPend] = "marcus:" + dPend
@@ -297,7 +298,7 @@ func TestLensDeviceCreateDelete(t *testing.T) {
 	if err := su.QueryRow(ctx, `SELECT metadata::text FROM audit_log WHERE customer_id = $1 AND action = 'device.delete' AND target_id = $2`, cust, dPend).Scan(&meta); err != nil || strings.Contains(meta, "left_behind") {
 		t.Errorf("pending delete audit %q: %v", meta, err)
 	}
-	if c := tagCalls(); len(c) != 2 || c[0] != "remove|ext-4|marcus:"+dPend || c[1] != "deleteTag|marcus:"+dPend {
+	if c := tagCalls(); len(c) != 1 || c[0] != "deleteTag|marcus:"+dPend {
 		t.Errorf("pending delete tag calls: %v", c)
 	}
 	mu.Lock()

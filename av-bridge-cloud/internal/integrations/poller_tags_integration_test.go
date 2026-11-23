@@ -158,6 +158,8 @@ func TestTagPendingGivesUpAfterFifteenMinutes(t *testing.T) {
 	lens := newTagLens(t)
 	lens.forbid = -1
 	f, dev := e.pendingFixture("acct-tag-giveup", true, "16 minutes")
+	// It has been tried before: the window runs from the first attempt.
+	e.exec(`UPDATE integration_devices SET tag_attempted_at = now() - interval '1 minute' WHERE device_id = $1`, dev)
 	if err := e.tagPoller(lens, f.cust).PollOnce(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -175,6 +177,24 @@ func TestTagPendingGivesUpAfterFifteenMinutes(t *testing.T) {
 	}
 	if got := e.tagRow(dev2); got != "pending||true" {
 		t.Fatalf("young: %s", got)
+	}
+}
+
+// A link that waited out a poller outage (requested long ago, never tried)
+// gets a full give-up window from its first attempt instead of failing at once.
+func TestTagPendingWindowStartsAtFirstAttempt(t *testing.T) {
+	e := newEnv(t)
+	lens := newTagLens(t)
+	lens.forbid = -1
+	f, dev := e.pendingFixture("acct-tag-outage", true, "30 minutes")
+	if err := e.tagPoller(lens, f.cust).PollOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.tagRow(dev); got != "pending||true" {
+		t.Fatalf("first attempt after an outage gave up: %s", got)
+	}
+	if fresh := e.q(`SELECT (tag_requested_at > now() - interval '1 minute')::text FROM integration_devices WHERE device_id = $1`, dev); fresh != "true" {
+		t.Fatal("window did not restart at the first attempt")
 	}
 }
 
