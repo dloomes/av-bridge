@@ -106,6 +106,10 @@ jobs:
           cache-dependency-path: ${{ matrix.module }}/go.sum
 
       - name: Install analysers
+        # gosec v2.30.0 needs a newer Go than the module's go line; let Go
+        # fetch that toolchain (setup-go v6+ sets GOTOOLCHAIN=local).
+        env:
+          GOTOOLCHAIN: auto
         run: |
           go install github.com/securego/gosec/v2/cmd/gosec@v2.30.0
           go install honnef.co/go/tools/cmd/staticcheck@v0.8.2
