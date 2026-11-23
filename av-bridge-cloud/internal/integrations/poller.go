@@ -34,6 +34,8 @@ type Readings struct {
 	LinkedDevices      int
 	MissingPeripherals []string
 	TeamsHealth        string
+	// Source goes into notification payloads; empty means poly_lens.
+	Source string
 }
 
 // AlertEvaluator opens and clears alerts from a device's latest readings.

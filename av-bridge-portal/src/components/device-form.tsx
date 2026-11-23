@@ -375,6 +375,21 @@ const ASSET_STATUSES = [
   { key: "retired", label: "Retired" },
 ] as const;
 
+// Protocol of a Teams Room on Windows the Collector reads directly.
+const MTR_PROTOCOL = "mtr_windows";
+// Where the Windows Teams Rooms setup page lives, when the docs site is
+// configured for this portal; otherwise the note names the page.
+const DOCS_URL = process.env.NEXT_PUBLIC_DOCS_URL?.replace(/\/$/, "");
+
+// withTag returns rows with tag `name` set to `value` (added when missing;
+// removed when value is blank).
+function withTag(rows: TagRow[], name: string, value: string): TagRow[] {
+  const i = rows.findIndex((r) => r.name.trim() === name);
+  if (!value.trim()) return i < 0 ? rows : rows.filter((_, j) => j !== i);
+  if (i >= 0) return rows.map((r, j) => (j === i ? { ...r, value } : r));
+  return [...rows, ...rowsFromTags({ [name]: value })];
+}
+
 const labelClass =
   "text-xs font-medium text-muted-foreground uppercase tracking-wide";
 const inputClass =
@@ -438,6 +453,11 @@ export function DeviceForm({
   const [loadingLookups, setLoadingLookups] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // A Teams Room on Windows read directly by a Collector (mtr_windows) uses
+  // this form rather than the Poly Lens one.
+  const [teamsDirect, setTeamsDirect] = useState(
+    () => !!initial && initial.source !== "poly_lens" && initial.type === "teams_room"
+  );
 
   useEffect(() => {
     const ctrl = new AbortController();
@@ -518,6 +538,10 @@ export function DeviceForm({
   const set = <K extends keyof FormState>(k: K, v: FormState[K]) =>
     setForm((f) => ({ ...f, [k]: v }));
 
+  const isEdit = mode === "edit";
+  // The Collector form is showing a Teams Room on Windows (Direct).
+  const mtr = teamsDirect && form.type === "teams_room";
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -570,6 +594,7 @@ export function DeviceForm({
           commands,
           tags,
           subscriptions,
+          platform: mtr ? "windows" : undefined,
         };
         const { id } = await api.createDevice(body);
         onSuccess(id);
@@ -629,12 +654,11 @@ export function DeviceForm({
     }
   };
 
-  const isEdit = mode === "edit";
-
-  // Microsoft Teams Rooms are read from Poly Lens, not polled by a
-  // Collector, so they get their own form (no Collector, protocol, address
-  // or credentials). Collector devices keep the form below untouched.
-  if ((!isEdit && form.type === "teams_room") || (isEdit && initial?.source === "poly_lens")) {
+  // Microsoft Teams Rooms read from Poly Lens get their own form (no
+  // Collector, protocol, address or credentials). A Windows one read
+  // directly by a Collector ("Direct") uses the form below with type and
+  // protocol fixed.
+  if ((!isEdit && form.type === "teams_room" && !teamsDirect) || (isEdit && initial?.source === "poly_lens")) {
     return (
       <TeamsRoomForm
         mode={mode}
@@ -644,6 +668,17 @@ export function DeviceForm({
         loadingLookups={loadingLookups}
         onCancel={onCancel}
         onSuccess={onSuccess}
+        onDirect={() => {
+          setTeamsDirect(true);
+          setForm((f) => ({
+            ...f,
+            type: "teams_room",
+            protocol: MTR_PROTOCOL,
+            // WinRM over HTTPS; the setup script gives the PC a self-signed
+            // certificate, so accept it (the link stays encrypted).
+            tags: withTag(withTag(f.tags, "winrm_https", "true"), "tls_skip_verify", "true"),
+          }));
+        }}
         typeSelect={
           <div>
             <label className={labelClass} htmlFor="dev-type">Type</label>
@@ -666,11 +701,51 @@ export function DeviceForm({
     );
   }
 
+  const portTag = form.tags.find((r) => r.name.trim() === "port")?.value ?? "";
+
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
       {error && (
         <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm [color:hsl(var(--destructive))]">
           {error}
+        </div>
+      )}
+
+      {mtr && (
+        <div className="rounded-md border bg-muted/30 p-3 text-sm">
+          <div className="flex items-center gap-2">
+            <span className="font-semibold">Microsoft Teams Room on Windows</span>
+            <span className="text-xs text-muted-foreground">· Direct (Windows remote management)</span>
+            {!isEdit && (
+              <button
+                type="button"
+                className="ml-auto text-xs underline underline-offset-2 text-muted-foreground hover:text-foreground"
+                onClick={() => {
+                  setTeamsDirect(false);
+                  setForm((f) => ({ ...f, protocol: "" }));
+                }}
+              >
+                Change
+              </button>
+            )}
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            The Collector reads the room PC over WinRM (HTTPS, port 5986) with a local account,
+            read-only. Run the setup script on the PC first:{" "}
+            {DOCS_URL ? (
+              <a
+                className="underline underline-offset-2"
+                href={`${DOCS_URL}/portal/teams-rooms-windows`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                Windows Teams Rooms setup
+              </a>
+            ) : (
+              <>see &ldquo;Windows Teams Rooms setup&rdquo; in the M.A.R.C.U.S. documentation</>
+            )}
+            .
+          </p>
         </div>
       )}
 
@@ -774,11 +849,12 @@ export function DeviceForm({
             className={inputClass}
             value={form.type}
             onChange={(e) => set("type", e.target.value)}
+            disabled={mtr}
           >
             <option value="">— Select —</option>
-            {/* Teams Rooms can only be added (as Poly Lens devices), never
-                switched to on an existing Collector device. */}
-            {TYPES.filter((t) => !isEdit || t !== "teams_room").map((t) => (
+            {/* A Teams Room is added through the Teams Room choices (Poly
+                Lens or Direct), never switched to on an existing device. */}
+            {TYPES.filter((t) => !isEdit || t !== "teams_room" || mtr).map((t) => (
               <option key={t} value={t}>
                 {DEVICE_TYPE_LABELS[t]}
               </option>
@@ -791,7 +867,7 @@ export function DeviceForm({
             className={inputClass}
             value={form.protocol}
             onChange={(e) => set("protocol", e.target.value)}
-            disabled={loadingLookups}
+            disabled={loadingLookups || mtr}
           >
             <option value="">— Select —</option>
             {/*
@@ -809,7 +885,10 @@ export function DeviceForm({
                 </option>
               )}
             {KIND_ORDER.map((kind) => {
-              const group = adapters.filter((a) => a.kind === kind);
+              // mtr_windows is only for Teams Rooms (chosen through Direct).
+              const group = adapters.filter(
+                (a) => a.kind === kind && (a.id !== MTR_PROTOCOL || mtr)
+              );
               if (group.length === 0) return null;
               return (
                 <optgroup key={kind} label={KIND_LABELS[kind]}>
@@ -829,7 +908,8 @@ export function DeviceForm({
             className={inputClass}
             value={form.address}
             onChange={(e) => set("address", e.target.value)}
-            placeholder="IP, hostname, or COM port"
+            placeholder={mtr ? "Room PC IP or hostname" : "IP, hostname, or COM port"}
+            required={mtr}
           />
         </div>
         <div>
@@ -843,16 +923,32 @@ export function DeviceForm({
             placeholder="Default for this device type"
           />
         </div>
-        <div>
-          <label className={labelClass}>Baud rate (serial)</label>
-          <input
-            type="number"
-            className={inputClass}
-            value={form.baud_rate}
-            onChange={(e) => set("baud_rate", e.target.value)}
-            placeholder="9600"
-          />
-        </div>
+        {mtr ? (
+          <div>
+            <label className={labelClass} htmlFor="dev-winrm-port">WinRM port (optional)</label>
+            <input
+              id="dev-winrm-port"
+              type="number"
+              min={1}
+              max={65535}
+              className={inputClass}
+              value={portTag}
+              onChange={(e) => set("tags", withTag(form.tags, "port", e.target.value))}
+              placeholder="5986"
+            />
+          </div>
+        ) : (
+          <div>
+            <label className={labelClass}>Baud rate (serial)</label>
+            <input
+              type="number"
+              className={inputClass}
+              value={form.baud_rate}
+              onChange={(e) => set("baud_rate", e.target.value)}
+              placeholder="9600"
+            />
+          </div>
+        )}
         <div>
           <label className={labelClass}>Username</label>
           <input
@@ -860,7 +956,8 @@ export function DeviceForm({
             value={form.username}
             onChange={(e) => set("username", e.target.value)}
             autoComplete="off"
-            placeholder={isEdit ? "(leave blank to keep)" : ""}
+            placeholder={isEdit ? "(leave blank to keep)" : mtr ? "Local account on the room PC" : ""}
+            required={mtr && !isEdit}
           />
         </div>
         <div>
@@ -872,8 +969,10 @@ export function DeviceForm({
             onChange={(e) => set("password", e.target.value)}
             autoComplete="new-password"
             placeholder={isEdit ? "(leave blank to keep)" : ""}
+            required={mtr && !isEdit}
           />
         </div>
+        {!mtr && (<>
         <div>
           <label className={labelClass}>Power on (watts)</label>
           <input
@@ -904,6 +1003,7 @@ export function DeviceForm({
             Standby / soft-off draw. Used to calculate savings from nightly power-down.
           </p>
         </div>
+        </>)}
       </div>
 
       <details
@@ -1085,6 +1185,8 @@ export function DeviceForm({
         </div>
       </details>
 
+      {/* A directly read Teams Room is read-only: no commands. */}
+      {!mtr && (
       <details
         className="rounded-md border bg-muted/30 p-3"
         // Open when there's something to see, and always for Tesira — its
@@ -1103,6 +1205,7 @@ export function DeviceForm({
           />
         </div>
       </details>
+      )}
 
       {/* Readings (subscriptions) are only consumed by the Tesira adapter;
           still shown for other protocols if a device already has some, so

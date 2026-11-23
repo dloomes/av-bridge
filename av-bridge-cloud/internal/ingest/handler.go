@@ -13,6 +13,7 @@ import (
 
 	"github.com/dloomes/av-bridge-cloud/internal/auth"
 	"github.com/dloomes/av-bridge-cloud/internal/db"
+	"github.com/dloomes/av-bridge-cloud/internal/integrations"
 	"github.com/dloomes/av-bridge-cloud/internal/notify"
 	"github.com/dloomes/av-bridge-cloud/internal/secrets"
 	"github.com/dloomes/av-bridge-cloud/internal/wsfanout"
@@ -89,6 +90,9 @@ type Handler struct {
 	hub        wsfanout.Publisher
 	dispatcher *notify.Dispatcher
 	log        *slog.Logger
+	// teamsAlerts opens and clears the alerts of Teams Rooms a Collector
+	// reads (mtr_windows); nil leaves them to nothing (tests, older wiring).
+	teamsAlerts integrations.AlertEvaluator
 }
 
 // NewHandler. hub and dispatcher may be nil — if so, events still persist
@@ -96,6 +100,13 @@ type Handler struct {
 // degrades gracefully so both side-effects are optional.
 func NewHandler(store *db.Store, cipher secrets.Cipher, hub wsfanout.Publisher, dispatcher *notify.Dispatcher, log *slog.Logger) *Handler {
 	return &Handler{store: store, cipher: cipher, hub: hub, dispatcher: dispatcher, log: log}
+}
+
+// SetTeamsRoomAlerter sets who owns the alerts of Collector Teams Rooms:
+// the same evaluator as Poly Lens rooms, so the conditions and holds match.
+func (h *Handler) SetTeamsRoomAlerter(a integrations.AlertEvaluator) *Handler {
+	h.teamsAlerts = a
+	return h
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -147,12 +158,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Collect newly-opened alerts so the dispatcher can fan them out to
 	// configured channels after the tx commits (don't dispatch on rollback).
 	var newAlerts []notify.AlertEvent
+	var teamsRooms []teamsRoomState
 	// Devices belong to the collector group: a warm standby reports for
 	// its primary's devices (see collectorha).
 	groupID := col.GroupID()
 	err = h.store.WithTenant(ctx, col.CustomerID, func(tx pgx.Tx) error {
 		newAlerts = newAlerts[:0]
+		teamsRooms = teamsRooms[:0]
 		deviceIDs := make(map[string]string, len(p.Telemetry))
+		teams := teamsRoomCache{}
 
 		for _, t := range p.Telemetry {
 			devID, err := upsertDeviceFromTelemetry(ctx, tx, col.CustomerID, groupID, t)
@@ -188,6 +202,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if err := insertEvent(ctx, tx, col.CustomerID, devID, e); err != nil {
 				return err
 			}
+			// A Collector Teams Room's offline alert belongs to the Teams
+			// Room alerter (evaluated below from its readings), not to the
+			// Collector's device_offline / device_recovered events.
+			if alerterOwnsEvent(e.EventType) {
+				isTeams, err := teams.is(ctx, tx, devID)
+				if err != nil {
+					return err
+				}
+				if isTeams {
+					continue
+				}
+			}
 			// Side-effect of an alert event: persist (or update) the alert row
 			// in the dedicated alerts table so the portal can show actionable
 			// state. Recovery events auto-resolve still-open alerts for the
@@ -200,6 +226,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			// open/resolve alerts, but don't page anyone hours late.
 			if outcome.notifyEvent != nil && !replayedTooLate(e.Timestamp) {
 				newAlerts = append(newAlerts, *outcome.notifyEvent)
+			}
+		}
+
+		if h.teamsAlerts != nil && len(p.Telemetry) > 0 {
+			ids := make([]string, 0, len(p.Telemetry))
+			for _, t := range p.Telemetry {
+				if id, ok := deviceIDs[t.DeviceID]; ok {
+					ids = append(ids, id)
+				}
+			}
+			var err error
+			if teamsRooms, err = loadTeamsRoomStates(ctx, tx, ids); err != nil {
+				return err
 			}
 		}
 
@@ -232,6 +271,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				Payload:    e.Payload,
 				Timestamp:  e.Timestamp,
 			})
+		}
+	}
+
+	// Teams Room alerts: evaluated after the commit from each room's latest
+	// stored readings (the Alerter keeps its own state and notifies itself).
+	for _, tr := range teamsRooms {
+		if err := h.teamsAlerts.Evaluate(ctx, col.CustomerID, tr.id, integrations.ReadingsFromMetrics(tr.status, tr.metrics)); err != nil {
+			h.log.Warn("teams room alert evaluation failed", "device", tr.id, "error", err)
 		}
 	}
 
