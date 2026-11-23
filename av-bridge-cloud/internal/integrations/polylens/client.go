@@ -381,6 +381,16 @@ func (c *Client) AssignTag(ctx context.Context, tagID, deviceID string) error {
 	return out.R.check()
 }
 
+// DeleteTagOnce is a single deleteTag attempt. A tag that is already gone
+// counts as deleted; a young tag answers ErrForbidden.
+func (c *Client) DeleteTagOnce(ctx context.Context, id string) error {
+	err := c.graphql(ctx, `mutation($id: String!) { deleteTag(id: $id) { success } }`, map[string]any{"id": id}, nil)
+	if errors.Is(err, ErrTagNotFound) {
+		return nil
+	}
+	return err
+}
+
 // DeleteTag deletes a tag by id, retrying a 403 a few times (the tag may be
 // brand new). A tag that is already gone counts as deleted. A 403 that
 // outlasts the retries is returned as ErrForbidden.
@@ -394,17 +404,37 @@ func (c *Client) DeleteTag(ctx context.Context, id string) error {
 			case <-time.After(TagRetryDelay):
 			}
 		}
-		err = c.graphql(ctx, `mutation($id: String!) { deleteTag(id: $id) { success } }`, map[string]any{"id": id}, nil)
-		switch {
-		case err == nil, errors.Is(err, ErrTagNotFound):
-			return nil
-		case errors.Is(err, ErrForbidden):
-			continue
-		default:
+		if err = c.DeleteTagOnce(ctx, id); !errors.Is(err, ErrForbidden) {
 			return err
 		}
 	}
 	return err
+}
+
+// UnassignTag removes a tag (by id) from a device. A tag Lens no longer knows
+// is a no-op.
+func (c *Client) UnassignTag(ctx context.Context, tagID, deviceID string) error {
+	var out struct {
+		R tagResult `json:"removeLensTagFromDevice"`
+	}
+	if err := c.graphql(ctx, `mutation($tagId: String!, $deviceIds: [String!]!) { removeLensTagFromDevice(tagId: $tagId, deviceIds: $deviceIds) { deviceId success } }`,
+		map[string]any{"tagId": tagID, "deviceIds": []string{deviceID}}, &out); err != nil {
+		if errors.Is(err, ErrTagNotFound) {
+			return nil
+		}
+		return err
+	}
+	return out.R.check()
+}
+
+// RemoveTagByID unassigns a per-device tag and then deletes it (the delete is
+// best effort: once the unassign has succeeded nothing is left on the device).
+func (c *Client) RemoveTagByID(ctx context.Context, tagID, deviceID string) error {
+	if err := c.UnassignTag(ctx, tagID, deviceID); err != nil {
+		return err
+	}
+	_ = c.DeleteTag(ctx, tagID)
+	return nil
 }
 
 // RemoveTag removes a tag from a device. A tag that does not exist is a no-op.
@@ -417,17 +447,7 @@ func (c *Client) RemoveTag(ctx context.Context, accountID, deviceID, tag string)
 	if err != nil || id == "" {
 		return err
 	}
-	var out struct {
-		R tagResult `json:"removeLensTagFromDevice"`
-	}
-	if err := c.graphql(ctx, `mutation($tagId: String!, $deviceIds: [String!]!) { removeLensTagFromDevice(tagId: $tagId, deviceIds: $deviceIds) { deviceId success } }`,
-		map[string]any{"tagId": id, "deviceIds": []string{deviceID}}, &out); err != nil {
-		if errors.Is(err, ErrTagNotFound) {
-			return nil // a ghost listing: nothing to remove
-		}
-		return err
-	}
-	if err := out.R.check(); err != nil {
+	if err := c.UnassignTag(ctx, id, deviceID); err != nil {
 		return err
 	}
 	if strings.HasPrefix(tag, "marcus:") {

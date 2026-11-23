@@ -236,7 +236,13 @@ func (h *Handler) releaseLensTag(r *http.Request, deviceID string) string {
 		h.log.Error("load lens link failed", "device_id", deviceID, "error", err)
 		return ""
 	}
-	if link == nil || (link.TagState != "tagged" && link.TagState != "pending") {
+	if link == nil {
+		return ""
+	}
+	// A device with no tag in Lens (never created, or cleaned up after a
+	// failed attempt) has nothing to release.
+	hasTag := link.TagState == "tagged" || ((link.TagState == "pending" || link.TagState == "failed") && link.LensTagID != "")
+	if !hasTag {
 		return ""
 	}
 	if !integrationConnected(integ) || integ.ID != link.IntegrationID {
@@ -250,16 +256,21 @@ func (h *Handler) releaseLensTag(r *http.Request, deviceID string) string {
 	ctx, cancel := context.WithTimeout(r.Context(), lensTimeout)
 	defer cancel()
 	client := h.lensClient(integ.ClientID, string(plain))
-	if link.TagState == "pending" {
-		// The poller may already have created the tag: best-effort delete by
-		// name. Nothing was assigned, so nothing is left behind.
-		if err := client.DeleteTagByName(ctx, integ.AccountID, lensTagPrefix+deviceID); err != nil {
-			h.log.Warn("poly lens pending tag cleanup failed", "device_id", deviceID, "error", err)
+	var rerr error
+	if link.LensTagID != "" {
+		rerr = client.RemoveTagByID(ctx, link.LensTagID, link.ExternalID)
+	} else {
+		rerr = client.RemoveTag(ctx, integ.AccountID, link.ExternalID, lensTagPrefix+deviceID)
+	}
+	if link.TagState != "tagged" {
+		// Never assigned: a failed cleanup leaves nothing on the device.
+		if rerr != nil {
+			h.log.Warn("poly lens tag cleanup failed", "device_id", deviceID, "error", rerr)
 		}
 		return "none"
 	}
-	if err := client.RemoveTag(ctx, integ.AccountID, link.ExternalID, lensTagPrefix+deviceID); err != nil {
-		h.log.Warn("poly lens tag removal failed", "device_id", deviceID, "error", err)
+	if rerr != nil {
+		h.log.Warn("poly lens tag removal failed", "device_id", deviceID, "error", rerr)
 		return "left_behind"
 	}
 	return "none"

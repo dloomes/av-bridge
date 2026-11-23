@@ -190,17 +190,17 @@ func HasNotificationChannelType(ctx context.Context, tx pgx.Tx, typ string) (boo
 
 // IntegrationLink is the vendor-cloud identity of a linked device.
 type IntegrationLink struct {
-	DeviceID, IntegrationID, ExternalID, TagState string
+	DeviceID, IntegrationID, ExternalID, TagState, LensTagID string
 }
 
 // GetIntegrationLink returns the link row of a live device, or nil.
 func GetIntegrationLink(ctx context.Context, tx pgx.Tx, deviceID string) (*IntegrationLink, error) {
 	var l IntegrationLink
 	err := tx.QueryRow(ctx, `
-		SELECT l.device_id::text, l.integration_id::text, l.external_id, l.tag_state
+		SELECT l.device_id::text, l.integration_id::text, l.external_id, l.tag_state, COALESCE(l.lens_tag_id, '')
 		  FROM integration_devices l JOIN devices d ON d.id = l.device_id
 		 WHERE l.device_id = $1 AND d.deleted_at IS NULL`, deviceID).
-		Scan(&l.DeviceID, &l.IntegrationID, &l.ExternalID, &l.TagState)
+		Scan(&l.DeviceID, &l.IntegrationID, &l.ExternalID, &l.TagState, &l.LensTagID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}

@@ -67,7 +67,9 @@ func TestLensDeviceCreateDelete(t *testing.T) {
 	var calls []string
 	lensTags := map[string]string{}
 	deleteForbids := 0 // deleteTag answers 403 this many times first
+	oldDelay := polylens.TagRetryDelay
 	polylens.TagRetryDelay = time.Millisecond
+	t.Cleanup(func() { polylens.TagRetryDelay = oldDelay })
 	mux := http.NewServeMux()
 	mux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
@@ -110,11 +112,6 @@ func TestLensDeviceCreateDelete(t *testing.T) {
 			mu.Lock()
 			calls = append(calls, "add|"+devs[0].(string)+"|"+lensTags[ids[0].(string)])
 			mu.Unlock()
-			if devs[0] == "ext-failtag" {
-				w.WriteHeader(403)
-				io.WriteString(w, `{"errors":[{"message":"no","extensions":{"code":"AUTHORIZATION_ERROR"}}]}`)
-				return
-			}
 			io.WriteString(w, `{"data":{"addLensTagToDevice":[{"deviceId":"`+devs[0].(string)+`","success":true}]}}`)
 			return
 		case strings.Contains(req.Query, "removeLensTagFromDevice"):
@@ -144,7 +141,7 @@ func TestLensDeviceCreateDelete(t *testing.T) {
 			return `{"node":{"id":"` + id + `","name":"` + name + `","serialNumber":"SN-` + id + `","macAddress":"AA:00:00:00:00:02","hardwareModel":"Test X","connected":true,"activeApplicationName":"Microsoft Teams Rooms"}}`
 		}
 		io.WriteString(w, `{"data":{"tenant":{"inventory":{"deviceSearch":{"pageInfo":{"hasNextPage":false},"edges":[`+
-			node("ext-1", "Fake Room One")+","+node("ext-2", "Fake Room Two")+","+node("ext-failtag", "Fake Room Fail")+","+node("ext-3", "Fake Room Three")+","+node("ext-4", "Fake Room Four")+`]}}}}}`)
+			node("ext-1", "Fake Room One")+","+node("ext-2", "Fake Room Two")+","+node("ext-3", "Fake Room Three")+","+node("ext-4", "Fake Room Four")+`]}}}}}`)
 	})
 	lens := httptest.NewServer(mux)
 	defer lens.Close()
@@ -255,10 +252,9 @@ func TestLensDeviceCreateDelete(t *testing.T) {
 		t.Errorf("tag_requested_at not set")
 	}
 	// Pretend the poller tagged it (the poller has its own tests).
-	q(`UPDATE integration_devices SET tag_state = 'tagged' WHERE device_id = $1 RETURNING 'x'`, d1)
+	q(`UPDATE integration_devices SET tag_state = 'tagged', lens_tag_id = $2 WHERE device_id = $1 RETURNING 'x'`, d1, "tag-marcus:"+d1)
 	mu.Lock()
 	lensTags["tag-marcus:"+d1] = "marcus:" + d1
-	deleteForbids = 2
 	mu.Unlock()
 	var meta string
 	if err := su.QueryRow(ctx, `SELECT metadata::text FROM audit_log WHERE customer_id = $1 AND action = 'device.create' AND target_id = $2`, cust, d1).Scan(&meta); err != nil || !strings.Contains(meta, "poly_lens") {
@@ -290,16 +286,26 @@ func TestLensDeviceCreateDelete(t *testing.T) {
 	if code != 201 || state != "pending" {
 		t.Fatalf("create ext-4 = %d state %q", code, state)
 	}
+	// The poller already created its tag: delete unassigns and deletes it by id.
+	q(`UPDATE integration_devices SET lens_tag_id = $2 WHERE device_id = $1 RETURNING 'x'`, dPend, "tag-marcus:"+dPend)
+	mu.Lock()
+	lensTags["tag-marcus:"+dPend] = "marcus:" + dPend
+	mu.Unlock()
 	if code, body := call("DELETE", "/api/v1/devices/"+dPend, nil); code != 204 {
 		t.Fatalf("delete pending = %d %s", code, body)
 	}
 	if err := su.QueryRow(ctx, `SELECT metadata::text FROM audit_log WHERE customer_id = $1 AND action = 'device.delete' AND target_id = $2`, cust, dPend).Scan(&meta); err != nil || strings.Contains(meta, "left_behind") {
 		t.Errorf("pending delete audit %q: %v", meta, err)
 	}
+	if c := tagCalls(); len(c) != 2 || c[0] != "remove|ext-4|marcus:"+dPend || c[1] != "deleteTag|marcus:"+dPend {
+		t.Errorf("pending delete tag calls: %v", c)
+	}
+	mu.Lock()
+	deleteForbids = 2
+	mu.Unlock()
 
 	// Delete while connected unassigns the tag, then deletes it (retrying the
 	// 403 Lens gives for a young tag) and frees the Lens device.
-	// and frees the Lens device.
 	if code, body := call("DELETE", "/api/v1/devices/"+d1, nil); code != 204 {
 		t.Fatalf("delete d1 = %d %s", code, body)
 	}

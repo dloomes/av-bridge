@@ -30,7 +30,9 @@ type tagLens struct {
 }
 
 func newTagLens(t *testing.T) *tagLens {
+	old := polylens.TagRetryDelay
 	polylens.TagRetryDelay = time.Millisecond
+	t.Cleanup(func() { polylens.TagRetryDelay = old })
 	f := &tagLens{listed: map[string]string{}, ghost: map[string]bool{}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {
@@ -180,6 +182,8 @@ func TestTagPendingGhostTagIsRecreated(t *testing.T) {
 	e := newEnv(t)
 	lens := newTagLens(t)
 	f, dev := e.pendingFixture("acct-tag-ghost", true, "2 minutes")
+	// Our stored tag id no longer exists in Lens.
+	e.exec(`UPDATE integration_devices SET lens_tag_id = 'ghost-1' WHERE device_id = $1`, dev)
 	lens.listed["ghost-1"] = "marcus:" + dev
 	lens.ghost["ghost-1"] = true
 	if err := e.tagPoller(lens, f.cust).PollOnce(context.Background()); err != nil {
@@ -187,6 +191,9 @@ func TestTagPendingGhostTagIsRecreated(t *testing.T) {
 	}
 	if got := e.tagRow(dev); got != "tagged||true" {
 		t.Fatalf("got %s", got)
+	}
+	if got := e.q(`SELECT lens_tag_id FROM integration_devices WHERE device_id = $1`, dev); got == "ghost-1" || got == "" {
+		t.Fatalf("stored tag id %q", got)
 	}
 	want := "add|marcus:" + dev + ",create|marcus:" + dev + ",add|marcus:" + dev
 	if strings.Join(lens.tagCalls(), ",") != want {
@@ -244,5 +251,47 @@ func TestTagPendingOtherErrorKeepsMessageAndTag(t *testing.T) {
 	}
 	if got := e.tagRow(dev); got != "failed|Poly Lens did not accept the tag|true" {
 		t.Fatalf("after give-up: %s", got)
+	}
+}
+
+func TestTagPendingForbiddenCreatesTagOnce(t *testing.T) {
+	e := newEnv(t)
+	lens := newTagLens(t)
+	lens.forbid = -1
+	f, dev := e.pendingFixture("acct-tag-once", true, "2 minutes")
+	p := e.tagPoller(lens, f.cust)
+	for i := 0; i < 4; i++ {
+		if err := p.PollOnce(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	creates := 0
+	for _, c := range lens.tagCalls() {
+		if strings.HasPrefix(c, "create|") {
+			creates++
+		}
+	}
+	if creates != 1 {
+		t.Fatalf("creates %d: %v", creates, lens.tagCalls())
+	}
+	if got := e.tagRow(dev); got != "pending||true" {
+		t.Fatalf("got %s", got)
+	}
+}
+
+func TestTagPendingSwitchedOffDeletesStoredTag(t *testing.T) {
+	e := newEnv(t)
+	lens := newTagLens(t)
+	f, dev := e.pendingFixture("acct-tag-off2", false, "")
+	e.exec(`UPDATE integration_devices SET tag_state = 'pending', tag_requested_at = now(), lens_tag_id = 'tag-x' WHERE device_id = $1`, dev)
+	lens.listed["tag-x"] = "marcus:" + dev
+	if err := e.tagPoller(lens, f.cust).PollOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if c := lens.tagCalls(); len(c) != 1 || c[0] != "delete|marcus:"+dev {
+		t.Fatalf("calls %v", c)
+	}
+	if got := e.tagRow(dev); !strings.HasPrefix(got, "none|") {
+		t.Fatalf("got %s", got)
 	}
 }
