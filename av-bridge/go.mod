@@ -5,7 +5,7 @@ go 1.26.0
 require (
 	github.com/Azure/go-ntlmssp v0.0.0-20221128193559-754e69321358
 	github.com/gorilla/mux v1.8.1
-	github.com/gorilla/websocket v1.5.1
+	github.com/gorilla/websocket v1.5.3
 	github.com/hashicorp/yamux v0.1.2
 	github.com/kardianos/service v1.3.0
 	github.com/masterzen/winrm v0.0.0-20260407182533-5570be7f80cf
