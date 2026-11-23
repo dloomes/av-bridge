@@ -71,11 +71,23 @@ func (e *Executor) stepPing(ctx context.Context, run RunContext, s step) stepRes
 		named = true
 	}
 	var pingable []resolvedDevice
+	var lensSkipped []resolvedDevice
 	for _, d := range devices {
+		if d.noCollector {
+			lensSkipped = append(lensSkipped, d)
+			continue
+		}
 		if d.protocol == "serial" && !named {
 			continue
 		}
 		pingable = append(pingable, d)
+	}
+	if len(pingable) == 0 && len(lensSkipped) > 0 {
+		actual := map[string]any{}
+		for _, d := range lensSkipped {
+			actual[d.name] = skippedLensMsg
+		}
+		return stepResult{Passed: true, Expected: map[string]any{"replies": true}, Actual: actual, StartedAt: started, EndedAt: time.Now()}
 	}
 	if len(pingable) == 0 {
 		return failedResult(started, "target resolved to no devices with a network address")
@@ -94,6 +106,9 @@ func (e *Executor) stepPing(ctx context.Context, run RunContext, s step) stepRes
 	var failures []string
 	var readings []stepReading
 	actual := map[string]any{}
+	for _, d := range lensSkipped {
+		actual[d.name] = skippedLensMsg
+	}
 	for _, d := range pingable {
 		o, ok := outcomes[d.id]
 		switch {

@@ -85,7 +85,7 @@ func (e *Executor) freshReadings(ctx context.Context, run RunContext, devices []
 	cmdDevice := map[string]string{} // command id -> device id
 	err := pgx.BeginFunc(ctx, e.pool, func(tx pgx.Tx) error {
 		for _, d := range devices {
-			if noFreshPoll[d.protocol] {
+			if noFreshPoll[d.protocol] || d.noCollector {
 				continue
 			}
 			id, err := commands.Submit(ctx, tx, run.CustomerID, d.id, pollCommand, nil, "nightly:"+run.RunID)

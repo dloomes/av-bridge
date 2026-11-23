@@ -70,7 +70,7 @@ func powerCapableIn(ctx context.Context, pool *pgxpool.Pool, devices []resolvedD
 	}
 	out := devices[:0:0]
 	for _, d := range devices {
-		if capable[d.id] {
+		if capable[d.id] && !d.noCollector {
 			out = append(out, d)
 		}
 	}

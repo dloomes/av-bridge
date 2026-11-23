@@ -52,6 +52,7 @@ var (
 	errMoveTargetNotFound = errors.New("target collector not found")
 	errMoveDeviceNotFound = errors.New("device not found")
 	errMoveTargetStandby  = errors.New("target is a standby collector")
+	errMoveNoCollector    = errors.New("device has no collector")
 )
 
 // moveDevices moves deviceIDs to target inside tx. Returns a result with
@@ -74,9 +75,11 @@ func moveDevices(ctx context.Context, tx pgx.Tx, p portalauth.Principal, deviceI
 
 	type dev struct {
 		id, collectorID, reportedID, name string
+		noCollector                       bool
 	}
 	rows, err := tx.Query(ctx, `
-		SELECT id::text, collector_id::text, COALESCE(reported_id, ''), COALESCE(name, '')
+		SELECT id::text, COALESCE(collector_id::text, ''), collector_id IS NULL,
+		       COALESCE(reported_id, ''), COALESCE(name, '')
 		  FROM devices
 		 WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL
 		 ORDER BY id
@@ -87,7 +90,7 @@ func moveDevices(ctx context.Context, tx pgx.Tx, p portalauth.Principal, deviceI
 	var found []dev
 	for rows.Next() {
 		var d dev
-		if err := rows.Scan(&d.id, &d.collectorID, &d.reportedID, &d.name); err != nil {
+		if err := rows.Scan(&d.id, &d.collectorID, &d.noCollector, &d.reportedID, &d.name); err != nil {
 			rows.Close()
 			return res, err
 		}
@@ -103,6 +106,9 @@ func moveDevices(ctx context.Context, tx pgx.Tx, p portalauth.Principal, deviceI
 
 	var moving []dev
 	for _, d := range found {
+		if d.noCollector {
+			return res, errMoveNoCollector
+		}
 		if d.collectorID == target {
 			res.Unchanged++
 			continue
@@ -270,7 +276,7 @@ func (h *Handler) MoveDevices(w http.ResponseWriter, r *http.Request) {
 	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
 		var err error
 		res, err = moveDevices(ctx, tx, p, ids, req.TargetCollectorID)
-		if errors.Is(err, errMoveTargetNotFound) || errors.Is(err, errMoveDeviceNotFound) || errors.Is(err, errMoveTargetStandby) {
+		if errors.Is(err, errMoveTargetNotFound) || errors.Is(err, errMoveDeviceNotFound) || errors.Is(err, errMoveTargetStandby) || errors.Is(err, errMoveNoCollector) {
 			moveErr = err
 			return nil
 		}
@@ -360,7 +366,7 @@ func (h *Handler) ReplaceCollector(w http.ResponseWriter, r *http.Request) {
 		}
 		if len(ids) > 0 {
 			res, err = moveDevices(ctx, tx, p, ids, req.TargetCollectorID)
-			if errors.Is(err, errMoveTargetNotFound) || errors.Is(err, errMoveTargetStandby) {
+			if errors.Is(err, errMoveTargetNotFound) || errors.Is(err, errMoveTargetStandby) || errors.Is(err, errMoveNoCollector) {
 				moveErr = err
 				return nil
 			}
@@ -404,6 +410,8 @@ func writeMoveResult(w http.ResponseWriter, res moveResult, moveErr error) {
 		writeErr(w, http.StatusBadRequest, "target collector not found in this customer")
 	case errors.Is(moveErr, errMoveTargetStandby):
 		writeErr(w, http.StatusBadRequest, "devices can't be moved to a standby collector; they belong to its primary, which the standby takes over automatically")
+	case errors.Is(moveErr, errMoveNoCollector):
+		writeErr(w, http.StatusConflict, lensManagedMsg)
 	case errors.Is(moveErr, errMoveDeviceNotFound):
 		writeErr(w, http.StatusNotFound, "one or more devices not found")
 	case len(res.Conflicts) > 0:

@@ -58,7 +58,7 @@ func (h *Handler) StartRemoteSession(w http.ResponseWriter, r *http.Request) {
 	if !h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
 		err := tx.QueryRow(ctx, `
 			SELECT COALESCE(reported_id, ''), COALESCE(address, ''),
-			       COALESCE(tags->>'web_port', ''), COALESCE(tags->>'web_path', ''), collector_id::text
+			       COALESCE(tags->>'web_port', ''), COALESCE(tags->>'web_path', ''), COALESCE(collector_id::text, '')
 			  FROM devices WHERE id = $1`, deviceID).Scan(&reportedID, &address, &webPortTag, &webPathTag, &collectorID)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
@@ -70,6 +70,10 @@ func (h *Handler) StartRemoteSession(w http.ResponseWriter, r *http.Request) {
 	}
 	if !found {
 		writeErr(w, http.StatusNotFound, "device not found")
+		return
+	}
+	if collectorID == "" {
+		writeErr(w, http.StatusConflict, lensManagedMsg)
 		return
 	}
 	if reportedID == "" || address == "" {

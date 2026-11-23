@@ -26,6 +26,10 @@ const portalCommandWait = 30 * time.Second
 // command map.
 const CommandReconnectName = "_reconnect"
 
+// lensManagedMsg is the refusal for actions that need a Collector, on a device
+// managed by Poly Lens (no Collector).
+const lensManagedMsg = "not available for devices managed by Poly Lens"
+
 // SubmitCommand — POST /api/v1/devices/{id}/command  body: { name, args }
 func (h *Handler) SubmitCommand(w http.ResponseWriter, r *http.Request) {
 	deviceID := r.PathValue("id")
@@ -117,6 +121,10 @@ func (h *Handler) SubmitBulkCommand(w http.ResponseWriter, r *http.Request) {
 				results = append(results, result{DeviceID: devID, Error: "device not found"})
 				continue
 			}
+			if errors.Is(err, commands.ErrNoCollector) {
+				results = append(results, result{DeviceID: devID, Error: lensManagedMsg})
+				continue
+			}
 			if err != nil {
 				// A real DB error (constraint, connection, etc.) is not per-device —
 				// abort the whole batch so the tx rolls back cleanly and the caller
@@ -191,11 +199,15 @@ func (h *Handler) submitAndWait(w http.ResponseWriter, r *http.Request, deviceID
 	}
 
 	var cmdID string
-	notFound := false
+	notFound, noCollector := false, false
 	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
 		id, err := commands.Submit(ctx, tx, p.CustomerID, deviceID, name, args, p.Role)
 		if errors.Is(err, pgx.ErrNoRows) {
 			notFound = true
+			return nil
+		}
+		if errors.Is(err, commands.ErrNoCollector) {
+			noCollector = true
 			return nil
 		}
 		if err != nil {
@@ -222,6 +234,10 @@ func (h *Handler) submitAndWait(w http.ResponseWriter, r *http.Request, deviceID
 	}
 	if notFound {
 		writeErr(w, http.StatusNotFound, "device not found")
+		return
+	}
+	if noCollector {
+		writeErr(w, http.StatusConflict, lensManagedMsg)
 		return
 	}
 

@@ -59,17 +59,24 @@ type Command struct {
 	Completed  *time.Time      `json:"completed_at,omitempty"`
 }
 
+// ErrNoCollector is returned by Submit for a device with no Collector (for
+// example one managed by Poly Lens): there is nothing to deliver a command to.
+var ErrNoCollector = errors.New("device has no Collector")
+
 // Submit inserts a pending command. Caller must already be in a WithTenant tx.
 // The submitter_role goes into the audit-friendly submitted_by column.
 func Submit(ctx context.Context, tx pgx.Tx, customerID, deviceID, name string, args []byte, submittedBy string) (string, error) {
 	var (
 		id          string
-		collectorID string
+		collectorID *string
 	)
 	err := tx.QueryRow(ctx,
 		`SELECT collector_id::text FROM devices WHERE id = $1 AND deleted_at IS NULL`, deviceID).Scan(&collectorID)
 	if err != nil {
 		return "", err
+	}
+	if collectorID == nil {
+		return "", ErrNoCollector
 	}
 
 	var argsParam any = nil
@@ -80,7 +87,7 @@ func Submit(ctx context.Context, tx pgx.Tx, customerID, deviceID, name string, a
 		INSERT INTO commands (customer_id, collector_id, device_id, name, args, submitted_by)
 		VALUES ($1, $2, $3, $4, $5::jsonb, $6)
 		RETURNING id::text`,
-		customerID, collectorID, deviceID, name, argsParam, submittedBy,
+		customerID, *collectorID, deviceID, name, argsParam, submittedBy,
 	).Scan(&id)
 	if err != nil {
 		return "", err
@@ -91,7 +98,7 @@ func Submit(ctx context.Context, tx pgx.Tx, customerID, deviceID, name string, a
 	// non-fatal: the row is committed either way and the sweeper +
 	// fallback poll pace would still deliver the command; but we surface
 	// the error so a mis-configured pool doesn't silently degrade.
-	if _, err := tx.Exec(ctx, `SELECT pg_notify($1, $2)`, ChannelPending, collectorID); err != nil {
+	if _, err := tx.Exec(ctx, `SELECT pg_notify($1, $2)`, ChannelPending, *collectorID); err != nil {
 		return "", fmt.Errorf("notify %s: %w", ChannelPending, err)
 	}
 	return id, nil

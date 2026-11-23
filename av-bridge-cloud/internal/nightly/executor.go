@@ -634,16 +634,33 @@ func (e *Executor) stepPowerAction(ctx context.Context, run RunContext, s step, 
 	if err != nil {
 		return failedResult(started, "resolve target: "+err.Error())
 	}
+	// Devices managed by Poly Lens have no Collector to send power to.
+	var lensSkipped []string
+	var withCollector []resolvedDevice
+	for _, d := range devices {
+		if d.noCollector {
+			lensSkipped = append(lensSkipped, d.name)
+			continue
+		}
+		withCollector = append(withCollector, d)
+	}
+	devices = withCollector
 	// Only devices that can do it: a PDU or ping probe in a "whole room"
 	// target would just fail the command, and the step with it.
 	if devices, err = powerCapableIn(ctx, e.pool, devices, action); err != nil {
 		return failedResult(started, "check power support: "+err.Error())
 	}
 	if len(devices) == 0 {
+		note := "no device in the target supports " + action
+		actual := map[string]any{"dispatched": false, "devices": 0, "note": note}
+		if len(lensSkipped) > 0 {
+			actual["note"] = skippedLensMsg
+			actual["skipped"] = lensSkipped
+		}
 		return stepResult{
 			Passed:    true,
 			Expected:  map[string]any{"action": action, "target_devices": 0},
-			Actual:    map[string]any{"dispatched": false, "devices": 0, "note": "no device in the target supports " + action},
+			Actual:    actual,
 			StartedAt: started,
 			EndedAt:   time.Now(),
 		}
@@ -670,10 +687,21 @@ func (e *Executor) stepPowerAction(ctx context.Context, run RunContext, s step, 
 		Passed:    allOK,
 		Error:     dispatchFailures(perDevice),
 		Expected:  map[string]any{"action": action, "target_devices": len(devices)},
-		Actual:    map[string]any{"dispatched": true, "devices": len(devices), "per_device": perDevice},
+		Actual:    powerActual(len(devices), perDevice, lensSkipped),
 		StartedAt: started,
 		EndedAt:   time.Now(),
 	}
+}
+
+// powerActual is a dispatched power step's actual payload, naming any
+// Poly Lens devices left out.
+func powerActual(n int, perDevice []map[string]any, lensSkipped []string) map[string]any {
+	a := map[string]any{"dispatched": true, "devices": n, "per_device": perDevice}
+	if len(lensSkipped) > 0 {
+		a["skipped"] = lensSkipped
+		a["skipped_reason"] = skippedLensMsg
+	}
+	return a
 }
 
 // stepDeviceCommand — enqueues the routine's named command against the
@@ -762,12 +790,19 @@ func (e *Executor) dispatchAcross(
 		res := e.dispatchOne(ctx, run, d, commandName, argsJSON, timeout)
 		perDevice = append(perDevice, res)
 		status, _ := res["status"].(string)
-		if status != string(commands.StatusSucceeded) {
+		if status != string(commands.StatusSucceeded) && status != statusSkipped {
 			allOK = false
 		}
 	}
 	return perDevice, allOK
 }
+
+// statusSkipped is the per-device status of a command not sent because the
+// device has no Collector; skippedLensMsg is its step-result wording.
+const (
+	statusSkipped  = "skipped"
+	skippedLensMsg = "skipped: managed by Poly Lens"
+)
 
 // dispatchFailures names each device whose command didn't succeed, with
 // its reason, as the step's error: "Camera: visca error 0x41: command not
@@ -776,7 +811,7 @@ func dispatchFailures(perDevice []map[string]any) string {
 	var parts []string
 	for _, r := range perDevice {
 		status, _ := r["status"].(string)
-		if status == string(commands.StatusSucceeded) {
+		if status == string(commands.StatusSucceeded) || status == statusSkipped {
 			continue
 		}
 		name, _ := r["device_name"].(string)
@@ -822,6 +857,11 @@ func (e *Executor) dispatchOne(
 		commandID = id
 		return nil
 	}); err != nil {
+		if errors.Is(err, commands.ErrNoCollector) {
+			base["status"] = statusSkipped
+			base["error"] = skippedLensMsg
+			return base
+		}
 		e.log.Warn("nightly dispatch submit failed",
 			"run", run.RunID, "device", dev.id, "command", commandName, "error", err)
 		base["status"] = string(commands.StatusFailed)
@@ -940,6 +980,7 @@ type resolvedDevice struct {
 	name         string
 	kind         string // devices.type — 'vc' / 'dsp' / 'display' etc.
 	protocol     string // adapter, e.g. aten_pdu (see noFreshPoll)
+	noCollector  bool   // managed by Poly Lens: no Collector to command or poll
 	latestStatus string
 	lastSeen     *time.Time // when latestStatus was reported
 }
@@ -980,6 +1021,7 @@ func queryDevices(ctx context.Context, pool *pgxpool.Pool, roomID string, extra 
 		       COALESCE(name, reported_id, ''),
 		       COALESCE(type, ''),
 		       COALESCE(protocol, ''),
+		       collector_id IS NULL,
 		       COALESCE(latest_status, 'unknown'),
 		       last_seen_at
 		  FROM devices
@@ -994,7 +1036,7 @@ func queryDevices(ctx context.Context, pool *pgxpool.Pool, roomID string, extra 
 	var out []resolvedDevice
 	for rows.Next() {
 		var d resolvedDevice
-		if err := rows.Scan(&d.id, &d.name, &d.kind, &d.protocol, &d.latestStatus, &d.lastSeen); err != nil {
+		if err := rows.Scan(&d.id, &d.name, &d.kind, &d.protocol, &d.noCollector, &d.latestStatus, &d.lastSeen); err != nil {
 			return nil, err
 		}
 		out = append(out, d)
