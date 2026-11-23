@@ -23,7 +23,7 @@ interface Props {
 // first connect, or to vendor users; a customer editing an existing connection
 // keeps the stored account (the API refuses an account change from them).
 export function LensConnectForm({ integration, isVendor, onCancel, onSaved, onDisconnect, onDirty }: Props) {
-  const hasAccount = !!integration?.account_name;
+  const hasAccount = !!integration?.account_id;
   const showAccount = !hasAccount || isVendor;
   const [clientId, setClientId] = useState(integration?.client_id ?? "");
   const [secret, setSecret] = useState("");
@@ -46,7 +46,7 @@ export function LensConnectForm({ integration, isVendor, onCancel, onSaved, onDi
         setError("These credentials work but no Poly Lens accounts are visible to them.");
         return null;
       }
-      const keep = res.accounts.find((a) => a.name === integration?.account_name);
+      const keep = res.accounts.find((a) => a.id === integration?.account_id);
       const pick = keep ?? (res.accounts.length === 1 ? res.accounts[0] : undefined);
       setAccountId((cur) => cur || pick?.id || "");
       return res.accounts;
@@ -65,7 +65,7 @@ export function LensConnectForm({ integration, isVendor, onCancel, onSaved, onDi
     if (showAccount && !chosen) {
       const found = await runTest();
       if (!found) return;
-      const keep = found.find((a) => a.name === integration?.account_name);
+      const keep = found.find((a) => a.id === integration?.account_id);
       chosen = keep?.id ?? (found.length === 1 ? found[0].id : "");
       if (!chosen) {
         setError("Choose the Poly Lens account to use, then connect.");

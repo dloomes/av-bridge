@@ -984,6 +984,7 @@ export type IntegrationStatus =
 export interface Integration {
   provider: IntegrationProvider;
   status: IntegrationStatus;
+  account_id?: string;
   account_name?: string;
   allow_tagging: boolean;
   has_secret: boolean;

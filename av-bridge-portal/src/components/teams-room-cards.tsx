@@ -83,7 +83,7 @@ export function TeamsRoomCards({ device, metrics }: { device: DeviceDetail; metr
     <div className="grid gap-6 md:grid-cols-2">
       <Panel title="Teams Rooms">
         <Row label="App version">{str(m.teams_app_version) || dash}</Row>
-        <Row label="Presence">{str(m.teams_presence) || dash}</Row>
+        {str(m.teams_presence) && <Row label="Presence">{str(m.teams_presence)}</Row>}
       </Panel>
       <Panel title="Peripherals">
         <Row label="Status">
