@@ -1509,9 +1509,12 @@ func (h *Handler) UpdateDevice(w http.ResponseWriter, r *http.Request) {
 	// Source-aware guards: a Poly Lens device has no Collector-side settings,
 	// and a Collector device cannot become a Lens-managed type.
 	var devSource, curType, curProtocol string
+	var hasUser, hasPass bool
 	if !h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
-		err := tx.QueryRow(ctx, `SELECT source, COALESCE(type, ''), COALESCE(protocol, '') FROM devices WHERE id = $1 AND deleted_at IS NULL`, id).
-			Scan(&devSource, &curType, &curProtocol)
+		err := tx.QueryRow(ctx, `SELECT source, COALESCE(type, ''), COALESCE(protocol, ''),
+		                                username_enc IS NOT NULL, password_enc IS NOT NULL
+		                           FROM devices WHERE id = $1 AND deleted_at IS NULL`, id).
+			Scan(&devSource, &curType, &curProtocol, &hasUser, &hasPass)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
@@ -1542,7 +1545,24 @@ func (h *Handler) UpdateDevice(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusBadRequest, msgTeamsRoomProtocol)
 			return
 		}
+		// mtr_windows signs in to the PC: credentials can't be cleared, and a
+		// device retyped into it needs them in the request or already stored.
+		if newProtocol == protocolMTRWindows {
+			if req.Username != nil {
+				hasUser = strings.TrimSpace(*req.Username) != ""
+			}
+			if req.Password != nil {
+				hasPass = strings.TrimSpace(*req.Password) != ""
+			}
+			touched := curProtocol != protocolMTRWindows || req.Username != nil || req.Password != nil
+			if touched && !(hasUser && hasPass) {
+				writeErr(w, http.StatusBadRequest, msgMTRCredentials)
+				return
+			}
+		}
 	}
+	// Retyped into or out of teams_room: its Teams Room alerts no longer apply.
+	teamsRetype := req.Type != nil && (curType == deviceTypeTeamsRoom) != (newType == deviceTypeTeamsRoom)
 
 	set := []string{}
 	args := []any{}
@@ -1691,6 +1711,17 @@ func (h *Handler) UpdateDevice(w http.ResponseWriter, r *http.Request) {
 			rowsAffected = tag.RowsAffected()
 			if rowsAffected == 0 {
 				return nil
+			}
+			if teamsRetype {
+				if _, err := tx.Exec(ctx, `
+					UPDATE alerts SET status = 'resolved', resolved_at = now(), resolved_by = 'auto:retyped'
+					 WHERE device_id = $1 AND status IN ('open', 'acknowledged') AND alert_key = ANY($2)`,
+					id, teamsRoomAlertKeys); err != nil {
+					return err
+				}
+				if _, err := tx.Exec(ctx, `DELETE FROM integration_alert_state WHERE device_id = $1`, id); err != nil {
+					return err
+				}
 			}
 		} else {
 			// No device fields changed — confirm the device exists so a

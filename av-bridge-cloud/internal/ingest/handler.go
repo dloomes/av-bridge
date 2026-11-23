@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -93,7 +94,17 @@ type Handler struct {
 	// teamsAlerts opens and clears the alerts of Teams Rooms a Collector
 	// reads (mtr_windows); nil leaves them to nothing (tests, older wiring).
 	teamsAlerts integrations.AlertEvaluator
+	// teamsAlertsWG tracks evaluations still running after their push was
+	// answered (WaitTeamsRoomAlerts, for tests and shutdown).
+	teamsAlertsWG sync.WaitGroup
 }
+
+// teamsAlertTimeout bounds one push's Teams Room alert evaluation.
+const teamsAlertTimeout = 10 * time.Second
+
+// WaitTeamsRoomAlerts waits for Teams Room alert evaluations started by
+// earlier pushes to finish.
+func (h *Handler) WaitTeamsRoomAlerts() { h.teamsAlertsWG.Wait() }
 
 // NewHandler. hub and dispatcher may be nil — if so, events still persist
 // but no live fan-out and no outbound notifications happen. Handler
@@ -274,14 +285,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Teams Room alerts: evaluated after the commit from each room's latest
-	// stored readings (the Alerter keeps its own state and notifies itself).
-	for _, tr := range teamsRooms {
-		if err := h.teamsAlerts.Evaluate(ctx, col.CustomerID, tr.id, integrations.ReadingsFromMetrics(tr.status, tr.metrics)); err != nil {
-			h.log.Warn("teams room alert evaluation failed", "device", tr.id, "error", err)
-		}
-	}
-
 	// Outbound notifications — only for alerts that just opened (re-fires of
 	// an already-open alert don't notify, per the alertOutcome logic). Each
 	// Dispatch call is non-blocking; the dispatcher manages its own
@@ -298,6 +301,23 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		"events":    len(p.Events),
 		"logs":      len(p.Logs),
 	})
+
+	// Teams Room alerts: evaluated after the commit, and after answering so
+	// the push isn't held up, from each room's latest stored readings (the
+	// Alerter keeps its own state and notifies itself).
+	if len(teamsRooms) > 0 {
+		evalCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), teamsAlertTimeout)
+		h.teamsAlertsWG.Add(1)
+		go func() {
+			defer h.teamsAlertsWG.Done()
+			defer cancel()
+			for _, tr := range teamsRooms {
+				if err := h.teamsAlerts.Evaluate(evalCtx, col.CustomerID, tr.id, integrations.ReadingsFromMetrics(tr.status, tr.metrics)); err != nil {
+					h.log.Warn("teams room alert evaluation failed", "device", tr.id, "error", err)
+				}
+			}
+		}()
+	}
 }
 
 // replayNotifyCutoff — alert events older than this when they reach the

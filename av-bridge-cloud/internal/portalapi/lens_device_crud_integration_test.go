@@ -369,14 +369,37 @@ func TestLensDeviceCreateDelete(t *testing.T) {
 	bad("mtr_windows for a display", mtrBody(map[string]any{"type": "display"}))
 	bad("collector teams_room on android", mtrBody(map[string]any{"platform": "android"}))
 	bad("platform on a collector display", mtrBody(map[string]any{"type": "display", "protocol": "ping"}))
+	bad("mtr_windows without a password", mtrBody(map[string]any{"password": ""}))
+	bad("mtr_windows without a username", mtrBody(map[string]any{"username": "  "}))
 	if c, body := call("POST", "/api/v1/devices", mtrBody(nil)); c != 201 {
 		t.Fatalf("create collector teams_room = %d %s", c, body)
 	}
 	if got := q(`SELECT source || '|' || platform || '|' || protocol FROM devices WHERE collector_id = $1 AND reported_id = 'fake-mtr'`, coll); got != "collector|windows|mtr_windows" {
 		t.Errorf("collector teams_room row = %q", got)
 	}
-	// Retype guard: teams_room only together with mtr_windows.
-	if code := patch(cdev, map[string]any{"type": "teams_room", "protocol": "mtr_windows"}); code != 204 && code != 200 {
+	mtrDev := q(`SELECT id::text FROM devices WHERE collector_id = $1 AND reported_id = 'fake-mtr'`, coll)
+	// Credentials can't be cleared on an mtr_windows device.
+	for _, f := range []map[string]any{{"password": ""}, {"username": ""}, {"username": "x", "password": ""}} {
+		if code := patch(mtrDev, f); code != 400 {
+			t.Errorf("PATCH mtr_windows %v = %d, want 400", f, code)
+		}
+	}
+	if code := patch(mtrDev, map[string]any{"password": "new-fake-pass"}); code != 204 && code != 200 {
+		t.Errorf("PATCH mtr_windows new password = %d", code)
+	}
+	if code := patch(mtrDev, map[string]any{"name": "Renamed Fake MTR"}); code != 204 && code != 200 {
+		t.Errorf("PATCH mtr_windows name = %d", code)
+	}
+	// Retype guard: teams_room only together with mtr_windows, and only with
+	// credentials (in the request or already stored).
+	if code := patch(cdev, map[string]any{"type": "teams_room", "protocol": "mtr_windows"}); code != 400 {
+		t.Errorf("PATCH collector device to teams_room + mtr_windows without credentials = %d, want 400", code)
+	}
+	if code := patch(cdev, map[string]any{"type": "teams_room", "protocol": "mtr_windows", "username": "fake-user"}); code != 400 {
+		t.Errorf("PATCH collector device to teams_room + mtr_windows without a password = %d, want 400", code)
+	}
+	if code := patch(cdev, map[string]any{"type": "teams_room", "protocol": "mtr_windows",
+		"username": "fake-user", "password": "fake-pass"}); code != 204 && code != 200 {
 		t.Errorf("PATCH collector device to teams_room + mtr_windows = %d", code)
 	}
 	if got := q(`SELECT COALESCE(platform, '') FROM devices WHERE id = $1`, cdev); got != "windows" {
@@ -385,8 +408,25 @@ func TestLensDeviceCreateDelete(t *testing.T) {
 	if code := patch(cdev, map[string]any{"protocol": "ping"}); code != 400 {
 		t.Errorf("PATCH collector teams_room protocol to ping = %d, want 400", code)
 	}
+	// Retyping out of teams_room resolves its Teams Room alerts and drops the
+	// alert state; other alerts stay open.
+	teamsAlert := q(`INSERT INTO alerts (customer_id, device_id, alert_key, severity, message, status)
+	                 VALUES ($1, $2, 'teams_signed_out', 'warning', 'Teams signed out', 'open') RETURNING id::text`, cust, cdev)
+	otherAlert := q(`INSERT INTO alerts (customer_id, device_id, alert_key, severity, message, status)
+	                 VALUES ($1, $2, 'device_degraded', 'warning', 'slow', 'open') RETURNING id::text`, cust, cdev)
+	q(`INSERT INTO integration_alert_state (device_id, customer_id, condition, since)
+	   VALUES ($1, $2, 'teams_signed_out', now()) RETURNING 'x'`, cdev, cust)
 	if code := patch(cdev, map[string]any{"type": "control", "protocol": "ping"}); code != 204 && code != 200 {
 		t.Errorf("PATCH back to control + ping = %d", code)
+	}
+	if got := q(`SELECT status || '|' || COALESCE(resolved_by, '') FROM alerts WHERE id = $1`, teamsAlert); got != "resolved|auto:retyped" {
+		t.Errorf("teams alert after retype = %q, want resolved|auto:retyped", got)
+	}
+	if got := q(`SELECT status FROM alerts WHERE id = $1`, otherAlert); got != "open" {
+		t.Errorf("other alert after retype = %q, want open", got)
+	}
+	if got := q(`SELECT count(*)::text FROM integration_alert_state WHERE device_id = $1`, cdev); got != "0" {
+		t.Errorf("integration_alert_state rows after retype = %s, want 0", got)
 	}
 	if got := q(`SELECT COALESCE(platform, 'none') FROM devices WHERE id = $1`, cdev); got != "none" {
 		t.Errorf("platform after retype back = %q, want none", got)

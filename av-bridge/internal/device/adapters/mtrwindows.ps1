@@ -88,10 +88,27 @@ $consentRel = 'SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager
 # section, so it reports null rather than a false "not in use"), or, with no
 # Skype account, every loaded user hive (lenient: unreadable ones are
 # skipped, but at least one must be read).
+# The SID of a local account, or $null. Get-LocalUser reads only this PC's
+# accounts (Win32_UserAccount can enumerate a whole domain); without the
+# LocalAccounts module, the ProfileList key names each profile's folder.
+function Get-LocalSid([string]$name) {
+    try {
+        return (Get-LocalUser -Name $name -ErrorAction Stop).SID.Value
+    } catch {
+        if ($_.FullyQualifiedErrorId -like 'UserNotFound*') { return $null }
+    }
+    $pl = 'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList'
+    foreach ($k in @(Get-ChildItem -Path $pl -ErrorAction SilentlyContinue)) {
+        if ($k.PSChildName -notmatch '^S-1-5-21-[\d-]+$') { continue }
+        if ([IO.Path]::GetFileName([string]$k.GetValue('ProfileImagePath')) -eq $name) { return $k.PSChildName }
+    }
+    $null
+}
+
 function Get-UserHives {
-    $acct = Get-CimInstance Win32_UserAccount -Filter "LocalAccount=True AND Name='$mtrUser'" -ErrorAction Stop
-    if ($acct) {
-        return [ordered]@{ strict = $true; hives = @('Registry::HKEY_USERS\' + $acct.SID) }
+    $sid = Get-LocalSid $mtrUser
+    if ($sid) {
+        return [ordered]@{ strict = $true; hives = @('Registry::HKEY_USERS\' + $sid) }
     }
     # Local / domain (S-1-5-21) and Entra ID (S-1-12-1) users; GetSubKeyNames
     # lists names without opening the service accounts' hives.

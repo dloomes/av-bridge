@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Azure/go-ntlmssp"
@@ -53,6 +54,15 @@ import (
 type MTRWindowsAdapter struct {
 	device.Base
 	run mtrRunFunc
+	now func() time.Time // swapped out in tests
+
+	// authHoldUntil: after the PC refuses the sign-in, no further sign-in is
+	// attempted (Connect or Poll) until this time, so repeated NTLM failures
+	// don't lock the local account (Windows' default lockout is 10 bad
+	// attempts in 10 minutes). A config/tag edit restarts the adapter, so a
+	// corrected password applies at once.
+	mu            sync.Mutex
+	authHoldUntil time.Time
 }
 
 // mtrRunFunc runs a command line on the PC and returns its stdout and
@@ -77,12 +87,47 @@ const (
 	// mtrMaxCommandLine: WinRS runs the command through cmd.exe, whose
 	// command line is limited to 8191 characters.
 	mtrMaxCommandLine = 8000
+	// mtrAuthHoldOff is how long sign-in attempts pause after a rejection.
+	mtrAuthHoldOff = 30 * time.Minute
 )
 
 func NewMTRWindowsAdapter(cfg config.DeviceConfig) *MTRWindowsAdapter {
 	a := &MTRWindowsAdapter{Base: device.NewBase(cfg)}
 	a.run = a.winrmRun
+	a.now = time.Now
 	return a
+}
+
+// mtrAuthHoldError: a sign-in was refused and attempts are paused until
+// the given time (shown in the Collector's local time).
+type mtrAuthHoldError struct{ until time.Time }
+
+func (e mtrAuthHoldError) Error() string {
+	return errWinRMAuth.Error() + " — retrying at " + e.until.Local().Format("15:04")
+}
+
+func (e mtrAuthHoldError) Unwrap() error { return errWinRMAuth }
+
+// runGuarded runs a command unless sign-in attempts are paused, and starts
+// the pause when the PC refuses the sign-in.
+func (a *MTRWindowsAdapter) runGuarded(ctx context.Context, command string) (string, string, int, error) {
+	a.mu.Lock()
+	until := a.authHoldUntil
+	a.mu.Unlock()
+	if !until.IsZero() && a.now().Before(until) {
+		return "", "", 1, mtrAuthHoldError{until}
+	}
+	stdout, stderr, code, err := a.run(ctx, command)
+	if mtrIsAuthError(err) {
+		until = a.now().Add(mtrAuthHoldOff)
+		a.mu.Lock()
+		a.authHoldUntil = until
+		a.mu.Unlock()
+		slog.Warn("mtr_windows sign-in rejected; pausing sign-in attempts to avoid locking the account",
+			"device", a.Cfg.ID, "until", until.Local().Format("15:04"))
+		return stdout, stderr, code, mtrAuthHoldError{until}
+	}
+	return stdout, stderr, code, err
 }
 
 // mtrEndpoint works out host, port and scheme from the address and tags.
@@ -104,6 +149,9 @@ func mtrEndpoint(cfg config.DeviceConfig) (host string, port int, https bool, er
 		if n, aerr := strconv.Atoi(p); aerr == nil {
 			port = n
 		}
+	} else if strings.HasPrefix(addr, "[") && strings.HasSuffix(addr, "]") {
+		// Bracketed IPv6 with no port: [fe80::1]
+		host = addr[1 : len(addr)-1]
 	}
 	if p := strings.TrimSpace(cfg.Tags["port"]); p != "" {
 		n, aerr := strconv.Atoi(p)
@@ -131,7 +179,7 @@ func mtrEndpoint(cfg config.DeviceConfig) (host string, port int, https bool, er
 func (a *MTRWindowsAdapter) Connect(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, mtrPollTimeout)
 	defer cancel()
-	if _, _, _, err := a.run(ctx, "hostname"); err != nil {
+	if _, _, _, err := a.runGuarded(ctx, "hostname"); err != nil {
 		a.SetStatus(device.StatusOffline)
 		return fmt.Errorf("mtr_windows connect %s: %s", a.Cfg.ID, mtrErrorText(err))
 	}
@@ -157,7 +205,7 @@ func (a *MTRWindowsAdapter) Poll(ctx context.Context) (*device.Telemetry, error)
 	if err != nil {
 		return nil, err
 	}
-	stdout, stderr, _, err := a.run(ctx, cmd)
+	stdout, stderr, _, err := a.runGuarded(ctx, cmd)
 	if err != nil {
 		// Unreachable, timed out or sign-in refused: offline.
 		a.SetStatus(device.StatusOffline)
@@ -195,6 +243,10 @@ func truncate(s string, n int) string {
 
 // mtrErrorText is the reading error for a failed WinRM run.
 func mtrErrorText(err error) string {
+	var he mtrAuthHoldError
+	if errors.As(err, &he) {
+		return he.Error()
+	}
 	if mtrIsAuthError(err) {
 		return errWinRMAuth.Error()
 	}
@@ -329,6 +381,7 @@ func newMTRTransport(user, pass string, skipVerify bool) *mtrTransport {
 		TLSClientConfig:       deviceTLSConfig(skipVerify),
 		TLSHandshakeTimeout:   mtrDialTimeout,
 		ResponseHeaderTimeout: mtrHTTPTimeout,
+		IdleConnTimeout:       5 * time.Second,
 		MaxConnsPerHost:       1,
 		MaxIdleConnsPerHost:   1,
 	}

@@ -118,31 +118,26 @@ func mtrReadings(raw []byte, now time.Time) (map[string]any, map[string]string, 
 	}
 
 	// ── Call: microphone/camera in use, Teams UDP media sockets ──
-	var mic, udp *bool
+	var mic *bool
 	if out.Mic != nil || out.Camera != nil {
 		v := (out.Mic != nil && out.Mic.InUse) || (out.Camera != nil && out.Camera.InUse)
 		mic = &v
 		m["call_signal_mic"] = v
 	}
 	if out.UDP != nil {
-		v := out.UDP.MediaSockets > 0
-		udp = &v
-		m["call_signal_udp"] = v
+		m["call_signal_udp"] = out.UDP.MediaSockets > 0
 		m["udp_media_sockets"] = out.UDP.MediaSockets
 	}
-	// The mic/camera signal decides when it can be read. The new Teams client
-	// was seen holding UDP ports >= 50000 while idle, so the UDP signal alone
-	// only decides when the mic/camera can't be read. Both raw signals are
-	// kept so they can be compared on a real MTR.
+	// The mic/camera signal decides. The new Teams client was seen holding
+	// UDP ports >= 50000 while idle, so UDP alone can't tell a call from an
+	// idle room: with the mic/camera unreadable (the least-privilege
+	// monitoring account can't read that registry key) the call state is
+	// unknown. The raw UDP signal is kept so it can be compared on a real MTR.
 	// unverified: confirm on a Windows MTR
 	switch {
 	case mic != nil && *mic:
 		m["call_state"], m["active_calls"] = "in_call", 1
 	case mic != nil:
-		m["call_state"], m["active_calls"] = "idle", 0
-	case udp != nil && *udp:
-		m["call_state"], m["active_calls"] = "in_call", 1
-	case udp != nil:
 		m["call_state"], m["active_calls"] = "idle", 0
 	default:
 		m["call_state"], m["active_calls"] = "unknown", 0

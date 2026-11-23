@@ -108,6 +108,7 @@ func TestCollectorTeamsRoomAlerts(t *testing.T) {
 		req.Header.Set("X-Signature", "sha256="+hex.EncodeToString(mac.Sum(nil)))
 		rec := httptest.NewRecorder()
 		ing.ServeHTTP(rec, req)
+		ing.WaitTeamsRoomAlerts() // evaluation runs after the reply
 		if rec.Code != 200 {
 			t.Fatalf("ingest: %d %s", rec.Code, rec.Body.String())
 		}

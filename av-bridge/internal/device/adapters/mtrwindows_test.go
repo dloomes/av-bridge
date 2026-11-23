@@ -169,13 +169,15 @@ func TestMTRReadings(t *testing.T) {
 			},
 		},
 		{
-			name: "in call by UDP when mic and camera can't be read",
+			// UDP alone doesn't decide: idle Teams can hold media ports.
+			name: "unknown when mic and camera can't be read, even with UDP open",
 			doc: mtrWith(mtrWith(mtrWith(mtrBaseDoc(), "udp", map[string]any{"teams_processes": 3, "media_sockets": 6}),
 				"mic", nil), "camera", nil),
 			want: map[string]any{
-				"call_state": "in_call", "active_calls": 1,
+				"call_state": "unknown", "active_calls": 0,
 				"call_signal_udp": true, "udp_media_sockets": 6,
 			},
+			absent: []string{"call_signal_mic"},
 		},
 		{
 			name: "both signals false",
@@ -201,7 +203,7 @@ func TestMTRReadings(t *testing.T) {
 			doc: mtrWith(mtrBaseDoc(), "mic", nil, "camera", nil,
 				"section_errors", map[string]string{"mic": "Requested registry access is not allowed.", "camera": "Requested registry access is not allowed."}),
 			want: map[string]any{
-				"call_state": "idle", "active_calls": 0, "call_signal_udp": false,
+				"call_state": "unknown", "active_calls": 0, "call_signal_udp": false,
 				"teams_health": "healthy",
 			},
 			absent: []string{"call_signal_mic"},
@@ -210,7 +212,7 @@ func TestMTRReadings(t *testing.T) {
 			name: "registry unreadable and UDP in use",
 			doc: mtrWith(mtrBaseDoc(), "mic", nil, "camera", nil,
 				"udp", map[string]any{"teams_processes": 2, "media_sockets": 4}),
-			want:   map[string]any{"call_state": "in_call", "active_calls": 1, "call_signal_udp": true},
+			want:   map[string]any{"call_state": "unknown", "active_calls": 0, "call_signal_udp": true, "udp_media_sockets": 4},
 			absent: []string{"call_signal_mic"},
 		},
 		{
@@ -473,7 +475,7 @@ func TestMTRWinRMSignInRejected(t *testing.T) {
 			defer srv.Close()
 			a := NewMTRWindowsAdapter(mtrConfig(srv.Listener.Addr().String(), map[string]string{"tls_skip_verify": "true"}))
 			tel, _ := a.Poll(context.Background())
-			if tel.Status != device.StatusOffline || tel.Error != "WinRM sign-in rejected" {
+			if tel.Status != device.StatusOffline || !strings.HasPrefix(tel.Error, "WinRM sign-in rejected — retrying at ") {
 				t.Fatalf("status %s error %q", tel.Status, tel.Error)
 			}
 			if sawBasic {
@@ -536,6 +538,9 @@ func TestMTREndpoint(t *testing.T) {
 		{"192.0.2.10", map[string]string{"port": "6000"}, "192.0.2.10", 6000, true},
 		{"192.0.2.10", map[string]string{"winrm_https": "false"}, "192.0.2.10", 5985, false},
 		{"192.0.2.10:5999", map[string]string{"port": "6001"}, "192.0.2.10", 6001, true},
+		{"[fe80::1]", nil, "fe80::1", 5986, true},
+		{"[fe80::1]:5999", nil, "fe80::1", 5999, true},
+		{"https://[2001:db8::10]/", nil, "2001:db8::10", 5986, true},
 	}
 	for _, tc := range tests {
 		host, port, https, err := mtrEndpoint(mtrConfig(tc.addr, tc.tags))
@@ -545,6 +550,63 @@ func TestMTREndpoint(t *testing.T) {
 	}
 	if _, _, _, err := mtrEndpoint(mtrConfig("192.0.2.10", map[string]string{"port": "nope"})); err == nil {
 		t.Error("want an error for a bad port tag")
+	}
+}
+
+// After one refused sign-in, no further sign-in is attempted (Connect or
+// Poll) for 30 minutes, so the PC's local account isn't locked out.
+func TestMTRAuthHoldOff(t *testing.T) {
+	a := NewMTRWindowsAdapter(mtrConfig("192.0.2.10", nil))
+	now := time.Date(2026, 11, 23, 10, 0, 0, 0, time.Local)
+	a.now = func() time.Time { return now }
+	attempts := 0
+	authFails := true
+	a.run = func(context.Context, string) (string, string, int, error) {
+		attempts++
+		if authFails {
+			return "", "", 1, errWinRMAuth
+		}
+		return string(mtrBaseDoc().json()), "", 0, nil
+	}
+	wantErr := "WinRM sign-in rejected — retrying at 10:30"
+
+	tel, _ := a.Poll(context.Background())
+	if tel.Status != device.StatusOffline || tel.Error != wantErr || attempts != 1 {
+		t.Fatalf("first poll: status %s error %q attempts %d", tel.Status, tel.Error, attempts)
+	}
+	for i := 0; i < 5; i++ {
+		now = now.Add(5 * time.Minute) // up to 10:25
+		if err := a.Connect(context.Background()); err == nil || !strings.Contains(err.Error(), wantErr) {
+			t.Fatalf("Connect during hold-off: %v", err)
+		}
+		tel, _ = a.Poll(context.Background())
+		if tel.Status != device.StatusOffline || tel.Error != wantErr {
+			t.Fatalf("Poll during hold-off: status %s error %q", tel.Status, tel.Error)
+		}
+	}
+	if attempts != 1 {
+		t.Fatalf("%d sign-in attempts during the hold-off, want none after the first", attempts)
+	}
+
+	// Hold-off over: one more attempt; the password is now right.
+	now = now.Add(5 * time.Minute) // 10:30
+	authFails = false
+	if err := a.Connect(context.Background()); err != nil {
+		t.Fatalf("Connect after hold-off: %v", err)
+	}
+	if attempts != 2 {
+		t.Fatalf("attempts %d, want 2", attempts)
+	}
+	tel, _ = a.Poll(context.Background())
+	if tel.Status != device.StatusOnline || tel.Error != "" {
+		t.Fatalf("poll after hold-off: status %s error %q", tel.Status, tel.Error)
+	}
+
+	// A restarted adapter (config edit) tries at once.
+	b := NewMTRWindowsAdapter(mtrConfig("192.0.2.10", nil))
+	b.run = a.run
+	if err := b.Connect(context.Background()); err != nil {
+		t.Fatalf("fresh adapter: %v", err)
 	}
 }
 
