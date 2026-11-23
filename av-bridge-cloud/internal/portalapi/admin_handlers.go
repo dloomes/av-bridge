@@ -1169,7 +1169,7 @@ func (h *Handler) DeleteRoom(w http.ResponseWriter, r *http.Request) {
 var allowedTypes = map[string]bool{
 	"display": true, "conferencing": true, "audio": true,
 	"camera": true, "control": true, "avoip": true, "power": true,
-	"projector": true,
+	"projector": true, "teams_room": true,
 }
 
 // Subscription mirrors the bridge's SubscriptionSpec (and bridgecfg's
@@ -1204,6 +1204,11 @@ type createDeviceReq struct {
 	Tags          map[string]string `json:"tags,omitempty"`
 	Subscriptions []Subscription    `json:"subscriptions,omitempty"`
 	RoomID        string            `json:"room_id,omitempty"`
+	// Source is "collector" (default) or "poly_lens". Platform and ExternalID
+	// apply to Poly Lens devices only.
+	Source     string `json:"source,omitempty"`
+	Platform   string `json:"platform,omitempty"`
+	ExternalID string `json:"external_id,omitempty"`
 	// AssetID optionally links this device to an EXISTING asset row.
 	// Mutually exclusive with Asset (a device can either link to an
 	// existing catalogue entry or create a new one, not both).
@@ -1252,6 +1257,23 @@ func (h *Handler) CreateDevice(w http.ResponseWriter, r *http.Request) {
 	var req createDeviceReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	switch req.Source {
+	case "", sourceCollector:
+	case sourcePolyLens:
+		h.createLensDevice(w, r, req)
+		return
+	default:
+		writeErr(w, http.StatusBadRequest, "unsupported source")
+		return
+	}
+	if req.Platform != "" || req.ExternalID != "" {
+		writeErr(w, http.StatusBadRequest, "platform and external_id apply to Poly Lens devices only")
+		return
+	}
+	if req.Type == "teams_room" {
+		writeErr(w, http.StatusBadRequest, "teams_room devices are managed through Poly Lens")
 		return
 	}
 	if req.CollectorID == "" || req.ReportedID == "" {
@@ -1980,6 +2002,7 @@ func (h *Handler) DeleteDevice(w http.ResponseWriter, r *http.Request) {
 	p, _ := portalauth.From(r.Context())
 
 	var rowsAffected int64
+	lensTag := h.releaseLensTag(r, id)
 	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
 		before, err := audit.SnapshotDevice(ctx, tx, id)
 		if err != nil {
@@ -2005,9 +2028,26 @@ func (h *Handler) DeleteDevice(w http.ResponseWriter, r *http.Request) {
 			 WHERE device_id = $1 AND status IN ('open', 'acknowledged')`, id); err != nil {
 			return err
 		}
+		// A Lens device releases its external id so the room can be linked
+		// again; the tag outcome is kept in the audit entry.
+		var meta map[string]any
+		var ext, state string
+		switch err := tx.QueryRow(ctx,
+			`SELECT external_id, tag_state FROM integration_devices WHERE device_id = $1`, id).Scan(&ext, &state); {
+		case err == nil:
+			if lensTag != "" {
+				state = lensTag
+			}
+			meta = map[string]any{"source": sourcePolyLens, "external_id": ext, "tag_state": state}
+			if _, err := tx.Exec(ctx, `DELETE FROM integration_devices WHERE device_id = $1`, id); err != nil {
+				return err
+			}
+		case !errors.Is(err, pgx.ErrNoRows):
+			return err
+		}
 		return audit.Record(ctx, tx, p.CustomerID, stampActor(p, audit.Entry{
 			Action: "device.delete", TargetKind: "device", TargetID: id,
-			Before: before,
+			Before: before, Metadata: meta,
 		}))
 	})
 	if !ok {
