@@ -104,8 +104,10 @@ const (
 
 const defaultZone = "Europe/London"
 
-// Alerter opens and clears alerts for Lens-managed devices from their latest
-// readings. State lives in integration_alert_state so it survives restarts.
+// Alerter opens and clears alerts for Teams Rooms from their latest readings:
+// Lens-managed ones (from the poller) and ones a Collector reads directly
+// (mtr_windows, from ingest). State lives in integration_alert_state so it
+// survives restarts.
 type Alerter struct {
 	admin *pgxpool.Pool
 	now   func() time.Time
@@ -202,7 +204,7 @@ func (a *Alerter) Evaluate(ctx context.Context, customerID, deviceID string, r R
 					return err
 				}
 				if tag.RowsAffected() > 0 {
-					events = append(events, a.event(customerID, deviceID, name, *alertID, c.key+"_recovered", c.severity, c.recovered, now, true))
+					events = append(events, a.event(r.Source, customerID, deviceID, name, *alertID, c.key+"_recovered", c.severity, c.recovered, now, true))
 				}
 			}
 			if _, err := tx.Exec(ctx, `DELETE FROM integration_alert_state WHERE device_id = $1 AND condition = $2`, deviceID, c.key); err != nil {
@@ -245,7 +247,7 @@ func (a *Alerter) Evaluate(ctx context.Context, customerID, deviceID string, r R
 			return err
 		}
 		if inserted {
-			events = append(events, a.event(customerID, deviceID, name, id, c.key, c.severity, msg, openedAt, false))
+			events = append(events, a.event(r.Source, customerID, deviceID, name, id, c.key, c.severity, msg, openedAt, false))
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -257,8 +259,11 @@ func (a *Alerter) Evaluate(ctx context.Context, customerID, deviceID string, r R
 	return nil
 }
 
-func (a *Alerter) event(customerID, deviceID, name, alertID, key, severity, msg string, at time.Time, recovered bool) notify.AlertEvent {
-	payload := map[string]any{"severity": severity, "message": msg, "source": "poly_lens"}
+func (a *Alerter) event(source, customerID, deviceID, name, alertID, key, severity, msg string, at time.Time, recovered bool) notify.AlertEvent {
+	if source == "" {
+		source = "poly_lens"
+	}
+	payload := map[string]any{"severity": severity, "message": msg, "source": source}
 	if recovered {
 		payload["recovered"] = true
 		payload["alert_key"] = strings.TrimSuffix(key, "_recovered")

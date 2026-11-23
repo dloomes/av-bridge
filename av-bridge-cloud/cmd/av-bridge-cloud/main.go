@@ -170,7 +170,10 @@ func main() {
 		log,
 	)
 
-	h := ingest.NewHandler(store, cipher, relay, dispatcher, log)
+	// Teams Rooms a Collector reads directly (mtr_windows) get the same
+	// alerts as Poly Lens rooms, evaluated by ingest after each push.
+	h := ingest.NewHandler(store, cipher, relay, dispatcher, log).
+		SetTeamsRoomAlerter(integrations.NewAlerter(store.AdminPool(), dispatcher, time.Now, log))
 
 	// Shared shutdown-context for every background goroutine (sweeper,
 	// session cleaner, nightly scheduler + digest + executor). Cancel

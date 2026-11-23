@@ -1268,12 +1268,8 @@ func (h *Handler) CreateDevice(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "unsupported source")
 		return
 	}
-	if req.Platform != "" || req.ExternalID != "" {
-		writeErr(w, http.StatusBadRequest, "platform and external_id apply to Poly Lens devices only")
-		return
-	}
-	if req.Type == "teams_room" {
-		writeErr(w, http.StatusBadRequest, "teams_room devices are managed through Poly Lens")
+	if msg := validateCollectorTeamsRoom(&req); msg != "" {
+		writeErr(w, http.StatusBadRequest, msg)
 		return
 	}
 	if req.CollectorID == "" || req.ReportedID == "" {
@@ -1368,13 +1364,13 @@ func (h *Handler) CreateDevice(w http.ResponseWriter, r *http.Request) {
 				name, type, protocol, address, baud_rate,
 				username_enc, password_enc, poll_rate_seconds,
 				commands, tags, subscriptions, asset_id,
-				power_watts_on, power_watts_standby
+				power_watts_on, power_watts_standby, platform
 			) VALUES (
 				$1, $2, $3, $4,
 				NULLIF($5,''), NULLIF($6,''), NULLIF($7,''), NULLIF($8,''), $9,
 				$10, $11, $12,
 				$13::jsonb, $14::jsonb, $15::jsonb, $16,
-				$17, $18
+				$17, $18, NULLIF($19,'')
 			)
 			ON CONFLICT (collector_id, reported_id) DO NOTHING
 			RETURNING id::text`,
@@ -1383,7 +1379,7 @@ func (h *Handler) CreateDevice(w http.ResponseWriter, r *http.Request) {
 			userEnc, passEnc, nullIfZero(req.PollRate),
 			jsonOrNil(req.Commands), jsonOrNil(req.Tags), jsonOrNil(req.Subscriptions),
 			assetParam,
-			req.PowerWattsOn, req.PowerWattsStandby,
+			req.PowerWattsOn, req.PowerWattsStandby, req.Platform,
 		).Scan(&id)
 		if errors.Is(err, pgx.ErrNoRows) {
 			duplicate = true
@@ -1512,15 +1508,24 @@ func (h *Handler) UpdateDevice(w http.ResponseWriter, r *http.Request) {
 
 	// Source-aware guards: a Poly Lens device has no Collector-side settings,
 	// and a Collector device cannot become a Lens-managed type.
-	var devSource string
+	var devSource, curType, curProtocol string
 	if !h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
-		err := tx.QueryRow(ctx, `SELECT source FROM devices WHERE id = $1 AND deleted_at IS NULL`, id).Scan(&devSource)
+		err := tx.QueryRow(ctx, `SELECT source, COALESCE(type, ''), COALESCE(protocol, '') FROM devices WHERE id = $1 AND deleted_at IS NULL`, id).
+			Scan(&devSource, &curType, &curProtocol)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
 		return err
 	}) {
 		return
+	}
+	retyped := req.Type != nil || req.Protocol != nil
+	newType, newProtocol := curType, curProtocol
+	if req.Type != nil {
+		newType = *req.Type
+	}
+	if req.Protocol != nil {
+		newProtocol = *req.Protocol
 	}
 	switch devSource {
 	case sourcePolyLens:
@@ -1531,8 +1536,10 @@ func (h *Handler) UpdateDevice(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	case sourceCollector:
-		if req.Type != nil && *req.Type == "teams_room" {
-			writeErr(w, http.StatusBadRequest, "type teams_room is only for Poly Lens devices")
+		// A Collector Teams Room is read only by mtr_windows, and mtr_windows
+		// reads only Teams Rooms: check the pair as it would be after the edit.
+		if retyped && (newType == deviceTypeTeamsRoom) != (newProtocol == protocolMTRWindows) {
+			writeErr(w, http.StatusBadRequest, msgTeamsRoomProtocol)
 			return
 		}
 	}
@@ -1552,6 +1559,14 @@ func (h *Handler) UpdateDevice(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Protocol != nil {
 		add("protocol", nullIfEmpty(*req.Protocol))
+	}
+	if devSource == sourceCollector && retyped {
+		// platform describes a Teams Room only (a Collector one is Windows).
+		if newType == deviceTypeTeamsRoom {
+			add("platform", "windows")
+		} else {
+			add("platform", nil)
+		}
 	}
 	if req.Address != nil {
 		add("address", nullIfEmpty(*req.Address))

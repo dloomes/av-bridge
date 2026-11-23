@@ -58,6 +58,8 @@ export default function DeviceDetailPage() {
   const [editOpen, setEditOpen] = useState(false);
   const [activityOpen, setActivityOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  // Name of the Collector reading a Teams Room directly (its Source card).
+  const [collectorName, setCollectorName] = useState<string | undefined>(undefined);
   const [deleting, setDeleting] = useState(false);
 
   // Loader extracted so the Edit save handler can also refresh the device meta
@@ -84,6 +86,23 @@ export default function DeviceDetailPage() {
     void loadDevice(ctrl.signal);
     return () => ctrl.abort();
   }, [loadDevice]);
+
+  // A Teams Room read directly names its Collector on the Source card.
+  const directCollectorId =
+    device && device.source !== "poly_lens" && device.type === "teams_room" ? device.collector_id : null;
+  useEffect(() => {
+    if (!directCollectorId) return;
+    const ctrl = new AbortController();
+    api
+      .listCollectors(ctrl.signal)
+      .then((cs) => {
+        if (!ctrl.signal.aborted) setCollectorName(cs.find((c) => c.id === directCollectorId)?.name);
+      })
+      .catch(() => {
+        /* the card then just says "Direct via Collector" */
+      });
+    return () => ctrl.abort();
+  }, [directCollectorId]);
 
   const handleDelete = async () => {
     setDeleting(true);
@@ -147,10 +166,13 @@ export default function DeviceDetailPage() {
   }
 
   // Teams Rooms read from Poly Lens: no Collector, so no commands,
-  // reconnect or remote access; their own pills and cards instead.
+  // reconnect or remote access; their own pills and cards instead. A
+  // Windows Teams Room a Collector reads directly (mtr_windows) shares the
+  // pills and cards, and keeps the Collector's reconnect.
   const isLens = device.source === "poly_lens";
+  const isTeamsRoom = isLens || device.type === "teams_room";
   const lensMetrics = telemetry.data?.metrics;
-  const typeText = isLens
+  const typeText = isTeamsRoom
     ? `${DEVICE_TYPE_LABELS[device.type] ?? device.type}${
         device.platform ? ` (${device.platform === "android" ? "Android" : "Windows"})` : ""
       }`
@@ -172,9 +194,9 @@ export default function DeviceDetailPage() {
               <StatusBadge
                 status={device.status}
                 collectorStatus={device.collector_status}
-                reason={isLens ? lensReason(lensMetrics) : undefined}
+                reason={isLens ? lensReason(lensMetrics) : isTeamsRoom ? telemetry.data?.error || undefined : undefined}
               />
-              {isLens && <TeamsSignedInPill metrics={lensMetrics} online={device.status === "online"} />}
+              {isTeamsRoom && <TeamsSignedInPill metrics={lensMetrics} online={device.status === "online"} />}
               <PowerBadge
                 protocol={device.protocol}
                 powerStatus={telemetry.data?.metrics?.power_status}
@@ -186,15 +208,15 @@ export default function DeviceDetailPage() {
                 callState={telemetry.data?.metrics?.call_state}
                 status={device.status}
               />
-              {isLens && <TeamsHealthPill metrics={lensMetrics} online={device.status === "online"} />}
+              {isTeamsRoom && <TeamsHealthPill metrics={lensMetrics} online={device.status === "online"} />}
             </div>
             <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
               <MapPin className="h-3 w-3" />
               <span>{device.location || "—"}</span>
               <span>·</span>
-              <span className={isLens ? undefined : "capitalize"}>{typeText ?? device.type}</span>
+              <span className={isTeamsRoom ? undefined : "capitalize"}>{typeText ?? device.type}</span>
               <span>·</span>
-              <span>{isLens ? "Poly Lens" : device.protocol}</span>
+              <span>{isLens ? "Poly Lens" : isTeamsRoom ? "Direct (WinRM)" : device.protocol}</span>
               {device.tags?.make && (
                 <>
                   <span>·</span>
@@ -222,8 +244,8 @@ export default function DeviceDetailPage() {
                 : null
             )}
           </span>
-          {!isLens && <TouchPanelButton device={device} />}
-          {!isLens && canRemoteAccess && (
+          {!isTeamsRoom && <TouchPanelButton device={device} />}
+          {!isTeamsRoom && canRemoteAccess && (
             <RemoteAccessButton
               deviceId={device.id}
               deviceName={device.name}
@@ -336,14 +358,14 @@ export default function DeviceDetailPage() {
       <div className="flex-1 min-h-0 overflow-y-auto">
         <div className="grid gap-6 p-6 lg:grid-cols-[minmax(0,1fr)_360px]">
           <div className="space-y-6 min-w-0">
-            {isLens ? (
+            {isTeamsRoom ? (
               <>
                 {telemetry.error && (
                   <div role="alert" className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm [color:hsl(var(--destructive))]">
                     {telemetry.error.message}
                   </div>
                 )}
-                <TeamsRoomCards device={device} metrics={lensMetrics} />
+                <TeamsRoomCards device={device} metrics={lensMetrics} collectorName={collectorName} />
               </>
             ) : (
               <TelemetryGrid
@@ -355,8 +377,8 @@ export default function DeviceDetailPage() {
                 exclude={levelKeys(device.subscriptions)}
               />
             )}
-            {!isLens && canSendCommand && <CommandPanel device={device} telemetry={telemetry.data} />}
-            {!isLens && <LevelsCard subscriptions={device.subscriptions ?? []} metrics={telemetry.data?.metrics} />}
+            {!isTeamsRoom && canSendCommand && <CommandPanel device={device} telemetry={telemetry.data} />}
+            {!isTeamsRoom && <LevelsCard subscriptions={device.subscriptions ?? []} metrics={telemetry.data?.metrics} />}
           </div>
           <aside className="space-y-6 min-w-0">
             <DeviceEventHistory deviceId={device.id} limit={5} />

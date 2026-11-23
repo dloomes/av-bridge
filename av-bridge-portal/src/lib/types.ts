@@ -38,8 +38,9 @@ export interface DeviceSummary {
   room_id?: string | null;
   collector_id?: string | null;
   // "collector" (polled by a Collector) or "poly_lens" (read from Poly Lens
-  // by the cloud; no Collector). platform and integration are set for the
-  // latter.
+  // by the cloud; no Collector). platform is set for Teams Rooms (a
+  // Collector reads Windows ones directly, protocol mtr_windows);
+  // integration for Poly Lens devices.
   source?: "collector" | "poly_lens";
   platform?: "windows" | "android" | null;
   integration?: DeviceIntegration | null;
@@ -152,6 +153,9 @@ export interface CreateDeviceBody {
   room_id?: string;
   asset_id?: string;
   asset?: DeviceAssetInput;
+  // "windows" for a Teams Room the Collector reads directly (type
+  // teams_room, protocol mtr_windows); omitted for every other device.
+  platform?: "windows";
 }
 
 // Wire shape for POST /api/v1/devices with source "poly_lens": a Teams Room
@@ -167,7 +171,7 @@ export interface CreateLensDeviceBody {
 
 // PATCH body. Every field optional — only the ones present are written.
 // password: blank string clears, omit-field leaves alone.
-export type UpdateDeviceBody = Partial<Omit<CreateDeviceBody, "collector_id" | "reported_id">>;
+export type UpdateDeviceBody = Partial<Omit<CreateDeviceBody, "collector_id" | "reported_id" | "platform">>;
 
 export interface CollectorSummary {
   id: string;

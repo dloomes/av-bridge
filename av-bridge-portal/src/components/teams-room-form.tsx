@@ -25,6 +25,9 @@ interface Props {
   loadingLookups: boolean;
   onCancel: () => void;
   onSuccess: (deviceId: string) => void;
+  // Chosen "Direct (Windows remote management)": the parent shows the
+  // Collector device form for protocol mtr_windows instead.
+  onDirect?: () => void;
 }
 
 function roomLabel(r: NamedRow, buildings: NamedRow[]): string {
@@ -45,6 +48,7 @@ export function TeamsRoomForm({
   loadingLookups,
   onCancel,
   onSuccess,
+  onDirect,
 }: Props) {
   const isEdit = mode === "edit";
   const [platform, setPlatform] = useState<Platform>(initial?.platform ?? "windows");
@@ -284,9 +288,20 @@ export function TeamsRoomForm({
           <div className="rounded-md border p-2.5 text-sm text-muted-foreground opacity-60" aria-disabled="true">
             Logitech Sync — connect it in Integrations first
           </div>
-          <div className="rounded-md border p-2.5 text-sm text-muted-foreground opacity-60" aria-disabled="true">
-            Direct (Windows remote management) — coming later
-          </div>
+          <button
+            type="button"
+            onClick={() => onDirect?.()}
+            disabled={platform !== "windows" || !onDirect}
+            className={cn(
+              "flex w-full items-center gap-2 rounded-md border p-2.5 text-left text-sm min-h-[44px]",
+              platform === "windows" && onDirect ? "hover:bg-muted/50" : "cursor-not-allowed text-muted-foreground opacity-60"
+            )}
+          >
+            <span className="font-semibold">Direct (Windows remote management)</span>
+            <span className="ml-auto text-xs text-muted-foreground">
+              {platform === "windows" ? "Read by a Collector over WinRM" : "Windows only"}
+            </span>
+          </button>
         </div>
       </div>
 

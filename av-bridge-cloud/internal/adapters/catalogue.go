@@ -135,6 +135,41 @@ var catalogue = []Info{
 	},
 
 	{
+		ID:          "mtr_windows",
+		Name:        "Microsoft Teams Rooms on Windows (WinRM)",
+		Vendor:      "Microsoft",
+		Kind:        KindVendor,
+		Description: "Microsoft Teams Rooms on Windows, read directly by the Collector over Windows Remote Management (WinRM, HTTPS on port 5986). Read-only: Teams sign-in and health, app version, call state (microphone/camera in use and Teams media ports), peripherals, Windows version and uptime. Polled every 60 seconds. Run the setup script from the \"Windows Teams Rooms setup\" docs page on the room PC first.",
+		DeviceTypes: []string{"teams_room"},
+		Power:       PowerCapability{On: false, Off: false},
+		Metrics: []string{
+			"teams_signed_in", "teams_health", "teams_app_version",
+			"call_state", "active_calls", "call_signal_mic", "call_signal_udp", "udp_media_sockets",
+			"peripherals", "peripherals_missing", "peripherals_linked",
+			"software_version", "uptime_s", "last_heartbeat", "last_error",
+		},
+		ConfigSchema: []ConfigField{
+			{Name: "address", Required: true, Description: "The Teams Room PC's IP or hostname. WinRM over HTTPS on port 5986 is assumed; see the Windows Teams Rooms setup page for enabling the HTTPS listener.", Example: "192.168.20.60"},
+			{Name: "username", Required: true, Description: "A local account on the Teams Room PC that can sign in over WinRM (for example the MTR Admin account, or a dedicated monitoring account added by the setup script).", Example: "Admin"},
+			{Name: "password", Required: true, Description: "That account's password. Stored encrypted."},
+			{Name: "tags.port", Required: false, Description: "WinRM port, if not the default 5986 (HTTPS) or 5985 (HTTP).", Example: "5986"},
+			{Name: "tags.winrm_https", Required: false, Description: "Defaults to \"true\" (HTTPS on 5986). Set to \"false\" only to use plain HTTP on port 5985, which is not recommended.", Example: "true"},
+			{Name: "tags.tls_skip_verify", Required: false, Description: "Set to \"true\" to accept the room PC's self-signed WinRM certificate (what the setup script creates). The connection is still encrypted; only the certificate check is skipped, as for other devices with self-signed certificates.", Example: "true"},
+		},
+		ExampleConfig: `- id: boardroom-mtr
+  name: Boardroom Teams Room
+  type: teams_room
+  protocol: mtr_windows
+  address: 192.168.20.60
+  username: Admin
+  password: ${MTR_PASSWORD}
+  poll_rate: 60s
+  tags:
+    winrm_https: "true"
+    tls_skip_verify: "true"`,
+	},
+
+	{
 		ID:          "netgear_m4250",
 		Name:        "NETGEAR M4250 / M4350",
 		Vendor:      "NETGEAR",

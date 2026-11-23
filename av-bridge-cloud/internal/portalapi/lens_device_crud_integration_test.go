@@ -355,6 +355,43 @@ func TestLensDeviceCreateDelete(t *testing.T) {
 		t.Errorf("PATCH collector device to teams_room = %d, want 400", code)
 	}
 
+	// A Teams Room on Windows read by a Collector (mtr_windows).
+	mtrBody := func(extra map[string]any) map[string]any {
+		b := map[string]any{"collector_id": coll, "reported_id": "fake-mtr", "name": "Fake MTR",
+			"type": "teams_room", "protocol": "mtr_windows", "platform": "windows",
+			"address": "192.0.2.10", "username": "fake-user", "password": "fake-pass"}
+		for k, v := range extra {
+			b[k] = v
+		}
+		return b
+	}
+	bad("collector teams_room with another protocol", mtrBody(map[string]any{"protocol": "ping"}))
+	bad("mtr_windows for a display", mtrBody(map[string]any{"type": "display"}))
+	bad("collector teams_room on android", mtrBody(map[string]any{"platform": "android"}))
+	bad("platform on a collector display", mtrBody(map[string]any{"type": "display", "protocol": "ping"}))
+	if c, body := call("POST", "/api/v1/devices", mtrBody(nil)); c != 201 {
+		t.Fatalf("create collector teams_room = %d %s", c, body)
+	}
+	if got := q(`SELECT source || '|' || platform || '|' || protocol FROM devices WHERE collector_id = $1 AND reported_id = 'fake-mtr'`, coll); got != "collector|windows|mtr_windows" {
+		t.Errorf("collector teams_room row = %q", got)
+	}
+	// Retype guard: teams_room only together with mtr_windows.
+	if code := patch(cdev, map[string]any{"type": "teams_room", "protocol": "mtr_windows"}); code != 204 && code != 200 {
+		t.Errorf("PATCH collector device to teams_room + mtr_windows = %d", code)
+	}
+	if got := q(`SELECT COALESCE(platform, '') FROM devices WHERE id = $1`, cdev); got != "windows" {
+		t.Errorf("platform after retype = %q, want windows", got)
+	}
+	if code := patch(cdev, map[string]any{"protocol": "ping"}); code != 400 {
+		t.Errorf("PATCH collector teams_room protocol to ping = %d, want 400", code)
+	}
+	if code := patch(cdev, map[string]any{"type": "control", "protocol": "ping"}); code != 204 && code != 200 {
+		t.Errorf("PATCH back to control + ping = %d", code)
+	}
+	if got := q(`SELECT COALESCE(platform, 'none') FROM devices WHERE id = $1`, cdev); got != "none" {
+		t.Errorf("platform after retype back = %q, want none", got)
+	}
+
 	// Create-time assets are accepted for a Lens device.
 	assetID := q(`INSERT INTO assets (customer_id, name, category) VALUES ($1, 'Fake existing asset', 'other') RETURNING id::text`, cust)
 	c, body := call("POST", "/api/v1/devices", map[string]any{
