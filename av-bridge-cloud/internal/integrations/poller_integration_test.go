@@ -561,6 +561,28 @@ func TestClientCachedPerIntegration(t *testing.T) {
 	}
 }
 
+func TestReadingsPeripheralList(t *testing.T) {
+	d := polylens.Device{Connections: []polylens.LinkedDevice{
+		{Name: "Ctl One", Model: "Fake Controller", Connected: true, SerialNumber: "FAKE-SN-1", LastDetected: time.Date(2026, 11, 20, 9, 0, 0, 0, time.UTC)},
+		{Name: "Cam One", Model: "Fake Camera", Connected: false},
+	}}
+	m, _ := readingsFor(d)
+	ps, ok := m["peripherals"].([]map[string]any)
+	if !ok || len(ps) != 2 || ps[0]["last_seen"] != "2026-11-20T09:00:00Z" || ps[1]["connected"] != false {
+		t.Fatalf("peripherals = %v", m["peripherals"])
+	}
+	if _, has := ps[0]["serial"]; has {
+		t.Fatal("serial must not be stored")
+	}
+	if miss := m["peripherals_missing"].([]string); len(miss) != 1 || miss[0] != "Fake Camera" {
+		t.Fatalf("missing = %v", miss)
+	}
+	m2, _ := readingsFor(polylens.Device{})
+	if _, has := m2["peripherals"]; has {
+		t.Fatal("peripherals must be omitted when Lens lists none")
+	}
+}
+
 func TestReadingsMapping(t *testing.T) {
 	tr := true
 	cases := []struct {

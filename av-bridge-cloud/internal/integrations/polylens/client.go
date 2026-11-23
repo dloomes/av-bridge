@@ -108,7 +108,28 @@ type Device struct {
 	Connected                                                  bool
 	LastDetected                                               time.Time
 	PeripheralsLinked                                          *bool // nil = unknown
+	HasPeripherals                                             *bool // nil = unknown
+	Connections                                                []LinkedDevice
 	Tags                                                       []string
+}
+
+// LinkedDevice is a device linked to a room device (controller, camera, mini
+// PC, ...) as Lens reports it under Device.connections.
+type LinkedDevice struct {
+	ID, Name, Model, SoftwareVersion, SerialNumber, MACAddress string
+	Connected                                                  bool
+	LastDetected                                               time.Time
+}
+
+type rawLinked struct {
+	ID              string     `json:"id"`
+	Name            string     `json:"name"`
+	HardwareModel   string     `json:"hardwareModel"`
+	SoftwareVersion string     `json:"softwareVersion"`
+	SerialNumber    string     `json:"serialNumber"`
+	MACAddress      string     `json:"macAddress"`
+	Connected       bool       `json:"connected"`
+	LastDetected    *time.Time `json:"lastDetected"`
 }
 
 type nameRef struct {
@@ -128,14 +149,16 @@ type rawDevice struct {
 	Site            *nameRef   `json:"site"`
 
 	// Optional / undocumented.
-	ActiveApplicationName    string    `json:"activeApplicationName"`
-	ActiveApplicationVersion string    `json:"activeApplicationVersion"`
-	CallStatus               string    `json:"callStatus"`
-	TeamsDeviceHealthStatus  string    `json:"teamsDeviceHealthStatus"`
-	TeamsPresenceAvail       string    `json:"teamsPresenceAvailability"`
-	TeamsPresenceActivity    string    `json:"teamsPresenceActivity"`
-	AllPeripheralsLinked     *bool     `json:"allPeripheralsLinked"`
-	LensTags                 []nameRef `json:"lensTags"`
+	ActiveApplicationName    string      `json:"activeApplicationName"`
+	ActiveApplicationVersion string      `json:"activeApplicationVersion"`
+	CallStatus               string      `json:"callStatus"`
+	TeamsDeviceHealthStatus  string      `json:"teamsDeviceHealthStatus"`
+	TeamsPresenceAvail       string      `json:"teamsPresenceAvailability"`
+	TeamsPresenceActivity    string      `json:"teamsPresenceActivity"`
+	AllPeripheralsLinked     *bool       `json:"allPeripheralsLinked"`
+	HasPeripherals           *bool       `json:"hasPeripherals"`
+	Connections              []rawLinked `json:"connections"`
+	LensTags                 []nameRef   `json:"lensTags"`
 }
 
 func (r rawDevice) device() Device {
@@ -145,7 +168,15 @@ func (r rawDevice) device() Device {
 		AppName: r.ActiveApplicationName, AppVersion: r.ActiveApplicationVersion,
 		CallStatus: r.CallStatus, TeamsHealth: r.TeamsDeviceHealthStatus,
 		PresenceAvailability: r.TeamsPresenceAvail, PresenceActivity: r.TeamsPresenceActivity,
-		PeripheralsLinked: r.AllPeripheralsLinked,
+		PeripheralsLinked: r.AllPeripheralsLinked, HasPeripherals: r.HasPeripherals,
+	}
+	for _, c := range r.Connections {
+		l := LinkedDevice{ID: c.ID, Name: c.Name, Model: c.HardwareModel, SoftwareVersion: c.SoftwareVersion,
+			SerialNumber: c.SerialNumber, MACAddress: c.MACAddress, Connected: c.Connected}
+		if c.LastDetected != nil {
+			l.LastDetected = *c.LastDetected
+		}
+		d.Connections = append(d.Connections, l)
 	}
 	for _, t := range r.LensTags {
 		if t.Name != "" {
@@ -190,11 +221,14 @@ func (c *Client) Accounts(ctx context.Context) ([]Account, error) {
 const baseFields = `id name serialNumber macAddress hardwareModel softwareVersion connected lastDetected
 room { name } site { name }`
 
-// Optional, undocumented fields. Lens rejects unknown fields, so these live in
+// Optional, undocumented fields. Do not select hardwareFamily, manufacturer,
+// callStatus or productId on connections: Lens answers "Authorization failed"
+// for the whole query. Lens rejects unknown fields, so these live in
 // a separate selection that is dropped if the first query fails with a schema error.
 // Verified against a real tenant (Task 11); the deprecated `tags` field is replaced by `lensTags { name }`.
 const optionalFields = `activeApplicationName activeApplicationVersion callStatus teamsDeviceHealthStatus
-teamsPresenceAvailability teamsPresenceActivity allPeripheralsLinked lensTags { name }`
+teamsPresenceAvailability teamsPresenceActivity allPeripheralsLinked lensTags { name }
+hasPeripherals connections { id name hardwareModel softwareVersion serialNumber macAddress connected lastDetected }`
 
 func inventoryQuery(fields string) string {
 	return `query Inventory($tenantId: ID!, $params: DeviceFindArgs) {

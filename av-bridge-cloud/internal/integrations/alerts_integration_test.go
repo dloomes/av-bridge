@@ -136,6 +136,41 @@ func TestTeamsConditionHolds(t *testing.T) {
 	}
 }
 
+func TestPeripheralListAlert(t *testing.T) {
+	f := newAlertFx(t, "")
+	msgOf := func() string {
+		var m string
+		f.e.su.QueryRow(context.Background(), `SELECT message FROM alerts WHERE device_id=$1 AND alert_key='peripherals_missing' AND status='open'`, f.dev).Scan(&m)
+		return m
+	}
+	// The list wins over a flag that says everything is linked.
+	miss := Readings{Status: "online", PeripheralsLinked: bp(true), LinkedDevices: 3, MissingPeripherals: []string{"Fake TC10"}}
+	f.eval(t, at(12, 0), miss)
+	f.eval(t, at(12, 9), miss)
+	if f.open("peripherals_missing") != 0 {
+		t.Fatal("opened before the hold")
+	}
+	f.eval(t, at(12, 10), miss)
+	if f.open("peripherals_missing") != 1 || msgOf() != "Peripheral missing: Fake TC10" {
+		t.Fatalf("alert not opened with the name: %q", msgOf())
+	}
+	f.eval(t, at(12, 20), Readings{Status: "online", PeripheralsLinked: bp(false), LinkedDevices: 3})
+	if f.open("peripherals_missing") != 0 {
+		t.Fatal("all connected should clear")
+	}
+	// No list: the flag decides.
+	flag := Readings{Status: "online", PeripheralsLinked: bp(false)}
+	f.eval(t, at(13, 0), flag)
+	f.eval(t, at(13, 10), flag)
+	if f.open("peripherals_missing") != 1 || msgOf() != "Peripheral missing" {
+		t.Fatalf("flag fallback failed: %q", msgOf())
+	}
+	// Message truncation.
+	if got := conditions[3].message(Readings{MissingPeripherals: []string{"A", "B", "C", "D", "E"}}); got != "Peripheral missing: A, B, C +2 more" {
+		t.Fatal(got)
+	}
+}
+
 func TestMaintenanceHold(t *testing.T) {
 	t.Run("short outage inside the window raises nothing", func(t *testing.T) {
 		f := newAlertFx(t, "")

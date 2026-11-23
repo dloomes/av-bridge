@@ -54,6 +54,16 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
   );
 }
 
+type Linked = { name: string; model: string; connected: boolean; lastSeen: string };
+
+// The linked devices Lens listed for the room (controller, camera, mini PC...).
+function linkedDevices(v: unknown): Linked[] {
+  if (!Array.isArray(v)) return [];
+  return v
+    .filter((x): x is Record<string, unknown> => !!x && typeof x === "object")
+    .map((x) => ({ name: str(x.name), model: str(x.model), connected: x.connected === true, lastSeen: str(x.last_seen) }));
+}
+
 const dash = <span className="text-muted-foreground">—</span>;
 
 function Panel({ title, children }: { title: string; children: React.ReactNode }) {
@@ -73,7 +83,9 @@ function Panel({ title, children }: { title: string; children: React.ReactNode }
 // optional: Lens fields that are missing show as unknown, never as bad.
 export function TeamsRoomCards({ device, metrics }: { device: DeviceDetail; metrics: Metrics }) {
   const m = metrics ?? {};
-  const linked = bool(m.peripherals_linked);
+  const peripherals = linkedDevices(m.peripherals);
+  const missing = peripherals.filter((p) => !p.connected).length;
+  const linked = peripherals.length > 0 ? missing === 0 : bool(m.peripherals_linked);
   const lastSeen = str(m.lens_last_seen);
   const model = str(device.model);
   const serial = str(device.serial_number);
@@ -91,11 +103,31 @@ export function TeamsRoomCards({ device, metrics }: { device: DeviceDetail; metr
           {linked === undefined ? (
             <span className="text-muted-foreground">Unknown</span>
           ) : linked ? (
-            "All peripherals linked"
+            peripherals.length > 0 ? "All peripherals connected" : "All peripherals linked"
           ) : (
-            <span className="[color:hsl(var(--warning))]">Peripheral missing</span>
+            <span className="[color:hsl(var(--warning))]">
+              {peripherals.length > 0 ? `${missing} missing` : "Peripheral missing"}
+            </span>
           )}
         </Row>
+        {peripherals.map((p, i) => (
+          <div key={i} className="flex items-start justify-between gap-3 border-b border-border/50 py-2 last:border-0">
+            <div className="min-w-0">
+              <div className="text-sm font-semibold break-words">{p.model || p.name || "Unknown device"}</div>
+              {p.name && p.model && <div className="text-xs text-muted-foreground break-words">{p.name}</div>}
+              <div className="text-xs text-muted-foreground">
+                {p.lastSeen ? (
+                  <span title={formatTimestamp(p.lastSeen)}>Last seen {formatRelative(p.lastSeen)}</span>
+                ) : (
+                  "Not seen yet"
+                )}
+              </div>
+            </div>
+            <Badge variant={p.connected ? "success" : "warning"} className="shrink-0">
+              {p.connected ? "Connected" : "Missing"}
+            </Badge>
+          </div>
+        ))}
       </Panel>
       <Panel title="Device">
         <Row label="Model">{model || dash}</Row>

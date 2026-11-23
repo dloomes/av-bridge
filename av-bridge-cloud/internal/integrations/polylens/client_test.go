@@ -137,6 +137,11 @@ func TestListTeamsRoomsPagingAndFilter(t *testing.T) {
 		d.PeripheralsLinked == nil || !*d.PeripheralsLinked || d.LastDetected.IsZero() || len(d.Tags) != 1 {
 		t.Fatalf("d1 = %+v", d)
 	}
+	if len(d.Connections) != 2 || d.HasPeripherals == nil || !*d.HasPeripherals ||
+		d.Connections[0].Model != "Fake Controller" || !d.Connections[0].Connected || d.Connections[0].LastDetected.IsZero() ||
+		d.Connections[0].SerialNumber != "FAKE-SN-1" || d.Connections[1].Connected || !d.Connections[1].LastDetected.IsZero() {
+		t.Fatalf("connections = %+v", d.Connections)
+	}
 	if got[2].PeripheralsLinked == nil || *got[2].PeripheralsLinked {
 		t.Fatal("d4 peripherals should be false")
 	}

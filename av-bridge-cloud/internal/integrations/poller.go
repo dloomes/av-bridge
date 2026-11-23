@@ -29,7 +29,11 @@ type Readings struct {
 	Status            string
 	SignedIn          *bool
 	PeripheralsLinked *bool
-	TeamsHealth       string
+	// LinkedDevices is how many linked devices Lens listed (0 = no list, fall
+	// back to PeripheralsLinked); MissingPeripherals names the not-connected ones.
+	LinkedDevices      int
+	MissingPeripherals []string
+	TeamsHealth        string
 }
 
 // AlertEvaluator opens and clears alerts from a device's latest readings.
@@ -422,7 +426,8 @@ func (p *Poller) writeDevice(ctx context.Context, in integrationRow, d linkedDev
 		return
 	}
 	p.publish(in, d, status, metrics)
-	p.evaluate(ctx, in, d, Readings{Status: status, SignedIn: signedIn, PeripheralsLinked: f.PeripheralsLinked, TeamsHealth: f.TeamsHealth})
+	p.evaluate(ctx, in, d, Readings{Status: status, SignedIn: signedIn, PeripheralsLinked: f.PeripheralsLinked, LinkedDevices: len(f.Connections),
+		MissingPeripherals: missingPeripherals(f), TeamsHealth: f.TeamsHealth})
 }
 
 func (p *Poller) publish(in integrationRow, d linkedDevice, status string, metrics map[string]any) {
@@ -478,6 +483,21 @@ func readingsFor(f polylens.Device) (map[string]any, *bool) {
 	if f.PeripheralsLinked != nil {
 		m["peripherals_linked"] = *f.PeripheralsLinked
 	}
+	if len(f.Connections) > 0 {
+		ps := make([]map[string]any, 0, len(f.Connections))
+		for _, c := range f.Connections {
+			e := map[string]any{"name": c.Name, "model": c.Model, "connected": c.Connected}
+			if !c.LastDetected.IsZero() {
+				e["last_seen"] = c.LastDetected.UTC().Format(time.RFC3339)
+			}
+			if c.SoftwareVersion != "" {
+				e["software_version"] = c.SoftwareVersion
+			}
+			ps = append(ps, e)
+		}
+		m["peripherals"] = ps
+		m["peripherals_missing"] = missingPeripherals(f)
+	}
 	if !f.LastDetected.IsZero() {
 		m["lens_last_seen"] = f.LastDetected.UTC().Format(time.RFC3339)
 	}
@@ -496,4 +516,24 @@ func callState(s string) string {
 		return "idle"
 	}
 	return "unknown"
+}
+
+// missingPeripherals names the linked devices that are not connected (model,
+// else name, else id). Never nil, so it stores as [] rather than null.
+func missingPeripherals(f polylens.Device) []string {
+	out := []string{}
+	for _, c := range f.Connections {
+		if c.Connected {
+			continue
+		}
+		n := strings.TrimSpace(c.Model)
+		if n == "" {
+			n = strings.TrimSpace(c.Name)
+		}
+		if n == "" {
+			n = c.ID
+		}
+		out = append(out, n)
+	}
+	return out
 }

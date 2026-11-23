@@ -3,6 +3,7 @@ package integrations
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"time"
@@ -67,8 +68,25 @@ var conditions = []condition{
 	},
 	{
 		key: "peripherals_missing", recovered: "Peripherals linked again", hold: 10 * time.Minute, severity: "warning",
-		message: func(Readings) string { return "Peripheral missing" },
+		message: func(r Readings) string {
+			n := len(r.MissingPeripherals)
+			if n == 0 {
+				return "Peripheral missing"
+			}
+			shown := r.MissingPeripherals
+			if n > 3 {
+				shown = shown[:3]
+			}
+			msg := "Peripheral missing: " + strings.Join(shown, ", ")
+			if n > 3 {
+				msg += fmt.Sprintf(" +%d more", n-3)
+			}
+			return msg
+		},
 		state: func(r Readings) (bool, bool) {
+			if r.LinkedDevices > 0 {
+				return len(r.MissingPeripherals) > 0, true
+			}
 			if r.PeripheralsLinked == nil {
 				return false, false
 			}
