@@ -130,16 +130,22 @@ func mtrReadings(raw []byte, now time.Time) (map[string]any, map[string]string, 
 		m["call_signal_udp"] = v
 		m["udp_media_sockets"] = out.UDP.MediaSockets
 	}
+	// The mic/camera signal decides when it can be read. The new Teams client
+	// was seen holding UDP ports >= 50000 while idle, so the UDP signal alone
+	// only decides when the mic/camera can't be read. Both raw signals are
+	// kept so they can be compared on a real MTR.
+	// unverified: confirm on a Windows MTR
 	switch {
-	case (mic != nil && *mic) || (udp != nil && *udp):
+	case mic != nil && *mic:
 		m["call_state"], m["active_calls"] = "in_call", 1
-	case mic != nil && udp != nil:
+	case mic != nil:
 		m["call_state"], m["active_calls"] = "idle", 0
-	case mic == nil && udp == nil:
-		m["call_state"], m["active_calls"] = "unknown", 0
+	case udp != nil && *udp:
+		m["call_state"], m["active_calls"] = "in_call", 1
+	case udp != nil:
+		m["call_state"], m["active_calls"] = "idle", 0
 	default:
-		// One signal known and quiet, the other unreadable: no call seen.
-		m["call_state"], m["active_calls"] = "idle", 0
+		m["call_state"], m["active_calls"] = "unknown", 0
 	}
 
 	// ── PC ──

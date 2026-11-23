@@ -160,11 +160,21 @@ func TestMTRReadings(t *testing.T) {
 			},
 		},
 		{
-			name: "in call by UDP only",
+			// Idle Teams can hold media ports: an idle mic/camera wins.
+			name: "UDP open but mic and camera idle is idle",
 			doc:  mtrWith(mtrBaseDoc(), "udp", map[string]any{"teams_processes": 3, "media_sockets": 6}),
 			want: map[string]any{
-				"call_state": "in_call", "active_calls": 1,
+				"call_state": "idle", "active_calls": 0,
 				"call_signal_mic": false, "call_signal_udp": true, "udp_media_sockets": 6,
+			},
+		},
+		{
+			name: "in call by UDP when mic and camera can't be read",
+			doc: mtrWith(mtrWith(mtrWith(mtrBaseDoc(), "udp", map[string]any{"teams_processes": 3, "media_sockets": 6}),
+				"mic", nil), "camera", nil),
+			want: map[string]any{
+				"call_state": "in_call", "active_calls": 1,
+				"call_signal_udp": true, "udp_media_sockets": 6,
 			},
 		},
 		{
@@ -400,7 +410,7 @@ func TestMTRPollWithFakeRunner(t *testing.T) {
 	if tel.Status != device.StatusOnline || tel.Error != "" {
 		t.Fatalf("status %s error %q", tel.Status, tel.Error)
 	}
-	if tel.Metrics["call_state"] != "in_call" || tel.Metrics["serial_number"] != "TESTSERIAL0001" {
+	if tel.Metrics["call_state"] != "idle" || tel.Metrics["serial_number"] != "TESTSERIAL0001" {
 		t.Errorf("metrics %v", tel.Metrics)
 	}
 	if _, ok := tel.Metrics["response_ms"]; !ok {
