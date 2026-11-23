@@ -22,7 +22,8 @@ export type PermissionCategory =
   | "Assets"
   | "Room Readiness"
   | "Public API"
-  | "Privacy";
+  | "Privacy"
+  | "Integrations";
 
 export interface PermissionDef {
   key: string;
@@ -88,6 +89,8 @@ export const PERMISSIONS: readonly PermissionDef[] = [
   { key: "api_token.manage",    title: "Manage API tokens",     description: "Mint, name, and revoke API tokens used by external systems to read from the tenant.",       category: "Public API" },
   // Privacy
   { key: "privacy.manage",    title: "Manage data requests",  description: "Export or erase one person's personal data on request.", category: "Privacy" },
+  // Integrations
+  { key: "integration.manage", title: "Manage integrations", description: "Connect vendor integrations such as Poly Lens and choose which of their devices M.A.R.C.U.S. monitors.", category: "Integrations" },
 ];
 
 // PERMISSIONS_BY_CATEGORY is what the matrix renders — same items, grouped

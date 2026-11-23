@@ -538,6 +538,15 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 		mux.Handle("DELETE /api/v1/notifications/channels/{id}", wrapPerm(portalauth.PermNotificationCRUD, portal.Portal.DeleteNotificationChannel))
 		mux.Handle("POST /api/v1/notifications/channels/{id}/test", wrapPerm(portalauth.PermNotificationTest, portal.Portal.TestNotificationChannel))
 
+		// Integrations (Poly Lens). Reads need only view.dashboard; connect,
+		// test and disconnect need integration.manage; the Lens device
+		// picker needs device.crud since it feeds adding devices.
+		mux.Handle("GET /api/v1/integrations", wrapPerm(portalauth.PermViewDashboard, portal.Portal.ListIntegrations))
+		mux.Handle("POST /api/v1/integrations/poly_lens/test", wrapPerm(portalauth.PermIntegrationManage, portal.Portal.TestPolyLens))
+		mux.Handle("PUT /api/v1/integrations/poly_lens", wrapPerm(portalauth.PermIntegrationManage, portal.Portal.PutPolyLens))
+		mux.Handle("DELETE /api/v1/integrations/poly_lens", wrapPerm(portalauth.PermIntegrationManage, portal.Portal.DeletePolyLens))
+		mux.Handle("GET /api/v1/integrations/poly_lens/devices", wrapPerm(portalauth.PermDeviceCRUD, portal.Portal.ListPolyLensDevices))
+
 		// Public-API token management. Portal-side CRUD for the /pub/v1
 		// integration API keys — list gates on api_token.view (so an
 		// auditor can inspect the fleet without minting rights) and

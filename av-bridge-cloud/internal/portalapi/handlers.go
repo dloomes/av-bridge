@@ -46,6 +46,8 @@ type Handler struct {
 	// events is the /ws/events hub; offboarding closes a customer's
 	// streams through it. nil = nothing to close.
 	events wsfanout.Publisher
+	// lensTokenURL / lensGraphQLURL override the Poly Lens endpoints (tests); empty = production.
+	lensTokenURL, lensGraphQLURL string
 }
 
 // SetCustomerSSO records whether customer Microsoft sign-in is configured.
