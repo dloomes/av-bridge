@@ -10,6 +10,7 @@ import (
 	"errors"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -54,12 +55,30 @@ type Poller struct {
 	log      *slog.Logger
 
 	tokenURL, graphqlURL string
-	// onlyCustomer limits a pass to one customer (tests sharing a database).
-	onlyCustomer string
+	// onlyCustomers limits a pass to these customers (tests sharing a database).
+	onlyCustomers []string
+	// timeout bounds one integration's calls to Lens; zero means the default.
+	timeout time.Duration
+
+	mu      sync.Mutex
+	clients map[string]cachedClient
 }
 
+type cachedClient struct {
+	key    string
+	client *polylens.Client
+}
+
+// maxConcurrent is how many integrations are polled at once, so one slow
+// Lens cannot hold up the other customers.
+const maxConcurrent = 4
+
+// maxLensWait is the longest one integration's Lens calls may take.
+const maxLensWait = 20 * time.Second
+
 func NewPoller(admin *pgxpool.Pool, cipher secrets.Cipher, live wsfanout.Publisher, alerts AlertEvaluator, interval time.Duration, log *slog.Logger) *Poller {
-	return &Poller{admin: admin, cipher: cipher, live: live, alerts: alerts, interval: interval, log: log}
+	return &Poller{admin: admin, cipher: cipher, live: live, alerts: alerts, interval: interval, log: log,
+		clients: map[string]cachedClient{}}
 }
 
 // SetLensBaseURLs points the Lens client at other endpoints (tests).
@@ -103,7 +122,8 @@ type linkedDevice struct {
 func (p *Poller) PollOnce(ctx context.Context) error {
 	rows, err := p.admin.Query(ctx, `
 		SELECT id::text, customer_id::text, status, COALESCE(client_id, ''), COALESCE(account_id, ''), secret_enc
-		  FROM integrations WHERE provider = 'poly_lens' AND ($1 = '' OR customer_id::text = $1)`, p.onlyCustomer)
+		  FROM integrations WHERE provider = 'poly_lens'
+		   AND (cardinality($1::text[]) = 0 OR customer_id::text = ANY($1))`, p.onlyCustomers)
 	if err != nil {
 		return err
 	}
@@ -120,22 +140,75 @@ func (p *Poller) PollOnce(ctx context.Context) error {
 	if err := rows.Err(); err != nil {
 		return err
 	}
+	p.pruneClients(ints)
+	sem := make(chan struct{}, maxConcurrent)
+	var wg sync.WaitGroup
 	for _, in := range ints {
 		if ctx.Err() != nil {
-			return ctx.Err()
+			break
 		}
-		if err := p.pollIntegration(ctx, in); err != nil {
-			p.log.Warn("integration poll failed", "integration", in.id, "error", err)
+		sem <- struct{}{}
+		wg.Add(1)
+		go func(in integrationRow) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			if err := p.pollIntegration(ctx, in); err != nil && ctx.Err() == nil {
+				p.log.Warn("integration poll failed", "integration", in.id, "error", err)
+			}
+		}(in)
+	}
+	wg.Wait()
+	return ctx.Err()
+}
+
+func (p *Poller) lensTimeout() time.Duration {
+	if p.timeout > 0 {
+		return p.timeout
+	}
+	t := maxLensWait
+	if p.interval > 0 && p.interval/2 < t {
+		t = p.interval / 2
+	}
+	return t
+}
+
+// clientFor returns the Lens client of an integration, keeping it (and its
+// OAuth token) between polls until the credentials or account change.
+func (p *Poller) clientFor(in integrationRow, secret string) *polylens.Client {
+	key := in.clientID + "|" + in.accountID + "|" + secret
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if c, ok := p.clients[in.id]; ok && c.key == key {
+		return c.client
+	}
+	var opts []polylens.Option
+	if p.tokenURL != "" || p.graphqlURL != "" {
+		opts = append(opts, polylens.WithBaseURLs(p.tokenURL, p.graphqlURL))
+	}
+	c := polylens.New(in.clientID, secret, opts...)
+	p.clients[in.id] = cachedClient{key: key, client: c}
+	return c
+}
+
+func (p *Poller) pruneClients(ints []integrationRow) {
+	live := make(map[string]bool, len(ints))
+	for _, in := range ints {
+		live[in.id] = true
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for id := range p.clients {
+		if !live[id] {
+			delete(p.clients, id)
 		}
 	}
-	return nil
 }
 
 func (p *Poller) linked(ctx context.Context, in integrationRow) ([]linkedDevice, error) {
 	rows, err := p.admin.Query(ctx, `
 		SELECT d.id::text, COALESCE(d.name, ''), COALESCE(d.type, ''), l.external_id
 		  FROM integration_devices l JOIN devices d ON d.id = l.device_id
-		 WHERE l.integration_id = $1 AND l.customer_id = $2 AND d.deleted_at IS NULL`, in.id, in.customerID)
+		 WHERE l.integration_id = $1 AND l.customer_id = $2 AND d.customer_id = l.customer_id AND d.deleted_at IS NULL`, in.id, in.customerID)
 	if err != nil {
 		return nil, err
 	}
@@ -163,23 +236,24 @@ func (p *Poller) pollIntegration(ctx context.Context, in integrationRow) error {
 		return nil
 	}
 	if len(devs) == 0 {
-		return p.setIntegration(ctx, in, "")
+		// Nothing was asked of Lens, so nothing is proved: leave the status.
+		return nil
 	}
 	secret, err := p.cipher.Decrypt(in.secretEnc)
 	if err != nil {
 		p.failIntegration(ctx, in, devs, msgNoSecret)
 		return nil
 	}
-	var opts []polylens.Option
-	if p.tokenURL != "" || p.graphqlURL != "" {
-		opts = append(opts, polylens.WithBaseURLs(p.tokenURL, p.graphqlURL))
-	}
-	client := polylens.New(in.clientID, string(secret), opts...)
+	client := p.clientFor(in, string(secret))
 	ids := make([]string, len(devs))
 	for i, d := range devs {
 		ids[i] = d.externalID
 	}
-	found, err := client.Devices(ctx, in.accountID, ids)
+	// Only the Lens call has a deadline; the writes below use the parent
+	// context so a hung Lens can still be recorded as unknown.
+	lensCtx, cancel := context.WithTimeout(ctx, p.lensTimeout())
+	found, err := client.Devices(lensCtx, in.accountID, ids)
+	cancel()
 	if err != nil {
 		var rl *polylens.RateLimitError
 		switch {
@@ -259,22 +333,31 @@ func (p *Poller) tenantTx(ctx context.Context, customerID string, fn func(pgx.Tx
 func (p *Poller) markUnknown(ctx context.Context, in integrationRow, d linkedDevice, reason string, telemetry bool) {
 	metrics := map[string]any{"error": reason}
 	b, _ := json.Marshal(metrics)
+	wrote := false
 	err := p.tenantTx(ctx, in.customerID, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, `
+		tag, err := tx.Exec(ctx, `
 			UPDATE devices SET latest_status = 'unknown', latest_metrics = $3::jsonb, last_seen_at = now()
-			 WHERE id = $1 AND customer_id = $2`, d.deviceID, in.customerID, string(b)); err != nil {
+			 WHERE id = $1 AND customer_id = $2 AND deleted_at IS NULL`, d.deviceID, in.customerID, string(b))
+		if err != nil {
 			return err
 		}
+		if tag.RowsAffected() == 0 {
+			return nil
+		}
+		wrote = true
 		if !telemetry {
 			return nil
 		}
-		_, err := tx.Exec(ctx, `
+		_, err = tx.Exec(ctx, `
 			INSERT INTO telemetry (customer_id, device_id, status, metrics, error, ts)
 			VALUES ($1, $2, 'unknown', $3::jsonb, $4, now())`, in.customerID, d.deviceID, string(b), reason)
 		return err
 	})
 	if err != nil {
 		p.log.Warn("mark device unknown failed", "device", d.deviceID, "error", err)
+		return
+	}
+	if !wrote {
 		return
 	}
 	p.publish(in, d, "unknown", metrics)
@@ -288,9 +371,11 @@ func (p *Poller) writeDevice(ctx context.Context, in integrationRow, d linkedDev
 	}
 	metrics, signedIn := readingsFor(f)
 	b, _ := json.Marshal(metrics)
+	wrote := false
 	err := p.tenantTx(ctx, in.customerID, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, `
+		tag, err := tx.Exec(ctx, `
 			UPDATE devices SET
+			    make             = COALESCE(NULLIF(make, ''), 'Poly'),
 			    latest_status    = $3,
 			    latest_metrics   = $4::jsonb,
 			    last_seen_at     = now(),
@@ -299,17 +384,25 @@ func (p *Poller) writeDevice(ctx context.Context, in integrationRow, d linkedDev
 			    serial_number    = COALESCE(NULLIF($6, ''), serial_number),
 			    firmware_version = COALESCE(NULLIF($7, ''), firmware_version),
 			    mac_address      = COALESCE(NULLIF($8, ''), mac_address)
-			 WHERE id = $1 AND customer_id = $2`,
-			d.deviceID, in.customerID, status, string(b), f.Model, f.SerialNumber, f.SoftwareVersion, f.MACAddress); err != nil {
+			 WHERE id = $1 AND customer_id = $2 AND deleted_at IS NULL`,
+			d.deviceID, in.customerID, status, string(b), f.Model, f.SerialNumber, f.SoftwareVersion, f.MACAddress)
+		if err != nil {
 			return err
 		}
-		_, err := tx.Exec(ctx, `
+		if tag.RowsAffected() == 0 {
+			return nil
+		}
+		wrote = true
+		_, err = tx.Exec(ctx, `
 			INSERT INTO telemetry (customer_id, device_id, status, metrics, ts)
 			VALUES ($1, $2, $3, $4::jsonb, now())`, in.customerID, d.deviceID, status, string(b))
 		return err
 	})
 	if err != nil {
 		p.log.Warn("write lens device failed", "device", d.deviceID, "error", err)
+		return
+	}
+	if !wrote {
 		return
 	}
 	p.publish(in, d, status, metrics)
