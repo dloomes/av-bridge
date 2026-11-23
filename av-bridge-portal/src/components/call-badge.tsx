@@ -14,6 +14,7 @@ const IDLE: Call = { label: "Idle", variant: "secondary", icon: Phone };
 // reports "active" or "idle".
 const CALL_STATES: Record<string, Call> = {
   idle: IDLE,
+  in_call: IN_CALL, // Teams Rooms read from Poly Lens
   connected: IN_CALL,
   active: IN_CALL,
   ringing: { label: "Ringing", variant: "warning", icon: PhoneIncoming },
@@ -40,7 +41,10 @@ interface Props {
 // CallBadge shows whether a codec is in a call — "In a call", "Ringing",
 // "Idle" — next to its status.
 export function CallBadge({ type, activeCalls, callState, status, className }: Props) {
-  if (type !== "conferencing" || status !== "online") return null;
+  if ((type !== "conferencing" && type !== "teams_room") || status !== "online") return null;
+  // Poly Lens says "unknown" when it did not report a call state: show
+  // nothing rather than guessing "Idle".
+  if (type === "teams_room" && (typeof callState !== "string" || callState.toLowerCase() === "unknown")) return null;
   const calls = typeof activeCalls === "number" ? activeCalls : undefined;
   const state = typeof callState === "string" ? callState.toLowerCase() : "";
   let call = CALL_STATES[state];

@@ -22,6 +22,7 @@ import { CommandPanel } from "@/components/command-panel";
 import { TelemetryGrid } from "@/components/telemetry-grid";
 import { PowerBadge } from "@/components/power-badge";
 import { CallBadge } from "@/components/call-badge";
+import { TeamsHealthPill, TeamsRoomCards, TeamsSignedInPill, lensReason } from "@/components/teams-room-cards";
 import { LevelsCard, levelKeys } from "@/components/levels-card";
 import { DeviceEventHistory } from "@/components/device-event-history";
 import { Modal } from "@/components/modal";
@@ -34,6 +35,7 @@ import { useSession } from "@/hooks/useSession";
 import { api, API_BASE } from "@/lib/api";
 import { hasPermission } from "@/lib/session";
 import type { DeviceDetail, Telemetry } from "@/lib/types";
+import { DEVICE_TYPE_LABELS } from "@/lib/types";
 import { formatRelative, formatTimestamp } from "@/lib/utils";
 
 export default function DeviceDetailPage() {
@@ -144,6 +146,16 @@ export default function DeviceDetailPage() {
     );
   }
 
+  // Teams Rooms read from Poly Lens: no Collector, so no commands,
+  // reconnect or remote access; their own pills and cards instead.
+  const isLens = device.source === "poly_lens";
+  const lensMetrics = telemetry.data?.metrics;
+  const typeText = isLens
+    ? `${DEVICE_TYPE_LABELS[device.type] ?? device.type}${
+        device.platform ? ` (${device.platform === "android" ? "Android" : "Windows"})` : ""
+      }`
+    : undefined;
+
   return (
     <div className="flex h-app flex-col">
       <header className="flex flex-wrap items-center justify-between gap-3 border-b bg-card/50 px-6 py-4">
@@ -160,7 +172,9 @@ export default function DeviceDetailPage() {
               <StatusBadge
                 status={device.status}
                 collectorStatus={device.collector_status}
+                reason={isLens ? lensReason(lensMetrics) : undefined}
               />
+              {isLens && <TeamsSignedInPill metrics={lensMetrics} online={device.status === "online"} />}
               <PowerBadge
                 protocol={device.protocol}
                 powerStatus={telemetry.data?.metrics?.power_status}
@@ -172,14 +186,15 @@ export default function DeviceDetailPage() {
                 callState={telemetry.data?.metrics?.call_state}
                 status={device.status}
               />
+              {isLens && <TeamsHealthPill metrics={lensMetrics} online={device.status === "online"} />}
             </div>
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
               <MapPin className="h-3 w-3" />
               <span>{device.location || "—"}</span>
               <span>·</span>
-              <span className="capitalize">{device.type}</span>
+              <span className={isLens ? undefined : "capitalize"}>{typeText ?? device.type}</span>
               <span>·</span>
-              <span>{device.protocol}</span>
+              <span>{isLens ? "Poly Lens" : device.protocol}</span>
               {device.tags?.make && (
                 <>
                   <span>·</span>
@@ -189,8 +204,12 @@ export default function DeviceDetailPage() {
                   </span>
                 </>
               )}
-              <span>·</span>
-              <LastContacted device={device} telemetry={telemetry.data} />
+              {!isLens && (
+                <>
+                  <span>·</span>
+                  <LastContacted device={device} telemetry={telemetry.data} />
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -203,8 +222,8 @@ export default function DeviceDetailPage() {
                 : null
             )}
           </span>
-          <TouchPanelButton device={device} />
-          {canRemoteAccess && (
+          {!isLens && <TouchPanelButton device={device} />}
+          {!isLens && canRemoteAccess && (
             <RemoteAccessButton
               deviceId={device.id}
               deviceName={device.name}
@@ -219,7 +238,7 @@ export default function DeviceDetailPage() {
             <RefreshCcw className="h-3.5 w-3.5" />
             Refresh
           </Button>
-          {canReconnect && (
+          {!isLens && canReconnect && (
             <Button
               variant="outline"
               size="sm"
@@ -317,16 +336,20 @@ export default function DeviceDetailPage() {
       <div className="flex-1 min-h-0 overflow-y-auto">
         <div className="grid gap-6 p-6 lg:grid-cols-[minmax(0,1fr)_360px]">
           <div className="space-y-6 min-w-0">
-            <TelemetryGrid
-              metrics={telemetry.data?.metrics}
-              lensMetrics={telemetry.data?.lens_metrics}
-              error={
-                telemetry.error?.message ?? telemetry.data?.error ?? undefined
-              }
-              exclude={levelKeys(device.subscriptions)}
-            />
-            {canSendCommand && <CommandPanel device={device} telemetry={telemetry.data} />}
-            <LevelsCard subscriptions={device.subscriptions ?? []} metrics={telemetry.data?.metrics} />
+            {isLens ? (
+              <TeamsRoomCards device={device} metrics={lensMetrics} />
+            ) : (
+              <TelemetryGrid
+                metrics={telemetry.data?.metrics}
+                lensMetrics={telemetry.data?.lens_metrics}
+                error={
+                  telemetry.error?.message ?? telemetry.data?.error ?? undefined
+                }
+                exclude={levelKeys(device.subscriptions)}
+              />
+            )}
+            {!isLens && canSendCommand && <CommandPanel device={device} telemetry={telemetry.data} />}
+            {!isLens && <LevelsCard subscriptions={device.subscriptions ?? []} metrics={telemetry.data?.metrics} />}
           </div>
           <aside className="space-y-6 min-w-0">
             <DeviceEventHistory deviceId={device.id} limit={5} />

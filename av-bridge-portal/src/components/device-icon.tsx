@@ -1,4 +1,4 @@
-import { Camera, Mic, Monitor, Network, PlugZap, Projector, SlidersHorizontal, Video } from "lucide-react";
+import { Camera, Mic, Monitor, Network, PlugZap, Presentation, Projector, SlidersHorizontal, Video } from "lucide-react";
 import type { DeviceType } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -11,6 +11,7 @@ const map = {
   control: SlidersHorizontal,
   avoip: Network,
   power: PlugZap,
+  teams_room: Presentation,
 } as const;
 
 interface Props {

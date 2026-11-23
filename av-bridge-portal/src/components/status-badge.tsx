@@ -35,17 +35,21 @@ interface Props {
   // as its own label ("Collector offline") tells the operator to
   // investigate the collector rather than the device.
   collectorStatus?: "online" | "offline" | "unknown";
+  // Why a Poly Lens device is unknown ("Poly Lens unreachable"). Shown in
+  // place of "Unknown" / "Collector offline" when status is unknown.
+  reason?: string;
 }
 
-export function StatusBadge({ status, className, collectorStatus }: Props) {
+export function StatusBadge({ status, className, collectorStatus, reason }: Props) {
+  const hasReason = status === "unknown" && !!reason;
   const isCollectorFault =
-    status === "unknown" && collectorStatus === "offline";
-  const label = isCollectorFault ? "Collector offline" : labels[status];
+    !hasReason && status === "unknown" && collectorStatus === "offline";
+  const label = hasReason ? reason : isCollectorFault ? "Collector offline" : labels[status];
   // Amber/warning tone for collector-fault so the pill visually
   // separates from an ordinary "Unknown" and doesn't look like a
   // healthy device.
-  const variant = isCollectorFault ? "warning" : variants[status];
-  const dot = isCollectorFault ? "bg-warning" : dotColors[status];
+  const variant = isCollectorFault || hasReason ? "warning" : variants[status];
+  const dot = isCollectorFault || hasReason ? "bg-warning" : dotColors[status];
 
   return (
     <Badge

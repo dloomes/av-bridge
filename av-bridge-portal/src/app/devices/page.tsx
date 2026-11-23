@@ -516,7 +516,7 @@ export default function DevicesPage() {
                             {TYPE_LABEL[d.type] ?? d.type}
                           </td>
                           <td className="px-4 py-3.5 align-top text-xs font-mono text-muted-foreground">
-                            {d.protocol}
+                            {d.integration ? "Poly Lens" : d.protocol}
                           </td>
                           <td className="px-4 py-3.5 align-top">
                             <Badge

@@ -1,11 +1,11 @@
 export type DeviceStatus = "online" | "offline" | "unknown" | "switched_off";
 
-export type DeviceType = "display" | "projector" | "conferencing" | "audio" | "camera" | "control" | "power" | "avoip";
+export type DeviceType = "display" | "projector" | "conferencing" | "audio" | "camera" | "control" | "power" | "avoip" | "teams_room";
 
 // Every device category, in the order pickers list them, with its label.
 // Mirrors allowedTypes in the cloud (portalapi/admin_handlers.go) and the
 // bridge's config validation.
-export const DEVICE_TYPES: DeviceType[] = ["display", "projector", "conferencing", "audio", "camera", "control", "avoip", "power"];
+export const DEVICE_TYPES: DeviceType[] = ["display", "projector", "conferencing", "audio", "camera", "control", "avoip", "power", "teams_room"];
 
 export const DEVICE_TYPE_LABELS: Record<DeviceType, string> = {
   display: "Display",
@@ -16,7 +16,15 @@ export const DEVICE_TYPE_LABELS: Record<DeviceType, string> = {
   control: "Control",
   avoip: "AV-over-IP",
   power: "Power",
+  teams_room: "Microsoft Teams Room",
 };
+
+export interface DeviceIntegration {
+  provider: string;
+  external_name: string;
+  account_name: string;
+  tag_state: string;
+}
 
 export interface DeviceSummary {
   id: string;
@@ -28,7 +36,13 @@ export interface DeviceSummary {
   location_name?: string;
   building?: string;
   room_id?: string | null;
-  collector_id?: string;
+  collector_id?: string | null;
+  // "collector" (polled by a Collector) or "poly_lens" (read from Poly Lens
+  // by the cloud; no Collector). platform and integration are set for the
+  // latter.
+  source?: "collector" | "poly_lens";
+  platform?: "windows" | "android" | null;
+  integration?: DeviceIntegration | null;
   // Derived status of the device's collector. When status="unknown"
   // AND collector_status="offline", the UI shows a "Collector offline"
   // pill so the operator knows the collector is the reason we can't
@@ -93,7 +107,7 @@ export interface DeviceAssetInput {
 // lets the edit form fill its Physical inventory section without a
 // second /assets fetch.
 export interface DeviceDetail extends DeviceSummary {
-  collector_id: string;
+  collector_id?: string | null;
   // When the device last answered its Collector ("Last contacted").
   // Absent when it hasn't within the records kept.
   last_online_at?: string;
@@ -132,6 +146,17 @@ export interface CreateDeviceBody {
   room_id?: string;
   asset_id?: string;
   asset?: DeviceAssetInput;
+}
+
+// Wire shape for POST /api/v1/devices with source "poly_lens": a Teams Room
+// read from Poly Lens. No Collector, protocol, address or credentials.
+export interface CreateLensDeviceBody {
+  source: "poly_lens";
+  type: "teams_room";
+  platform: "windows" | "android";
+  external_id: string;
+  name: string;
+  room_id?: string;
 }
 
 // PATCH body. Every field optional — only the ones present are written.

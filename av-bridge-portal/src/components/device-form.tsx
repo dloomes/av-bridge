@@ -15,6 +15,7 @@ import {
   subscriptionsFromRows,
   type SubscriptionRow,
 } from "@/components/subscription-editor";
+import { TeamsRoomForm } from "@/components/teams-room-form";
 import { TagEditor, rowsFromTags, tagsFromRows, type TagRow } from "@/components/tag-editor";
 import { api, MoveError } from "@/lib/api";
 import type {
@@ -126,7 +127,7 @@ function emptyForm(): FormState {
 
 function formFromDetail(d: DeviceDetail): FormState {
   return {
-    collector_id: d.collector_id,
+    collector_id: d.collector_id ?? "",
     reported_id: d.reported_id,
     name: d.name ?? "",
     type: d.type ?? "",
@@ -630,6 +631,41 @@ export function DeviceForm({
 
   const isEdit = mode === "edit";
 
+  // Microsoft Teams Rooms are read from Poly Lens, not polled by a
+  // Collector, so they get their own form (no Collector, protocol, address
+  // or credentials). Collector devices keep the form below untouched.
+  if ((!isEdit && form.type === "teams_room") || (isEdit && initial?.source === "poly_lens")) {
+    return (
+      <TeamsRoomForm
+        mode={mode}
+        initial={initial}
+        rooms={rooms}
+        buildings={buildings}
+        loadingLookups={loadingLookups}
+        onCancel={onCancel}
+        onSuccess={onSuccess}
+        typeSelect={
+          <div>
+            <label className={labelClass} htmlFor="dev-type">Type</label>
+            <select
+              id="dev-type"
+              className={inputClass}
+              value={form.type}
+              onChange={(e) => set("type", e.target.value)}
+            >
+              <option value="">— Select —</option>
+              {TYPES.map((t) => (
+                <option key={t} value={t}>
+                  {DEVICE_TYPE_LABELS[t]}
+                </option>
+              ))}
+            </select>
+          </div>
+        }
+      />
+    );
+  }
+
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
       {error && (
@@ -740,7 +776,9 @@ export function DeviceForm({
             onChange={(e) => set("type", e.target.value)}
           >
             <option value="">— Select —</option>
-            {TYPES.map((t) => (
+            {/* Teams Rooms can only be added (as Poly Lens devices), never
+                switched to on an existing Collector device. */}
+            {TYPES.filter((t) => !isEdit || t !== "teams_room").map((t) => (
               <option key={t} value={t}>
                 {DEVICE_TYPE_LABELS[t]}
               </option>

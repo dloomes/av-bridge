@@ -22,6 +22,7 @@ import type {
   UpdateCustomerBody,
   CreateCustomerResponse,
   CreateDeviceBody,
+  CreateLensDeviceBody,
   CreateRoleBody,
   CreateRoleMappingBody,
   CreateUserBody,
@@ -2127,7 +2128,7 @@ export const api = {
     }
   },
 
-  createDevice: (body: CreateDeviceBody, signal?: AbortSignal) =>
+  createDevice: (body: CreateDeviceBody | CreateLensDeviceBody, signal?: AbortSignal) =>
     request<{ id: string }>("/api/v1/devices", {
       method: "POST",
       body: JSON.stringify(body),
