@@ -939,3 +939,59 @@ export interface RoadmapNewLink {
   link: RoadmapLink;
   url: string;
 }
+
+// ---- Integrations (Poly Lens etc.) ----
+
+export type IntegrationProvider = "poly_lens" | "logitech_sync" | "microsoft_365" | "servicenow";
+export type IntegrationStatus =
+  | "connected"
+  | "disconnected"
+  | "error"
+  | "not_connected"
+  | "coming_soon";
+
+export interface Integration {
+  provider: IntegrationProvider;
+  status: IntegrationStatus;
+  account_name?: string;
+  allow_tagging: boolean;
+  has_secret: boolean;
+  client_id?: string;
+  last_success_at?: string;
+  last_error?: string;
+  linked_devices: number;
+}
+
+export interface LensAccount {
+  id: string;
+  name: string;
+}
+
+export interface LensCredentials {
+  client_id: string;
+  client_secret?: string;
+}
+
+export interface LensSaveBody extends LensCredentials {
+  account_id: string;
+  allow_tagging: boolean;
+}
+
+export interface LensDevice {
+  external_id: string;
+  name: string;
+  model: string;
+  serial: string;
+  mac: string;
+  room_name: string;
+  site_name: string;
+  connected: boolean;
+  linked_device_id?: string;
+  already_monitored_as?: string;
+  already_monitored_device_id?: string;
+}
+
+export interface LensDevicesResult {
+  devices: LensDevice[];
+  degraded?: boolean;
+}

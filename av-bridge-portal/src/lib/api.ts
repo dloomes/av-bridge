@@ -61,6 +61,11 @@ import type {
   RoadmapPeriod,
   RoadmapSettings,
   SharedRoadmap,
+  Integration,
+  LensAccount,
+  LensCredentials,
+  LensDevicesResult,
+  LensSaveBody,
 } from "./types";
 
 // HTTP requests go to the Next.js dev server, which proxies to av-bridge via
@@ -1965,6 +1970,32 @@ export const api = {
   // Business Unit CRUD — optional top-of-hierarchy tier. Gated backend-
   // side on business_unit.crud AND the tenant flag; the portal only
   // surfaces these controls when Branding.business_units_enabled is true.
+  listIntegrations: (signal?: AbortSignal) =>
+    request<Integration[]>("/api/v1/integrations", { signal }),
+
+  testLens: (body: LensCredentials, signal?: AbortSignal) =>
+    request<{ accounts: LensAccount[] }>("/api/v1/integrations/poly_lens/test", {
+      method: "POST",
+      body: JSON.stringify(body),
+      signal,
+    }),
+
+  saveLens: (body: LensSaveBody, signal?: AbortSignal) =>
+    request<void>("/api/v1/integrations/poly_lens", {
+      method: "PUT",
+      body: JSON.stringify(body),
+      signal,
+    }),
+
+  disconnectLens: (signal?: AbortSignal) =>
+    request<void>("/api/v1/integrations/poly_lens", { method: "DELETE", signal }),
+
+  listLensDevices: (q?: string, signal?: AbortSignal) =>
+    request<LensDevicesResult>(
+      `/api/v1/integrations/poly_lens/devices${q ? `?q=${encodeURIComponent(q)}` : ""}`,
+      { signal }
+    ),
+
   listRoomTags: (signal?: AbortSignal) =>
     request<RoomTag[]>("/api/v1/room-tags", { signal }),
 
