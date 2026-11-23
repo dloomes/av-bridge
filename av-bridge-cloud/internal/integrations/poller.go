@@ -113,6 +113,7 @@ func (p *Poller) Run(ctx context.Context) {
 type integrationRow struct {
 	id, customerID, status, clientID, accountID string
 	secretEnc                                   []byte
+	allowTagging                                bool
 }
 
 type linkedDevice struct {
@@ -123,7 +124,7 @@ type linkedDevice struct {
 // integration never stops the others.
 func (p *Poller) PollOnce(ctx context.Context) error {
 	rows, err := p.admin.Query(ctx, `
-		SELECT id::text, customer_id::text, status, COALESCE(client_id, ''), COALESCE(account_id, ''), secret_enc
+		SELECT id::text, customer_id::text, status, COALESCE(client_id, ''), COALESCE(account_id, ''), secret_enc, allow_tagging
 		  FROM integrations WHERE provider = 'poly_lens'
 		   AND `+db.CustomerActiveSQL("customer_id")+`
 		   AND (cardinality($1::text[]) = 0 OR customer_id::text = ANY($1))`, p.onlyCustomers)
@@ -133,7 +134,7 @@ func (p *Poller) PollOnce(ctx context.Context) error {
 	var ints []integrationRow
 	for rows.Next() {
 		var r integrationRow
-		if err := rows.Scan(&r.id, &r.customerID, &r.status, &r.clientID, &r.accountID, &r.secretEnc); err != nil {
+		if err := rows.Scan(&r.id, &r.customerID, &r.status, &r.clientID, &r.accountID, &r.secretEnc, &r.allowTagging); err != nil {
 			rows.Close()
 			return err
 		}
@@ -285,6 +286,7 @@ func (p *Poller) pollIntegration(ctx context.Context, in integrationRow) error {
 			p.markUnknown(ctx, in, d, msgNotFound, true)
 		}
 	}
+	p.tagPending(ctx, in, client)
 	return p.setIntegration(ctx, in, "")
 }
 

@@ -4,6 +4,7 @@ package polylens
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -60,7 +61,7 @@ func TestLensTagRoundTrip(t *testing.T) {
 				t.Errorf("cleanup RemoveTag %s: %v", id, err)
 			}
 		}
-		tid, err := c.tagID(ctx, acc, verifyTag)
+		tid, err := c.FindTag(ctx, acc, verifyTag)
 		if err == nil && tid != "" {
 			if err := c.graphql(ctx, `mutation($id: String!) { deleteTag(id: $id) { success } }`, map[string]any{"id": tid}, nil); err != nil {
 				t.Errorf("cleanup deleteTag: %v", err)
@@ -69,11 +70,11 @@ func TestLensTagRoundTrip(t *testing.T) {
 		for _, id := range ids {
 			t.Logf("final: device %s has tag=%v", id, hasTag(id))
 		}
-		tid, _ = c.tagID(ctx, acc, verifyTag)
+		tid, _ = c.FindTag(ctx, acc, verifyTag)
 		t.Logf("final: tag entity exists=%v", tid != "")
 	}()
 	for _, id := range ids {
-		if err := c.AddTag(ctx, acc, id, verifyTag); err != nil {
+		if err := addTagLive(ctx, c, acc, id, verifyTag); err != nil {
 			t.Fatalf("AddTag %s: %v", id, err)
 		}
 		t.Logf("after add: device %s has tag=%v", id, hasTag(id))
@@ -84,4 +85,25 @@ func TestLensTagRoundTrip(t *testing.T) {
 		}
 		t.Logf("after remove: device %s has tag=%v", id, hasTag(id))
 	}
+}
+
+// addTagLive creates the tag if needed and assigns it, retrying while Lens
+// rejects the fresh tag (about 5-10 s).
+func addTagLive(ctx context.Context, c *Client, acc, device, tag string) error {
+	id, err := c.FindTag(ctx, acc, tag)
+	if err != nil {
+		return err
+	}
+	if id == "" {
+		if id, err = c.CreateTag(ctx, acc, tag); err != nil {
+			return err
+		}
+	}
+	for i := 0; i < 8; i++ {
+		if err = c.AssignTag(ctx, id, device); err == nil || !errors.Is(err, ErrForbidden) {
+			return err
+		}
+		time.Sleep(3 * time.Second)
+	}
+	return err
 }

@@ -301,8 +301,20 @@ func (c *Client) Devices(ctx context.Context, accountID string, ids []string) ([
 	return res, nil
 }
 
-// tagID finds a Lens tag by exact name in the account; "" if it does not exist.
-func (c *Client) tagID(ctx context.Context, accountID, tag string) (string, error) {
+// ErrTagNotFound means Lens says the tag does not exist (a deleted tag can
+// linger in listings as a ghost).
+var ErrTagNotFound = errors.New("polylens: no tag found")
+
+// TagRetryDelay is the pause between deleteTag attempts. Lens answers 403 for
+// a tag that was created seconds ago, so a delete is retried a few times.
+var TagRetryDelay = 4 * time.Second
+
+const deleteTagAttempts = 5
+
+// FindTag returns the id of the tag with this exact name, "" if none is
+// listed. Lens listings can keep deleted tags for minutes, so a found id is
+// not proof the tag exists.
+func (c *Client) FindTag(ctx context.Context, accountID, tag string) (string, error) {
 	var out struct {
 		Tenant struct {
 			LensTags []struct {
@@ -324,6 +336,24 @@ func (c *Client) tagID(ctx context.Context, accountID, tag string) (string, erro
 	return "", nil
 }
 
+// CreateTag creates a tag in the account and returns its id. Lens rejects
+// assigning or deleting the tag (403) for several seconds afterwards.
+func (c *Client) CreateTag(ctx context.Context, accountID, tag string) (string, error) {
+	var cr struct {
+		CreateTag struct {
+			ID string `json:"id"`
+		} `json:"createTag"`
+	}
+	if err := c.graphql(ctx, `mutation($tenantId: String!, $name: String!) { createTag(tenantId: $tenantId, input: {name: $name}) { id } }`,
+		map[string]any{"tenantId": accountID, "name": tag}, &cr); err != nil {
+		return "", err
+	}
+	if cr.CreateTag.ID == "" {
+		return "", errors.New("polylens: createTag returned no id")
+	}
+	return cr.CreateTag.ID, nil
+}
+
 type tagResult []struct {
 	DeviceID string `json:"deviceId"`
 	Success  *bool  `json:"success"`
@@ -338,60 +368,52 @@ func (r tagResult) check() error {
 	return nil
 }
 
-// AddTag adds a tag to a device, creating the tag in the account if needed.
-// Lens tags are account-level entities; devices reference them by id.
-func (c *Client) AddTag(ctx context.Context, accountID, deviceID, tag string) error {
-	id, err := c.tagID(ctx, accountID, tag)
-	if err != nil {
-		return err
-	}
-	created := false
-	if id == "" {
-		var cr struct {
-			CreateTag struct {
-				ID string `json:"id"`
-			} `json:"createTag"`
-		}
-		if err := c.graphql(ctx, `mutation($tenantId: String!, $name: String!) { createTag(tenantId: $tenantId, input: {name: $name}) { id } }`,
-			map[string]any{"tenantId": accountID, "name": tag}, &cr); err != nil {
-			return err
-		}
-		if id = cr.CreateTag.ID; id == "" {
-			return errors.New("polylens: createTag returned no id")
-		}
-		created = true
-	}
+// AssignTag adds an existing tag (by id) to a device. A single attempt:
+// callers retry on ErrForbidden or ErrTagNotFound.
+func (c *Client) AssignTag(ctx context.Context, tagID, deviceID string) error {
 	var out struct {
 		R tagResult `json:"addLensTagToDevice"`
 	}
 	if err := c.graphql(ctx, `mutation($tagIds: [String!]!, $deviceIds: [String!]!) { addLensTagToDevice(tagIds: $tagIds, deviceIds: $deviceIds) { deviceId success } }`,
-		map[string]any{"tagIds": []string{id}, "deviceIds": []string{deviceID}}, &out); err != nil {
-		c.discardTag(ctx, id, created)
+		map[string]any{"tagIds": []string{tagID}, "deviceIds": []string{deviceID}}, &out); err != nil {
 		return err
 	}
-	if err := out.R.check(); err != nil {
-		c.discardTag(ctx, id, created)
-		return err
-	}
-	return nil
+	return out.R.check()
 }
 
-// discardTag best-effort deletes a tag this call just created, so a role that
-// can create but not assign tags does not leave an orphan per device. Any
-// failure (including a 403) is ignored.
-func (c *Client) discardTag(ctx context.Context, id string, created bool) {
-	if !created {
-		return
+// DeleteTag deletes a tag by id, retrying a 403 a few times (the tag may be
+// brand new). A tag that is already gone counts as deleted. A 403 that
+// outlasts the retries is returned as ErrForbidden.
+func (c *Client) DeleteTag(ctx context.Context, id string) error {
+	var err error
+	for i := 0; i < deleteTagAttempts; i++ {
+		if i > 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(TagRetryDelay):
+			}
+		}
+		err = c.graphql(ctx, `mutation($id: String!) { deleteTag(id: $id) { success } }`, map[string]any{"id": id}, nil)
+		switch {
+		case err == nil, errors.Is(err, ErrTagNotFound):
+			return nil
+		case errors.Is(err, ErrForbidden):
+			continue
+		default:
+			return err
+		}
 	}
-	_ = c.graphql(ctx, `mutation($id: String!) { deleteTag(id: $id) { success } }`, map[string]any{"id": id}, nil)
+	return err
 }
 
 // RemoveTag removes a tag from a device. A tag that does not exist is a no-op.
 // A per-device tag ("marcus:<device id>") is unique to that device, so it is
-// deleted after the unassign (best effort; failures such as a 403 are ignored).
-// Any other tag is left in place because other devices may use it.
+// deleted after the unassign (best effort: a 403 or a missing tag is ignored,
+// since the unassign already succeeded). Any other tag is left in place
+// because other devices may use it.
 func (c *Client) RemoveTag(ctx context.Context, accountID, deviceID, tag string) error {
-	id, err := c.tagID(ctx, accountID, tag)
+	id, err := c.FindTag(ctx, accountID, tag)
 	if err != nil || id == "" {
 		return err
 	}
@@ -400,12 +422,30 @@ func (c *Client) RemoveTag(ctx context.Context, accountID, deviceID, tag string)
 	}
 	if err := c.graphql(ctx, `mutation($tagId: String!, $deviceIds: [String!]!) { removeLensTagFromDevice(tagId: $tagId, deviceIds: $deviceIds) { deviceId success } }`,
 		map[string]any{"tagId": id, "deviceIds": []string{deviceID}}, &out); err != nil {
+		if errors.Is(err, ErrTagNotFound) {
+			return nil // a ghost listing: nothing to remove
+		}
 		return err
 	}
 	if err := out.R.check(); err != nil {
 		return err
 	}
-	c.discardTag(ctx, id, strings.HasPrefix(tag, "marcus:"))
+	if strings.HasPrefix(tag, "marcus:") {
+		_ = c.DeleteTag(ctx, id)
+	}
+	return nil
+}
+
+// DeleteTagByName deletes the tag with this name if one is listed. Ghosts and
+// a lingering 403 are not errors.
+func (c *Client) DeleteTagByName(ctx context.Context, accountID, tag string) error {
+	id, err := c.FindTag(ctx, accountID, tag)
+	if err != nil || id == "" {
+		return err
+	}
+	if err := c.DeleteTag(ctx, id); err != nil && !errors.Is(err, ErrForbidden) {
+		return err
+	}
 	return nil
 }
 
@@ -505,6 +545,11 @@ func (c *Client) graphql(ctx context.Context, query string, vars map[string]any,
 			}
 		}
 		msg := "polylens: graphql errors: " + strings.Join(msgs, "; ")
+		for _, m := range msgs {
+			if strings.Contains(m, "No Tag found") {
+				return fmt.Errorf("%w: %s", ErrTagNotFound, msg)
+			}
+		}
 		if schema {
 			return &schemaError{msg}
 		}

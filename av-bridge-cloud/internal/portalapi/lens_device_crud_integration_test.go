@@ -17,10 +17,12 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
 	"github.com/dloomes/av-bridge-cloud/internal/db"
+	"github.com/dloomes/av-bridge-cloud/internal/integrations/polylens"
 	"github.com/dloomes/av-bridge-cloud/internal/portalauth"
 	"github.com/dloomes/av-bridge-cloud/internal/secrets"
 )
@@ -64,6 +66,8 @@ func TestLensDeviceCreateDelete(t *testing.T) {
 	var mu sync.Mutex
 	var calls []string
 	lensTags := map[string]string{}
+	deleteForbids := 0 // deleteTag answers 403 this many times first
+	polylens.TagRetryDelay = time.Millisecond
 	mux := http.NewServeMux()
 	mux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
@@ -124,6 +128,13 @@ func TestLensDeviceCreateDelete(t *testing.T) {
 			mu.Lock()
 			id, _ := req.Variables["id"].(string)
 			calls = append(calls, "deleteTag|"+lensTags[id])
+			if deleteForbids > 0 {
+				deleteForbids--
+				mu.Unlock()
+				w.WriteHeader(403)
+				io.WriteString(w, `{"errors":[{"message":"Authorization failed","extensions":{"code":"AUTHORIZATION_ERROR"}}]}`)
+				return
+			}
 			delete(lensTags, id)
 			mu.Unlock()
 			io.WriteString(w, `{"data":{"deleteTag":{"success":true}}}`)
@@ -218,7 +229,7 @@ func TestLensDeviceCreateDelete(t *testing.T) {
 
 	// Create with tagging allowed.
 	code, d1, state := create("ext-1")
-	if code != 201 || state != "tagged" {
+	if code != 201 || state != "pending" {
 		t.Fatalf("create ext-1 = %d state %q", code, state)
 	}
 	var src, plat, name, ser string
@@ -233,12 +244,22 @@ func TestLensDeviceCreateDelete(t *testing.T) {
 	if err := su.QueryRow(ctx, `SELECT external_name, model, tag_state FROM integration_devices WHERE device_id = $1`, d1).Scan(&extName, &model, &tagState); err != nil {
 		t.Fatal(err)
 	}
-	if extName != "Fake Room One" || model != "Test X" || tagState != "tagged" {
+	if extName != "Fake Room One" || model != "Test X" || tagState != "pending" {
 		t.Errorf("link row: %q %q %q", extName, model, tagState)
 	}
-	if c := tagCalls(); len(c) != 2 || c[0] != "create|marcus:"+d1 || c[1] != "add|ext-1|marcus:"+d1 {
-		t.Errorf("tag calls: %v", c)
+	// Tagging is left to the poller: the request makes no Lens tag call.
+	if c := tagCalls(); len(c) != 0 {
+		t.Errorf("tag calls at create: %v", c)
 	}
+	if got := q(`SELECT (tag_requested_at IS NOT NULL)::text FROM integration_devices WHERE device_id = $1`, d1); got != "true" {
+		t.Errorf("tag_requested_at not set")
+	}
+	// Pretend the poller tagged it (the poller has its own tests).
+	q(`UPDATE integration_devices SET tag_state = 'tagged' WHERE device_id = $1 RETURNING 'x'`, d1)
+	mu.Lock()
+	lensTags["tag-marcus:"+d1] = "marcus:" + d1
+	deleteForbids = 2
+	mu.Unlock()
 	var meta string
 	if err := su.QueryRow(ctx, `SELECT metadata::text FROM audit_log WHERE customer_id = $1 AND action = 'device.create' AND target_id = $2`, cust, d1).Scan(&meta); err != nil || !strings.Contains(meta, "poly_lens") {
 		t.Errorf("create audit metadata %q: %v", meta, err)
@@ -247,22 +268,6 @@ func TestLensDeviceCreateDelete(t *testing.T) {
 	// Second link of the same Lens device.
 	if code, _, _ := create("ext-1"); code != 409 {
 		t.Errorf("duplicate link = %d, want 409", code)
-	}
-
-	// Tag failure: device is still created.
-	code, dFail, state := create("ext-failtag")
-	if code != 201 || state != "failed" {
-		t.Fatalf("create ext-failtag = %d state %q", code, state)
-	}
-	if got := q(`SELECT tag_state FROM integration_devices WHERE device_id = $1`, dFail); got != "failed" {
-		t.Errorf("tag_state = %q, want failed", got)
-	}
-	if got := q(`SELECT COALESCE(tag_error,'') FROM integration_devices WHERE device_id = $1`, dFail); got != "Lens role can't tag devices" {
-		t.Errorf("tag_error = %q", got)
-	}
-	// The orphan tag created for the failed assignment was cleaned up.
-	if c := tagCalls(); c[len(c)-1] != "deleteTag|marcus:"+dFail {
-		t.Errorf("orphan tag not deleted: %v", c)
 	}
 
 	// Tagging disabled: no tag call.
@@ -280,11 +285,25 @@ func TestLensDeviceCreateDelete(t *testing.T) {
 	}
 	setTagging(true)
 
-	// Delete while connected removes the tag and frees the Lens device.
+	// Deleting a device whose tag is still pending is not left_behind.
+	code, dPend, state := create("ext-4")
+	if code != 201 || state != "pending" {
+		t.Fatalf("create ext-4 = %d state %q", code, state)
+	}
+	if code, body := call("DELETE", "/api/v1/devices/"+dPend, nil); code != 204 {
+		t.Fatalf("delete pending = %d %s", code, body)
+	}
+	if err := su.QueryRow(ctx, `SELECT metadata::text FROM audit_log WHERE customer_id = $1 AND action = 'device.delete' AND target_id = $2`, cust, dPend).Scan(&meta); err != nil || strings.Contains(meta, "left_behind") {
+		t.Errorf("pending delete audit %q: %v", meta, err)
+	}
+
+	// Delete while connected unassigns the tag, then deletes it (retrying the
+	// 403 Lens gives for a young tag) and frees the Lens device.
+	// and frees the Lens device.
 	if code, body := call("DELETE", "/api/v1/devices/"+d1, nil); code != 204 {
 		t.Fatalf("delete d1 = %d %s", code, body)
 	}
-	if c := tagCalls(); c[len(c)-2] != "remove|ext-1|marcus:"+d1 || c[len(c)-1] != "deleteTag|marcus:"+d1 {
+	if c := tagCalls(); len(c) < 4 || c[len(c)-4] != "remove|ext-1|marcus:"+d1 || strings.Join(c[len(c)-3:], ",") != strings.Repeat("deleteTag|marcus:"+d1+",", 2)+"deleteTag|marcus:"+d1 {
 		t.Errorf("last tag calls: %v", c)
 	}
 	if err := su.QueryRow(ctx, `SELECT metadata::text FROM audit_log WHERE customer_id = $1 AND action = 'device.delete' AND target_id = $2`, cust, d1).Scan(&meta); err != nil || !strings.Contains(meta, `"tag_state": "none"`) && !strings.Contains(meta, `"tag_state":"none"`) {
@@ -294,7 +313,8 @@ func TestLensDeviceCreateDelete(t *testing.T) {
 		t.Errorf("link row kept after delete: %s", got)
 	}
 	code, d3, state := create("ext-1")
-	if code != 201 || state != "tagged" {
+	q(`UPDATE integration_devices SET tag_state = 'tagged' WHERE device_id = $1 RETURNING 'x'`, d3)
+	if code != 201 || state != "pending" {
 		t.Fatalf("relink ext-1 = %d state %q", code, state)
 	}
 

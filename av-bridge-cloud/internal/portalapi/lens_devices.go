@@ -7,7 +7,6 @@ package portalapi
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"strings"
 
@@ -15,7 +14,6 @@ import (
 
 	"github.com/dloomes/av-bridge-cloud/internal/audit"
 	"github.com/dloomes/av-bridge-cloud/internal/db"
-	"github.com/dloomes/av-bridge-cloud/internal/integrations/polylens"
 	"github.com/dloomes/av-bridge-cloud/internal/portalauth"
 )
 
@@ -190,40 +188,30 @@ func (h *Handler) createLensDevice(w http.ResponseWriter, r *http.Request, req c
 		return
 	}
 
+	// Lens rejects a freshly created tag for several seconds, so tagging is
+	// left to the poller, which retries. A tagging failure never blocks linking.
 	tagState := "none"
 	if tagging {
-		// Best effort: a tagging failure never blocks linking. The external
-		// id was read from the stored account a moment ago.
-		tagErr := ""
-		tagState = "tagged"
-		tctx, tcancel := context.WithTimeout(r.Context(), lensTimeout)
-		if err := client.AddTag(tctx, cur.AccountID, req.ExternalID, lensTagPrefix+id); err != nil {
-			h.log.Warn("poly lens tagging failed", "device_id", id, "error", err)
-			tagState, tagErr = "failed", "Poly Lens did not accept the tag"
-			if errors.Is(err, polylens.ErrForbidden) {
-				tagErr = "Lens role can't tag devices"
-			}
-		}
-		tcancel()
-		// The response reflects what is stored: if the state cannot be
-		// recorded (after one retry) the row still says none.
-		if !h.setLensTagState(r, id, tagState, tagErr) && !h.setLensTagState(r, id, tagState, tagErr) {
+		tagState = "pending"
+		if !h.markLensTagPending(r, id) && !h.markLensTagPending(r, id) {
 			tagState = "none"
 		}
 	}
 	writeJSON(w, http.StatusCreated, map[string]string{"id": id, "tag_state": tagState})
 }
 
-func (h *Handler) setLensTagState(r *http.Request, deviceID, state, errMsg string) bool {
+// markLensTagPending asks the poller to tag the device. It reports whether the
+// request was stored.
+func (h *Handler) markLensTagPending(r *http.Request, deviceID string) bool {
 	p, _ := portalauth.From(r.Context())
 	err := h.store.WithTenantScope(r.Context(), p.CustomerID, principalScope(p), func(tx pgx.Tx) error {
 		_, err := tx.Exec(r.Context(),
-			`UPDATE integration_devices SET tag_state = $2, tag_error = NULLIF($3,'') WHERE device_id = $1`,
-			deviceID, state, errMsg)
+			`UPDATE integration_devices SET tag_state = 'pending', tag_error = NULL, tag_requested_at = now()
+			  WHERE device_id = $1`, deviceID)
 		return err
 	})
 	if err != nil {
-		h.log.Error("record lens tag state failed", "device_id", deviceID, "error", err)
+		h.log.Error("record lens tag request failed", "device_id", deviceID, "error", err)
 		return false
 	}
 	return true
@@ -248,7 +236,7 @@ func (h *Handler) releaseLensTag(r *http.Request, deviceID string) string {
 		h.log.Error("load lens link failed", "device_id", deviceID, "error", err)
 		return ""
 	}
-	if link == nil || link.TagState != "tagged" {
+	if link == nil || (link.TagState != "tagged" && link.TagState != "pending") {
 		return ""
 	}
 	if !integrationConnected(integ) || integ.ID != link.IntegrationID {
@@ -261,7 +249,16 @@ func (h *Handler) releaseLensTag(r *http.Request, deviceID string) string {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), lensTimeout)
 	defer cancel()
-	if err := h.lensClient(integ.ClientID, string(plain)).RemoveTag(ctx, integ.AccountID, link.ExternalID, lensTagPrefix+deviceID); err != nil {
+	client := h.lensClient(integ.ClientID, string(plain))
+	if link.TagState == "pending" {
+		// The poller may already have created the tag: best-effort delete by
+		// name. Nothing was assigned, so nothing is left behind.
+		if err := client.DeleteTagByName(ctx, integ.AccountID, lensTagPrefix+deviceID); err != nil {
+			h.log.Warn("poly lens pending tag cleanup failed", "device_id", deviceID, "error", err)
+		}
+		return "none"
+	}
+	if err := client.RemoveTag(ctx, integ.AccountID, link.ExternalID, lensTagPrefix+deviceID); err != nil {
 		h.log.Warn("poly lens tag removal failed", "device_id", deviceID, "error", err)
 		return "left_behind"
 	}
