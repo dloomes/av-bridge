@@ -4,17 +4,11 @@ import { useState } from "react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
+import { apiMessage } from "@/lib/api-error";
 import type { Integration, LensAccount } from "@/lib/types";
 
 const inputCls =
   "w-full rounded-md border bg-background px-3 py-2 text-sm disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
-
-// The API returns "<status> <text>: <body>"; show only the body.
-export function apiMessage(e: unknown): string {
-  const m = e instanceof Error ? e.message : String(e);
-  const i = m.indexOf(": ");
-  return (i >= 0 ? m.slice(i + 2) : m).trim() || "Something went wrong";
-}
 
 interface Props {
   integration: Integration | null;

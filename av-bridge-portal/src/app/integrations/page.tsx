@@ -9,9 +9,10 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Modal } from "@/components/modal";
 import { useToast } from "@/components/toast";
-import { LensConnectForm, apiMessage } from "@/components/integrations/lens-connect-form";
+import { LensConnectForm } from "@/components/integrations/lens-connect-form";
 import { useSession } from "@/hooks/useSession";
 import { api } from "@/lib/api";
+import { apiMessage } from "@/lib/api-error";
 import type { Integration, IntegrationProvider } from "@/lib/types";
 import { hasPermission } from "@/lib/session";
 import { formatRelative } from "@/lib/utils";
@@ -116,10 +117,13 @@ export default function IntegrationsPage() {
 
       <Modal
         open={editing}
-        onClose={closeEditor}
+        onClose={() => {
+          // Escape also reaches this modal while the disconnect confirm is open.
+          if (!confirmingDisconnect) closeEditor();
+        }}
         title={lensConnected ? "Poly Lens" : "Connect Poly Lens"}
         wide={false}
-        dirty={dirty}
+        dirty={dirty && !confirmingDisconnect}
       >
         {editing && (
           <LensConnectForm
