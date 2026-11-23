@@ -64,6 +64,9 @@ const (
 	// dashboard.share — publish, edit and delete the organisation's
 	// shared dashboards. Personal dashboards need only view.dashboard.
 	PermDashboardShare = "dashboard.share"
+	// integration.manage - connect and configure vendor integrations
+	// (Poly Lens) and link their devices.
+	PermIntegrationManage = "integration.manage"
 )
 
 // Outbound notifications — channel CRUD is the manage side; test is the
@@ -151,6 +154,7 @@ var KnownPermissions = map[string]struct{}{
 	PermDeviceCRUD:         {},
 	PermDeviceRemoteAccess: {},
 	PermDashboardShare:     {},
+	PermIntegrationManage:  {},
 	PermHierarchyCRUD:      {},
 	PermCollectorCRUD:      {},
 	PermViewCollectorLogs:  {},

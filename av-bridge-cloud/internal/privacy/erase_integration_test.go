@@ -209,6 +209,8 @@ func TestErase(t *testing.T) {
 	exec(`INSERT INTO dashboards (customer_id, owner_user_id, name, created_by) VALUES ($1, $2, 'Old', 'alice@example.com')`, a, former)
 	shared := q(`INSERT INTO dashboards (customer_id, name, created_by) VALUES ($1, 'Estate', 'alice@example.com') RETURNING id::text`, a)
 	exec(`INSERT INTO dashboards (customer_id, owner_user_id, name, created_by) VALUES ($1, $2, 'B', 'alice@example.com')`, b, aliceB)
+	exec(`INSERT INTO integrations (customer_id, provider, created_by, updated_by) VALUES ($1, 'poly_lens', 'alice@example.com', 'ALICE@example.com')`, a)
+	exec(`INSERT INTO integrations (customer_id, provider, created_by, updated_by) VALUES ($1, 'poly_lens', 'alice@example.com', 'alice@example.com')`, b)
 	exec(`INSERT INTO dashboard_display_links (customer_id, name, token_hash, dashboard_ids, created_by)
 		VALUES ($1, 'Wall', $2, ARRAY[$3::uuid], 'ALICE@example.com')`, a, "ed-"+shared, shared)
 	exec(`INSERT INTO firmware_targets (customer_id, make, model, updated_by) VALUES ($1, 'Cisco', 'Room Kit', 'alice@example.com')`, a)

@@ -118,6 +118,8 @@ var Personal = []Entry{
 	{Table: "dashboards", Column: "owner_user_id", Key: KeyUserID, Category: "account", Action: ActDeleteRow, Scoped: true},
 	{Table: "dashboard_display_links", Column: "created_by", Key: KeyEmail, Category: "activity", Action: ActReplace, Scoped: true},
 	{Table: "firmware_targets", Column: "updated_by", Key: KeyEmail, Category: "activity", Action: ActReplace, Scoped: true},
+	{Table: "integrations", Column: "created_by", Key: KeyEmail, Category: "activity", Action: ActReplace, Scoped: true},
+	{Table: "integrations", Column: "updated_by", Key: KeyEmail, Category: "activity", Action: ActReplace, Scoped: true},
 	{Table: "schedule_date", Column: "created_by", Key: KeyEmail, Category: "activity", Action: ActReplace, Scoped: true},
 
 	// The roadmap is global (no customer), so these are not Scoped; only
@@ -186,6 +188,8 @@ var NotPersonal = []Exempt{
 	{"locations", "name", "location name, not a person"},
 	{"nightly_step_result", "step_name", "check step name"},
 	{"nightly_test_routine", "name", "routine name"},
+	{"integration_devices", "external_name", "device name in the vendor's system, not a person"},
+	{"integrations", "account_name", "vendor account name, an organisation"},
 	{"notification_channels", "name", "channel label"},
 	{"regions", "name", "region name"},
 	{"roadmap_periods", "name", "period name"},
