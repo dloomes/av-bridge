@@ -458,9 +458,13 @@ func main() {
 		go collectorWatcher.Run(sweeperCtx)
 	}
 
-	// Poly Lens poller — status and readings of Teams Rooms devices that
-	// have no Collector. Task 8 passes an alert evaluator; nil until then.
-	lensPoller := integrations.NewPoller(store.AdminPool(), cipher, relay, nil, cfg.IntegrationPollInterval, log)
+	// Poly Lens poller - status and readings of Teams Rooms devices that
+	// have no Collector. The alerter opens and clears their alerts.
+	var lensAlerts integrations.AlertEvaluator
+	if background {
+		lensAlerts = integrations.NewAlerter(store.AdminPool(), dispatcher, time.Now, log)
+	}
+	lensPoller := integrations.NewPoller(store.AdminPool(), cipher, relay, lensAlerts, cfg.IntegrationPollInterval, log)
 	if background {
 		go lensPoller.Run(sweeperCtx)
 	}
