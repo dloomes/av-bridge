@@ -41,10 +41,12 @@ interface Props {
 // CallBadge shows whether a codec is in a call — "In a call", "Ringing",
 // "Idle" — next to its status.
 export function CallBadge({ type, activeCalls, callState, status, className }: Props) {
-  if ((type !== "conferencing" && type !== "teams_room") || status !== "online") return null;
-  // Poly Lens says "unknown" when it did not report a call state: show
+  const room = type === "teams_room" || type === "zoom_room";
+  if ((type !== "conferencing" && !room) || status !== "online") return null;
+  // Poly Lens says "unknown" when it did not report a call state (and a room
+  // system may not report one at all): show
   // nothing rather than guessing "Idle".
-  if (type === "teams_room" && (typeof callState !== "string" || callState.toLowerCase() === "unknown")) return null;
+  if (room && (typeof callState !== "string" || callState.toLowerCase() === "unknown")) return null;
   const calls = typeof activeCalls === "number" ? activeCalls : undefined;
   const state = typeof callState === "string" ? callState.toLowerCase() : "";
   let call = CALL_STATES[state];

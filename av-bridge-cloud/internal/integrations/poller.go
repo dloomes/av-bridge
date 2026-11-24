@@ -1,7 +1,8 @@
 // Package integrations runs the background work for vendor-cloud
-// integrations. The poller reads Poly Lens for every linked Teams Room and
-// writes status and readings the same way Collector ingest does, so the
-// portal, alerts and reports treat Lens devices like any other.
+// integrations. The poller reads each provider's cloud (Poly Lens, Neat
+// Pulse) for every linked room device and writes status and readings the
+// same way Collector ingest does, so the portal, alerts and reports treat
+// these devices like any other.
 package integrations
 
 import (
@@ -36,6 +37,9 @@ type Readings struct {
 	TeamsHealth        string
 	// Source goes into notification payloads; empty means poly_lens.
 	Source string
+	// Label names the kind of room in alert messages ("Zoom Room"); empty
+	// means "Teams Room".
+	Label string
 }
 
 // AlertEvaluator opens and clears alerts from a device's latest readings.
@@ -52,7 +56,37 @@ const (
 	msgForbidden    = "Poly Lens role lacks permission"
 )
 
-// Poller polls every Poly Lens integration on an interval. It runs as the
+// Providers the poller reads.
+const (
+	ProviderPolyLens  = "poly_lens"
+	ProviderNeatPulse = "neat_pulse"
+)
+
+// providerText is the fixed wording of one provider's failures, stored on the
+// integration and shown as the reason a device is unknown.
+type providerText struct {
+	unreachable, notFound, rejected, noSecret, forbidden string
+	// rejectedOnDevices shows the rejected message on the devices too (Neat
+	// answers 403 both for a bad key and for a key without Read access).
+	rejectedOnDevices bool
+}
+
+var providerTexts = map[string]providerText{
+	ProviderPolyLens: {unreachable: msgUnreachable, notFound: msgNotFound, rejected: msgRejected,
+		noSecret: msgNoSecret, forbidden: msgForbidden},
+	ProviderNeatPulse: {unreachable: "Neat Pulse unreachable", notFound: "Not found in this Neat Pulse organisation",
+		rejected: "Neat Pulse rejected the API key", noSecret: "Stored Neat Pulse API key could not be read",
+		rejectedOnDevices: true},
+}
+
+func textFor(provider string) providerText {
+	if t, ok := providerTexts[provider]; ok {
+		return t
+	}
+	return providerTexts[ProviderPolyLens]
+}
+
+// Poller polls every vendor-cloud integration on an interval. It runs as the
 // admin (cross-tenant) pool and scopes each device write to its customer.
 type Poller struct {
 	admin    *pgxpool.Pool
@@ -63,6 +97,7 @@ type Poller struct {
 	log      *slog.Logger
 
 	tokenURL, graphqlURL string
+	neatBaseURL          string
 	// onlyCustomers limits a pass to these customers (tests sharing a database).
 	onlyCustomers []string
 	// timeout bounds one integration's calls to Lens; zero means the default.
@@ -70,6 +105,7 @@ type Poller struct {
 
 	mu      sync.Mutex
 	clients map[string]cachedClient
+	neat    map[string]*neatState // integration id -> Neat client and caches
 }
 
 type cachedClient struct {
@@ -86,7 +122,20 @@ const maxLensWait = 20 * time.Second
 
 func NewPoller(admin *pgxpool.Pool, cipher secrets.Cipher, live wsfanout.Publisher, alerts AlertEvaluator, interval time.Duration, log *slog.Logger) *Poller {
 	return &Poller{admin: admin, cipher: cipher, live: live, alerts: alerts, interval: interval, log: log,
-		clients: map[string]cachedClient{}}
+		clients: map[string]cachedClient{}, neat: map[string]*neatState{}}
+}
+
+// SetOnlyCustomers limits each pass to these customers (tests that share a
+// database with others). Production leaves it unset: every customer.
+func (p *Poller) SetOnlyCustomers(ids ...string) *Poller {
+	p.onlyCustomers = ids
+	return p
+}
+
+// SetNeatBaseURL points the Neat Pulse client at another base URL (tests).
+func (p *Poller) SetNeatBaseURL(u string) *Poller {
+	p.neatBaseURL = u
+	return p
 }
 
 // SetLensBaseURLs points the Lens client at other endpoints (tests).
@@ -117,9 +166,9 @@ func (p *Poller) Run(ctx context.Context) {
 }
 
 type integrationRow struct {
-	id, customerID, status, clientID, accountID string
-	secretEnc                                   []byte
-	allowTagging                                bool
+	id, customerID, provider, status, clientID, accountID string
+	secretEnc                                             []byte
+	allowTagging                                          bool
 }
 
 type linkedDevice struct {
@@ -131,12 +180,12 @@ type linkedDevice struct {
 // COALESCE is what makes an unset filter mean "every customer".
 const onlyCustomersSQL = `(COALESCE(cardinality($1::text[]), 0) = 0 OR customer_id::text = ANY($1))`
 
-// PollOnce does one pass over every Poly Lens integration. A failure on one
-// integration never stops the others.
+// PollOnce does one pass over every integration of every provider the poller
+// reads. A failure on one integration never stops the others.
 func (p *Poller) PollOnce(ctx context.Context) error {
 	rows, err := p.admin.Query(ctx, `
-		SELECT id::text, customer_id::text, status, COALESCE(client_id, ''), COALESCE(account_id, ''), secret_enc, allow_tagging
-		  FROM integrations WHERE provider = 'poly_lens'
+		SELECT id::text, customer_id::text, provider, status, COALESCE(client_id, ''), COALESCE(account_id, ''), secret_enc, allow_tagging
+		  FROM integrations WHERE provider IN ('`+ProviderPolyLens+`', '`+ProviderNeatPulse+`')
 		   AND `+db.CustomerActiveSQL("customer_id")+`
 		   AND `+onlyCustomersSQL, p.onlyCustomers)
 	if err != nil {
@@ -145,7 +194,7 @@ func (p *Poller) PollOnce(ctx context.Context) error {
 	var ints []integrationRow
 	for rows.Next() {
 		var r integrationRow
-		if err := rows.Scan(&r.id, &r.customerID, &r.status, &r.clientID, &r.accountID, &r.secretEnc, &r.allowTagging); err != nil {
+		if err := rows.Scan(&r.id, &r.customerID, &r.provider, &r.status, &r.clientID, &r.accountID, &r.secretEnc, &r.allowTagging); err != nil {
 			rows.Close()
 			return err
 		}
@@ -217,6 +266,11 @@ func (p *Poller) pruneClients(ints []integrationRow) {
 			delete(p.clients, id)
 		}
 	}
+	for id := range p.neat {
+		if !live[id] {
+			delete(p.neat, id)
+		}
+	}
 }
 
 func (p *Poller) linked(ctx context.Context, in integrationRow) ([]linkedDevice, error) {
@@ -256,10 +310,20 @@ func (p *Poller) pollIntegration(ctx context.Context, in integrationRow) error {
 	}
 	secret, err := p.cipher.Decrypt(in.secretEnc)
 	if err != nil {
-		p.failIntegration(ctx, in, devs, msgNoSecret)
+		p.failIntegration(ctx, in, devs, textFor(in.provider).noSecret)
 		return nil
 	}
-	client := p.clientFor(in, string(secret))
+	switch in.provider {
+	case ProviderNeatPulse:
+		return p.pollNeat(ctx, in, devs, string(secret))
+	default:
+		return p.pollLens(ctx, in, devs, string(secret))
+	}
+}
+
+// pollLens reads the linked devices from Poly Lens.
+func (p *Poller) pollLens(ctx context.Context, in integrationRow, devs []linkedDevice, secret string) error {
+	client := p.clientFor(in, secret)
 	ids := make([]string, len(devs))
 	for i, d := range devs {
 		ids[i] = d.externalID
@@ -294,7 +358,7 @@ func (p *Poller) pollIntegration(ctx context.Context, in integrationRow) error {
 		if f, ok := byID[d.externalID]; ok {
 			p.writeDevice(ctx, in, d, f)
 		} else {
-			p.markUnknown(ctx, in, d, msgNotFound, true)
+			p.markUnknown(ctx, in, d, textFor(in.provider).notFound, true)
 		}
 	}
 	p.tagPending(ctx, in, client)
@@ -323,9 +387,10 @@ func (p *Poller) failIntegration(ctx context.Context, in integrationRow, devs []
 	if err := p.setIntegration(ctx, in, msg); err != nil {
 		p.log.Warn("mark integration error failed", "integration", in.id, "error", err)
 	}
-	reason := msgUnreachable
-	if msg == msgForbidden {
-		reason = msg // a role problem is not an outage
+	t := textFor(in.provider)
+	reason := t.unreachable
+	if (t.forbidden != "" && msg == t.forbidden) || (t.rejectedOnDevices && msg == t.rejected) {
+		reason = msg // a role or key problem is not an outage
 	}
 	for _, d := range devs {
 		p.markUnknown(ctx, in, d, reason, true)
@@ -392,12 +457,27 @@ func (p *Poller) writeDevice(ctx context.Context, in integrationRow, d linkedDev
 		status = "online"
 	}
 	metrics, signedIn := readingsFor(f)
+	p.writeReadings(ctx, in, d, status, metrics,
+		identity{make: "Poly", model: f.Model, serial: f.SerialNumber, firmware: f.SoftwareVersion, mac: f.MACAddress},
+		Readings{Status: status, SignedIn: signedIn, PeripheralsLinked: f.PeripheralsLinked, LinkedDevices: len(f.Connections),
+			MissingPeripherals: missingPeripherals(f), TeamsHealth: f.TeamsHealth})
+}
+
+// identity is the inventory a provider reports for a device; empty values
+// leave the stored column as it is (make only fills an empty one).
+type identity struct {
+	make, model, serial, firmware, mac string
+}
+
+// writeReadings stores one device's status, readings and identity, keeps a
+// telemetry row, publishes the change and evaluates its alerts.
+func (p *Poller) writeReadings(ctx context.Context, in integrationRow, d linkedDevice, status string, metrics map[string]any, id identity, r Readings) {
 	b, _ := json.Marshal(metrics)
 	wrote := false
 	err := p.tenantTx(ctx, in.customerID, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx, `
 			UPDATE devices SET
-			    make             = COALESCE(NULLIF(make, ''), 'Poly'),
+			    make             = COALESCE(NULLIF(make, ''), NULLIF($9, '')),
 			    latest_status    = $3,
 			    latest_metrics   = $4::jsonb,
 			    last_seen_at     = now(),
@@ -407,7 +487,7 @@ func (p *Poller) writeDevice(ctx context.Context, in integrationRow, d linkedDev
 			    firmware_version = COALESCE(NULLIF($7, ''), firmware_version),
 			    mac_address      = COALESCE(NULLIF($8, ''), mac_address)
 			 WHERE id = $1 AND customer_id = $2 AND deleted_at IS NULL`,
-			d.deviceID, in.customerID, status, string(b), f.Model, f.SerialNumber, f.SoftwareVersion, f.MACAddress)
+			d.deviceID, in.customerID, status, string(b), id.model, id.serial, id.firmware, id.mac, id.make)
 		if err != nil {
 			return err
 		}
@@ -421,15 +501,14 @@ func (p *Poller) writeDevice(ctx context.Context, in integrationRow, d linkedDev
 		return err
 	})
 	if err != nil {
-		p.log.Warn("write lens device failed", "device", d.deviceID, "error", err)
+		p.log.Warn("write integration device failed", "device", d.deviceID, "provider", in.provider, "error", err)
 		return
 	}
 	if !wrote {
 		return
 	}
 	p.publish(in, d, status, metrics)
-	p.evaluate(ctx, in, d, Readings{Status: status, SignedIn: signedIn, PeripheralsLinked: f.PeripheralsLinked, LinkedDevices: len(f.Connections),
-		MissingPeripherals: missingPeripherals(f), TeamsHealth: f.TeamsHealth})
+	p.evaluate(ctx, in, d, r)
 }
 
 func (p *Poller) publish(in integrationRow, d linkedDevice, status string, metrics map[string]any) {

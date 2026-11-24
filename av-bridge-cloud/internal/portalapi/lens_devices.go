@@ -52,7 +52,6 @@ func (h *Handler) createLensDevice(w http.ResponseWriter, r *http.Request, req c
 		writeErr(w, http.StatusBadRequest, msg)
 		return
 	}
-	p, _ := portalauth.From(r.Context())
 	req.ExternalID = strings.TrimSpace(req.ExternalID)
 
 	cur, ok := h.loadIntegration(w, r)
@@ -77,22 +76,63 @@ func (h *Handler) createLensDevice(w http.ResponseWriter, r *http.Request, req c
 		h.lensFailure(w, err)
 		return
 	}
-	type lensInfo struct{ name, serial, mac, model string }
-	var lens *lensInfo
+	var lens *linkedInfo
 	for _, d := range found {
 		if d.ID == req.ExternalID {
-			lens = &lensInfo{d.Name, d.SerialNumber, d.MACAddress, d.Model}
+			lens = &linkedInfo{name: d.Name, serial: d.SerialNumber, mac: d.MACAddress, model: d.Model}
 		}
 	}
 	if lens == nil {
 		writeErr(w, http.StatusBadRequest, "external_id not found in the connected Poly Lens account")
 		return
 	}
-	name := strings.TrimSpace(req.Name)
-	if name == "" {
-		name = lens.name
+	id, tagging, ok := h.insertLinkedDevice(w, r, cur, req, linkSpec{
+		source: sourcePolyLens, typ: deviceTypeTeamsRoom, platform: req.Platform, vendor: "Poly Lens", info: *lens,
+	})
+	if !ok {
+		return
 	}
 
+	// Lens rejects a freshly created tag for several seconds, so tagging is
+	// left to the poller, which retries. A tagging failure never blocks linking.
+	tagState := "none"
+	if tagging {
+		// One retry: the response must match what was stored.
+		tagState = "none"
+		for attempt := 0; attempt < 2; attempt++ {
+			if h.markLensTagPending(r, id) {
+				tagState = "pending"
+				break
+			}
+		}
+	}
+	writeJSON(w, http.StatusCreated, map[string]string{"id": id, "tag_state": tagState})
+}
+
+// linkedInfo is what the vendor cloud says about a device being linked.
+type linkedInfo struct{ name, serial, mac, model string }
+
+// linkSpec describes a vendor-cloud device to create and link.
+type linkSpec struct {
+	source, typ, platform string
+	vendor                string // "Poly Lens", "Neat Pulse" (messages)
+	info                  linkedInfo
+	meta                  map[string]any // extra audit metadata
+}
+
+// insertLinkedDevice creates a device with no Collector and its integration
+// link, in one transaction that locks the integration row (serialising
+// concurrent links and proving the account and credentials are the ones the
+// caller's lookup used). It writes the error response itself and returns
+// ok=false when it did; otherwise the new device id and whether the
+// integration allows tagging.
+func (h *Handler) insertLinkedDevice(w http.ResponseWriter, r *http.Request, cur *db.Integration, req createDeviceReq, spec linkSpec) (string, bool, bool) {
+	p, _ := portalauth.From(r.Context())
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		name = spec.info.name
+	}
+	lens := spec.info
 	var (
 		id        string
 		roomBad   bool
@@ -103,9 +143,7 @@ func (h *Handler) createLensDevice(w http.ResponseWriter, r *http.Request, req c
 		tagging   bool
 	)
 	if !h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
-		// Lock the integration row: serialises concurrent links and proves
-		// the account and credentials are the ones the lookup above used.
-		locked, err := db.GetIntegrationForUpdate(ctx, tx, providerPolyLens)
+		locked, err := db.GetIntegrationForUpdate(ctx, tx, cur.Provider)
 		if err != nil {
 			return err
 		}
@@ -137,7 +175,7 @@ func (h *Handler) createLensDevice(w http.ResponseWriter, r *http.Request, req c
 		if req.RoomID != "" {
 			roomParam = req.RoomID
 		}
-		assetParam, bad, aerr, err := resolveDeviceAsset(ctx, tx, p.CustomerID, roomParam, "teams_room", name, req.AssetID, req.Asset)
+		assetParam, bad, aerr, err := resolveDeviceAsset(ctx, tx, p.CustomerID, roomParam, spec.typ, name, req.AssetID, req.Asset)
 		if err != nil {
 			return err
 		}
@@ -147,9 +185,10 @@ func (h *Handler) createLensDevice(w http.ResponseWriter, r *http.Request, req c
 		}
 		if err := tx.QueryRow(ctx, `
 			INSERT INTO devices (customer_id, source, platform, room_id, name, type, serial_number, mac_address, tags, asset_id)
-			VALUES ($1, 'poly_lens', $2, $3, NULLIF($4,''), 'teams_room', NULLIF($5,''), NULLIF($6,''), $7::jsonb, $8)
+			VALUES ($1, $9, $2, $3, NULLIF($4,''), $10, NULLIF($5,''), NULLIF($6,''), $7::jsonb, $8)
 			RETURNING id::text`,
-			p.CustomerID, req.Platform, roomParam, name, lens.serial, lens.mac, jsonOrNil(req.Tags), assetParam).Scan(&id); err != nil {
+			p.CustomerID, spec.platform, roomParam, name, lens.serial, lens.mac, jsonOrNil(req.Tags), assetParam,
+			spec.source, spec.typ).Scan(&id); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, `
@@ -163,45 +202,31 @@ func (h *Handler) createLensDevice(w http.ResponseWriter, r *http.Request, req c
 		if err != nil {
 			return err
 		}
+		meta := map[string]any{"source": spec.source, "platform": spec.platform, "external_id": req.ExternalID}
+		for k, v := range spec.meta {
+			meta[k] = v
+		}
 		return audit.Record(ctx, tx, p.CustomerID, stampActor(p, audit.Entry{
-			Action: "device.create", TargetKind: "device", TargetID: id, After: after,
-			Metadata: map[string]any{"source": sourcePolyLens, "platform": req.Platform, "external_id": req.ExternalID},
+			Action: "device.create", TargetKind: "device", TargetID: id, After: after, Metadata: meta,
 		}))
 	}) {
-		return
+		return "", false, false
 	}
 	switch {
 	case stale:
 		writeErr(w, http.StatusConflict, "The integration changed; reload and try again")
-		return
 	case roomBad:
 		writeErr(w, http.StatusBadRequest, "room_id not found in this customer")
-		return
 	case assetBad:
 		writeErr(w, http.StatusBadRequest, "asset_id not found in this customer")
-		return
 	case assetErr != nil:
 		writeErr(w, http.StatusBadRequest, assetErr.Error())
-		return
 	case duplicate:
-		writeErr(w, http.StatusConflict, "That Poly Lens device is already linked")
-		return
+		writeErr(w, http.StatusConflict, "That "+spec.vendor+" device is already linked")
+	default:
+		return id, tagging, true
 	}
-
-	// Lens rejects a freshly created tag for several seconds, so tagging is
-	// left to the poller, which retries. A tagging failure never blocks linking.
-	tagState := "none"
-	if tagging {
-		// One retry: the response must match what was stored.
-		tagState = "none"
-		for attempt := 0; attempt < 2; attempt++ {
-			if h.markLensTagPending(r, id) {
-				tagState = "pending"
-				break
-			}
-		}
-	}
-	writeJSON(w, http.StatusCreated, map[string]string{"id": id, "tag_state": tagState})
+	return "", false, false
 }
 
 // markLensTagPending asks the poller to tag the device. It reports whether the

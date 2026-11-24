@@ -35,7 +35,7 @@ import { useSession } from "@/hooks/useSession";
 import { api, API_BASE } from "@/lib/api";
 import { hasPermission } from "@/lib/session";
 import type { DeviceDetail, Telemetry } from "@/lib/types";
-import { DEVICE_TYPE_LABELS } from "@/lib/types";
+import { CLOUD_SOURCE_LABELS, DEVICE_TYPE_LABELS, isCloudSource, isRoomSystemType } from "@/lib/types";
 import { formatRelative, formatTimestamp } from "@/lib/utils";
 
 export default function DeviceDetailPage() {
@@ -89,7 +89,7 @@ export default function DeviceDetailPage() {
 
   // A Teams Room read directly names its Collector on the Source card.
   const directCollectorId =
-    device && device.source !== "poly_lens" && device.type === "teams_room" ? device.collector_id : null;
+    device && !isCloudSource(device.source) && device.type === "teams_room" ? device.collector_id : null;
   useEffect(() => {
     if (!directCollectorId) return;
     const ctrl = new AbortController();
@@ -165,12 +165,13 @@ export default function DeviceDetailPage() {
     );
   }
 
-  // Teams Rooms read from Poly Lens: no Collector, so no commands,
-  // reconnect or remote access; their own pills and cards instead. A
-  // Windows Teams Room a Collector reads directly (mtr_windows) shares the
-  // pills and cards, and keeps the Collector's reconnect.
-  const isLens = device.source === "poly_lens";
-  const isTeamsRoom = isLens || device.type === "teams_room";
+  // Room systems read from a vendor cloud (Poly Lens, Neat Pulse): no
+  // Collector, so no commands, reconnect or remote access; their own pills
+  // and cards instead. A Windows Teams Room a Collector reads directly
+  // (mtr_windows) shares the pills and cards, and keeps the Collector's
+  // reconnect.
+  const isLens = isCloudSource(device.source);
+  const isTeamsRoom = isLens || isRoomSystemType(device.type);
   const lensMetrics = telemetry.data?.metrics;
   const typeText = isTeamsRoom
     ? `${DEVICE_TYPE_LABELS[device.type] ?? device.type}${
@@ -216,7 +217,13 @@ export default function DeviceDetailPage() {
               <span>·</span>
               <span className={isTeamsRoom ? undefined : "capitalize"}>{typeText ?? device.type}</span>
               <span>·</span>
-              <span>{isLens ? "Poly Lens" : isTeamsRoom ? "Direct (WinRM)" : device.protocol}</span>
+              <span>
+                {isCloudSource(device.source)
+                  ? CLOUD_SOURCE_LABELS[device.source]
+                  : isTeamsRoom
+                    ? "Direct (WinRM)"
+                    : device.protocol}
+              </span>
               {device.tags?.make && (
                 <>
                   <span>·</span>

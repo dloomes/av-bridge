@@ -43,10 +43,10 @@ type publicDevice struct {
 	Building       string            `json:"building,omitempty"`
 	LastSeenAt     *time.Time        `json:"last_seen_at,omitempty"`
 	Tags           map[string]string `json:"tags,omitempty"`
-	// Source: "collector" (polled by a Collector) or "poly_lens" (a
-	// device with no Collector, managed through the Poly Lens
-	// integration). Platform: "windows" or "android" for Teams Rooms
-	// devices.
+	// Source: "collector" (polled by a Collector), "poly_lens" or
+	// "neat_pulse" (a device with no Collector, read through that
+	// integration). Platform: "windows" or "android" for Teams Rooms and
+	// Zoom Rooms devices.
 	Source   string `json:"source"`
 	Platform string `json:"platform,omitempty"`
 }

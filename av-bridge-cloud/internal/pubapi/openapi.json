@@ -534,7 +534,7 @@
         "properties": {
           "id": { "type": "string", "format": "uuid" },
           "name": { "type": "string", "description": "The device's display name. Falls back to the adapter's reported id when no override is set in the portal." },
-          "type": { "type": "string", "description": "Device category: `display`, `conferencing`, `audio`, `camera`, `control`, `avoip` (AV-over-IP), `power` or `projector`." },
+          "type": { "type": "string", "description": "Device category: `display`, `conferencing`, `audio`, `camera`, `control`, `avoip` (AV-over-IP), `power`, `projector`, `teams_room` (Microsoft Teams Room) or `zoom_room` (Zoom Room)." },
           "protocol": { "type": "string", "description": "The adapter the Collector uses for the device, e.g. `sony_bravia`, `tesira`, `cisco_roomos`, `aten_pdu`." },
           "status": { "type": "string", "enum": ["online", "offline", "unknown", "switched_off"], "description": "`unknown` when the device's Collector isn't reporting; `switched_off` while Room Readiness has it switched off for the night." },
           "ip_address": { "type": "string" },
@@ -551,8 +551,8 @@
           "building": { "type": "string" },
           "last_seen_at": { "type": ["string", "null"], "format": "date-time" },
           "tags": { "type": "object", "additionalProperties": { "type": "string" } },
-          "source": { "type": "string", "enum": ["collector", "poly_lens"], "description": "`collector` for devices polled by a Collector; `poly_lens` for devices with no Collector, managed through the Poly Lens integration." },
-          "platform": { "type": "string", "enum": ["windows", "android"], "description": "The device's operating platform, for Microsoft Teams Rooms devices. Absent otherwise." }
+          "source": { "type": "string", "enum": ["collector", "poly_lens", "neat_pulse"], "description": "`collector` for devices polled by a Collector; `poly_lens` and `neat_pulse` for devices with no Collector, read through the Poly Lens or Neat Pulse integration." },
+          "platform": { "type": "string", "enum": ["windows", "android"], "description": "The device's operating platform, for Microsoft Teams Rooms and Zoom Rooms devices. Absent otherwise." }
         },
         "example": {
           "id": "3f8b0f2c-1c1e-4c6b-9b2a-d0d9d4d1d3d4",

@@ -11,6 +11,7 @@ const (
 	protocolMTRWindows   = "mtr_windows"
 	msgTeamsRoomProtocol = "a Collector Teams Room uses protocol mtr_windows, and mtr_windows is for Teams Rooms only"
 	msgMTRCredentials    = "username and password are required for protocol mtr_windows (a local account on the Teams Rooms PC)"
+	msgZoomRoomSource    = "a Zoom Room is added through Neat Pulse; no Collector adapter reads one"
 )
 
 // teamsRoomAlertKeys are the alerts a Teams Room raises (ingest and the
@@ -28,6 +29,9 @@ func validateCollectorTeamsRoom(req *createDeviceReq) string {
 	}
 	if req.ExternalID != "" {
 		return "external_id applies to Poly Lens devices only"
+	}
+	if req.Type == deviceTypeZoomRoom {
+		return msgZoomRoomSource
 	}
 	teams := req.Type == deviceTypeTeamsRoom
 	if teams != (req.Protocol == protocolMTRWindows) {

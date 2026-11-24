@@ -546,6 +546,11 @@ func NewServer(addr string, ingest, adminCollectors http.Handler, portal *Portal
 		mux.Handle("PUT /api/v1/integrations/poly_lens", wrapPerm(portalauth.PermIntegrationManage, portal.Portal.PutPolyLens))
 		mux.Handle("DELETE /api/v1/integrations/poly_lens", wrapPerm(portalauth.PermIntegrationManage, portal.Portal.DeletePolyLens))
 		mux.Handle("GET /api/v1/integrations/poly_lens/devices", wrapPerm(portalauth.PermDeviceCRUD, portal.Portal.ListPolyLensDevices))
+		// Neat Pulse: the same permissions as Poly Lens.
+		mux.Handle("POST /api/v1/integrations/neat_pulse/test", wrapPerm(portalauth.PermIntegrationManage, portal.Portal.TestNeatPulse))
+		mux.Handle("PUT /api/v1/integrations/neat_pulse", wrapPerm(portalauth.PermIntegrationManage, portal.Portal.PutNeatPulse))
+		mux.Handle("DELETE /api/v1/integrations/neat_pulse", wrapPerm(portalauth.PermIntegrationManage, portal.Portal.DeleteNeatPulse))
+		mux.Handle("GET /api/v1/integrations/neat_pulse/devices", wrapPerm(portalauth.PermDeviceCRUD, portal.Portal.ListNeatPulseDevices))
 
 		// Public-API token management. Portal-side CRUD for the /pub/v1
 		// integration API keys — list gates on api_token.view (so an

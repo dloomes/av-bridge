@@ -1,11 +1,36 @@
 export type DeviceStatus = "online" | "offline" | "unknown" | "switched_off";
 
-export type DeviceType = "display" | "projector" | "conferencing" | "audio" | "camera" | "control" | "power" | "avoip" | "teams_room";
+export type DeviceType =
+  | "display"
+  | "projector"
+  | "conferencing"
+  | "audio"
+  | "camera"
+  | "control"
+  | "power"
+  | "avoip"
+  | "teams_room"
+  | "zoom_room";
 
 // Every device category, in the order pickers list them, with its label.
 // Mirrors allowedTypes in the cloud (portalapi/admin_handlers.go) and the
 // bridge's config validation.
-export const DEVICE_TYPES: DeviceType[] = ["display", "projector", "conferencing", "audio", "camera", "control", "avoip", "power", "teams_room"];
+export const DEVICE_TYPES: DeviceType[] = ["display", "projector", "conferencing", "audio", "camera", "control", "avoip", "power", "teams_room", "zoom_room"];
+
+// Room systems (Teams Rooms, Zoom Rooms): they get the room cards and pills
+// rather than the Collector telemetry grid and commands.
+export const ROOM_SYSTEM_TYPES: DeviceType[] = ["teams_room", "zoom_room"];
+export const isRoomSystemType = (t: string | undefined | null): boolean =>
+  t === "teams_room" || t === "zoom_room";
+
+// Devices read from a vendor cloud (no Collector).
+export type CloudSource = "poly_lens" | "neat_pulse";
+export const CLOUD_SOURCE_LABELS: Record<CloudSource, string> = {
+  poly_lens: "Poly Lens",
+  neat_pulse: "Neat Pulse",
+};
+export const isCloudSource = (s: string | undefined | null): s is CloudSource =>
+  s === "poly_lens" || s === "neat_pulse";
 
 export const DEVICE_TYPE_LABELS: Record<DeviceType, string> = {
   display: "Display",
@@ -17,6 +42,7 @@ export const DEVICE_TYPE_LABELS: Record<DeviceType, string> = {
   avoip: "AV-over-IP",
   power: "Power",
   teams_room: "Microsoft Teams Room",
+  zoom_room: "Zoom Room",
 };
 
 export interface DeviceIntegration {
@@ -37,11 +63,11 @@ export interface DeviceSummary {
   building?: string;
   room_id?: string | null;
   collector_id?: string | null;
-  // "collector" (polled by a Collector) or "poly_lens" (read from Poly Lens
-  // by the cloud; no Collector). platform is set for Teams Rooms (a
-  // Collector reads Windows ones directly, protocol mtr_windows);
-  // integration for Poly Lens devices.
-  source?: "collector" | "poly_lens";
+  // "collector" (polled by a Collector), "poly_lens" or "neat_pulse" (read
+  // from that vendor cloud by the cloud; no Collector). platform is set for
+  // Teams/Zoom Rooms (a Collector reads Windows ones directly, protocol
+  // mtr_windows); integration for vendor-cloud devices.
+  source?: "collector" | CloudSource;
   platform?: "windows" | "android" | null;
   integration?: DeviceIntegration | null;
   // Derived status of the device's collector. When status="unknown"
@@ -164,6 +190,17 @@ export interface CreateLensDeviceBody {
   source: "poly_lens";
   type: "teams_room";
   platform: "windows" | "android";
+  external_id: string;
+  name: string;
+  room_id?: string;
+}
+
+// Wire shape for POST /api/v1/devices with source "neat_pulse": a room's
+// main Neat unit read from Neat Pulse (Android). The type follows the Pulse
+// primary mode; it is sent only when Pulse doesn't give one.
+export interface CreateNeatDeviceBody {
+  source: "neat_pulse";
+  type?: "teams_room" | "zoom_room";
   external_id: string;
   name: string;
   room_id?: string;
@@ -977,7 +1014,7 @@ export interface RoadmapNewLink {
 
 // ---- Integrations (Poly Lens etc.) ----
 
-export type IntegrationProvider = "poly_lens" | "logitech_sync" | "microsoft_365" | "servicenow";
+export type IntegrationProvider = "poly_lens" | "neat_pulse" | "logitech_sync" | "microsoft_365" | "servicenow";
 export type IntegrationStatus =
   | "connected"
   | "disconnected"
@@ -1030,4 +1067,37 @@ export interface LensDevice {
 export interface LensDevicesResult {
   devices: LensDevice[];
   degraded?: boolean;
+}
+
+// Neat Pulse: the organisation id is the integration's account_id.
+export interface NeatCredentials {
+  org_id: string;
+  api_key?: string;
+}
+
+export interface NeatTestResult {
+  org_id: string;
+  device_count: number;
+}
+
+// One room main unit in the Neat Pulse picker (paired Pads are left out).
+export interface NeatDevice {
+  external_id: string;
+  name: string;
+  model: string;
+  serial: string;
+  room_name: string;
+  location_name: string;
+  region_name: string;
+  connected: boolean;
+  primary_mode: string;
+  // teams_room / zoom_room from the primary mode; "" when Pulse doesn't say.
+  suggested_type: "" | "teams_room" | "zoom_room";
+  linked_device_id?: string;
+  already_monitored_as?: string;
+  already_monitored_device_id?: string;
+}
+
+export interface NeatDevicesResult {
+  devices: NeatDevice[];
 }

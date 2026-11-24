@@ -38,7 +38,7 @@ import type {
   DeviceSummary,
   DeviceType,
 } from "@/lib/types";
-import { DEVICE_TYPE_LABELS, DEVICE_TYPES } from "@/lib/types";
+import { CLOUD_SOURCE_LABELS, DEVICE_TYPE_LABELS, DEVICE_TYPES, isCloudSource } from "@/lib/types";
 
 // /devices — flat listing of every device the caller can see, with
 // query-string filters. Reached via:
@@ -516,7 +516,7 @@ export default function DevicesPage() {
                             {TYPE_LABEL[d.type] ?? d.type}
                           </td>
                           <td className="px-4 py-3.5 align-top text-xs font-mono text-muted-foreground">
-                            {d.integration ? "Poly Lens" : d.protocol}
+                            {isCloudSource(d.source) ? CLOUD_SOURCE_LABELS[d.source] : d.integration ? "Poly Lens" : d.protocol}
                           </td>
                           <td className="px-4 py-3.5 align-top">
                             <Badge

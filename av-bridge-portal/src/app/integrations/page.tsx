@@ -10,6 +10,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Modal } from "@/components/modal";
 import { useToast } from "@/components/toast";
 import { LensConnectForm } from "@/components/integrations/lens-connect-form";
+import { NeatConnectForm } from "@/components/integrations/neat-connect-form";
 import { useSession } from "@/hooks/useSession";
 import { api } from "@/lib/api";
 import { apiMessage } from "@/lib/api-error";
@@ -26,10 +27,16 @@ interface Vendor {
 
 const VENDORS: Vendor[] = [
   { provider: "poly_lens", name: "Poly Lens", category: "Device management cloud", logo: "/integrations/poly.svg" },
+  { provider: "neat_pulse", name: "Neat Pulse", category: "Neat device management cloud (read-only)", logo: "/integrations/neat.svg" },
   { provider: "logitech_sync", name: "Logitech Sync", category: "Device management cloud", logo: "/integrations/logitech.svg" },
   { provider: "microsoft_365", name: "Microsoft 365", category: "Teams Rooms presence, bookings, call quality", logo: "/integrations/microsoft.svg" },
   { provider: "servicenow", name: "ServiceNow", category: "Incidents from alerts", logo: "/integrations/servicenow.svg" },
 ];
+
+// Providers with a connect form on this page, and their names.
+type ManagedProvider = "poly_lens" | "neat_pulse";
+const MANAGED: Record<ManagedProvider, string> = { poly_lens: "Poly Lens", neat_pulse: "Neat Pulse" };
+const isManaged = (p: IntegrationProvider): p is ManagedProvider => p === "poly_lens" || p === "neat_pulse";
 
 export default function IntegrationsPage() {
   const session = useSession();
@@ -38,7 +45,8 @@ export default function IntegrationsPage() {
   const canManage = isVendor || hasPermission(session.user, "integration.manage");
   const [items, setItems] = useState<Integration[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [editing, setEditing] = useState(false);
+  // The provider whose connect form is open.
+  const [editing, setEditing] = useState<ManagedProvider | null>(null);
   const [dirty, setDirty] = useState(false);
   const [confirmingDisconnect, setConfirmingDisconnect] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
@@ -63,11 +71,12 @@ export default function IntegrationsPage() {
   }, [load]);
 
   const byProvider = (p: IntegrationProvider) => items?.find((i) => i.provider === p) ?? null;
-  const lens = byProvider("poly_lens");
-  const lensConnected = lens?.status === "connected" || lens?.status === "error";
+  const current = editing ? byProvider(editing) : null;
+  const currentConnected = current?.status === "connected" || current?.status === "error";
+  const vendorName = editing ? MANAGED[editing] : "";
 
   function closeEditor() {
-    setEditing(false);
+    setEditing(null);
     setDirty(false);
   }
 
@@ -107,7 +116,9 @@ export default function IntegrationsPage() {
                   vendor={v}
                   integration={byProvider(v.provider)}
                   canManage={canManage}
-                  onManage={() => setEditing(true)}
+                  onManage={() => {
+                    if (isManaged(v.provider)) setEditing(v.provider);
+                  }}
                 />
               ))}
             </div>
@@ -116,18 +127,18 @@ export default function IntegrationsPage() {
       </div>
 
       <Modal
-        open={editing}
+        open={editing !== null}
         onClose={() => {
           // Escape also reaches this modal while the disconnect confirm is open.
           if (!confirmingDisconnect) closeEditor();
         }}
-        title={lensConnected ? "Poly Lens" : "Connect Poly Lens"}
+        title={currentConnected ? vendorName : `Connect ${vendorName}`}
         wide={false}
         dirty={dirty && !confirmingDisconnect}
       >
-        {editing && (
+        {editing === "poly_lens" && (
           <LensConnectForm
-            integration={lens}
+            integration={current}
             isVendor={isVendor}
             onCancel={closeEditor}
             onDirty={setDirty}
@@ -142,18 +153,35 @@ export default function IntegrationsPage() {
             }}
           />
         )}
+        {editing === "neat_pulse" && (
+          <NeatConnectForm
+            integration={current}
+            isVendor={isVendor}
+            onCancel={closeEditor}
+            onDirty={setDirty}
+            onSaved={() => {
+              closeEditor();
+              toast({ title: "Neat Pulse saved", variant: "success" });
+              void load();
+            }}
+            onDisconnect={() => {
+              setDisconnectError(null);
+              setConfirmingDisconnect(true);
+            }}
+          />
+        )}
       </Modal>
 
       <Modal
         open={confirmingDisconnect}
         onClose={() => setConfirmingDisconnect(false)}
-        title="Disconnect Poly Lens?"
+        title={`Disconnect ${vendorName}?`}
         wide={false}
       >
         <div className="space-y-4">
           <p className="text-sm">
-            M.A.R.C.U.S. will stop reading from Poly Lens and delete the stored credentials. Devices linked from Poly
-            Lens stay in M.A.R.C.U.S., but their status becomes unknown until you connect again.
+            M.A.R.C.U.S. will stop reading from {vendorName} and delete the stored credentials. Devices linked from{" "}
+            {vendorName} stay in M.A.R.C.U.S., but their status becomes unknown until you connect again.
           </p>
           {disconnectError && (
             <p role="alert" className="text-sm text-destructive">
@@ -171,10 +199,12 @@ export default function IntegrationsPage() {
                 setDisconnecting(true);
                 setDisconnectError(null);
                 try {
-                  await api.disconnectLens();
+                  if (editing === "neat_pulse") await api.disconnectNeat();
+                  else await api.disconnectLens();
                   setConfirmingDisconnect(false);
+                  const name = vendorName;
                   closeEditor();
-                  toast({ title: "Poly Lens disconnected", variant: "success" });
+                  toast({ title: `${name} disconnected`, variant: "success" });
                   void load();
                 } catch (e) {
                   setDisconnectError(apiMessage(e));
@@ -205,7 +235,8 @@ function IntegrationCard({
   onManage: () => void;
 }) {
   const status = integration?.status ?? "not_connected";
-  const isLens = vendor.provider === "poly_lens";
+  // Cloud integrations connected and managed on this page.
+  const isLens = isManaged(vendor.provider);
   const isServiceNow = vendor.provider === "servicenow";
   const connected = status === "connected";
   const active = connected || status === "error";
@@ -227,6 +258,7 @@ function IntegrationCard({
     summary = `${n} ${n === 1 ? "device" : "devices"} linked`;
     if (integration?.last_success_at) summary += ` · checked ${formatRelative(integration.last_success_at)}`;
     if (integration?.account_name) summary = `${integration.account_name} · ${summary}`;
+    else if (vendor.provider === "neat_pulse" && integration?.account_id) summary = `Org ${integration.account_id} · ${summary}`;
   } else if (isServiceNow) {
     summary = connected ? "via Alert channels" : "Set up under Alert channels";
   }

@@ -2,6 +2,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ExternalLink } from "lucide-react";
 import type { DeviceDetail } from "@/lib/types";
+import { isCloudSource } from "@/lib/types";
 import { formatRelative, formatTimestamp } from "@/lib/utils";
 
 type Metrics = Record<string, unknown> | null | undefined;
@@ -95,10 +96,65 @@ function Panel({ title, children }: { title: string; children: React.ReactNode }
 
 const CALL_STATE: Record<string, string> = { in_call: "In a call", idle: "Not in a call", unknown: "Unknown" };
 
-// The cards on a Teams Room's page: one managed by Poly Lens, or a Windows
-// one a Collector reads directly over WinRM (source collector, protocol
-// mtr_windows). Every value is optional: fields that are missing show as
-// unknown, never as bad.
+const CALL_PLATFORM: Record<string, string> = {
+  zoom: "Zoom",
+  teams: "Microsoft Teams",
+  meet: "Google Meet",
+  byod: "BYOD / open mode",
+  other: "Other",
+};
+
+const UPGRADE_STATUS: Record<string, string> = {
+  idle: "",
+  downloading: "Downloading update",
+  updating: "Updating",
+  reboot_required: "Restart needed to finish the update",
+  error: "Update failed",
+  uninstalled: "Update removed",
+};
+
+const num = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
+const fmt = (v: number | undefined, digits: number, unit: string) =>
+  v === undefined ? undefined : `${Number(v.toFixed(digits))}${unit}`;
+
+// Sensors reported by a Neat device through Neat Pulse; nothing when it sent none.
+function SensorsCard({ m }: { m: Record<string, unknown> }) {
+  const shutter = bool(m.privacy_shutter_closed);
+  const people = num(m.people_count);
+  const rows: [string, string | undefined][] = [
+    ["People", people === undefined ? undefined : String(people)],
+    ["Temperature", fmt(num(m.temperature_c), 1, " °C")],
+    ["Humidity", fmt(num(m.humidity_pct), 0, "%")],
+    ["CO₂", fmt(num(m.co2_ppm), 0, " ppm")],
+    ["VOC", fmt(num(m.voc), 0, "")],
+    ["VOC index", fmt(num(m.voc_index), 0, "")],
+    ["Light", fmt(num(m.illuminance_lux), 0, " lux")],
+    ["Privacy shutter", shutter === undefined ? undefined : shutter ? "Closed" : "Open"],
+  ];
+  const shown = rows.filter(([, v]) => v !== undefined);
+  if (shown.length === 0) return null;
+  const at = str(m.sensor_at);
+  return (
+    <Panel title="Sensors">
+      {shown.map(([label, v]) => (
+        <Row key={label} label={label}>
+          {v}
+        </Row>
+      ))}
+      {at && (
+        <Row label="Sample time">
+          <span title={formatTimestamp(at)}>{formatRelative(at)}</span>
+        </Row>
+      )}
+    </Panel>
+  );
+}
+
+// The cards on a room system's page: a Teams Room managed by Poly Lens, a
+// Teams or Zoom Room on a Neat device managed by Neat Pulse, or a Windows
+// Teams Room a Collector reads directly over WinRM (source collector,
+// protocol mtr_windows). Every value is optional: fields that are missing
+// show as unknown, never as bad.
 export function TeamsRoomCards({
   device,
   metrics,
@@ -110,7 +166,14 @@ export function TeamsRoomCards({
   collectorName?: string;
 }) {
   const m = metrics ?? {};
-  const direct = device.source !== "poly_lens";
+  const direct = !isCloudSource(device.source);
+  const neat = device.source === "neat_pulse";
+  const platform = str(m.call_platform);
+  const fwUpdate = str(m.firmware_update);
+  const upgradeKey = str(m.firmware_upgrade_status);
+  const upgrade = upgradeKey in UPGRADE_STATUS ? UPGRADE_STATUS[upgradeKey] : upgradeKey;
+  const lastConnected = str(m.last_connected);
+  const lastRestart = str(m.last_restart);
   const heartbeat = str(m.last_heartbeat);
   const lastError = str(m.last_error);
   const uptime = formatUptime(m.uptime_s);
@@ -128,6 +191,13 @@ export function TeamsRoomCards({
 
   return (
     <div className="grid gap-6 md:grid-cols-2">
+      {neat ? (
+        <Panel title={device.type === "zoom_room" ? "Zoom Room" : "Teams Room"}>
+          <Row label="Primary mode">{str(m.primary_mode) || dash}</Row>
+          {str(m.pulse_room) && <Row label="Pulse room">{str(m.pulse_room)}</Row>}
+          {bool(m.byod) && <Row label="BYOD">In use as a USB device</Row>}
+        </Panel>
+      ) : (
       <Panel title="Teams Rooms">
         <Row label="App version">{str(m.teams_app_version) || dash}</Row>
         {str(m.teams_presence) && <Row label="Presence">{str(m.teams_presence)}</Row>}
@@ -142,7 +212,8 @@ export function TeamsRoomCards({
           </>
         )}
       </Panel>
-      {direct && (
+      )}
+      {(direct || neat) && (
         <Card>
           <CardHeader>
             <CardTitle>Call</CardTitle>
@@ -150,13 +221,17 @@ export function TeamsRoomCards({
           <CardContent>
             <dl>
               <Row label="State">{CALL_STATE[callState] ?? callState}</Row>
+              {neat && callState === "in_call" && <Row label="Platform">{CALL_PLATFORM[platform] ?? (platform || dash)}</Row>}
             </dl>
-            <p className="mt-2 text-xs text-muted-foreground">
-              Mic/camera in use: {yesNo(bool(m.call_signal_mic))} · Teams media ports open: {yesNo(bool(m.call_signal_udp))}
-            </p>
+            {direct && (
+              <p className="mt-2 text-xs text-muted-foreground">
+                Mic/camera in use: {yesNo(bool(m.call_signal_mic))} · Teams media ports open: {yesNo(bool(m.call_signal_udp))}
+              </p>
+            )}
           </CardContent>
         </Card>
       )}
+      {neat && <SensorsCard m={m} />}
       <Panel title="Peripherals">
         <Row label="Status">
           {linked === undefined ? (
@@ -190,10 +265,34 @@ export function TeamsRoomCards({
       </Panel>
       <Panel title="Device">
         <Row label="Model">{model || dash}</Row>
-        <Row label={direct ? "Windows version" : "Software"}>{str(m.software_version) || str(device.firmware_version) || dash}</Row>
+        <Row label={direct ? "Windows version" : neat ? "Firmware" : "Software"}>{str(m.software_version) || str(device.firmware_version) || dash}</Row>
+        {neat && (
+          <Row label="Firmware update">
+            {upgrade ? (
+              <span className="[color:hsl(var(--warning))]">{upgrade}</span>
+            ) : fwUpdate ? (
+              <span>
+                {fwUpdate} available{bool(m.firmware_update_scheduled) ? " (scheduled)" : ""}
+              </span>
+            ) : str(m.software_version) ? (
+              "Up to date"
+            ) : (
+              dash
+            )}
+          </Row>
+        )}
         <Row label="Serial">{serial || dash}</Row>
         {direct ? (
           <Row label="Uptime">{uptime || dash}</Row>
+        ) : neat ? (
+          <>
+            <Row label="Connected since">
+              {lastConnected ? <span title={formatTimestamp(lastConnected)}>{formatRelative(lastConnected)}</span> : dash}
+            </Row>
+            <Row label="Last restart">
+              {lastRestart ? <span title={formatTimestamp(lastRestart)}>{formatRelative(lastRestart)}</span> : dash}
+            </Row>
+          </>
         ) : (
           <Row label="Last seen by Lens">
             {lastSeen ? <span title={formatTimestamp(lastSeen)}>{formatRelative(lastSeen)}</span> : dash}
@@ -207,6 +306,21 @@ export function TeamsRoomCards({
             WinRM over {https ? "HTTPS" : "HTTP"} · port {port}
           </Row>
           <Row label="Address">{str(device.address) || dash}</Row>
+        </Panel>
+      ) : neat ? (
+        <Panel title="Source">
+          <Row label="Managed by">Neat Pulse{integ?.account_name ? ` (${integ.account_name})` : ""}</Row>
+          <Row label="Access">Read only</Row>
+          <Row label="Pulse">
+            <a
+              href="https://pulse.neat.no"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-primary hover:underline"
+            >
+              Open in Neat Pulse <ExternalLink className="h-3 w-3" aria-hidden="true" />
+            </a>
+          </Row>
         </Panel>
       ) : (
       <Panel title="Source">

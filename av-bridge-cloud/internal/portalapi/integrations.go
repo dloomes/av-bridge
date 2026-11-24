@@ -85,9 +85,13 @@ func (h *Handler) ListIntegrations(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	lens := integrationView{Provider: providerPolyLens, Status: "not_connected"}
+	neat := integrationView{Provider: providerNeatPulse, Status: "not_connected"}
 	for _, i := range rows {
-		if i.Provider == providerPolyLens {
+		switch i.Provider {
+		case providerPolyLens:
 			lens = viewOf(i, linked[i.Provider])
+		case providerNeatPulse:
+			neat = viewOf(i, linked[i.Provider])
 		}
 	}
 	// The client id is a credential half: only managers (and Involve) see it.
@@ -100,6 +104,7 @@ func (h *Handler) ListIntegrations(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, []integrationView{
 		lens,
+		neat,
 		{Provider: "servicenow", Status: snStatus},
 		{Provider: "logitech_sync", Status: "coming_soon"},
 		{Provider: "microsoft_365", Status: "coming_soon"},
@@ -130,10 +135,16 @@ func decodeLensBody(w http.ResponseWriter, r *http.Request) (lensCredentials, bo
 }
 
 func (h *Handler) loadIntegration(w http.ResponseWriter, r *http.Request) (*db.Integration, bool) {
+	return h.loadIntegrationFor(w, r, providerPolyLens)
+}
+
+// loadIntegrationFor reads the customer's integration of one provider (nil
+// when there is none).
+func (h *Handler) loadIntegrationFor(w http.ResponseWriter, r *http.Request, provider string) (*db.Integration, bool) {
 	var cur *db.Integration
 	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
 		var err error
-		cur, err = db.GetIntegration(ctx, tx, providerPolyLens)
+		cur, err = db.GetIntegration(ctx, tx, provider)
 		return err
 	})
 	return cur, ok
@@ -319,7 +330,14 @@ func (h *Handler) PutPolyLens(w http.ResponseWriter, r *http.Request) {
 		}
 		next.SecretEnc = enc
 	}
+	h.saveIntegration(w, r, cur, next)
+}
 
+// saveIntegration writes next (connect or update) unless the stored row has
+// changed since cur was read, audits it and writes the view. next.Provider
+// names the integration.
+func (h *Handler) saveIntegration(w http.ResponseWriter, r *http.Request, cur *db.Integration, next db.Integration) {
+	p, _ := portalauth.From(r.Context())
 	actor := p.Email
 	if actor == "" {
 		actor = p.ActorLabel()
@@ -331,7 +349,7 @@ func (h *Handler) PutPolyLens(w http.ResponseWriter, r *http.Request) {
 		if h.beforeIntegrationWrite != nil {
 			h.beforeIntegrationWrite()
 		}
-		before, err := db.GetIntegrationForUpdate(ctx, tx, providerPolyLens)
+		before, err := db.GetIntegrationForUpdate(ctx, tx, next.Provider)
 		if err != nil {
 			return err
 		}
@@ -343,7 +361,7 @@ func (h *Handler) PutPolyLens(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
-		if saved, err = db.GetIntegration(ctx, tx, providerPolyLens); err != nil {
+		if saved, err = db.GetIntegration(ctx, tx, next.Provider); err != nil {
 			return err
 		}
 		if err := tx.QueryRow(ctx, `SELECT count(*) FROM integration_devices WHERE integration_id = $1`, id).Scan(&linked); err != nil {
@@ -370,6 +388,12 @@ func (h *Handler) PutPolyLens(w http.ResponseWriter, r *http.Request) {
 // DeletePolyLens handles DELETE /api/v1/integrations/poly_lens: the secret is
 // wiped and the integration marked disconnected; linked devices are kept.
 func (h *Handler) DeletePolyLens(w http.ResponseWriter, r *http.Request) {
+	h.disconnectIntegration(w, r, providerPolyLens)
+}
+
+// disconnectIntegration wipes a provider's stored secret and marks it
+// disconnected; linked devices are kept.
+func (h *Handler) disconnectIntegration(w http.ResponseWriter, r *http.Request, provider string) {
 	p, _ := portalauth.From(r.Context())
 	actor := p.Email
 	if actor == "" {
@@ -377,11 +401,11 @@ func (h *Handler) DeletePolyLens(w http.ResponseWriter, r *http.Request) {
 	}
 	found := false
 	if !h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
-		before, err := db.GetIntegration(ctx, tx, providerPolyLens)
+		before, err := db.GetIntegration(ctx, tx, provider)
 		if err != nil || before == nil {
 			return err
 		}
-		id, ok, err := db.DisconnectIntegration(ctx, tx, providerPolyLens, actor)
+		id, ok, err := db.DisconnectIntegration(ctx, tx, provider, actor)
 		if err != nil || !ok {
 			return err
 		}

@@ -48,7 +48,11 @@ type Handler struct {
 	events wsfanout.Publisher
 	// lensTokenURL / lensGraphQLURL override the Poly Lens endpoints (tests); empty = production.
 	lensTokenURL, lensGraphQLURL string
-	// beforeIntegrationWrite runs inside PutPolyLens's write transaction before
+	// neatBaseURL overrides the Neat Pulse API base URL (tests); empty = production.
+	neatBaseURL string
+	// neatDetails caches Neat Pulse endpoint details for the device picker.
+	neatDetails neatDetailCache
+	// beforeIntegrationWrite runs inside an integration PUT's write transaction before
 	// the row is locked; tests use it to change the row between read and write.
 	beforeIntegrationWrite func()
 }

@@ -1169,7 +1169,7 @@ func (h *Handler) DeleteRoom(w http.ResponseWriter, r *http.Request) {
 var allowedTypes = map[string]bool{
 	"display": true, "conferencing": true, "audio": true,
 	"camera": true, "control": true, "avoip": true, "power": true,
-	"projector": true, "teams_room": true,
+	"projector": true, "teams_room": true, "zoom_room": true,
 }
 
 // Subscription mirrors the bridge's SubscriptionSpec (and bridgecfg's
@@ -1204,8 +1204,9 @@ type createDeviceReq struct {
 	Tags          map[string]string `json:"tags,omitempty"`
 	Subscriptions []Subscription    `json:"subscriptions,omitempty"`
 	RoomID        string            `json:"room_id,omitempty"`
-	// Source is "collector" (default) or "poly_lens". Platform and ExternalID
-	// apply to Poly Lens devices only.
+	// Source is "collector" (default), "poly_lens" or "neat_pulse". ExternalID
+	// applies to vendor-cloud devices only; Platform to Teams Rooms and
+	// vendor-cloud devices.
 	Source     string `json:"source,omitempty"`
 	Platform   string `json:"platform,omitempty"`
 	ExternalID string `json:"external_id,omitempty"`
@@ -1263,6 +1264,9 @@ func (h *Handler) CreateDevice(w http.ResponseWriter, r *http.Request) {
 	case "", sourceCollector:
 	case sourcePolyLens:
 		h.createLensDevice(w, r, req)
+		return
+	case sourceNeatPulse:
+		h.createNeatDevice(w, r, req)
 		return
 	default:
 		writeErr(w, http.StatusBadRequest, "unsupported source")
@@ -1531,14 +1535,23 @@ func (h *Handler) UpdateDevice(w http.ResponseWriter, r *http.Request) {
 		newProtocol = *req.Protocol
 	}
 	switch devSource {
-	case sourcePolyLens:
+	case sourcePolyLens, sourceNeatPulse:
 		if req.Type != nil || req.Protocol != nil || req.Address != nil || req.BaudRate != nil ||
 			req.PollRate != nil || req.PowerWattsOn != nil || req.PowerWattsStandby != nil ||
 			req.Username != nil || req.Password != nil || req.Commands != nil || req.Subscriptions != nil {
-			writeErr(w, http.StatusBadRequest, "only name, room_id, tags and asset can be changed on a Poly Lens device")
+			vendor := "Poly Lens"
+			if devSource == sourceNeatPulse {
+				vendor = "Neat Pulse"
+			}
+			writeErr(w, http.StatusBadRequest, "only name, room_id, tags and asset can be changed on a "+vendor+" device")
 			return
 		}
 	case sourceCollector:
+		// A Zoom Room comes only from Neat Pulse: no Collector adapter reads one.
+		if req.Type != nil && newType == deviceTypeZoomRoom && curType != deviceTypeZoomRoom {
+			writeErr(w, http.StatusBadRequest, msgZoomRoomSource)
+			return
+		}
 		// A Collector Teams Room is read only by mtr_windows, and mtr_windows
 		// reads only Teams Rooms: check the pair as it would be after the edit.
 		if retyped && (newType == deviceTypeTeamsRoom) != (newProtocol == protocolMTRWindows) {
@@ -1978,14 +1991,19 @@ func (h *Handler) DeleteDevice(w http.ResponseWriter, r *http.Request) {
 		// A Lens device releases its external id so the room can be linked
 		// again; the tag outcome is kept in the audit entry.
 		var meta map[string]any
-		var ext, state string
+		var ext, state, provider string
 		switch err := tx.QueryRow(ctx,
-			`SELECT external_id, tag_state FROM integration_devices WHERE device_id = $1`, id).Scan(&ext, &state); {
+			`SELECT l.external_id, l.tag_state, COALESCE(i.provider, '')
+			   FROM integration_devices l LEFT JOIN integrations i ON i.id = l.integration_id
+			  WHERE l.device_id = $1`, id).Scan(&ext, &state, &provider); {
 		case err == nil:
 			if lensTag != "" {
 				state = lensTag
 			}
-			meta = map[string]any{"source": sourcePolyLens, "external_id": ext, "tag_state": state}
+			if provider == "" {
+				provider = sourcePolyLens
+			}
+			meta = map[string]any{"source": provider, "external_id": ext, "tag_state": state}
 			if _, err := tx.Exec(ctx, `DELETE FROM integration_devices WHERE device_id = $1`, id); err != nil {
 				return err
 			}

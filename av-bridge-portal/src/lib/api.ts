@@ -67,6 +67,10 @@ import type {
   LensCredentials,
   LensDevicesResult,
   LensSaveBody,
+  CreateNeatDeviceBody,
+  NeatCredentials,
+  NeatDevicesResult,
+  NeatTestResult,
 } from "./types";
 
 // HTTP requests go to the Next.js dev server, which proxies to av-bridge via
@@ -1997,6 +2001,29 @@ export const api = {
       { signal }
     ),
 
+  testNeat: (body: NeatCredentials, signal?: AbortSignal) =>
+    request<NeatTestResult>("/api/v1/integrations/neat_pulse/test", {
+      method: "POST",
+      body: JSON.stringify(body),
+      signal,
+    }),
+
+  saveNeat: (body: NeatCredentials, signal?: AbortSignal) =>
+    request<void>("/api/v1/integrations/neat_pulse", {
+      method: "PUT",
+      body: JSON.stringify(body),
+      signal,
+    }),
+
+  disconnectNeat: (signal?: AbortSignal) =>
+    request<void>("/api/v1/integrations/neat_pulse", { method: "DELETE", signal }),
+
+  listNeatDevices: (q?: string, signal?: AbortSignal) =>
+    request<NeatDevicesResult>(
+      `/api/v1/integrations/neat_pulse/devices${q ? `?q=${encodeURIComponent(q)}` : ""}`,
+      { signal }
+    ),
+
   listRoomTags: (signal?: AbortSignal) =>
     request<RoomTag[]>("/api/v1/room-tags", { signal }),
 
@@ -2128,7 +2155,7 @@ export const api = {
     }
   },
 
-  createDevice: (body: CreateDeviceBody | CreateLensDeviceBody, signal?: AbortSignal) =>
+  createDevice: (body: CreateDeviceBody | CreateLensDeviceBody | CreateNeatDeviceBody, signal?: AbortSignal) =>
     request<{ id: string }>("/api/v1/devices", {
       method: "POST",
       body: JSON.stringify(body),

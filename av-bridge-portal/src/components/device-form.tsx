@@ -29,7 +29,7 @@ import type {
   Subscription,
   UpdateDeviceBody,
 } from "@/lib/types";
-import { DEVICE_TYPE_LABELS, DEVICE_TYPES } from "@/lib/types";
+import { DEVICE_TYPE_LABELS, DEVICE_TYPES, isCloudSource } from "@/lib/types";
 
 const TYPES = DEVICE_TYPES;
 
@@ -456,7 +456,7 @@ export function DeviceForm({
   // A Teams Room on Windows read directly by a Collector (mtr_windows) uses
   // this form rather than the Poly Lens one.
   const [teamsDirect, setTeamsDirect] = useState(
-    () => !!initial && initial.source !== "poly_lens" && initial.type === "teams_room"
+    () => !!initial && !isCloudSource(initial.source) && initial.type === "teams_room"
   );
 
   useEffect(() => {
@@ -654,14 +654,18 @@ export function DeviceForm({
     }
   };
 
-  // Microsoft Teams Rooms read from Poly Lens get their own form (no
-  // Collector, protocol, address or credentials). A Windows one read
-  // directly by a Collector ("Direct") uses the form below with type and
-  // protocol fixed.
-  if ((!isEdit && form.type === "teams_room" && !teamsDirect) || (isEdit && initial?.source === "poly_lens")) {
+  // Teams Rooms and Zoom Rooms read from a vendor cloud (Poly Lens, Neat
+  // Pulse) get their own form (no Collector, protocol, address or
+  // credentials). A Windows Teams Room read directly by a Collector
+  // ("Direct") uses the form below with type and protocol fixed.
+  if (
+    (!isEdit && ((form.type === "teams_room" && !teamsDirect) || form.type === "zoom_room")) ||
+    (isEdit && isCloudSource(initial?.source))
+  ) {
     return (
       <TeamsRoomForm
         mode={mode}
+        roomType={form.type === "zoom_room" ? "zoom_room" : "teams_room"}
         initial={initial}
         rooms={rooms}
         buildings={buildings}
@@ -853,8 +857,9 @@ export function DeviceForm({
           >
             <option value="">— Select —</option>
             {/* A Teams Room is added through the Teams Room choices (Poly
-                Lens or Direct), never switched to on an existing device. */}
-            {TYPES.filter((t) => !isEdit || t !== "teams_room" || mtr).map((t) => (
+                Lens, Neat Pulse or Direct), never switched to on an existing
+                device; a Zoom Room only through Neat Pulse. */}
+            {TYPES.filter((t) => (!isEdit || t !== "teams_room" || mtr) && !(isEdit && t === "zoom_room")).map((t) => (
               <option key={t} value={t}>
                 {DEVICE_TYPE_LABELS[t]}
               </option>

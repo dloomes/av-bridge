@@ -12,6 +12,7 @@ const map = {
   avoip: Network,
   power: PlugZap,
   teams_room: Presentation,
+  zoom_room: Presentation,
 } as const;
 
 interface Props {

@@ -20,16 +20,27 @@ type condition struct {
 	hold      time.Duration // how long it must persist before an alert opens
 	severity  string
 	message   func(r Readings) string
-	recovered string
+	recovered func(r Readings) string
 	// state reports whether the condition holds. known is false when the
 	// readings do not say, which neither starts nor clears it.
 	state func(r Readings) (active, known bool)
 }
 
+// label is the kind of room the readings are for ("Teams Room" by default).
+func (r Readings) label() string {
+	if l := strings.TrimSpace(r.Label); l != "" {
+		return l
+	}
+	return "Teams Room"
+}
+
+func fixed(s string) func(Readings) string { return func(Readings) string { return s } }
+
 var conditions = []condition{
 	{
-		key: "device_offline", recovered: "Teams Room back online", hold: 5 * time.Minute, severity: "critical",
-		message: func(Readings) string { return "Teams Room offline" },
+		key: "device_offline", hold: 5 * time.Minute, severity: "critical",
+		recovered: func(r Readings) string { return r.label() + " back online" },
+		message:   func(r Readings) string { return r.label() + " offline" },
 		state: func(r Readings) (bool, bool) {
 			switch r.Status {
 			case "offline":
@@ -41,7 +52,7 @@ var conditions = []condition{
 		},
 	},
 	{
-		key: "teams_signed_out", recovered: "Teams signed in again", hold: 10 * time.Minute, severity: "critical",
+		key: "teams_signed_out", recovered: fixed("Teams signed in again"), hold: 10 * time.Minute, severity: "critical",
 		message: func(Readings) string { return "Teams signed out" },
 		state: func(r Readings) (bool, bool) {
 			if r.SignedIn == nil {
@@ -51,7 +62,7 @@ var conditions = []condition{
 		},
 	},
 	{
-		key: "teams_unhealthy", recovered: "Teams health recovered", hold: 10 * time.Minute, severity: "warning",
+		key: "teams_unhealthy", recovered: fixed("Teams health recovered"), hold: 10 * time.Minute, severity: "warning",
 		message: func(r Readings) string { return "Teams health: " + strings.TrimSpace(r.TeamsHealth) },
 		state: func(r Readings) (bool, bool) {
 			h := strings.ToLower(strings.TrimSpace(r.TeamsHealth))
@@ -67,7 +78,7 @@ var conditions = []condition{
 		},
 	},
 	{
-		key: "peripherals_missing", recovered: "Peripherals linked again", hold: 10 * time.Minute, severity: "warning",
+		key: "peripherals_missing", recovered: fixed("Peripherals linked again"), hold: 10 * time.Minute, severity: "warning",
 		message: func(r Readings) string {
 			n := len(r.MissingPeripherals)
 			if n == 0 {
@@ -204,7 +215,7 @@ func (a *Alerter) Evaluate(ctx context.Context, customerID, deviceID string, r R
 					return err
 				}
 				if tag.RowsAffected() > 0 {
-					events = append(events, a.event(r.Source, customerID, deviceID, name, *alertID, c.key+"_recovered", c.severity, c.recovered, now, true))
+					events = append(events, a.event(r.Source, customerID, deviceID, name, *alertID, c.key+"_recovered", c.severity, c.recovered(r), now, true))
 				}
 			}
 			if _, err := tx.Exec(ctx, `DELETE FROM integration_alert_state WHERE device_id = $1 AND condition = $2`, deviceID, c.key); err != nil {
