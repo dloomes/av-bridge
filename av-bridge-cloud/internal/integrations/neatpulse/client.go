@@ -313,6 +313,9 @@ func (c *Client) get(ctx context.Context, path string, out any) error {
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
 	switch {
 	case resp.StatusCode == http.StatusUnauthorized, resp.StatusCode == http.StatusForbidden:
+		// 403 is folded into "rejected": Pulse answers it both for a key
+		// without Read access and for a key from another organisation, and
+		// either way the fix is a new key.
 		return ErrUnauthorized
 	case resp.StatusCode == http.StatusTooManyRequests:
 		return &RateLimitError{RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After"))}
@@ -342,21 +345,32 @@ func errorMessage(b []byte) string {
 	return s
 }
 
-// parseRetryAfter reads delta-seconds or an HTTP date.
+// MaxRetryAfter caps the wait a 429 can ask for, so a bad or hostile header
+// cannot stop polling for long.
+const MaxRetryAfter = 5 * time.Minute
+
+// parseRetryAfter reads delta-seconds or an HTTP date, capped at MaxRetryAfter.
 func parseRetryAfter(v string) time.Duration {
 	v = strings.TrimSpace(v)
 	if v == "" {
 		return 0
 	}
+	var d time.Duration
 	if n, err := strconv.ParseFloat(v, 64); err == nil && n > 0 {
-		return time.Duration(n * float64(time.Second))
-	}
-	if t, err := http.ParseTime(v); err == nil {
-		if d := time.Until(t); d > 0 {
-			return d
+		if n > MaxRetryAfter.Seconds() {
+			return MaxRetryAfter
 		}
+		d = time.Duration(n * float64(time.Second))
+	} else if t, err := http.ParseTime(v); err == nil {
+		d = time.Until(t)
 	}
-	return 0
+	switch {
+	case d <= 0:
+		return 0
+	case d > MaxRetryAfter:
+		return MaxRetryAfter
+	}
+	return d
 }
 
 // CallPlatform maps inCallStatus to the platform of the call in progress:

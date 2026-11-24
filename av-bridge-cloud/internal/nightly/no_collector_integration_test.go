@@ -113,4 +113,42 @@ func TestNoCollectorReadiness(t *testing.T) {
 	if n := q(`SELECT count(*)::text FROM commands WHERE device_id = $1`, lens); n != "0" {
 		t.Errorf("commands rows for the Lens device = %s, want 0", n)
 	}
+
+	// A Neat Pulse room says so; a room mixing Lens and Neat says "no Collector".
+	neatRoom := q(`INSERT INTO rooms (customer_id, building_id, name) VALUES ($1, $2, 'Huddle') RETURNING id::text`, cust, b)
+	neat := q(`INSERT INTO devices (customer_id, room_id, source, platform, name, type, latest_status, last_seen_at)
+	           VALUES ($1, $2, 'neat_pulse', 'android', 'Neat Room', 'zoom_room', 'online', now()) RETURNING id::text`, cust, neatRoom)
+	nrun := run
+	nrun.RoomID, nrun.RoomName = neatRoom, "Huddle"
+	r = e.dispatchStep(ctx, nrun, mkStep(map[string]any{"type": "power_on", "target": map[string]any{"scope": "room"}}))
+	if actual, _ := r.Actual.(map[string]any); !r.Passed || actual["note"] != "skipped: managed by Neat Pulse" {
+		t.Errorf("neat power_on: passed=%v actual=%v", r.Passed, r.Actual)
+	}
+	r = e.dispatchStep(ctx, nrun, mkStep(map[string]any{"type": "ping", "target": map[string]any{"device_id": neat}}))
+	if actual, _ := r.Actual.(map[string]any); !r.Passed || actual["Neat Room"] != "skipped: managed by Neat Pulse" {
+		t.Errorf("neat ping: passed=%v actual=%v", r.Passed, r.Actual)
+	}
+	if _, err := su.Exec(ctx, `UPDATE devices SET room_id = $1 WHERE id = $2`, neatRoom, lens); err != nil {
+		t.Fatal(err)
+	}
+	r = e.dispatchStep(ctx, nrun, mkStep(map[string]any{"type": "power_off", "target": map[string]any{"scope": "room"}}))
+	if actual, _ := r.Actual.(map[string]any); !r.Passed || actual["note"] != "skipped: no Collector" {
+		t.Errorf("mixed power_off: passed=%v actual=%v", r.Passed, r.Actual)
+	}
+}
+
+func TestSkippedMsg(t *testing.T) {
+	for src, want := range map[string]string{
+		"poly_lens": "skipped: managed by Poly Lens", "neat_pulse": "skipped: managed by Neat Pulse", "": "skipped: no Collector",
+	} {
+		if got := skippedMsg(src); got != want {
+			t.Errorf("skippedMsg(%q) = %q", src, got)
+		}
+	}
+	if got := skippedReason([]resolvedDevice{{source: "neat_pulse"}, {source: "neat_pulse"}}); got != "skipped: managed by Neat Pulse" {
+		t.Errorf("shared = %q", got)
+	}
+	if got := skippedReason([]resolvedDevice{{source: "neat_pulse"}, {source: "poly_lens"}}); got != "skipped: no Collector" {
+		t.Errorf("mixed = %q", got)
+	}
 }

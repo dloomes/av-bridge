@@ -142,6 +142,13 @@ func TestRateLimitHonoursRetryAfter(t *testing.T) {
 	if d := parseRetryAfter(time.Now().Add(90 * time.Second).UTC().Format(http.TimeFormat)); d < 80*time.Second || d > 91*time.Second {
 		t.Fatalf("http-date retry after %v", d)
 	}
+	// Capped at 5 minutes, however long Pulse asks for.
+	if d := parseRetryAfter("3600"); d != MaxRetryAfter {
+		t.Fatalf("3600s retry after = %v, want %v", d, MaxRetryAfter)
+	}
+	if d := parseRetryAfter(time.Now().Add(2 * time.Hour).UTC().Format(http.TimeFormat)); d != MaxRetryAfter {
+		t.Fatalf("far http-date retry after = %v, want %v", d, MaxRetryAfter)
+	}
 }
 
 func TestTimeout(t *testing.T) {

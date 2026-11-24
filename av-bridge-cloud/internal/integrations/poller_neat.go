@@ -21,11 +21,19 @@ const (
 	// neatMaxDetailCalls caps the details calls per integration per cycle.
 	neatMaxDetailCalls = 30
 	// neatSensorTTL is how long sensor data is reused when the sensor call
-	// fails, and how old a sample may be and still be written.
+	// fails.
 	neatSensorTTL = 15 * time.Minute
 	// neatSampleMaxAge: an older sample is left out (it would count people in
 	// the wrong hour of Room usage).
-	neatSampleMaxAge = 30 * time.Minute
+	neatSampleMaxAge = 10 * time.Minute
+	// neatSampleMaxAhead: a sample this far in the future is left out (a
+	// clock or unit error).
+	neatSampleMaxAhead = 5 * time.Minute
+	// neatRateLimitUnknown: once Pulse has held us off for this long, the
+	// linked devices show unknown (so last_seen_at keeps moving and they never
+	// go stale, then offline).
+	neatRateLimitUnknown = 10 * time.Minute
+	msgNeatRateLimited   = "Neat Pulse rate limiting"
 )
 
 // neatState is one Neat integration's client and caches. It is only touched
@@ -38,6 +46,17 @@ type neatState struct {
 	sensorsAt time.Time
 	seen      map[string]time.Time // endpoint id -> last seen connected
 	notBefore time.Time            // Retry-After from a 429
+	rlSince   time.Time            // first 429 of the current hold-off; zero when none
+}
+
+// rateLimited records a 429 and its (already capped) Retry-After.
+func (s *neatState) rateLimited(now time.Time, wait time.Duration) {
+	if s.rlSince.IsZero() {
+		s.rlSince = now
+	}
+	if until := now.Add(wait); until.After(s.notBefore) {
+		s.notBefore = until
+	}
 }
 
 type neatDetail struct {
@@ -67,10 +86,20 @@ func (p *Poller) neatFor(in integrationRow, secret string) *neatState {
 func (p *Poller) pollNeat(ctx context.Context, in integrationRow, devs []linkedDevice, secret string) error {
 	st := p.neatFor(in, secret)
 	now := time.Now()
-	if now.Before(st.notBefore) {
-		return nil // Pulse asked us to wait: change nothing
-	}
 	t := textFor(in.provider)
+	// holdOff reports a long rate-limit hold-off on the devices (unknown,
+	// never stale); a short one changes nothing.
+	holdOff := func() {
+		if !st.rlSince.IsZero() && now.Sub(st.rlSince) > neatRateLimitUnknown {
+			for _, d := range devs {
+				p.markUnknown(ctx, in, d, msgNeatRateLimited, true)
+			}
+		}
+	}
+	if now.Before(st.notBefore) {
+		holdOff() // Pulse asked us to wait
+		return nil
+	}
 	// Only the Pulse calls have a deadline; the writes below use the parent
 	// context so a hung Pulse can still be recorded as unknown.
 	nctx, cancel := context.WithTimeout(ctx, p.lensTimeout())
@@ -80,10 +109,13 @@ func (p *Poller) pollNeat(ctx context.Context, in integrationRow, devs []linkedD
 		var rl *neatpulse.RateLimitError
 		switch {
 		case errors.As(err, &rl):
-			st.notBefore = now.Add(rl.RetryAfter)
+			st.rateLimited(now, rl.RetryAfter)
 			p.log.Info("neat pulse rate limited; skipping cycle", "integration", in.id, "retry_after", rl.RetryAfter)
+			holdOff()
 		case errors.Is(err, neatpulse.ErrUnauthorized):
 			p.failIntegration(ctx, in, devs, t.rejected)
+		case errors.Is(err, neatpulse.ErrNotFound):
+			p.failIntegration(ctx, in, devs, t.orgNotFound)
 		case ctx.Err() != nil:
 			return ctx.Err()
 		default:
@@ -91,10 +123,13 @@ func (p *Poller) pollNeat(ctx context.Context, in integrationRow, devs []linkedD
 		}
 		return nil
 	}
+	st.rlSince = time.Time{} // the hold-off is over
 
 	// Sensor data: a failure keeps the last good data for a while rather
 	// than dropping the readings for one cycle.
+	sensorsFresh := false
 	if sens, err := st.client.SensorData(nctx, in.accountID); err == nil {
+		sensorsFresh = true
 		st.sensors = make(map[string]neatpulse.EndpointSensors, len(sens))
 		for _, s := range sens {
 			st.sensors[s.EndpointID] = s
@@ -103,7 +138,7 @@ func (p *Poller) pollNeat(ctx context.Context, in integrationRow, devs []linkedD
 	} else {
 		var rl *neatpulse.RateLimitError
 		if errors.As(err, &rl) {
-			st.notBefore = now.Add(rl.RetryAfter)
+			st.rateLimited(now, rl.RetryAfter)
 		}
 		p.log.Info("neat pulse sensor data failed", "integration", in.id, "error", err)
 		if now.Sub(st.sensorsAt) > neatSensorTTL {
@@ -136,7 +171,7 @@ func (p *Poller) pollNeat(ctx context.Context, in integrationRow, devs []linkedD
 		if err != nil {
 			var rl *neatpulse.RateLimitError
 			if errors.As(err, &rl) {
-				st.notBefore = now.Add(rl.RetryAfter)
+				st.rateLimited(now, rl.RetryAfter)
 			}
 			p.log.Info("neat pulse endpoint details failed", "integration", in.id, "endpoint", id, "error", err)
 			return c.ep, ok
@@ -161,12 +196,19 @@ func (p *Poller) pollNeat(ctx context.Context, in integrationRow, devs []linkedD
 		if main.Connected {
 			status = "online"
 		}
-		metrics := neatReadings(main, det, hasDet, pads, st.seen, sens, now)
+		// The details say the unit is paired with nothing: no Pad is missing
+		// (this is what clears the alert after a Pad is unpaired).
+		unpaired := hasDet && normSerial(det.PairingSerial) == "" && len(pads) == 0
+		metrics := neatReadings(main, det, hasDet, pads, unpaired, st.seen, sens, sensorsFresh, now)
 		r := Readings{Status: status, Source: ProviderNeatPulse, Label: roomLabel(d.typ)}
-		if len(pads) > 0 {
+		switch {
+		case len(pads) > 0:
 			r.LinkedDevices = len(pads)
 			r.MissingPeripherals = missingPads(pads)
 			all := len(r.MissingPeripherals) == 0
+			r.PeripheralsLinked = &all
+		case unpaired:
+			all := true
 			r.PeripheralsLinked = &all
 		}
 		id := identity{make: "Neat", model: main.Model, serial: main.Serial}
@@ -200,16 +242,21 @@ func roomLabel(typ string) string {
 	return "Teams Room"
 }
 
-// neatPad is a device paired with a room's main unit.
+// neatPad is a device paired with a room's main unit. known is false for a
+// pairingSerial that matches no Pulse endpoint: its state is unknown.
 type neatPad struct {
 	id, model string
 	connected bool
+	known     bool
 }
+
+const msgPadNotInPulse = "Paired device (not in Pulse)"
 
 // neatPeripherals finds the Pads paired with a main unit: the endpoint whose
 // serial is the main unit's pairingSerial, and any companion endpoint in the
 // same Pulse room whose own pairingSerial is the main unit's serial. A
-// pairingSerial that matches no endpoint is listed as a missing device.
+// pairingSerial that matches no endpoint is listed with an unknown state,
+// never as missing.
 func neatPeripherals(main neatpulse.BasicEndpoint, det neatpulse.Endpoint, hasDet bool, eps []neatpulse.BasicEndpoint,
 	bySerial map[string]neatpulse.BasicEndpoint, detail func(string) (neatpulse.Endpoint, bool)) []neatPad {
 	var out []neatPad
@@ -219,13 +266,13 @@ func neatPeripherals(main neatpulse.BasicEndpoint, det neatpulse.Endpoint, hasDe
 			return
 		}
 		seen[e.ID] = true
-		out = append(out, neatPad{id: e.ID, model: e.Model, connected: e.Connected})
+		out = append(out, neatPad{id: e.ID, model: e.Model, connected: e.Connected, known: true})
 	}
 	if hasDet && normSerial(det.PairingSerial) != "" {
 		if e, ok := bySerial[normSerial(det.PairingSerial)]; ok {
 			add(e)
 		} else {
-			out = append(out, neatPad{model: "Paired Neat device", connected: false})
+			out = append(out, neatPad{model: msgPadNotInPulse})
 		}
 	}
 	mine := normSerial(main.Serial)
@@ -246,7 +293,7 @@ func neatPeripherals(main neatpulse.BasicEndpoint, det neatpulse.Endpoint, hasDe
 func missingPads(pads []neatPad) []string {
 	out := []string{}
 	for _, p := range pads {
-		if !p.connected {
+		if p.known && !p.connected {
 			n := strings.TrimSpace(p.model)
 			if n == "" {
 				n = "Neat device"
@@ -262,8 +309,13 @@ func normSerial(s string) string { return strings.ToLower(strings.TrimSpace(s)) 
 // neatReadings maps a Neat main unit to the readings stored in
 // latest_metrics. Fields Pulse did not report are omitted (unknown, never
 // bad). people_count is the key the Room usage report reads.
-func neatReadings(main neatpulse.BasicEndpoint, det neatpulse.Endpoint, hasDet bool, pads []neatPad,
-	seen map[string]time.Time, sens *neatpulse.EndpointSensors, now time.Time) map[string]any {
+//
+// unpaired means the details say the unit is paired with nothing: an empty
+// peripherals list. Sensor samples must be from the last neatSampleMaxAge
+// and not in the future; one without a timestamp is used only from this
+// cycle's response (sensorsFresh), never from cached data.
+func neatReadings(main neatpulse.BasicEndpoint, det neatpulse.Endpoint, hasDet bool, pads []neatPad, unpaired bool,
+	seen map[string]time.Time, sens *neatpulse.EndpointSensors, sensorsFresh bool, now time.Time) map[string]any {
 	callStatus := main.InCallStatus
 	if callStatus == "" && hasDet {
 		callStatus = det.InCallStatus
@@ -310,7 +362,10 @@ func neatReadings(main neatpulse.BasicEndpoint, det neatpulse.Endpoint, hasDet b
 			if name == "" {
 				name = "Neat device"
 			}
-			e := map[string]any{"name": name, "model": p.model, "connected": p.connected}
+			e := map[string]any{"name": name, "model": p.model}
+			if p.known {
+				e["connected"] = p.connected
+			}
 			if t, ok := seen[p.id]; ok && p.id != "" {
 				e["last_seen"] = t.UTC().Format(time.RFC3339)
 			}
@@ -319,12 +374,16 @@ func neatReadings(main neatpulse.BasicEndpoint, det neatpulse.Endpoint, hasDet b
 		m["peripherals"] = ps
 		m["peripherals_missing"] = missingPads(pads)
 		m["peripherals_linked"] = len(missingPads(pads)) == 0
+	} else if unpaired {
+		m["peripherals"] = []map[string]any{}
+		m["peripherals_missing"] = []string{}
+		m["peripherals_linked"] = true
 	}
 	if sens != nil {
 		if sens.ShutterClosed != nil {
 			m["privacy_shutter_closed"] = *sens.ShutterClosed
 		}
-		if s, ok := sens.Latest(); ok && (s.Timestamp.IsZero() || now.Sub(s.Timestamp) <= neatSampleMaxAge) {
+		if s, ok := sens.Latest(); ok && sampleUsable(s.Timestamp, sensorsFresh, now) {
 			num := func(k string, v *float64) {
 				if v != nil {
 					m[k] = *v
@@ -343,4 +402,12 @@ func neatReadings(main neatpulse.BasicEndpoint, det neatpulse.Endpoint, hasDet b
 		}
 	}
 	return m
+}
+
+// sampleUsable reports whether a sensor sample is current enough to write.
+func sampleUsable(ts time.Time, fresh bool, now time.Time) bool {
+	if ts.IsZero() {
+		return fresh
+	}
+	return now.Sub(ts) <= neatSampleMaxAge && ts.Sub(now) <= neatSampleMaxAhead
 }

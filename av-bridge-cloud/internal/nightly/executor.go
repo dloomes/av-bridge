@@ -634,12 +634,14 @@ func (e *Executor) stepPowerAction(ctx context.Context, run RunContext, s step, 
 	if err != nil {
 		return failedResult(started, "resolve target: "+err.Error())
 	}
-	// Devices managed by Poly Lens have no Collector to send power to.
+	// Devices managed by a vendor cloud have no Collector to send power to.
 	var lensSkipped []string
+	var skippedDevs []resolvedDevice
 	var withCollector []resolvedDevice
 	for _, d := range devices {
 		if d.noCollector {
 			lensSkipped = append(lensSkipped, d.name)
+			skippedDevs = append(skippedDevs, d)
 			continue
 		}
 		withCollector = append(withCollector, d)
@@ -654,7 +656,7 @@ func (e *Executor) stepPowerAction(ctx context.Context, run RunContext, s step, 
 		note := "no device in the target supports " + action
 		actual := map[string]any{"dispatched": false, "devices": 0, "note": note}
 		if len(lensSkipped) > 0 {
-			actual["note"] = skippedLensMsg
+			actual["note"] = skippedReason(skippedDevs)
 			actual["skipped"] = lensSkipped
 		}
 		return stepResult{
@@ -687,19 +689,19 @@ func (e *Executor) stepPowerAction(ctx context.Context, run RunContext, s step, 
 		Passed:    allOK,
 		Error:     dispatchFailures(perDevice),
 		Expected:  map[string]any{"action": action, "target_devices": len(devices)},
-		Actual:    powerActual(len(devices), perDevice, lensSkipped),
+		Actual:    powerActual(len(devices), perDevice, lensSkipped, skippedReason(skippedDevs)),
 		StartedAt: started,
 		EndedAt:   time.Now(),
 	}
 }
 
 // powerActual is a dispatched power step's actual payload, naming any
-// Poly Lens devices left out.
-func powerActual(n int, perDevice []map[string]any, lensSkipped []string) map[string]any {
+// vendor-cloud devices left out and why.
+func powerActual(n int, perDevice []map[string]any, lensSkipped []string, reason string) map[string]any {
 	a := map[string]any{"dispatched": true, "devices": n, "per_device": perDevice}
 	if len(lensSkipped) > 0 {
 		a["skipped"] = lensSkipped
-		a["skipped_reason"] = skippedLensMsg
+		a["skipped_reason"] = reason
 	}
 	return a
 }
@@ -798,11 +800,35 @@ func (e *Executor) dispatchAcross(
 }
 
 // statusSkipped is the per-device status of a command not sent because the
-// device has no Collector; skippedLensMsg is its step-result wording.
-const (
-	statusSkipped  = "skipped"
-	skippedLensMsg = "skipped: managed by Poly Lens"
-)
+// device has no Collector; skippedMsg is its step-result wording.
+const statusSkipped = "skipped"
+
+// skippedMsg says why a device with no Collector was skipped, naming the
+// vendor cloud that manages it.
+func skippedMsg(source string) string {
+	switch source {
+	case "poly_lens":
+		return "skipped: managed by Poly Lens"
+	case "neat_pulse":
+		return "skipped: managed by Neat Pulse"
+	}
+	return "skipped: no Collector"
+}
+
+// skippedReason is the step-level wording for skipped devices: their
+// vendor when they all share one, else "skipped: no Collector".
+func skippedReason(devs []resolvedDevice) string {
+	if len(devs) == 0 {
+		return skippedMsg("")
+	}
+	src := devs[0].source
+	for _, d := range devs[1:] {
+		if d.source != src {
+			return skippedMsg("")
+		}
+	}
+	return skippedMsg(src)
+}
 
 // dispatchFailures names each device whose command didn't succeed, with
 // its reason, as the step's error: "Camera: visca error 0x41: command not
@@ -859,7 +885,7 @@ func (e *Executor) dispatchOne(
 	}); err != nil {
 		if errors.Is(err, commands.ErrNoCollector) {
 			base["status"] = statusSkipped
-			base["error"] = skippedLensMsg
+			base["error"] = skippedMsg(dev.source)
 			return base
 		}
 		e.log.Warn("nightly dispatch submit failed",
@@ -980,7 +1006,8 @@ type resolvedDevice struct {
 	name         string
 	kind         string // devices.type — 'vc' / 'dsp' / 'display' etc.
 	protocol     string // adapter, e.g. aten_pdu (see noFreshPoll)
-	noCollector  bool   // managed by Poly Lens: no Collector to command or poll
+	noCollector  bool   // managed by a vendor cloud: no Collector to command or poll
+	source       string // devices.source: collector, poly_lens, neat_pulse
 	latestStatus string
 	lastSeen     *time.Time // when latestStatus was reported
 }
@@ -1022,6 +1049,7 @@ func queryDevices(ctx context.Context, pool *pgxpool.Pool, roomID string, extra 
 		       COALESCE(type, ''),
 		       COALESCE(protocol, ''),
 		       collector_id IS NULL,
+		       COALESCE(source, ''),
 		       COALESCE(latest_status, 'unknown'),
 		       last_seen_at
 		  FROM devices
@@ -1036,7 +1064,7 @@ func queryDevices(ctx context.Context, pool *pgxpool.Pool, roomID string, extra 
 	var out []resolvedDevice
 	for rows.Next() {
 		var d resolvedDevice
-		if err := rows.Scan(&d.id, &d.name, &d.kind, &d.protocol, &d.noCollector, &d.latestStatus, &d.lastSeen); err != nil {
+		if err := rows.Scan(&d.id, &d.name, &d.kind, &d.protocol, &d.noCollector, &d.source, &d.latestStatus, &d.lastSeen); err != nil {
 			return nil, err
 		}
 		out = append(out, d)

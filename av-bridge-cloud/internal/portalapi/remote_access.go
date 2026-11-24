@@ -52,14 +52,15 @@ func (h *Handler) StartRemoteSession(w http.ResponseWriter, r *http.Request) {
 	deviceID := r.PathValue("id")
 
 	var (
-		reportedID, address, webPortTag, webPathTag, collectorID string
-		found                                                    bool
+		reportedID, address, webPortTag, webPathTag, collectorID, devSource string
+		found                                                               bool
 	)
 	if !h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
 		err := tx.QueryRow(ctx, `
 			SELECT COALESCE(reported_id, ''), COALESCE(address, ''),
-			       COALESCE(tags->>'web_port', ''), COALESCE(tags->>'web_path', ''), COALESCE(collector_id::text, '')
-			  FROM devices WHERE id = $1`, deviceID).Scan(&reportedID, &address, &webPortTag, &webPathTag, &collectorID)
+			       COALESCE(tags->>'web_port', ''), COALESCE(tags->>'web_path', ''), COALESCE(collector_id::text, ''),
+			       COALESCE(source, '')
+			  FROM devices WHERE id = $1`, deviceID).Scan(&reportedID, &address, &webPortTag, &webPathTag, &collectorID, &devSource)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
@@ -73,7 +74,7 @@ func (h *Handler) StartRemoteSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if collectorID == "" {
-		writeErr(w, http.StatusConflict, lensManagedMsg)
+		writeErr(w, http.StatusConflict, managedMsg(devSource))
 		return
 	}
 	if reportedID == "" || address == "" {

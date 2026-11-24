@@ -69,14 +69,16 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
   );
 }
 
-type Linked = { name: string; model: string; connected: boolean; lastSeen: string };
+// connected is undefined when the state is unknown (a Neat pairing that
+// matches no device in Pulse): never counted as missing.
+type Linked = { name: string; model: string; connected: boolean | undefined; lastSeen: string };
 
 // The linked devices Lens listed for the room (controller, camera, mini PC...).
 function linkedDevices(v: unknown): Linked[] {
   if (!Array.isArray(v)) return [];
   return v
     .filter((x): x is Record<string, unknown> => !!x && typeof x === "object")
-    .map((x) => ({ name: str(x.name), model: str(x.model), connected: x.connected === true, lastSeen: str(x.last_seen) }));
+    .map((x) => ({ name: str(x.name), model: str(x.model), connected: bool(x.connected), lastSeen: str(x.last_seen) }));
 }
 
 const dash = <span className="text-muted-foreground">—</span>;
@@ -181,7 +183,7 @@ export function TeamsRoomCards({
   const https = device.tags?.winrm_https !== "false";
   const port = str(device.tags?.port) || (https ? "5986" : "5985");
   const peripherals = linkedDevices(m.peripherals);
-  const missing = peripherals.filter((p) => !p.connected).length;
+  const missing = peripherals.filter((p) => p.connected === false).length;
   const linked = peripherals.length > 0 ? missing === 0 : bool(m.peripherals_linked);
   const lastSeen = str(m.lens_last_seen);
   const model = str(device.model);
@@ -252,13 +254,18 @@ export function TeamsRoomCards({
               <div className="text-xs text-muted-foreground">
                 {p.lastSeen ? (
                   <span title={formatTimestamp(p.lastSeen)}>Last seen {formatRelative(p.lastSeen)}</span>
+                ) : p.connected === undefined ? (
+                  "State unknown"
                 ) : (
                   "Not seen yet"
                 )}
               </div>
             </div>
-            <Badge variant={p.connected ? "success" : "warning"} className="shrink-0">
-              {p.connected ? "Connected" : "Missing"}
+            <Badge
+              variant={p.connected === undefined ? "secondary" : p.connected ? "success" : "warning"}
+              className="shrink-0"
+            >
+              {p.connected === undefined ? "Unknown" : p.connected ? "Connected" : "Missing"}
             </Badge>
           </div>
         ))}

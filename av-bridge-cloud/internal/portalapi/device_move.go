@@ -76,10 +76,11 @@ func moveDevices(ctx context.Context, tx pgx.Tx, p portalauth.Principal, deviceI
 	type dev struct {
 		id, collectorID, reportedID, name string
 		noCollector                       bool
+		source                            string
 	}
 	rows, err := tx.Query(ctx, `
 		SELECT id::text, COALESCE(collector_id::text, ''), collector_id IS NULL,
-		       COALESCE(reported_id, ''), COALESCE(name, '')
+		       COALESCE(reported_id, ''), COALESCE(name, ''), COALESCE(source, '')
 		  FROM devices
 		 WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL
 		 ORDER BY id
@@ -90,7 +91,7 @@ func moveDevices(ctx context.Context, tx pgx.Tx, p portalauth.Principal, deviceI
 	var found []dev
 	for rows.Next() {
 		var d dev
-		if err := rows.Scan(&d.id, &d.collectorID, &d.noCollector, &d.reportedID, &d.name); err != nil {
+		if err := rows.Scan(&d.id, &d.collectorID, &d.noCollector, &d.reportedID, &d.name, &d.source); err != nil {
 			rows.Close()
 			return res, err
 		}
@@ -107,7 +108,7 @@ func moveDevices(ctx context.Context, tx pgx.Tx, p portalauth.Principal, deviceI
 	var moving []dev
 	for _, d := range found {
 		if d.noCollector {
-			return res, errMoveNoCollector
+			return res, &moveNoCollectorError{source: d.source}
 		}
 		if d.collectorID == target {
 			res.Unchanged++
@@ -404,6 +405,12 @@ func (h *Handler) ReplaceCollector(w http.ResponseWriter, r *http.Request) {
 	writeMoveResult(w, res, moveErr)
 }
 
+// moveNoCollectorError is errMoveNoCollector naming the device's source.
+type moveNoCollectorError struct{ source string }
+
+func (e *moveNoCollectorError) Error() string { return errMoveNoCollector.Error() }
+func (e *moveNoCollectorError) Unwrap() error { return errMoveNoCollector }
+
 func writeMoveResult(w http.ResponseWriter, res moveResult, moveErr error) {
 	switch {
 	case errors.Is(moveErr, errMoveTargetNotFound):
@@ -411,7 +418,12 @@ func writeMoveResult(w http.ResponseWriter, res moveResult, moveErr error) {
 	case errors.Is(moveErr, errMoveTargetStandby):
 		writeErr(w, http.StatusBadRequest, "devices can't be moved to a standby collector; they belong to its primary, which the standby takes over automatically")
 	case errors.Is(moveErr, errMoveNoCollector):
-		writeErr(w, http.StatusConflict, lensManagedMsg)
+		var nc *moveNoCollectorError
+		src := ""
+		if errors.As(moveErr, &nc) {
+			src = nc.source
+		}
+		writeErr(w, http.StatusConflict, managedMsg(src))
 	case errors.Is(moveErr, errMoveDeviceNotFound):
 		writeErr(w, http.StatusNotFound, "one or more devices not found")
 	case len(res.Conflicts) > 0:

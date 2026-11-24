@@ -85,7 +85,7 @@ func (e *Executor) stepPing(ctx context.Context, run RunContext, s step) stepRes
 	if len(pingable) == 0 && len(lensSkipped) > 0 {
 		actual := map[string]any{}
 		for _, d := range lensSkipped {
-			actual[d.name] = skippedLensMsg
+			actual[d.name] = skippedMsg(d.source)
 		}
 		return stepResult{Passed: true, Expected: map[string]any{"replies": true}, Actual: actual, StartedAt: started, EndedAt: time.Now()}
 	}
@@ -107,7 +107,7 @@ func (e *Executor) stepPing(ctx context.Context, run RunContext, s step) stepRes
 	var readings []stepReading
 	actual := map[string]any{}
 	for _, d := range lensSkipped {
-		actual[d.name] = skippedLensMsg
+		actual[d.name] = skippedMsg(d.source)
 	}
 	for _, d := range pingable {
 		o, ok := outcomes[d.id]

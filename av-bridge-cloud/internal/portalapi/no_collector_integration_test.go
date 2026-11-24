@@ -146,4 +146,28 @@ func TestNoCollectorRefusals(t *testing.T) {
 
 	code, body = call("/devices/"+lensDev+"/remote-sessions", map[string]any{})
 	refused("remote access", code, body)
+
+	// A Neat Pulse device is refused the same way, naming Neat Pulse.
+	neatDev := q(`INSERT INTO devices (customer_id, source, platform, name, type, latest_status, last_seen_at)
+	              VALUES ($1, 'neat_pulse', 'android', 'neat device', 'zoom_room', 'online', now())
+	              RETURNING id::text`, cust)
+	const wantNeat = `{"error":"not available for devices managed by Neat Pulse"}`
+	neatRefused := func(where string, code int, body []byte) {
+		t.Helper()
+		if code != http.StatusConflict || string(bytes.TrimSpace(body)) != wantNeat {
+			t.Errorf("neat %s = %d %s, want 409 %s", where, code, body, wantNeat)
+		}
+	}
+	code, body = call("/devices/"+neatDev+"/command", map[string]any{"name": "power_on"})
+	neatRefused("command", code, body)
+	code, body = call("/devices/"+neatDev+"/reconnect", map[string]any{})
+	neatRefused("reconnect", code, body)
+	code, body = call("/devices/move", map[string]any{"device_ids": []string{neatDev}, "target_collector_id": col2})
+	neatRefused("move", code, body)
+	code, body = call("/devices/"+neatDev+"/remote-sessions", map[string]any{})
+	neatRefused("remote access", code, body)
+	code, body = call("/commands/bulk", map[string]any{"device_ids": []string{neatDev, lensDev}, "name": "power_on"})
+	if code != 200 || !bytes.Contains(body, []byte("managed by Neat Pulse")) || !bytes.Contains(body, []byte("managed by Poly Lens")) {
+		t.Errorf("bulk with neat and lens = %d %s", code, body)
+	}
 }

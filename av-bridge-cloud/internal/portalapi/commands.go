@@ -30,6 +30,21 @@ const CommandReconnectName = "_reconnect"
 // managed by Poly Lens (no Collector).
 const lensManagedMsg = "not available for devices managed by Poly Lens"
 
+// managedMsg is that refusal for a device of the given source.
+func managedMsg(source string) string {
+	if source == sourceNeatPulse {
+		return "not available for devices managed by Neat Pulse"
+	}
+	return lensManagedMsg
+}
+
+// deviceSource returns a device's source ("" when it can't be read).
+func deviceSource(ctx context.Context, tx pgx.Tx, deviceID string) string {
+	var s string
+	_ = tx.QueryRow(ctx, `SELECT COALESCE(source, '') FROM devices WHERE id = $1`, deviceID).Scan(&s)
+	return s
+}
+
 // SubmitCommand — POST /api/v1/devices/{id}/command  body: { name, args }
 func (h *Handler) SubmitCommand(w http.ResponseWriter, r *http.Request) {
 	deviceID := r.PathValue("id")
@@ -122,7 +137,7 @@ func (h *Handler) SubmitBulkCommand(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			if errors.Is(err, commands.ErrNoCollector) {
-				results = append(results, result{DeviceID: devID, Error: lensManagedMsg})
+				results = append(results, result{DeviceID: devID, Error: managedMsg(deviceSource(ctx, tx, devID))})
 				continue
 			}
 			if err != nil {
@@ -200,6 +215,7 @@ func (h *Handler) submitAndWait(w http.ResponseWriter, r *http.Request, deviceID
 
 	var cmdID string
 	notFound, noCollector := false, false
+	var source string
 	ok := h.withTenant(w, r, func(ctx context.Context, tx pgx.Tx) error {
 		id, err := commands.Submit(ctx, tx, p.CustomerID, deviceID, name, args, p.Role)
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -208,6 +224,7 @@ func (h *Handler) submitAndWait(w http.ResponseWriter, r *http.Request, deviceID
 		}
 		if errors.Is(err, commands.ErrNoCollector) {
 			noCollector = true
+			source = deviceSource(ctx, tx, deviceID)
 			return nil
 		}
 		if err != nil {
@@ -237,7 +254,7 @@ func (h *Handler) submitAndWait(w http.ResponseWriter, r *http.Request, deviceID
 		return
 	}
 	if noCollector {
-		writeErr(w, http.StatusConflict, lensManagedMsg)
+		writeErr(w, http.StatusConflict, managedMsg(source))
 		return
 	}
 

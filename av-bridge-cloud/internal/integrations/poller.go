@@ -66,6 +66,9 @@ const (
 // integration and shown as the reason a device is unknown.
 type providerText struct {
 	unreachable, notFound, rejected, noSecret, forbidden string
+	// orgNotFound: the account/organisation itself is unknown (shown on
+	// the devices too).
+	orgNotFound string
 	// rejectedOnDevices shows the rejected message on the devices too (Neat
 	// answers 403 both for a bad key and for a key without Read access).
 	rejectedOnDevices bool
@@ -76,7 +79,7 @@ var providerTexts = map[string]providerText{
 		noSecret: msgNoSecret, forbidden: msgForbidden},
 	ProviderNeatPulse: {unreachable: "Neat Pulse unreachable", notFound: "Not found in this Neat Pulse organisation",
 		rejected: "Neat Pulse rejected the API key", noSecret: "Stored Neat Pulse API key could not be read",
-		rejectedOnDevices: true},
+		orgNotFound: "Neat Pulse organisation not found", rejectedOnDevices: true},
 }
 
 func textFor(provider string) providerText {
@@ -389,7 +392,8 @@ func (p *Poller) failIntegration(ctx context.Context, in integrationRow, devs []
 	}
 	t := textFor(in.provider)
 	reason := t.unreachable
-	if (t.forbidden != "" && msg == t.forbidden) || (t.rejectedOnDevices && msg == t.rejected) {
+	if (t.forbidden != "" && msg == t.forbidden) || (t.rejectedOnDevices && msg == t.rejected) ||
+		(t.orgNotFound != "" && msg == t.orgNotFound) {
 		reason = msg // a role or key problem is not an outage
 	}
 	for _, d := range devs {
@@ -448,7 +452,7 @@ func (p *Poller) markUnknown(ctx context.Context, in integrationRow, d linkedDev
 		return
 	}
 	p.publish(in, d, "unknown", metrics)
-	p.evaluate(ctx, in, d, Readings{Status: "unknown"})
+	p.evaluate(ctx, in, d, Readings{Status: "unknown", Source: in.provider, Label: roomLabel(d.typ)})
 }
 
 func (p *Poller) writeDevice(ctx context.Context, in integrationRow, d linkedDevice, f polylens.Device) {

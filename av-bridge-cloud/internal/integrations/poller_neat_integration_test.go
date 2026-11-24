@@ -19,11 +19,14 @@ import (
 
 type fakePulse struct {
 	srv   *httptest.Server
-	mode  atomic.Value // "ok", "unauth", "down", "ratelimit"
+	mode  atomic.Value // "ok", "unauth", "down", "ratelimit", "notfound"
 	mu    sync.Mutex
 	calls map[string]int // path -> count
 	// barConnected and padConnected drive the fake devices' state.
 	barConnected, padConnected atomic.Bool
+	// unpaired clears both pairingSerials; ghost points the Bar's at a serial
+	// no endpoint has.
+	unpaired, ghost atomic.Bool
 }
 
 func (f *fakePulse) count(prefix string) int {
@@ -63,9 +66,20 @@ func newFakePulse(t *testing.T) *fakePulse {
 			w.WriteHeader(503)
 			return
 		case "ratelimit":
-			w.Header().Set("Retry-After", "120")
+			w.Header().Set("Retry-After", "3600") // capped to 5 minutes
 			w.WriteHeader(429)
 			return
+		case "notfound":
+			w.WriteHeader(404)
+			_, _ = w.Write([]byte(`{"message":"organisation not found","status":404}`))
+			return
+		}
+		barPair, padPair := "FAKE-NP-1", "FAKE-NB-1"
+		if f.unpaired.Load() {
+			barPair, padPair = "", ""
+		}
+		if f.ghost.Load() {
+			barPair, padPair = "FAKE-GHOST-1", ""
 		}
 		parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/") // v1 orgs <org> endpoints [id]
 		if len(parts) < 4 || parts[0] != "v1" || parts[1] != "orgs" || parts[3] != "endpoints" {
@@ -83,12 +97,12 @@ func newFakePulse(t *testing.T) *fakePulse {
 			fmt.Fprintf(w, `{"data":[{"id":"ep-bar","endpointData":{"shutterClosed":true,"data":[
  {"co2":612.5,"humidity":38.5,"illumination":180,"people":3,"temp":22.25,"voc":95,"vocIndex":110,"timestamp":"%d"}]}}]}`, time.Now().Unix())
 		case len(parts) == 5 && parts[4] == "ep-bar":
-			_, _ = w.Write([]byte(`{"id":"ep-bar","connected":true,"model":"Neat Bar","serial":"FAKE-NB-1","firmwareVersion":"NFF1.FAKE.1",
- "latestVersion":"NFF1.FAKE.2","upgradeStatus":"IDLE","primaryMode":"ZOOM_ROOMS","pairingSerial":"FAKE-NP-1",
+			fmt.Fprintf(w, `{"id":"ep-bar","connected":true,"model":"Neat Bar","serial":"FAKE-NB-1","firmwareVersion":"NFF1.FAKE.1",
+ "latestVersion":"NFF1.FAKE.2","upgradeStatus":"IDLE","primaryMode":"ZOOM_ROOMS","pairingSerial":"%s",
  "connectionTime":"2026-11-20T08:00:00Z","restartTime":"2026-11-19T02:00:00Z",
- "networks":[{"macAddress":"AABeAFMB","type":"NETWORK_TYPE_ETHERNET","linkUp":true}],"roomId":7,"roomName":"Fake Huddle"}`))
+ "networks":[{"macAddress":"AABeAFMB","type":"NETWORK_TYPE_ETHERNET","linkUp":true}],"roomId":7,"roomName":"Fake Huddle"}`, barPair)
 		case len(parts) == 5 && parts[4] == "ep-pad":
-			_, _ = w.Write([]byte(`{"id":"ep-pad","model":"Neat Pad","serial":"FAKE-NP-1","pairingSerial":"FAKE-NB-1","primaryMode":"ZOOM_ROOMS","roomId":7}`))
+			fmt.Fprintf(w, `{"id":"ep-pad","model":"Neat Pad","serial":"FAKE-NP-1","pairingSerial":"%s","primaryMode":"ZOOM_ROOMS","roomId":7}`, padPair)
 		case len(parts) == 5 && parts[4] == "ep-board":
 			_, _ = w.Write([]byte(`{"id":"ep-board","model":"Neat Board","serial":"FAKE-NBD-1","firmwareVersion":"NFF1.FAKE.2","latestVersion":"NFF1.FAKE.2","primaryMode":"MICROSOFT_TEAMS_ROOMS","roomId":8}`))
 		default:
@@ -181,13 +195,15 @@ func TestNeatPollWritesReadingsPeripheralsAndSensors(t *testing.T) {
 		t.Errorf("alert readings %+v", r)
 	}
 
-	// The Board has no Pad and no sensor data: those readings are omitted.
+	// The Board is paired with nothing: an empty peripherals list, nothing
+	// missing. It has no sensor data: those readings are omitted.
 	_, bm, _ := e.dev(f.devs["ep-board"])
-	if strings.Contains(bm, "peripherals") || strings.Contains(bm, "people_count") || strings.Contains(bm, "firmware_update\"") ||
+	if !strings.Contains(bm, `"peripherals": []`) || !strings.Contains(bm, `"peripherals_linked": true`) ||
+		strings.Contains(bm, "people_count") || strings.Contains(bm, "firmware_update\"") ||
 		!strings.Contains(bm, `"call_state": "idle"`) {
 		t.Errorf("board metrics: %s", bm)
 	}
-	if r, _ := alerts.get(f.devs["ep-board"]); r.Label != "Teams Room" || r.LinkedDevices != 0 || r.PeripheralsLinked != nil {
+	if r, _ := alerts.get(f.devs["ep-board"]); r.Label != "Teams Room" || r.LinkedDevices != 0 || r.PeripheralsLinked == nil || !*r.PeripheralsLinked {
 		t.Errorf("board alert readings %+v", r)
 	}
 	// A linked device missing from the organisation is unknown.
@@ -386,5 +402,161 @@ func TestNeatAlertsOfflineAndPadMissing(t *testing.T) {
 	poll(at(5, 0))
 	if n, _ := open("device_offline"); n != 1 {
 		t.Fatal("alert not opened after the overnight hold")
+	}
+}
+
+// After the Pad is unpaired in Pulse, the pad-missing alert resolves.
+func TestNeatUnpairClearsPadAlert(t *testing.T) {
+	e := newEnv(t)
+	pulse := newFakePulse(t)
+	f := e.neatTenant("org-neat-unpair", map[string]string{"ep-bar": "zoom_room"})
+	bar := f.devs["ep-bar"]
+	clock := at(12, 0)
+	alerter := NewAlerter(e.st.AdminPool(), nil, func() time.Time { return clock }, e.quiet)
+	alerter.dispatch = (&recDispatch{}).add
+	p := e.neatPoller(pulse, alerter, f.cust)
+	poll := func(ts time.Time) {
+		t.Helper()
+		clock = ts
+		if err := p.PollOnce(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	open := func() int {
+		return e.count(`SELECT count(*) FROM alerts WHERE device_id = $1 AND alert_key = 'peripherals_missing' AND status = 'open'`, bar)
+	}
+	poll(at(12, 0))
+	poll(at(12, 10))
+	if open() != 1 {
+		t.Fatal("pad-missing alert not opened")
+	}
+	pulse.unpaired.Store(true)
+	p.neat[f.integ].details = map[string]neatDetail{} // the 15-minute cache has expired
+	poll(at(12, 15))
+	if open() != 0 {
+		t.Fatal("pad-missing alert not resolved after unpairing")
+	}
+	_, m, _ := e.dev(bar)
+	if !strings.Contains(m, `"peripherals": []`) || !strings.Contains(m, `"peripherals_missing": []`) {
+		t.Fatalf("metrics after unpairing: %s", m)
+	}
+}
+
+// A pairingSerial that matches no Pulse endpoint is listed with an unknown
+// state and never counts as missing.
+func TestNeatUnmatchedPairingNotMissing(t *testing.T) {
+	e := newEnv(t)
+	pulse := newFakePulse(t)
+	pulse.ghost.Store(true)
+	f := e.neatTenant("org-neat-ghost", map[string]string{"ep-bar": "zoom_room"})
+	alerts := &recAlerts{seen: map[string]Readings{}}
+	if err := e.neatPoller(pulse, alerts, f.cust).PollOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	_, metrics, _ := e.dev(f.devs["ep-bar"])
+	var m map[string]any
+	_ = json.Unmarshal([]byte(metrics), &m)
+	ps, _ := m["peripherals"].([]any)
+	if len(ps) != 1 {
+		t.Fatalf("peripherals = %v", m["peripherals"])
+	}
+	pad := ps[0].(map[string]any)
+	if pad["name"] != "Paired device (not in Pulse)" {
+		t.Errorf("pad = %v", pad)
+	}
+	if _, has := pad["connected"]; has {
+		t.Errorf("unknown pad must have no connected state: %v", pad)
+	}
+	if miss, _ := m["peripherals_missing"].([]any); len(miss) != 0 {
+		t.Errorf("peripherals_missing = %v", m["peripherals_missing"])
+	}
+	if r, _ := alerts.get(f.devs["ep-bar"]); len(r.MissingPeripherals) != 0 {
+		t.Errorf("alert readings %+v", r)
+	}
+}
+
+// Retry-After is capped at 5 minutes, and a hold-off longer than 10 minutes
+// shows the devices unknown so they never go stale, then offline.
+func TestNeatLongRateLimitMarksUnknown(t *testing.T) {
+	e := newEnv(t)
+	pulse := newFakePulse(t)
+	f := e.neatTenant("org-neat-rl", map[string]string{"ep-bar": "zoom_room"})
+	bar := f.devs["ep-bar"]
+	alerts := &recAlerts{seen: map[string]Readings{}}
+	p := e.neatPoller(pulse, alerts, f.cust)
+	if err := p.PollOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	pulse.mode.Store("ratelimit")
+	if err := p.PollOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	st := p.neat[f.integ]
+	if wait := time.Until(st.notBefore); wait > 5*time.Minute+time.Second || wait < 4*time.Minute {
+		t.Fatalf("hold-off %v, want capped at 5 minutes", wait)
+	}
+	// A short hold-off changes nothing.
+	if s, _, _ := e.dev(bar); s != "online" {
+		t.Fatalf("short hold-off changed status: %q", s)
+	}
+	// The hold-off has lasted over 10 minutes.
+	st.rlSince = time.Now().Add(-11 * time.Minute)
+	e.exec(`UPDATE devices SET last_seen_at = now() - interval '20 minutes' WHERE id = $1`, bar)
+	if err := p.PollOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	s, m, fresh := e.dev(bar)
+	if s != "unknown" || !fresh || !strings.Contains(m, "Neat Pulse rate limiting") {
+		t.Fatalf("long hold-off: %q fresh=%v %s", s, fresh, m)
+	}
+	if r, _ := alerts.get(bar); r.Status != "unknown" || r.Source != "neat_pulse" || r.Label != "Zoom Room" {
+		t.Fatalf("alert readings %+v", r)
+	}
+	// Pulse answers again: the device recovers and the hold-off ends.
+	pulse.mode.Store("ok")
+	st.notBefore = time.Time{}
+	if err := p.PollOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if s, _, _ := e.dev(bar); s != "online" || !st.rlSince.IsZero() {
+		t.Fatalf("not recovered: %q rlSince=%v", s, st.rlSince)
+	}
+}
+
+func TestNeatOrgNotFound(t *testing.T) {
+	e := newEnv(t)
+	pulse := newFakePulse(t)
+	pulse.mode.Store("notfound")
+	f := e.neatTenant("org-neat-404", map[string]string{"ep-bar": "zoom_room"})
+	if err := e.neatPoller(pulse, nil, f.cust).PollOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.integration(f.integ); got != "error|Neat Pulse organisation not found" {
+		t.Fatalf("integration %q", got)
+	}
+	if s, m, _ := e.dev(f.devs["ep-bar"]); s != "unknown" || !strings.Contains(m, "Neat Pulse organisation not found") {
+		t.Fatalf("%q %s", s, m)
+	}
+}
+
+func TestNeatSampleUsable(t *testing.T) {
+	now := time.Date(2026, 11, 24, 12, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name  string
+		ts    time.Time
+		fresh bool
+		want  bool
+	}{
+		{"recent", now.Add(-9 * time.Minute), false, true},
+		{"too old", now.Add(-11 * time.Minute), true, false},
+		{"slightly ahead", now.Add(4 * time.Minute), true, true},
+		{"far ahead", now.Add(6 * time.Minute), true, false},
+		{"no timestamp, this cycle", time.Time{}, true, true},
+		{"no timestamp, cached", time.Time{}, false, false},
+	}
+	for _, c := range cases {
+		if got := sampleUsable(c.ts, c.fresh, now); got != c.want {
+			t.Errorf("%s: %v, want %v", c.name, got, c.want)
+		}
 	}
 }

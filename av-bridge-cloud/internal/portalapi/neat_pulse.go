@@ -34,7 +34,7 @@ const (
 	// neatPickerDetailTTL is how long the picker reuses an endpoint's details.
 	neatPickerDetailTTL = 5 * time.Minute
 	// neatPickerMaxDetails caps details calls per picker request.
-	neatPickerMaxDetails = 300
+	neatPickerMaxDetails = 50
 	neatPickerParallel   = 4
 )
 
