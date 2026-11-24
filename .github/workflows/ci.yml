@@ -53,6 +53,19 @@ jobs:
           go-version-file: ${{ matrix.module }}/go.mod
           cache-dependency-path: ${{ matrix.module }}/go.sum
 
+      # The release Docker builds pin their own Go image; a go.mod bump (e.g. by
+      # Dependabot) that outgrows it only fails at release time otherwise.
+      - name: Dockerfile Go images are new enough for go.mod
+        run: |
+          want=$(awk '/^go /{print $2}' go.mod)
+          fail=0
+          for img in $(grep -ho 'FROM golang:[0-9.]*' Dockerfile ../*/Dockerfile 2>/dev/null | sed 's/FROM golang://' | sort -u); do
+            if [ "$(printf '%s\n%s\n' "$want" "$img" | sort -V | head -1)" != "$want" ] && [ "${want%.*}" != "$img" ]; then
+              echo "Dockerfile uses golang:$img but go.mod requires go $want"; fail=1
+            fi
+          done
+          exit $fail
+
       - name: Vet
         run: go vet ./...
 

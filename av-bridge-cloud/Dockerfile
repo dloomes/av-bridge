@@ -16,7 +16,7 @@
 # Makefile's build-* targets — statically linked (CGO_ENABLED=0),
 # stripped (-s -w). version + buildTime stay "dev" here; the signed
 # release builds will override via ldflags in a follow-up.
-FROM golang:1.25-alpine AS bridge-build
+FROM golang:1.26-alpine AS bridge-build
 # Build args stamp the version + build time into the binary via ldflags.
 # Version defaults to "dev" so a plain `docker build` still succeeds;
 # the deploy script passes --build-arg BRIDGE_VERSION=$(git describe …)
@@ -58,7 +58,7 @@ RUN --mount=type=secret,id=update_signing_key,required=false \
       /out/av-bridge-windows-amd64.exe /out/av-bridge-linux-amd64 /out/av-bridge-linux-arm64
 
 # ---- Cloud (native linux) build -------------------------------------------
-FROM golang:1.22-alpine AS cloud-build
+FROM golang:1.26-alpine AS cloud-build
 WORKDIR /src
 COPY av-bridge-cloud/go.mod av-bridge-cloud/go.sum ./
 RUN go mod download
